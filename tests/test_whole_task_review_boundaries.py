@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tests.gatefixture import gate_page
 from cria import loop, probegate, probediscovery
 from cria.config import Role
 from cria.plan import Plan, PlanItem
@@ -37,12 +38,12 @@ def driver_fixture(*, synthetic, coder=None, reasoner=None, scheduled=False, she
 
 def gate_reply(session, body, *, red=False):
     candidate = _candidate(probediscovery.ProbeKind.Test, ["go", "test", "./..."])
-    session.gate_plan = probegate.GatePlan(workspace=".", candidates=[candidate])
+    session.gate_plan = probegate.GatePlan(workspace=".", candidates=[candidate], transport_id="0" * 24)   # a fixed id: the evidence must not vary by run
     raw = (f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n"
            + ("thing.go:8: broken\nEXIT:1\n" if red else "ok package\nEXIT:0\n")
            + f"{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}\nabc\n")
     return {**body, "messages": body["messages"] + [
-        {"role": "tool", "tool_call_id": session.probe_call_id, "content": raw}]}
+        {"role": "tool", "tool_call_id": session.probe_call_id, "content": gate_page(session.gate_plan, raw)}]}
 
 
 @pytest.mark.parametrize("red", [False, True])

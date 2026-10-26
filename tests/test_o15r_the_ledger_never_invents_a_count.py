@@ -206,8 +206,17 @@ def test_a_read_instead_result_is_counted_inside_the_recorded_boundary():
     from cria import bodykeys, writeproxy
     from tests.test_o15_the_ledger_basis_is_the_latest_touch import _call, _res
     payload = "ModuleNotFoundError: No module named 'example_pkg'\n"
-    content = denial.mark("write did not run\n") + "\n" + denial.READ_INSTEAD_MARKER + "\n" + payload
-    msgs = [_call("w", name="write_file", path="error.log", content="new"), _res("w", content)]
+    comp = {"choices": [{"message": {"tool_calls": [{"id": "w", "type": "function", "function": {
+        "name": "write_file", "arguments": json.dumps({"path": "error.log", "content": "new"})}}]}}]}
+    writeproxy.translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
+                                  injected={"write_file"})                       # the REAL lowering: sentinel + receipt
+    lowered = comp["choices"][0]["message"]["tool_calls"][0]
+    rcpt = writeproxy.receipt_of(json.loads(lowered["function"]["arguments"])["cmd"], "w")
+    from cria import resultpacket
+    # the record exactly as the read-instead program prints it: the authored prose is `pre`, the file's bytes the body
+    content = resultpacket.line(rcpt, denial.REFUSED, observe="whole", body=payload.encode(),
+                                pre=denial.mark("write did not run\n") + "\n" + denial.READ_INSTEAD_MARKER + "\n")
+    msgs = [{"role": "assistant", "tool_calls": [lowered]}, _res("w", content)]
     got = writeproxy.represent_inbound(msgs, None, tools_present=False)
     assert bodykeys.PAYLOAD_BOUNDARY in got[-1]
     assert loop._extract_reads(got)["error.log"][1] == "1 lines"

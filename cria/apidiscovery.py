@@ -78,6 +78,9 @@ class Discovery:
     note: str = ""                             # one line: what this endpoint is and how it is called
     routes: list[str] = field(default_factory=list)   # the callable surface, arguments inline
     shapes: list[str] = field(default_factory=list)   # what a call RETURNS, when the server declares it
+    # The response FIELD NAMES each `shapes` entry declares (same index), read from the schema/introspection structure as it was
+    # parsed — typed, so no consumer has to scan an entry's text for them. () = the producer declared none for that entry.
+    shape_fields: list[tuple] = field(default_factory=list)
     unread: str = ""                           # set INSTEAD of routes when a bound stopped the probe
 
     def __bool__(self) -> bool:
@@ -163,6 +166,17 @@ def _json_schema_args(schema: Any, mark_optional: bool = True) -> list[str]:
     return out
 
 
+def _json_schema_names(schema: Any) -> tuple:
+    """The property NAMES of a JSON Schema, in the order `_json_schema_args` shows them — read from the structure, not its text."""
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict):
+        return ()
+    required = schema.get("required")
+    required = set(required) if isinstance(required, list) else set()
+    ordered = ([k for k in props if k in required] + [k for k in props if k not in required])
+    return tuple(str(n) for n in ordered[:MAX_ARGS])
+
+
 def _mcp_discover(url: str) -> Optional[Discovery]:
     """Speak MCP well enough to read the menu: ``initialize`` → ``notifications/initialized`` →
     ``tools/list`` (then resources and prompts, which many servers do not implement — an error there
@@ -228,6 +242,7 @@ def _mcp_discover(url: str) -> Optional[Discovery]:
         fields = _json_schema_args(t.get("outputSchema"), mark_optional=False)
         if fields:
             d.shapes.append(f"{t['name']} → {', '.join(fields)}")
+            d.shape_fields.append(_json_schema_names(t.get("outputSchema")))
     if MAX_ITEMS is not None and len(tools) > MAX_ITEMS:
         d.routes.append(f"…+{len(tools) - MAX_ITEMS} more tool(s) not shown")
     for method, key, label in (("resources/list", "resources", "mcp resource"),
@@ -353,6 +368,8 @@ def _graphql_discover(url: str) -> Optional[Discovery]:
                     names.append(f"…+{len(subfields) - MAX_FIELDS} more field(s)")
                 if names:
                     d.shapes.append(f"{prefix}.{f['name']} → {', '.join(names)}")
+                    d.shape_fields.append(tuple(str(s["name"]) for s in subfields[:MAX_FIELDS]
+                                                if isinstance(s, dict) and s.get("name")))
         if MAX_ITEMS is not None and len(fields) > MAX_ITEMS:
             d.routes.append(f"…+{len(fields) - MAX_ITEMS} more {prefix} field(s) not shown")
     return d or None

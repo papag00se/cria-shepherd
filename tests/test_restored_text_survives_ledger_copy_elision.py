@@ -1,4 +1,5 @@
 """Whole-read credit follows exact delivered text, not a surviving stale hint."""
+from cria.fetchfacts import Shape
 import hashlib
 import io
 import json
@@ -19,7 +20,7 @@ def test_the_real_rank4_driver_keeps_repeated_restored_lines_and_credits_only_th
     driver, session, body = setup_driver()
     session.workspace_root = str(tmp_path)
     session.read_files = {'a.txt': (1, '5 lines')}
-    session.fetched_pages = {'https://example.test/spec': ('HTTP 200', '/report', UNIT.strip(), '')}
+    session.fetched_pages = {'https://example.test/spec': ('HTTP 200', ('/report',), (Shape(UNIT.strip()),), (), '')}
     driver._ctx.pilot_runtime = assistruntime.AssistRuntime.select(level=5, profile='rank4-ablation')
     posts = []
     def transport(request, **options):
@@ -43,7 +44,7 @@ def test_the_real_rank4_driver_keeps_repeated_restored_lines_and_credits_only_th
 
 
 def test_each_ordinary_copy_retains_its_position_and_resolves_to_exact_authoritative_lines():
-    facts = {'https://example.test/spec': ('HTTP 200', '/report', UNIT.strip(), '')}
+    facts = {'https://example.test/spec': ('HTTP 200', ('/report',), (Shape(UNIT.strip()),), (), '')}
     ledger = loop._format_fetches(facts, location=False)
     original = TEXT + '\n\n\nfooter'
     messages = [{'role': 'tool', 'content': original},

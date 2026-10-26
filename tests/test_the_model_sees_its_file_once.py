@@ -49,8 +49,9 @@ def write(cid, path, body):
                      "arguments": json.dumps({"path": path, "content": body})}}]}
 
 
-def result(cid, text="⟦ctx:wrote⟧"):
-    return {"role": "tool", "tool_call_id": cid, "content": text}
+def result(cid, text="Wrote it"):
+    """A write's result as `represent_inbound` hands it on: the program's own typed `landed` outcome."""
+    return {"role": "tool", "tool_call_id": cid, "content": text, "cria_result_outcome": "landed"}
 
 
 BIG = "fn resolve_path(t: &Table) -> Result<Value, String> {\n" + ("    // work\n" * 200) + "}\n"

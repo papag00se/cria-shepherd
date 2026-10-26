@@ -148,7 +148,7 @@ def test_registered_planner_fetch_full_payload_and_facts(monkeypatch):
         facts = {}
         with bound(document_runtime(disabled=disabled)):
             assert planner_tools._web_fetch({'url': result.final_url}, facts=facts).text == expected
-        assert facts == {result.final_url: ('HTTP 200', '', '')}
+        assert facts == {result.final_url: ('HTTP 200', (), (), (), '')}
 
 
 def test_registered_planner_search_full_payload_and_unknown_negative(monkeypatch):
@@ -162,7 +162,7 @@ def test_registered_planner_search_full_payload_and_unknown_negative(monkeypatch
     with bound(document_runtime()):
         assert planner_tools._no_structure_note(None) == ''
         assert planner_tools._no_structure_note({}, parsed={}) == ''
-        assert planner_tools._search_no_structure_note({'url': ('HTTP 200', '/real')}) == ''
+        assert planner_tools._search_no_structure_note({'url': ('HTTP 200', ('/real',), (), (), '')}) == ''
 
 
 def test_planner_retains_entry_definition_and_services_across_provider_rebinding(monkeypatch):
@@ -202,7 +202,7 @@ def test_planner_retains_entry_definition_and_services_across_provider_rebinding
             if route == 'fetch':
                 result = planner_tools._web_fetch({'url': 'https://example.invalid/doc'}, facts=facts)
                 assert result.text == 'HTTP 200 · https://example.invalid/doc\nplain\n[entry-owner-A]'
-                assert facts == {'https://example.invalid/doc': ('HTTP 200', '', '')}
+                assert facts == {'https://example.invalid/doc': ('HTTP 200', (), (), (), '')}
             else:
                 result = planner_tools._web_search({'query': 'unrelated topic'}, 'fake-key', [], facts=facts)
                 assert result.text == 'No results for query: unrelated topic\n[entry-owner-A]'

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from cria import loop, prompts, webfetch
+from tests.resultshape import fetch_pair
 
 
 def entry(status="HTTP 200"):
@@ -202,9 +203,7 @@ class FrozenCompactionCopyMakesNoLocationClaimTests(unittest.TestCase):
 
     def _fetch_turn(self):
         result = f"HTTP 200 \u00b7 {self.URL}\nContent-Type: text/html\ntoml docs body: pub fn from_str ..."
-        return [{"role": "assistant", "content": None, "tool_calls": [{"id": "f1", "type": "function",
-                 "function": {"name": "web_fetch", "arguments": '{"url": "%s"}' % self.URL}}]},
-                {"role": "tool", "tool_call_id": "f1", "content": result}]
+        return fetch_pair(result, self.URL)
 
     def _before_elision_after_compaction_and_refetch(self, *, frozen_location: bool):
         """Stage the historical appendix and fresh live anchor before current elision."""
@@ -341,7 +340,7 @@ class NoSpecHereCarriesNoHiddenLocationClaimTests(unittest.TestCase):
         res_a = ("HTTP 200 \u00b7 " + self.A + "\nContent-Type: application/json\n"
                  "[API endpoints (2): GET /handles/{handle}, GET /holders/{address}]\nbody")
         res_b = "HTTP 200 \u00b7 " + self.B + "\nContent-Type: text/html\ntoml docs body"
-        msgs = [{"role": "tool", "content": res_a}, {"role": "tool", "content": res_b}]
+        msgs = [*fetch_pair(res_a, routes=('GET /handles/{handle}', 'GET /holders/{address}', )), *fetch_pair(res_b)]
         return loop._extract_fetches(msgs)
 
     def test_fails_before_not_visible_would_self_contradict(self):
@@ -400,9 +399,9 @@ class NoSpecHereCarriesNoHiddenLocationClaimTests(unittest.TestCase):
         sid = "c31-elide-e2e"
         sess = SimpleNamespace(fetched_pages=pre, web_session=sid, workspace_root="")
         frozen = loop._fetch_ground_truth(
-            [{"role": "tool", "content": "HTTP 200 \u00b7 " + self.A +
-              "\n[API endpoints (2): GET /handles/{handle}, GET /holders/{address}]"},
-             {"role": "tool", "content": "HTTP 200 \u00b7 " + self.B + "\ntoml docs body"}],
+            [*fetch_pair("HTTP 200 \u00b7 " + self.A + "\n[API endpoints (2): GET /handles/{handle}, GET /holders/{address}]",
+                         routes=('GET /handles/{handle}', 'GET /holders/{address}', )),
+             *fetch_pair("HTTP 200 \u00b7 " + self.B + "\ntoml docs body")],
             location=False)
         self.assertNotIn("in the transcript above", frozen)
         for vis in (set(), {self.B}):

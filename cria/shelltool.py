@@ -70,6 +70,23 @@ def shell_args(tool: dict, cmd: str) -> dict:
     return {field: cmd}
 
 
+# Only a field whose NAME carries the unit (`max_output_tokens`) is safe to raise; a tool that declares none is left alone.
+_OUTPUT_BUDGET_FIELDS = ("max_output_tokens",)
+
+
+def with_output_budget(tool: dict, args: dict, tokens: int) -> dict:
+    """Raise the schema-advertised output allowance to at least ``tokens`` (one token per wire byte is an upper bound),
+    via whichever token-unit field the tool's own schema declares (Codex: ``max_output_tokens``). A result that carries
+    typed records must not be cut by a default allowance smaller than the records themselves; a tool that declares no
+    such field is returned unchanged — cria never invents a parameter the harness didn't advertise, and a cap it cannot
+    raise is an immutable external limit, which can only make the result UNKNOWN, never a wrong claim."""
+    props = (tool.get("schema") or {}).get("properties") or {}
+    for f in _OUTPUT_BUDGET_FIELDS:
+        if f in props and isinstance(args.get(f, 0), (int, float)):
+            return {**args, f: max(int(args.get(f) or 0), tokens)}
+    return args
+
+
 # Milliseconds a composed GATE script may need end-to-end: each probe is bounded by its own
 # `timeout -k 5 240` inside the script, and the slowest real gate is floor + lint + a pytest run.
 # Without this, a harness's default exec yield (observed: Codex's 10s) cuts the composed script

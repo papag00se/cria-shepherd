@@ -7,7 +7,7 @@ import os
 import unittest
 from unittest import mock
 
-from cria import denial, webfetch
+from cria import bodykeys, denial, webfetch
 from cria import writeproxy
 
 from cria.config import CRIA_HOME
@@ -112,21 +112,23 @@ class TranslateWriteTests(unittest.TestCase):
         self.assertEqual(json.loads(tc["arguments"])["content"], content)
 
     def test_write_result_reframed_only_on_the_success_token(self):
-        from cria.writeproxy import _WROTE
         comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="c9")
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
-        # SUCCESS: the result carries the positive token → clean confirmation (token hidden)
-        ok = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": _WROTE}]
+        # SUCCESS: the program's own typed `landed` record leads the result → clean confirmation (token hidden)
+        from tests.resultshape import landed
+        ok = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9",
+                                     "content": landed(comp["choices"][0]["message"]["tool_calls"][0])}]
         self.assertIn("x.py", str(represent_inbound(ok)[-1]["content"]))
-        self.assertNotIn(_WROTE, str(represent_inbound(ok)[-1]["content"]))
-        # FAILURE: no token (error on stderr, or blank) → left UNTOUCHED, the model sees the failure
-        for failed in ("permission denied", "  ", ""):
+        self.assertNotIn(LANDED, str(represent_inbound(ok)[-1]["content"]))
+        # FAILURE: no record (error on stderr, or blank) → left UNTOUCHED, the model sees the failure. The bare token is
+        # display wording and proves nothing: only the typed record lands a write.
+        for failed in ("permission denied", "  ", "", LANDED):
             hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": failed}]
             self.assertEqual(represent_inbound(hist)[-1]["content"], failed)   # never fabricated success
         # M11: a harness that ECHOES the command carries the token only INSIDE print('…'), NOT as a
         # standalone stdout line — a FAILED write must not be reframed as "Wrote" just because the echoed
         # heredoc source contains the token. Line-anchoring (== the token) distinguishes them.
-        echoed = f"os.replace failed\nprint('{_WROTE}')\nPermissionError: denied"
+        echoed = f"os.replace failed\nprint('{LANDED}')\nPermissionError: denied"
         hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9", "content": echoed}]
         self.assertEqual(represent_inbound(hist)[-1]["content"], echoed)   # untouched — the failure is shown
 
@@ -159,7 +161,7 @@ class WriteWithNoContentTests(unittest.TestCase):
         output, held = self._execute(cmd)
         self.assertEqual(held, 'before = 1\n')
         self.assertTrue(denial.is_denied(output))
-        self.assertNotIn(writeproxy._WROTE, output)
+        self.assertNotIn(LANDED, output)
 
     def test_a_null_content_is_refused_not_written_as_empty(self):
         cmd = self._cmd({"path": "keep.py", "content": None})
@@ -167,13 +169,13 @@ class WriteWithNoContentTests(unittest.TestCase):
         output, held = self._execute(cmd)
         self.assertEqual(held, 'before = 1\n')
         self.assertTrue(denial.is_denied(output))
-        self.assertNotIn(writeproxy._WROTE, output)
+        self.assertNotIn(LANDED, output)
 
     def test_an_intentional_empty_string_still_writes(self):
         cmd = self._cmd({"path": "keep.py", "content": ""})
         output, held = self._execute(cmd)
         self.assertEqual(held, '')
-        self.assertIn(writeproxy._WROTE, output)
+        self.assertIn(LANDED, output)
         self.assertNotIn("cut off", cmd)
 
     def test_a_falsy_but_real_content_is_not_discarded(self):
@@ -679,7 +681,6 @@ class WebFetchEnvelopeTests(unittest.TestCase):
             self.assertEqual(str(out[-1]["content"]), payload)                    # envelope gone, payload exact
 
     def test_write_failure_strips_envelope_but_keeps_the_error(self):
-        from cria.writeproxy import _WROTE
         comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="w9")
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
         enveloped = "Chunk ID: 5\nProcess exited with code 1\nOutput:\nsed: cannot write: Permission denied"
@@ -687,7 +688,7 @@ class WebFetchEnvelopeTests(unittest.TestCase):
         out = represent_inbound(hist)
         content = str(out[-1]["content"])
         self.assertNotIn("Chunk ID", content)                    # envelope noise gone
-        self.assertNotIn(_WROTE, content)                        # never fabricates success on a failure
+        self.assertNotIn(LANDED, content)                        # never fabricates success on a failure
         self.assertIn("Permission denied", content)              # the REAL error survives
 
 
@@ -724,6 +725,17 @@ class MiscTests(unittest.TestCase):
         self.assertEqual(_repair_double_escaped("a\nb"), "a\nb")
 
 
+RCPT = "0123456789abcdef"
+LANDED = '"k":"landed"'       # the program's own typed first record: the ONLY thing that says a write landed
+
+
+def _scoped(fn, *args, **kw):
+    """Compose ``fn`` the way the compiler does: under a call's receipt, so the program prints its typed records."""
+    from cria import denial
+    with denial.receipt_scope(RCPT):
+        return fn(*args, **kw)
+
+
 class ValidateBeforeLowerTests(unittest.TestCase):
     """A syntactically-broken write/edit never reaches disk — but ONLY as a regression guard: it
     refuses to break a file that currently parses, and NEVER blocks a model from fixing a broken one."""
@@ -741,40 +753,40 @@ class ValidateBeforeLowerTests(unittest.TestCase):
         return p
 
     def test_write_refuses_to_break_a_currently_valid_file(self):
-        from cria.writeproxy import _write_command, _WROTE
+        from cria.writeproxy import _write_command
         p = self._tmp("a.py", "def f():\n    return 1\n")            # currently valid
-        out = self._exec(_write_command(p, "def f(:\n"))            # broken replacement
+        out = self._exec(_scoped(_write_command, p, "def f(:\n"))            # broken replacement
         self.assertIn("REFUSED", out)
-        self.assertNotIn(_WROTE, out)
+        self.assertNotIn(LANDED, out)
         self.assertEqual(open(p).read(), "def f():\n    return 1\n")  # untouched
 
     def test_write_allows_a_new_or_already_broken_file(self):
-        from cria.writeproxy import _write_command, _WROTE
+        from cria.writeproxy import _write_command
         new = self._tmp("new.py")                                   # does not exist yet
-        self.assertIn(_WROTE, self._exec(_write_command(new, "def g(:\n")))   # regression-only → allowed
+        self.assertIn(LANDED, self._exec(_scoped(_write_command, new, "def g(:\n")))   # regression-only → allowed
         broken = self._tmp("b.py", "def h(:\n")                     # already broken on disk
-        self.assertIn(_WROTE, self._exec(_write_command(broken, "def h(:\n  pass\n")))
+        self.assertIn(LANDED, self._exec(_scoped(_write_command, broken, "def h(:\n  pass\n")))
 
     def test_write_validates_toml_and_json_too(self):
-        from cria.writeproxy import _write_command, _WROTE
+        from cria.writeproxy import _write_command
         t = self._tmp("c.toml", "[a]\nx = 1\n")
-        self.assertIn("REFUSED", self._exec(_write_command(t, "[a]\nx = = 1\n")))
+        self.assertIn("REFUSED", self._exec(_scoped(_write_command, t, "[a]\nx = = 1\n")))
         j = self._tmp("d.json", '{"a": 1}')
-        self.assertIn("REFUSED", self._exec(_write_command(j, '{"a": }')))
+        self.assertIn("REFUSED", self._exec(_scoped(_write_command, j, '{"a": }')))
         md = self._tmp("e.md", "# ok")                              # non-code → not validated
-        self.assertIn(_WROTE, self._exec(_write_command(md, "# hi (unbalanced")))
+        self.assertIn(LANDED, self._exec(_scoped(_write_command, md, "# hi (unbalanced")))
 
     def test_edit_refuses_a_regression_but_allows_fixing_a_broken_file(self):
         import base64, json
-        from cria.writeproxy import _edit_command, _WROTE
+        from cria.writeproxy import _edit_command
         from cria import editrecovery
         valid = self._tmp("f.py", "x = 1\ny = 2\n")
-        out = self._exec(_edit_command(valid, "y = 2", "y = (2"))                       # would break a valid file
-        fail = editrecovery.decode_report(out.split(editrecovery.EDITFAIL, 1)[1])
+        out = self._exec(_scoped(_edit_command, valid, "y = 2", "y = (2"))                       # would break a valid file
+        fail = editrecovery.decode_report(json.loads(out.split("\n", 1)[0])["rep"]["ef"])      # a typed field of the record
         self.assertEqual(fail["mode"], "would_break")                                   # reported, not applied
         self.assertEqual(open(valid).read(), "x = 1\ny = 2\n")                          # untouched
         broken = self._tmp("g.py", "def h(:\n    pass\n")                               # already broken
-        self.assertIn(_WROTE, self._exec(_edit_command(broken, "def h(:", "def h():")))  # fixing → allowed
+        self.assertIn(LANDED, self._exec(_scoped(_edit_command, broken, "def h(:", "def h():")))  # fixing → allowed
         self.assertIn("def h():", open(broken).read())
 
 
@@ -787,23 +799,24 @@ class EditCommandTests(unittest.TestCase):
         from cria import editrecovery
         fd, path = tempfile.mkstemp(suffix=".py")
         os.write(fd, content.encode()); os.close(fd)
-        command = writeproxy._edit_command(path, old, new)
+        command = _scoped(writeproxy._edit_command, path, old, new)
         r = subprocess.run(['sh', '-c', command], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
         msg = (r.stdout + r.stderr).strip()
         fail = None
-        if msg.startswith(editrecovery.EDITFAIL):
-            fail = editrecovery.decode_report(msg[len(editrecovery.EDITFAIL):])
+        first = json.loads(r.stdout.split("\n", 1)[0]) if r.stdout.startswith('{"v":1,') else {}
+        if first.get("k") == "unapplied":              # the fact report is a TYPED field of the program's own record
+            fail = editrecovery.decode_report(first["rep"]["ef"])
         return r.returncode, msg, out, fail
 
     def test_exact_match_replaces(self):
         rc, msg, out, _ = self._run("foo\nbar\n", "foo", "FOO")
-        self.assertEqual(rc, 0); self.assertIn("⟦ctx:wrote⟧", msg); self.assertEqual(out, "FOO\nbar\n")
+        self.assertEqual(rc, 0); self.assertIn(LANDED, msg); self.assertEqual(out, "FOO\nbar\n")
 
     def test_blank_line_drift_still_matches(self):
         # old has an EXTRA blank line vs the file — byte-exact would fail; whitespace-flexible matches.
         rc, msg, out, _ = self._run("a = 1\n\nb = 2\n", "a = 1\n\n\nb = 2", "a = 1\n\nc = 3")
-        self.assertEqual(rc, 0); self.assertIn("⟦ctx:wrote⟧", msg); self.assertIn("c = 3", out)
+        self.assertEqual(rc, 0); self.assertIn(LANDED, msg); self.assertIn("c = 3", out)
 
     def test_indentation_drift_still_matches(self):
         rc, msg, out, _ = self._run("    x = 1\n", "x = 1", "x = 2")
@@ -927,7 +940,7 @@ class EditRecoveryTests(unittest.TestCase):
         # of the run. A landed write proves the model can pin this file; the clock starts over.
         from cria import editrecovery, prompts
         tag = editrecovery.EDIT_MARK + " app.py — "
-        steer = {"role": "user", "content": tag + "copy this VERBATIM"}
+        steer = {"role": "tool", "content": tag + "copy this VERBATIM", bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}
         ok = {"role": "tool", "content": prompts.render("write_confirm", path="/work/app.py")}
         self.assertEqual(editrecovery._prior_edit_steers([steer, steer, steer], "/work/app.py"), 3)
         self.assertEqual(editrecovery._prior_edit_steers([steer, steer, steer, ok], "/work/app.py"), 0)
@@ -935,7 +948,7 @@ class EditRecoveryTests(unittest.TestCase):
 
     def test_the_clock_is_per_file_and_path_form_agnostic(self):
         from cria import editrecovery, prompts
-        mine = {"role": "user", "content": editrecovery.EDIT_MARK + " app.py — miss"}
+        mine = {"role": "tool", "content": editrecovery.EDIT_MARK + " app.py — miss", bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}
         other = {"role": "tool", "content": prompts.render("write_confirm", path="other.py")}
         rel = {"role": "tool", "content": prompts.render("write_confirm", path="app.py")}
         self.assertEqual(editrecovery._prior_edit_steers([mine, other], "/work/app.py"), 1)  # not my file
@@ -972,7 +985,7 @@ class EditRecoveryTests(unittest.TestCase):
         read = [{"role": "assistant", "tool_calls": [
             {"function": {"name": "read_file", "arguments": json.dumps({"path": "resolve_handle.py"})}}]}]
         self.assertNotIn("FULL file", editrecovery.recover(raw, read))
-        hist = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} resolve_handle.py — x"}
+        hist = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} resolve_handle.py — x", bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}
                 for _ in range(editrecovery.ESCALATE_AFTER)]
         self.assertIn("FULL file", editrecovery.recover(raw, hist))
         # A BLIND touch (never read or wrote resolve_handle.py) escalates on the FIRST miss.
@@ -984,7 +997,8 @@ class EditRecoveryTests(unittest.TestCase):
 
     def test_rewrite_sanctioned_detects_escalation(self):
         from cria import editrecovery
-        esc = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} h.py — … produce the corrected FULL file …"}]
+        esc = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} h.py — … produce the corrected FULL file …",
+                bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}]
         self.assertTrue(editrecovery.rewrite_sanctioned(esc, "h.py"))
         self.assertFalse(editrecovery.rewrite_sanctioned(esc, "other.py"))
         self.assertFalse(editrecovery.rewrite_sanctioned([], "h.py"))
@@ -1105,9 +1119,9 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
         lexer = shlex.shlex(tail, posix=True, punctuation_chars=";")
         lexer.whitespace_split = True
         tokens = list(lexer)
-        self.assertEqual(tokens[:3] + tokens[4:7] + tokens[8:],
-            ["then", "printf", "%s", ";", "printf", r"\n%s\n", ";", "else", "exit", "1", ";", "fi"])
-        self.assertEqual(len(tokens), 14)
+        # ONE printf (the typed first record + the pointer message): the stored fact is a field of that record, no second printf
+        self.assertEqual(tokens[:3] + tokens[4:], ["then", "printf", "%s", ";", "else", "exit", "1", ";", "fi"])
+        self.assertEqual(len(tokens), 10)
         self.assertFalse(os.environ.get("BASH_ENV"))
         self.assertFalse(any(k.startswith("BASH_FUNC_") for k in os.environ))
         writeproxy.retain_externalizations(self._owner, completion)
@@ -1118,8 +1132,8 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
             "content": f"Process exited with code {result.returncode}\nOutput:\n{result.stdout}"}]
         writeproxy.observe_externalization_results(self._store.get_guard("task:same-prompt"), history)
         represented = represent_inbound(history, workspace_root=ws, sess_key="task:same-prompt")
-        self.assertIn("⟦ctx:stored⟧", result.stdout)
-        self.assertNotIn("⟦ctx:stored⟧", represented[-1]["content"])
+        self.assertIn('"st":', result.stdout.split("\n", 1)[0])                       # the stored fact: a typed field
+        self.assertNotIn("⟦ctx:stored⟧", result.stdout + represented[-1]["content"])
 
     def test_the_same_workspace_is_still_refused_a_whole_re_fetch(self):
         """The guard this fix works around is real and must survive: a doc cria DID write into THIS
@@ -1174,7 +1188,7 @@ class WriteTempEscapesWorkspaceTests(unittest.TestCase):
         """Execute the REAL generated write program — the same python cria lowers to the harness."""
         import re, subprocess
         from cria.writeproxy import _write_command
-        cmd = _write_command(path, content)
+        cmd = _scoped(_write_command, path, content)
         m = re.search(r"python3 - <<'__CRIA_PY_EOF__'\n(.*?)\n__CRIA_PY_EOF__", cmd, re.S)
         self.assertIsNotNone(m, "could not extract the write program")
         return subprocess.run(["python3", "-c", m.group(1)], capture_output=True, text=True)
@@ -1286,7 +1300,7 @@ class MissingPathRefusalTests(unittest.TestCase):
                 result = subprocess.run(['sh', '-c', command], cwd=directory, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((pathlib.Path(directory) / 'a.py').read_text(), expected)
-                self.assertIn(writeproxy._WROTE, result.stdout)
+                self.assertIn(LANDED, result.stdout)
 
 
 class InvertedRangeTests(unittest.TestCase):
@@ -1342,7 +1356,7 @@ class ParentIsAFileTests(unittest.TestCase):
             blocker = os.path.join(ws, "tests")
             with open(blocker, "w") as fh:
                 fh.write("</parameter>\n</function>\n")
-            cmd = writeproxy._write_command(os.path.join(ws, "tests", "test_x.py"), "import x\n")
+            cmd = _scoped(writeproxy._write_command, os.path.join(ws, "tests", "test_x.py"), "import x\n")
             r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
             self.assertNotEqual(r.returncode, 0)
             out = r.stdout + r.stderr
@@ -1353,7 +1367,7 @@ class ParentIsAFileTests(unittest.TestCase):
     def test_a_normal_nested_write_still_creates_parents(self):
         import tempfile, os
         with tempfile.TemporaryDirectory() as ws:
-            cmd = writeproxy._write_command(os.path.join(ws, "pkg", "mod.py"), "x = 1\n")
+            cmd = _scoped(writeproxy._write_command, os.path.join(ws, "pkg", "mod.py"), "x = 1\n")
             r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0)
             self.assertTrue(os.path.exists(os.path.join(ws, "pkg", "mod.py")))

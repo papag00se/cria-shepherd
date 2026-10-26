@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from cria import loop, wsview
+from tests.resultshape import leading_frame
+from cria import denial, loop, toolwire, writeproxy, wsview
 from cria.config import Role
 from cria.writeproxy import represent_inbound, translate_outbound
 from tests.test_loop import _single_loop, _synth
@@ -106,15 +107,38 @@ def _run(cmd, cwd):
     return subprocess.run(["bash", "-c", cmd], cwd=cwd, capture_output=True, text=True)
 
 
+def _body(stdout: str) -> str:
+    """What the program printed AFTER its typed first record (`landed`): its own lines."""
+    from cria import resultpacket
+    rcpt = _receipt_of(stdout)
+    first = resultpacket.read_record(stdout, 0, rcpt)
+    at = first.end
+    if (second := resultpacket.read_record(stdout, at, rcpt, survey=True)) is not None:   # a pending survey rides next
+        at = second.end
+    return stdout[at:]
+
+
+def _receipt_of(stdout: str) -> str:
+    import json as _json
+    return _json.loads(stdout.split("\n", 1)[0]).get("r", "")
+
+
+def _rm(stdout: str) -> str:
+    """The removal facts of a landed write: a TYPED field (`rm`) of the program's own first record."""
+    return (json.loads(stdout.split("\n", 1)[0]).get("rep") or {}).get("rm", "")
+
+
 def _wrote_without_facts(stdout: str) -> bool:
     """Landed, and nothing of the removal facts after it (a pending survey may ride the result — global state)."""
-    return stdout.startswith("⟦ctx:wrote⟧") and "removed at least" not in stdout
+    return json.loads(stdout.split("\n", 1)[0])["k"] == "landed" and "removed at least" not in _rm(stdout)
 
 
 def _held(cmd, cwd):
     """Run the lowered command on disk: True when it refused (and so left the file alone)."""
     out = _run(cmd, cwd)
-    return out.returncode != 0 and out.stdout.startswith("⟦ctx:denied⟧") and "ctx:wrote" not in out.stdout
+    kind, lead = leading_frame(out.stdout, writeproxy.receipt_of(cmd))       # cria's own `refused` frame first
+    return (out.returncode != 0 and kind == denial.REFUSED
+            and _body(out.stdout).startswith("⟦ctx:denied⟧") and '"k":"landed"' not in out.stdout)
 
 
 def _seed(tmp_path):
@@ -138,7 +162,9 @@ def test_the_a4_pom_fragment_is_held_with_facts_and_nothing_is_written(view, tmp
     out = _run(cmd, tmp_path)
     assert out.returncode != 0
     assert (tmp_path / "pom.xml").read_text() == SEED_POM
-    text = out.stdout
+    kind, lead = leading_frame(out.stdout, writeproxy.receipt_of(cmd))
+    assert kind == denial.REFUSED                                              # proven did-not-run (the branch's own record)
+    text = _body(out.stdout)                                                   # (a pending survey's record may ride between)
     assert text.startswith("⟦ctx:denied⟧")                                   # marked did-not-run (H1 B1)
     assert "pom.xml exists on disk: 980 bytes, 25 non-blank lines, 25 of them distinct" in text
     assert "190 bytes, 7 non-blank lines, and repeats 0 of the file's 25 distinct non-blank lines" in text
@@ -243,7 +269,7 @@ def test_a_file_the_coders_own_shell_rewrote_is_not_held_on_the_stale_view(view,
     _, cmd = _lower("pom.xml", FRAGMENT, check)
     (tmp_path / "pom.xml").write_text("<project/>\n")                           # the coder's own rewrite
     out = _run(cmd, tmp_path)
-    assert not _held(cmd, tmp_path) and "ctx:wrote" in out.stdout
+    assert not _held(cmd, tmp_path) and '"k":"landed"' in out.stdout
     assert (tmp_path / "pom.xml").read_text() == FRAGMENT
     (tmp_path / "pom.xml").write_text(SEED_POM)                                 # disk == measured bytes
     assert _held(cmd, tmp_path) and (tmp_path / "pom.xml").read_text() == SEED_POM
@@ -259,7 +285,8 @@ def test_a_held_answer_keeps_the_rejected_payload_and_marks_the_call_denied(view
     tc = comp["choices"][0]["message"]["tool_calls"][0]
     out = _run(cmd, tmp_path).stdout
     msgs = represent_inbound([{"role": "assistant", "tool_calls": [tc]},
-                              {"role": "tool", "tool_call_id": "c1", "content": "Output:\n" + out}])
+                              {"role": "tool", "tool_call_id": tc["id"], "content":
+                               "Chunk ID: a1\nWall time: 0.0 seconds\nProcess exited with code 1\nOriginal token count: 9\nOutput:\n" + out}])
     result = msgs[1]["content"]
     assert "⟦ctx:rejected-candidate⟧" in result and "pad79 -->" in result
     assert "pad79" not in json.dumps(msgs[0]["tool_calls"])                    # collapsed out of the call itself
@@ -286,7 +313,7 @@ def _replay(view, tmp_path, edits, whole_read=True):
     if whole_read:
         lower("read_file", {"path": JAVA})
     for old, new in edits:
-        assert "ctx:wrote" in lower("edit_file", {"path": JAVA, "old_string": old, "new_string": new})
+        assert '"k":"landed"' in lower("edit_file", {"path": JAVA, "old_string": old, "new_string": new})
     represent_inbound(msgs, workspace_root=ROOT)
     return (tmp_path / JAVA).read_text()
 
@@ -357,9 +384,16 @@ def test_a_survey_riding_the_edit_result_does_not_drop_the_followed_body(view, t
         comp = {"choices": [{"message": {"tool_calls": [tc]}}]}
         translate_outbound(comp, _CMD_SHELL, injected={"edit_file"}, workspace_root=ROOT)
         tc = comp["choices"][0]["message"]["tool_calls"][0]
-        body = (f"Chunk ID: a\nProcess exited with code 0\nOutput:\n⟦ctx:wrote⟧\n{wsview.SURVEY_OPEN}\n" + survey(
+        from tests.resultshape import landed
+        survey_text = (f"{wsview.SURVEY_OPEN}\n" + survey(
             f"D\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\nF\t1\t{size}\t{JAVA}",
             root=ROOT, complete=True).rstrip("\n") + f"\n{wsview.SURVEY_CLOSE}\n")
+        # the sentinel declares the survey; the program printed its landed record, then the survey record, then its lines
+        # this edit rode a survey: its sentinel declares the second record, exactly as the compiler would have stamped it
+        tc_args = json.dumps({"path": JAVA, "old_string": old, "new_string": new})
+        tc = {**tc, "function": {**tc["function"], "arguments": json.dumps({"cmd": toolwire._sentinel(
+            "edit_file", tc_args, denial.receipt_for("e1", "edit_file", tc_args), True) + "\n:"})}}
+        body = "Chunk ID: a\nProcess exited with code 0\nOutput:\n" + landed(tc, survey=survey_text)
         represent_inbound([{"role": "assistant", "tool_calls": [tc]},
                            {"role": "tool", "tool_call_id": "e1", "content": body}], workspace_root=ROOT)
         assert (view.read(JAVA) == post) is kept
@@ -387,9 +421,8 @@ def test_a9_call_0010_lands_and_its_result_lists_what_it_removed(view, tmp_path)
     _, cmd = _lower(JAVA, A9_REWRITE, check)
     out = _run(cmd, tmp_path)
     assert out.returncode == 0 and (tmp_path / JAVA).read_text() == A9_REWRITE
-    lines = out.stdout.splitlines()
-    assert lines[0] == "⟦ctx:wrote⟧"                                     # still recognised as a landed write
-    text = out.stdout
+    assert json.loads(out.stdout.splitlines()[0])["k"] == "landed"         # the typed record: a landed write
+    text = _rm(out.stdout)                                               # the facts ride as a typed field
     assert "removed at least 97 of the file's 114 non-blank lines" in text
     assert "least-indented removed lines that open a block" in text
     assert "line 91: `public static Summary summarize(String path) throws Exception {`" in text
@@ -432,7 +465,7 @@ def test_corpus_legitimate_rewrites_land_with_facts_and_are_never_asked(view, tm
     _, cmd = _lower(name, new, check)
     out = _run(cmd, tmp_path)
     assert judge.prompts == [] and out.returncode == 0 and (tmp_path / name).read_text() == new
-    assert out.stdout.startswith("⟦ctx:wrote⟧") and "removed at least" in out.stdout
+    assert json.loads(out.stdout.split("\n", 1)[0])["k"] == "landed" and "removed at least" in _rm(out.stdout)
 
 
 def test_small_edits_and_additive_rewrites_are_untouched():
@@ -503,7 +536,7 @@ def test_the_first_survey_files_leave_out_a_file_the_coders_landed_write_created
     sess = _synth()
     msgs = [{"role": "assistant", "content": None, "tool_calls": [{"id": "w1", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": f"{ROOT}/pom.xml", "content": "x\n"})}}]},
-            {"role": "tool", "tool_call_id": "w1", "content": "⟦ctx:wrote⟧"}]
+            {"role": "tool", "tool_call_id": "w1", "content": "⟦ctx:wrote⟧", "cria_result_outcome": denial.LANDED}]   # as represent_inbound hands it on
     loop._note_first_survey_files(sess, ROOT, msgs)
     assert "pom.xml" not in sess.first_survey_files and JAVA in sess.first_survey_files
 

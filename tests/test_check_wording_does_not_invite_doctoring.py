@@ -12,6 +12,7 @@
    and authentication, cria's own two examples read straight back, for a 404 whose real cause was a
    wrong value in the path.
 """
+from cria.fetchfacts import Shape
 import unittest
 
 from cria import prompts
@@ -62,9 +63,7 @@ class FailedFetchNoteTests(unittest.TestCase):
 
     def test_the_per_url_diagnosis_names_the_half_that_is_actually_wrong(self):
         from cria import loop
-        led = {"spec": ("HTTP 200", "/handles/{handle}, /holders/{address}",
-                        "GET /holders/{address} (replace in the URL path: {address} = The stake "
-                        "address of the Holder) returns:", "")}
+        led = {"spec": ('HTTP 200', ('/handles/{handle}', '/holders/{address}'), (Shape(head='GET /holders/{address}', route='/holders/{address}', params=('{address} = The stake address of the Holder',)), ), (), '')}
         wrong_route = loop._failed_fetch_diagnosis("https://api.handle.me/handle/goose", led)
         wrong_value = loop._failed_fetch_diagnosis("https://api.handle.me/holders/addr1qxsf", led)
         self.assertIn("no such route", wrong_route)
@@ -75,7 +74,7 @@ class FailedFetchNoteTests(unittest.TestCase):
     def test_with_no_route_list_it_says_nothing(self):
         """Silence over a guess — cria has nothing to match the URL against."""
         from cria import loop
-        self.assertEqual(loop._failed_fetch_diagnosis("https://x.test/a", {"u": ("HTTP 404", "", "", "")}), "")
+        self.assertEqual(loop._failed_fetch_diagnosis("https://x.test/a", {"u": ('HTTP 404', (), (), (), '')}), "")
 
     def test_it_no_longer_claims_cria_has_no_content(self):
         # False: cria held the 404's 89-byte body and had replaced it with a key list.

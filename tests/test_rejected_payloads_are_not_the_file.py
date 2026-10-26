@@ -28,10 +28,11 @@ elision. It's all or nothing."* There the whole call could go, because a superse
 nothing. Here the failure is information the coder needs, so the CALL stays and only the payload
 leaves — the same rule applied to the only part of it that can be misread.
 """
+import base64
 import json
 import unittest
 
-from cria import writeproxy
+from cria import bodykeys, denial, editrecovery, writeproxy
 
 BIG = "package cartsvc\n\ntype Item struct {\n\tID string\n\tName string\n\tPricePerUnit float64\n}\n" * 8
 SMALL = "func (c *Cart) Total() float64 {"
@@ -90,8 +91,12 @@ class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
             "command": {"type": "string"}}}}
         writeproxy.translate_outbound(comp, shell, injected={"write_file"})
         call = comp["choices"][0]["message"]
-        refusal = editrecovery.compose(
-            {"mode": "would_break", "path": "cart.go", "err": "syntax error", "current": "old"}, 0)
+        # The raw result a real failed edit program returns: its fact-report, carrying the receipt the lowering
+        # declared in its own sentinel (that is what makes it cria's report and not a quotation of one).
+        rcpt = writeproxy.receipt_of(writeproxy._command_of(call["tool_calls"][0]["function"]["arguments"]))
+        report = {"mode": "would_break", "path": "cart.go", "err": "syntax error", "current": "old"}
+        refusal = (denial.frame(denial.UNAPPLIED, rcpt) + editrecovery.EDITFAIL
+                   + base64.b64encode(json.dumps(report).encode()).decode())
         out = writeproxy.represent_inbound(
             [call, {"role": "tool", "tool_call_id": "w1", "content": refusal}])
         args = json.loads(out[0]["tool_calls"][0]["function"]["arguments"])
@@ -107,15 +112,23 @@ class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
         out = writeproxy._collapse_rejected_payload(tc, "cart.go")
         self.assertEqual(json.loads(out["function"]["arguments"])["old_string"], SMALL)
 
+    def _answered(self, cid, content, outcome=None):
+        """A call and its result as `represent_inbound` hands them on: the outcome is a PROVEN message-level
+        hint, never something read off the content."""
+        result = {"role": "tool", "tool_call_id": cid, "content": content}
+        if outcome:
+            result[bodykeys.RESULT_OUTCOME] = outcome
+        return [{"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {
+                    "name": "edit_file", "arguments": "{}"}}]}, result]
+
     def test_a_successful_write_is_never_collapsed(self):
         """Content that DID reach disk is the file, and must survive verbatim."""
-        msgs = [{"role": "tool", "tool_call_id": "w1", "content": writeproxy._WROTE}]
-        self.assertNotIn("w1", writeproxy._failed_edit_ids(msgs))
+        msgs = self._answered("w1", "Wrote x", denial.LANDED)
+        self.assertNotIn("w1", denial.unlanded_call_ids(msgs))
 
     def test_a_failed_edit_is_recognised(self):
-        """Built by the REAL composer, not hand-typed. The old fixture was a bare sentence with no
-        `⟦ctx:edit⟧` marker — a body the production path cannot emit — so the test certified the
-        substring scan rather than the mechanism, which is how the scan survived being the rule."""
+        """Built by the REAL composer, and recognised by the PROVEN outcome — not by scanning the directive's
+        text, which any command output can quote."""
         from cria import editrecovery
         for mode, extra in (("no_anchor", {}),
                             ("anchor_noline", {"anchor": "func Total() int {"}),
@@ -124,42 +137,33 @@ class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
                             ("phantom", {"anchor": "x := 1"})):
             with self.subTest(mode=mode):
                 body = editrecovery.compose({"mode": mode, "path": "cart.go", **extra}, 0)
-                msgs = [{"role": "tool", "tool_call_id": "e1", "content": body}]
-                self.assertIn("e1", writeproxy._failed_edit_ids(msgs))
+                self.assertIn("e1", denial.unlanded_call_ids(self._answered("e1", body, denial.UNAPPLIED)))
+                self.assertNotIn("e1", denial.unlanded_call_ids(self._answered("e1", body)))   # the text alone proves nothing
 
     def test_a_denied_call_counts_too(self):
-        """cria's OWN refusal of a call that never ran — a different marker, same fact: the payload
-        is not on disk. Preserved from the old rule, which is why it is pinned here."""
-        from cria import denial
+        """cria's OWN refusal of a call that never ran — the payload is not on disk. Proven, not worded."""
         body = denial.DENIED_MARKER + " the path is outside the workspace"
-        self.assertTrue(denial.is_denied(body), "fixture no longer looks like a denial")
-        msgs = [{"role": "tool", "tool_call_id": "e1", "content": body}]
-        self.assertIn("e1", writeproxy._failed_edit_ids(msgs))
+        self.assertIn("e1", denial.unlanded_call_ids(self._answered("e1", body, denial.REFUSED)))
+        self.assertNotIn("e1", denial.unlanded_call_ids(self._answered("e1", body)))
 
     def test_reading_a_file_that_mentions_the_argument_is_not_a_failure(self):
         """`old_string` is an ordinary token. A source file documenting the edit tool used to
         collapse the coder's own successful payloads for saying the word."""
-        msgs = [{"role": "tool", "tool_call_id": "r1",
-                 "content": "def edit(path, old_string, new_string):\n    ...  # not an exact match"}]
-        self.assertNotIn("r1", writeproxy._failed_edit_ids(msgs))
+        msgs = self._answered("r1", "def edit(path, old_string, new_string):\n    ...  # not an exact match")
+        self.assertNotIn("r1", denial.unlanded_call_ids(msgs))
 
     def test_no_dead_attribute_probe_remains(self):
-        """`hasattr(editrecovery, "is_edit_failure")` guarded a name that has never existed, so the
-        fallback WAS the rule — a mitigation for a problem that isn't there (#4). No input can
-        exercise this (the attribute is always absent, so a reintroduced guard would be dead code
-        either way) — genuinely structural, so this checks the parsed AST for a `hasattr(...)` call
-        rather than searching source text, which cannot be fooled by the function's own docstring
-        narrating the removed pattern in prose (that prose literally contains the string
-        'hasattr(editrecovery, "is_edit_failure")' — a text search has to dodge its own evidence)."""
+        """`hasattr(editrecovery, "is_edit_failure")` guarded a name that has never existed (#4). Checked on the
+        parsed AST of the one owner of 'did this land?', which cannot be fooled by prose in a docstring."""
         import ast
         import inspect
         import textwrap
         from cria import editrecovery
         self.assertFalse(hasattr(editrecovery, "is_edit_failure"))
-        tree = ast.parse(textwrap.dedent(inspect.getsource(writeproxy._failed_edit_ids)))
+        tree = ast.parse(textwrap.dedent(inspect.getsource(denial._unambiguous)))
         calls = [n for n in ast.walk(tree)
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "hasattr"]
-        self.assertEqual(calls, [], "a hasattr(...) guard has crept back into _failed_edit_ids")
+        self.assertEqual(calls, [], "a hasattr(...) guard has crept back into the unlanded-id owner")
 
 
 if __name__ == "__main__":

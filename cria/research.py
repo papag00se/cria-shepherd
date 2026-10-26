@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 
-from . import denial, jsontext, prompts
+from . import denial, fetchfacts, groundtruth, jsontext, prompts
 from .jsontext import extract_json_object, strip_think
 
 
@@ -65,27 +65,29 @@ def files_read(messages: list) -> list[tuple[str, int]]:
     both. A refusal (cria's own denial marker) is not a read, and neither is an empty result: both are
     the shapes that made a coder believe it had seen a file it had not."""
     calls: dict[str, str] = {}
+    before_read: dict[str, frozenset] = {}      # call id -> the paths this session had ALREADY landed a write to when it asked
     got: dict[str, int] = {}
-    written = _paths_written(messages or [])
+    landed = denial.landed_call_ids(messages or [])
+    written: set = set()
+    paired = denial.paired_results(messages or [])      # one call, one result after it: the same pairing owner as every ledger
     for m in messages or []:
         for tc in (m.get("tool_calls") or []):
             fn = tc.get("function") or {}
-            if str(fn.get("name", "")) not in _READ_TOOLS:
+            name = str(fn.get("name", ""))
+            if name in _WRITE_TOOLS and tc.get("id") in landed:
+                written |= _call_paths(fn)                  # in call order: a write counts for reads asked AFTER it
                 continue
-            args = fn.get("arguments")
-            try:
-                d = jsontext.loads(args) if isinstance(args, str) else (args or {})
-            except (ValueError, TypeError, AttributeError):
-                d = {}
-            path = d.get("path") or d.get("file") or d.get("filename")
-            if isinstance(path, str) and path.strip() and tc.get("id"):
-                calls[tc["id"]] = path.strip()
-        if m.get("role") == "tool" and m.get("tool_call_id") in calls:
-            body = m.get("content")
-            if isinstance(body, list):
-                body = "".join(str(p.get("text", "")) for p in body if isinstance(p, dict))
-            body = body if isinstance(body, str) else ""
-            if body.strip() and not denial.is_denied(body):
+            if name not in _READ_TOOLS:
+                continue
+            path = next(iter(_call_paths(fn)), None)
+            if path and tc.get("id"):
+                calls[tc["id"]] = path
+                before_read[tc["id"]] = frozenset(written)
+        if m.get("role") == "tool" and m.get("tool_call_id") in calls and paired.get(m.get("tool_call_id")) is m:
+            # THE SHARED READ RULE (`denial.returned_text`): a lowered read counts only through its verified body; a cut or
+            # unrecorded lowered result is unknown, a refusal is none, a native result is the harness's own text.
+            body = denial.returned_text(m)
+            if body is not None and body.strip():
                 path = calls[m["tool_call_id"]]
                 # READING BACK YOUR OWN WRITING IS NOT RESEARCH. A file the coder created earlier in
                 # this same session teaches it nothing it did not already know, and counting it let
@@ -99,28 +101,20 @@ def files_read(messages: list) -> list[tuple[str, int]]:
                 # A file that existed BEFORE the session — a seed, a schema, a data set — is
                 # untouched: that is real reading, and the whole reason this ledger covers files at
                 # all rather than fetches alone.
-                if path not in written:
+                if path not in before_read[m["tool_call_id"]]:
                     got[path] = max(got.get(path, 0), len(body))
     return sorted(got.items())
 
 
-def _paths_written(messages: list) -> set:
-    """Every path this session WROTE, so a read of one can be told from a read of the world."""
-    out = set()
-    for m in messages or []:
-        for tc in (m.get("tool_calls") or []):
-            fn = tc.get("function") or {}
-            if str(fn.get("name", "")) not in _WRITE_TOOLS:
-                continue
-            try:
-                d = jsontext.loads(fn.get("arguments")) if isinstance(fn.get("arguments"), str) \
-                    else (fn.get("arguments") or {})
-            except (ValueError, TypeError, AttributeError):
-                d = {}
-            path = (d or {}).get("path") or (d or {}).get("file") or (d or {}).get("filename")
-            if isinstance(path, str) and path.strip():
-                out.add(path.strip())
-    return out
+def _call_paths(fn: dict) -> set:
+    """The path argument of one named file-tool call (empty when it carries none)."""
+    args = fn.get("arguments")
+    try:
+        d = jsontext.loads(args) if isinstance(args, str) else (args or {})
+    except (ValueError, TypeError, AttributeError):
+        d = {}
+    path = (d or {}).get("path") or (d or {}).get("file") or (d or {}).get("filename")
+    return {path.strip()} if isinstance(path, str) and path.strip() else set()
 
 
 # The write-shaped tools, by the same rule as _READ_TOOLS below: named tools only, never a shell
@@ -155,6 +149,14 @@ def fetch_succeeded(status) -> bool:
 
 
 
+def fetch_answered(entry) -> bool:
+    """Did this ledger entry's fetch return something? Either the GET came back 2xx, or a discovery probe SUCCESSFULLY read a
+    protocol at the url (`rep.fx.observed`) — two typed facts, so a GET 405 in front of a working MCP endpoint stays a 405 in the
+    ledger and still counts as the answered source it is. The one rule every positive consumer asks."""
+    status = (tuple(entry) + ("",))[0]
+    return fetch_succeeded(status) or bool(groundtruth.fetch_observed(entry))
+
+
 def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
     """``(url, routes, shapes)`` for the fetches that came back 2xx AND defined something.
 
@@ -165,9 +167,10 @@ def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
     having successfully loaded a home page as reading having happened."""
     out = []
     for url, entry in (ledger or {}).items():
-        status, routes, shapes = (tuple(entry) + ("", "", ""))[:3]
-        if fetch_succeeded(status) and (str(routes).strip() or str(shapes).strip()):
-            out.append((url, str(routes), str(shapes)))
+        _status, routes, shapes, _catalog = groundtruth.fetch_facts(entry)
+        if fetch_answered(entry) and (routes or shapes):
+            # (display for a judge, composed one way from the typed entry — never read back)
+            out.append((url, ", ".join(routes), fetchfacts.shapes_text(shapes)))
     return out
 
 

@@ -11,7 +11,7 @@ sibling branch — the one naming a spill file — already carries a comment des
 costing 8 refusals in an earlier run; that fix was applied there and not here."""
 import unittest
 
-from cria import denial
+from cria import bodykeys, denial
 from cria.server import _visible_web_calls
 
 
@@ -20,14 +20,18 @@ def _call(cid, name, args):
         {"id": cid, "type": "function", "function": {"name": name, "arguments": args}}]}
 
 
-def _result(cid, content):
-    return {"role": "tool", "tool_call_id": cid, "content": content}
+def _result(cid, content, outcome=None):
+    """A result as `represent_inbound` hands it on; ``outcome`` is the PROVEN hint, never the wording."""
+    m = {"role": "tool", "tool_call_id": cid, "content": content}
+    if outcome:
+        m[bodykeys.RESULT_OUTCOME] = outcome
+    return m
 
 
 class OnlyWhatActuallyRanTests(unittest.TestCase):
     def test_a_refused_search_is_not_a_search_that_ran(self):
         msgs = [_call("c1", "web_search", '{"query":"refused one"}'),
-                _result("c1", denial.mark("You already ran web_search …"))]
+                _result("c1", denial.mark("You already ran web_search …"), denial.REFUSED)]
         self.assertEqual(_visible_web_calls(msgs)[1], [])
 
     def test_a_search_that_ran_is_still_counted(self):
@@ -37,7 +41,7 @@ class OnlyWhatActuallyRanTests(unittest.TestCase):
 
     def test_the_same_holds_for_a_refused_fetch(self):
         msgs = [_call("c1", "web_fetch", '{"url":"https://x/no"}'),
-                _result("c1", denial.mark("refused")),
+                _result("c1", denial.mark("refused"), denial.REFUSED),
                 _call("c2", "web_fetch", '{"url":"https://x/ok"}'),
                 _result("c2", "HTTP 200 · https://x/ok")]
         self.assertEqual(_visible_web_calls(msgs)[0], [("https://x/ok", "", "")])

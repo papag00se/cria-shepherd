@@ -10,6 +10,7 @@ import json
 import pathlib
 import unittest
 
+from cria import bodykeys
 from cria import denial, editrecovery, generation, loop, prompts
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "a10_0018_complete_edit_at_length.json"
@@ -127,7 +128,8 @@ class ThrashClauseIsMeasuredTests(unittest.TestCase):
         gs = self._gs()
         loop.track_gate_progress(gs, "E")
         self._write(gs, "w1")
-        refused = [{"role": "tool", "tool_call_id": "w1", "content": denial.mark("write_file REFUSED (not written): x")}]
+        refused = [_asst(_tc("w1", "write_file", {"path": "A.java", "content": "x"})),
+                   _res("w1", denial.mark("write_file REFUSED (not written): x"), denial.REFUSED)]
         loop.guard_track_write_streak(gs, {"choices": []}, _Rlog(), messages=refused)
         loop.track_gate_progress(gs, "E")
         self.assertIn("w1", gs.refused_write_ids)
@@ -188,8 +190,12 @@ def _asst(*calls):
     return {"role": "assistant", "content": "", "tool_calls": list(calls)}
 
 
-def _res(cid, text="ok"):
-    return {"role": "tool", "tool_call_id": cid, "content": text}
+def _res(cid, text="ok", outcome=None):
+    """A tool result as `represent_inbound` hands it on; ``outcome`` is the PROVEN hint, never the wording."""
+    m = {"role": "tool", "tool_call_id": cid, "content": text}
+    if outcome:
+        m[bodykeys.RESULT_OUTCOME] = outcome
+    return m
 
 
 class ThrashClauseInRealDriverOrderTests(unittest.TestCase):
@@ -207,7 +213,7 @@ class ThrashClauseInRealDriverOrderTests(unittest.TestCase):
             loop.track_gate_progress(gs, "E", msgs)
         e1 = _tc("e1", "edit_file", {"path": "A.java", "old_string": "x", "new_string": "y"})
         self._sent(gs, e1)                                  # tracker sees the call, no result yet
-        msgs += [_asst(e1), _res("e1", editrecovery.EDIT_MARK + " no match")]
+        msgs += [_asst(e1), _res("e1", editrecovery.EDIT_MARK + " no match", denial.UNAPPLIED)]
         loop.track_gate_progress(gs, "E", msgs)
         text = loop._STEER_TRIGGER["thrash"](gs, None)
         self.assertIn("no file edit landed between those rounds", text)
@@ -218,7 +224,7 @@ class ThrashClauseInRealDriverOrderTests(unittest.TestCase):
         loop.track_gate_progress(gs, "E", msgs)
         w1 = _tc("w1", "write_file", {"path": "A.java", "content": "x"})
         self._sent(gs, w1)
-        msgs += [_asst(w1), _res("w1", denial.mark("write_file REFUSED (not written): x"))]
+        msgs += [_asst(w1), _res("w1", denial.mark("write_file REFUSED (not written): x"), denial.REFUSED)]
         loop.track_gate_progress(gs, "E", msgs)
         w2 = _tc("w2", "write_file", {"path": "B.java", "content": "y"})
         self._sent(gs, w2)

@@ -16,6 +16,7 @@ import json
 import unittest
 
 from cria import probegate, probeparse, wsview
+from tests.gatefixture import gate_page, completed
 
 
 def _shell(cid, cmd):
@@ -42,7 +43,7 @@ class TheViewKnowsItMayBeBehindTests(unittest.TestCase):
 
 
 class TheChecksSayWhenTheyMightBeBehindTests(unittest.TestCase):
-    RAW = (probegate.SECTION_PREFIX + "0" + probegate.SECTION_SUFFIX
+    RAW = (probegate.SECTION_PREFIX + "probe-0" + probegate.SECTION_SUFFIX
            + "\ncart.go:9:2: missing go.sum entry\nEXIT:1\n")
 
     def test_a_shell_command_that_writes_counts(self):
@@ -56,16 +57,16 @@ class TheChecksSayWhenTheyMightBeBehindTests(unittest.TestCase):
         self.assertFalse(probegate._a_command_could_have_changed_things_after(msgs, 0))
 
     def test_the_block_says_so_without_naming_files_it_cannot_name(self):
-        out = probegate.clean_gate_output(self.RAW, a_command_ran_since=True)
+        out = probegate.clean_gate_output(self.RAW, completed(probegate.GatePlan(''), self.RAW), a_command_ran_since=True)
         self.assertIn("ran BEFORE a command you ran that can change the workspace", out)
         self.assertIn("missing go.sum entry", out)      # the finding still ships
 
     def test_and_says_nothing_when_nothing_ran(self):
-        self.assertNotIn("BEFORE a command", probegate.clean_gate_output(self.RAW))
+        self.assertNotIn("BEFORE a command", probegate.clean_gate_output(self.RAW, completed(probegate.GatePlan(''), self.RAW)))
 
     def test_the_note_is_separated_from_the_sentence_before_it(self):
         """It used to render as `…is not a fix.These checks ran BEFORE…`."""
-        out = probegate.clean_gate_output(self.RAW, a_command_ran_since=True)
+        out = probegate.clean_gate_output(self.RAW, completed(probegate.GatePlan(''), self.RAW), a_command_ran_since=True)
         self.assertNotIn("fix.These", out)
 
 

@@ -23,6 +23,7 @@ import json
 import unittest
 
 from cria import wsview, writeproxy
+from tests.resultshape import LANDED_SHORTHAND
 
 ROOT = "/workspace"
 SESSION = "s-replayed-write"
@@ -42,22 +43,24 @@ def _survey(mtime, size, extra_files="") -> str:
 def _write_history(call_id: str, mtime, size) -> list[dict]:
     """A write cria lowered, whose OWN tool result rides the harness's survey too (the usual shape:
     write and survey run in the same composed shell command)."""
-    sentinel = writeproxy._sentinel("write_file", json.dumps({"path": "go.mod", "content": GO_MOD_OLD}))
+    from tests.resultshape import lowered
+    sentinel, result = lowered("write_file", json.dumps({"path": "go.mod", "content": GO_MOD_OLD}),
+                               LANDED_SHORTHAND + "\n" + _survey(mtime, size), call_id)   # landed record, survey record, lines
     return [
         {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {
             "name": "shell", "arguments": json.dumps({"command": sentinel + "\ncmd"})}}]},
-        {"role": "tool", "tool_call_id": call_id,
-         "content": writeproxy._WROTE + "\n" + _survey(mtime, size)},
+        {"role": "tool", "tool_call_id": call_id, "content": result},
     ]
 
 
 def _later_survey_message(call_id: str, mtime, size) -> list[dict]:
     """A LATER turn's own gate result, carrying only a fresh survey — no write, no edit cria saw."""
+    from tests.resultshape import lowered      # a survey rides only on a call cria lowered, as a typed record
+    sentinel, result = lowered("list_dir", json.dumps({"path": "."}), "build output\n" + _survey(mtime, size), call_id)
     return [
         {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {
-            "name": "exec_command", "arguments": json.dumps({"command": "go build ./..."})}}]},
-        {"role": "tool", "tool_call_id": call_id,
-         "content": "build output\n" + _survey(mtime, size)},
+            "name": "exec_command", "arguments": json.dumps({"command": sentinel + "\nls"})}}]},
+        {"role": "tool", "tool_call_id": call_id, "content": result},
     ]
 
 

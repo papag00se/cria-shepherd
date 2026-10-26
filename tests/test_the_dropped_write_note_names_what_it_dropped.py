@@ -21,7 +21,7 @@ named `pom.xml` among the files whose on-disk state matched its last write.
 import json
 import unittest
 
-from cria import focustrim
+from cria import bodykeys, denial, focustrim
 
 
 BIG = focustrim._STUB_MIN_CHARS + 50
@@ -29,10 +29,15 @@ DENIED = "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace 
 
 
 def write(i, path, ch, result=None):
+    """``result=DENIED`` is cria's own refusal as `represent_inbound` hands it on: its outcome is PROVEN."""
+    tool = {"role": "tool", "tool_call_id": f"w{i}", "content": result or f"Wrote {path}"}
+    if result is DENIED:
+        tool[bodykeys.RESULT_OUTCOME] = denial.REFUSED
+    elif result is None:
+        tool[bodykeys.RESULT_OUTCOME] = denial.LANDED       # a genuine landed write, as `represent_inbound` hands it on
     return [{"role": "assistant", "content": None,
              "tool_calls": [{"id": f"w{i}", "type": "function", "function": {
-                 "name": "write_file", "arguments": json.dumps({"path": path, "content": ch * BIG})}}]},
-            {"role": "tool", "tool_call_id": f"w{i}", "content": result or f"Wrote {path}"}]
+                 "name": "write_file", "arguments": json.dumps({"path": path, "content": ch * BIG})}}]}, tool]
 
 
 def note_of(msgs):

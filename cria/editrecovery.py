@@ -25,7 +25,7 @@ import json
 import os
 import zlib
 
-from . import prompts
+from . import denial, prompts
 
 # Heredoc → cria: a structured edit-FAILURE fact-report (base64 JSON follows the marker).
 EDITFAIL = "⟦ctx:editfail⟧"
@@ -124,7 +124,7 @@ def _prior_edit_steers(prior_msgs: list, path: str) -> int:
     Stateless — reconstructed from the messages, so it survives a cria restart."""
     tag = _tag(path)
     return sum(1 for m in prior_msgs[_wrote_since(prior_msgs, path):]
-               if isinstance(m, dict) and tag in str(m.get("content") or ""))
+               if isinstance(m, dict) and denial.unlanded(m) and tag in str(m.get("content") or ""))
 
 
 def _steer_counts(prior_msgs: list, path: str) -> tuple[int, int]:
@@ -135,8 +135,8 @@ def _steer_counts(prior_msgs: list, path: str) -> tuple[int, int]:
     # no assistant message at all = no turn to speak of: every steer is from "earlier"
     turn = max((i for i, m in enumerate(prior_msgs) if isinstance(m, dict) and m.get("role") == "assistant"),
                default=len(prior_msgs) - 1) + 1
-    hit = lambda seq, also="": sum(1 for m in seq if isinstance(m, dict) and tag in str(m.get("content") or "")
-                                   and also in str(m.get("content") or ""))
+    hit = lambda seq, also="": sum(1 for m in seq if isinstance(m, dict) and denial.unlanded(m)
+                                   and tag in str(m.get("content") or "") and also in str(m.get("content") or ""))
     # in this turn only the COMMITTED directive (`escalate*`, which says STOP) is what a follower refers to
     return hit(prior_msgs[start:turn]), hit(prior_msgs[max(start, turn):], "STOP editing it.")
 
@@ -308,6 +308,6 @@ def rewrite_sanctioned(msgs: list, path: str) -> bool:
     tag = _tag(path)
     for m in reversed(msgs[-40:]):
         c = str((m.get("content") if isinstance(m, dict) else "") or "")
-        if tag in c and "produce the corrected FULL file" in c:
+        if denial.unlanded(m) and tag in c and "produce the corrected FULL file" in c:
             return True
     return False

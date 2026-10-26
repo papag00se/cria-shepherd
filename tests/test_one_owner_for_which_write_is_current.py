@@ -20,6 +20,7 @@ Each caller asks the question it actually needs:
 import json
 import unittest
 
+from cria import bodykeys
 from cria import contextfloor, denial, focustrim, selfcompact, toolargs
 
 
@@ -33,7 +34,7 @@ def turn(cid, name, args):
 
 
 def wrote(cid, path="/w/app.py"):
-    return {"role": "tool", "tool_call_id": cid, "content": f"⟦ctx:wrote⟧ Wrote {path}"}
+    return {"role": "tool", "tool_call_id": cid, "content": f"Wrote {path}", "cria_result_outcome": "landed"}
 
 
 class TheDistinctionItselfTests(unittest.TestCase):
@@ -97,7 +98,7 @@ class TheFloorDoesNotNameAFileThatWasRefusedTests(unittest.TestCase):
 
     def test_a_refused_write_is_not_named(self):
         msgs = [turn("w1", "write_file", {"path": "/w/pom.xml", "content": "<bad"}),
-                {"role": "tool", "tool_call_id": "w1", "content": denial.mark("refused: malformed XML")},
+                {"role": "tool", "tool_call_id": "w1", "content": denial.mark("refused: malformed XML"), bodykeys.RESULT_OUTCOME: denial.REFUSED},
                 turn("w2", "write_file", {"path": "/w/App.java", "content": "class A{}"}), wrote("w2", "/w/App.java")]
         self.assertEqual(contextfloor._modified_files(msgs), ["/w/App.java"])
 

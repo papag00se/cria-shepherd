@@ -8,6 +8,7 @@ import json
 import pytest
 
 from cria import loop, probegate
+from tests.gatefixture import gate_page
 
 
 def pair(command, output, call_id="coder-check"):
@@ -48,7 +49,7 @@ def test_a_coder_can_print_or_quote_internal_marker_text_without_losing_bytes(ma
 def test_actual_owned_gate_is_cleaned_not_misattributed_to_the_coder():
     command = probegate._gate_sentinel(["mvn test"]) + "\necho ___CRIA_GATE_probe-0___\nmvn test"
     output = "___CRIA_GATE_probe-0___\nTests run: 6, Failures: 1, Errors: 0, Skipped: 0\nEXIT:1\n"
-    messages = pair(command, output, "automatic-gate")
+    messages = pair(command, gate_page(probegate.GatePlan(''), output), "automatic-gate")
     expected = probegate.clean_gate_results(messages, linked_only=True)[1]["content"]
     assert probegate.CHECKS_MARKER in expected
     assert loop._work_log(messages) == ""

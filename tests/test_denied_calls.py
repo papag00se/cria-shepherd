@@ -29,7 +29,7 @@ import subprocess
 import tempfile
 import unittest
 
-from cria import denial, loop, prompts, webfetch, writeproxy
+from cria import bodykeys, denial, loop, prompts, webfetch, writeproxy
 
 
 class _Rlog:
@@ -62,11 +62,15 @@ REAL_RESULT = ("HTTP 200 OK · https://api.handle.me/handles/goose\n"
                '{"name": "goose", "resolved_addresses": {"ada": "addr1..."}}')
 
 
-def _turn(call_id, name, args, result):
+def _turn(call_id, name, args, result, outcome=None):
+    """A call and its result as `represent_inbound` hands them on; ``outcome`` is the PROVEN hint (the fixture
+    states what the producer proved — the content's wording is never consulted)."""
+    tool = {"role": "tool", "tool_call_id": call_id, "content": result}
+    if outcome:
+        tool[bodykeys.RESULT_OUTCOME] = outcome
     return [{"role": "assistant", "tool_calls": [
                 {"id": call_id, "type": "function",
-                 "function": {"name": name, "arguments": args}}]},
-            {"role": "tool", "tool_call_id": call_id, "content": result}]
+                 "function": {"name": name, "arguments": args}}]}, tool]
 
 
 class TheMarkTests(unittest.TestCase):
@@ -179,7 +183,7 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
 
     def test_the_refused_CALL_is_labelled(self):
         log = self._log(_turn("c1", "web_fetch", '{"url":"https://api.handle.me/openapi.json"}',
-                              SPILLED_REFUSAL))
+                              SPILLED_REFUSAL, outcome=denial.REFUSED))
         call = next(ln for ln in log.splitlines() if ln.startswith("$ web_fetch"))
         self.assertIn(prompts.load("work_log_denied"), call)
 
@@ -187,7 +191,7 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
         # THE REGRESSION THIS FILE EXISTS FOR. The refusal carries the API's real endpoint list. The
         # label must appear on the call line ONLY — nothing may be said about these bytes, because
         # they are true and the judge needs them.
-        log = self._log(_turn("c1", "web_fetch", '{"url":"…"}', SPILLED_REFUSAL))
+        log = self._log(_turn("c1", "web_fetch", '{"url":"…"}', SPILLED_REFUSAL, outcome=denial.REFUSED))
         body = log.split("  -> ", 1)[1]
         self.assertEqual(body, SPILLED_REFUSAL)
         self.assertIn("[API endpoints (33): /, /mcp, /openapi.json, /handles/{handle},", body)
@@ -216,7 +220,8 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
                     {"id": "b", "type": "function",
                      "function": {"name": "web_fetch", "arguments": '{"url":"https://x/again"}'}}]},
                 {"role": "tool", "tool_call_id": "a", "content": REAL_RESULT},
-                {"role": "tool", "tool_call_id": "b", "content": SPILLED_REFUSAL}]
+                {"role": "tool", "tool_call_id": "b", "content": SPILLED_REFUSAL,
+                 bodykeys.RESULT_OUTCOME: denial.REFUSED}]
         lines = self._log(msgs).splitlines()
         label = prompts.load("work_log_denied")
         self.assertNotIn(label, next(ln for ln in lines if "https://x/ok" in ln))
@@ -239,7 +244,8 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
 
     def test_the_label_is_TRACED(self):
         rlog = _Rlog()
-        self._log(_turn("c1", "read_file", '{"path":"spec.json"}', SPILLED_REFUSAL), rlog)
+        self._log(_turn("c1", "read_file", '{"path":"spec.json"}', SPILLED_REFUSAL,
+                        outcome=denial.REFUSED), rlog)
         self.assertEqual(rlog.of("loop.work_log_denied"),
                          [{"level": "info", "labelled": 1, "unpaired": 0}])
 
@@ -266,7 +272,7 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
         args = "\n\t{\"path\":\"tmp/a\"}\r\n"
         body = denial.mark("\n\ttool-provided refusal context\r\n")
         label = prompts.load("work_log_denied")
-        rendered = self._log(_turn("refused", "read_file", args, body))
+        rendered = self._log(_turn("refused", "read_file", args, body, outcome=denial.REFUSED))
 
         self.assertEqual(rendered, f'$ read_file {label} {args}\n[tool call id: "refused"]\n'
                          f'[tool result call id: "refused"]\n  -> {body}')
@@ -290,7 +296,8 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
              "function": {"name": "read_file", "arguments": refused_args}},
         ]},
         {"role": "tool", "tool_call_id": "real", "content": real_payload},
-        {"role": "tool", "tool_call_id": "refused", "content": refused_body}]
+        {"role": "tool", "tool_call_id": "refused", "content": refused_body,
+         bodykeys.RESULT_OUTCOME: denial.REFUSED}]
 
         rendered = self._log(messages)
         headers = [line for line in rendered.splitlines() if line.startswith("$ read_file")][:2]
@@ -314,7 +321,7 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
     def test_ordinary_refused_framing_is_unchanged(self):
         args = '{"path":"ordinary"}'
         body = denial.mark("ordinary refusal text")
-        self.assertEqual(self._log(_turn("ordinary", "read_file", args, body)),
+        self.assertEqual(self._log(_turn("ordinary", "read_file", args, body, outcome=denial.REFUSED)),
                          f'$ read_file {args} {prompts.load("work_log_denied")}\n'
                          f'[tool call id: "ordinary"]\n[tool result call id: "ordinary"]\n  -> {body}')
 
@@ -369,7 +376,7 @@ class TheSearchDenialIsLabelledNotDeletedTests(unittest.TestCase):
 
     def test_the_call_keeps_a_result_line_and_gains_the_label(self):
         log = loop._work_log(_turn("r1", "read_file", '{"path":"./tmp/reference/search-x.txt"}',
-                                   self.NOTE))
+                                   self.NOTE, outcome=denial.REFUSED))
         lines = log.splitlines()
         self.assertIn(prompts.load("work_log_denied"), lines[0])
         self.assertEqual(lines[1:3], ['[tool call id: "r1"]', '[tool result call id: "r1"]'])
@@ -397,14 +404,14 @@ class TheJudgeSeesTheLabelTests(unittest.TestCase):
         sess.workspace_root = ""
         lp = loop.Loop.__new__(loop.Loop)
         body = {"messages": _turn("c1", "web_fetch", '{"url":"https://api.handle.me/openapi.json"}',
-                                  SPILLED_REFUSAL)}
+                                  SPILLED_REFUSAL, outcome=denial.REFUSED)}
         ev = lp._grounded_evidence(sess, body, _Rlog())
         self.assertIn(prompts.load("work_log_denied"), ev)
         self.assertIn("[API endpoints (33)", ev)
 
     def test_the_satisfaction_judges_evidence_carries_it(self):
         ev = loop._satisfaction_evidence(
-            _turn("c1", "web_fetch", '{"url":"…"}', SPILLED_REFUSAL), rlog=_Rlog())
+            _turn("c1", "web_fetch", '{"url":"…"}', SPILLED_REFUSAL, outcome=denial.REFUSED), rlog=_Rlog())
         self.assertIn(prompts.load("work_log_denied"), ev)
 
 

@@ -358,7 +358,7 @@ def test_negative_failure_cache_is_scoped_resettable_and_fork_safe():
     assert len(provider.bodies) > first
     fork_count = len(provider.bodies)
     owner._retriable_failure = True
-    owner._gather_facts = {'fork': ('HTTP 200', '', '')}
+    owner._gather_facts = {'fork': ('HTTP 200', (), (), (), '')}
     owner.reset('a')
     assert owner._retriable_failure and 'fork' in owner._gather_facts
     owner.plan_for(messages(), Log(), session_key='fork')
@@ -415,7 +415,7 @@ def test_concurrent_exchanges_do_not_share_failure_direction_or_research_facts()
     barrier = Barrier(2)
     observed = {}
     def gather(owner, turns, log, prior, rewrite, outcome, session):
-        owner._gather_facts = {session: ('HTTP 200', '', '')}
+        owner._gather_facts = {session: ('HTTP 200', (), (), (), '')}
         owner._retriable_failure = session == 'a'
         owner._admission_exhausted_check = session
         barrier.wait(timeout=5)
@@ -428,8 +428,8 @@ def test_concurrent_exchanges_do_not_share_failure_direction_or_research_facts()
         a = pool.submit(owner.plan_for, messages(), Log(), session_key='a')
         b = pool.submit(owner.plan_for, messages(), Log(), session_key='b')
         assert a.result() is None and b.result() is None
-    assert observed == {'a': ({'a': ('HTTP 200', '', '')}, True, 'a'),
-                        'b': ({'b': ('HTTP 200', '', '')}, False, 'b')}
+    assert observed == {'a': ({'a': ('HTTP 200', (), (), (), '')}, True, 'a'),
+                        'b': ({'b': ('HTTP 200', (), (), (), '')}, False, 'b')}
 
 
 def test_shared_research_search_binding_is_used_replaced_and_disabled():

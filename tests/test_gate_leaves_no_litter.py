@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 from cria import probediscovery, probegate, proberun
+from tests.gatefixture import gate_page, completed
 
 
 def _repo():
@@ -39,7 +40,7 @@ def _run(ws, writes=(), *, project_writes=()):
         plan = probegate.plan_gate(ws)
         out = subprocess.run(['sh', '-c', plan.script], capture_output=True, text=True, cwd=ws,
                              env={**os.environ, 'TMPDIR': harness}, check=True)
-        outcome = probegate.interpret_gate(plan, out.stdout)
+        outcome = probegate.interpret_gate(plan, gate_page(plan, out.stdout))
         assert plan.transport_complete and not probegate.gate_is_partial(outcome)
         assert not (pathlib.Path(plan.transport_path).parent / 'aux').exists()
     return sorted(p.name for p in pathlib.Path(ws).iterdir() if p.name != '.git')
@@ -106,9 +107,9 @@ class CleanupDoesNotWaitForAnotherActionTests(unittest.TestCase):
         ws = _repo()
         pathlib.Path(ws, 'junk.txt').write_text('coder-owned now')
         plan = probegate.plan_gate(ws)
-        probegate.interpret_gate(plan, '\n'.join([
+        probegate.interpret_gate(plan, gate_page(plan, '\n'.join([
             f'{probegate.SECTION_PREFIX}{probegate.LITTER_SECTION}{probegate.SECTION_SUFFIX}',
-            'junk.txt', f'{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}']))
+            'junk.txt', f'{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}'])))
         _run(ws)
         self.assertEqual(pathlib.Path(ws, 'junk.txt').read_text(), 'coder-owned now')
 

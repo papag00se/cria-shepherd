@@ -40,6 +40,7 @@ import tempfile
 import unittest
 
 from cria import probediscovery, proberun
+from tests.gatefixture import gate_page, completed
 
 
 def _kernel_grants_it(root):
@@ -193,7 +194,7 @@ class ALostInstrumentIsAnEventTests(unittest.TestCase):
                 cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
                 may_need_services=False, reason="t"))
         plan.candidates = cands
-        return probegate.interpret_gate(plan, script_result)
+        return probegate.interpret_gate(plan, gate_page(plan, script_result))
 
     GREEN = "___CRIA_GATE_probe-0___\n2 passed\nEXIT:0\n"
 
@@ -225,7 +226,8 @@ class ALostInstrumentIsAnEventTests(unittest.TestCase):
             cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
             may_need_services=False, reason="t")]
         rlog = _Rlog()
-        loop.read_gate(plan, self.GREEN, rlog)
+        from tests.gatefixture import gate_page
+        loop.read_gate(plan, gate_page(plan, self.GREEN), rlog)
         ev = dict(next(k for n, k in rlog.events if n == "loop.gate_offline"))
         self.assertEqual(ev, {"ran": False, "test_green": True})
 if __name__ == "__main__":

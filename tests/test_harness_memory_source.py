@@ -10,6 +10,7 @@ from dataclasses import replace
 
 import pytest
 
+from cria import bodykeys, denial
 from cria import memoryhandoff as memory
 from cria import prompts, server
 from cria.config import Role
@@ -38,7 +39,7 @@ def history():
         {"role": "user", "content": "Implement all original deliverables"},
         {"role": "assistant", "tool_calls": [{"id": "w", "type": "function",
          "function": {"name": "write_file", "arguments": json.dumps({"path": "a.py", "content": "x=1\n"})}}]},
-        {"role": "tool", "tool_call_id": "w", "content": "Wrote a.py"},
+        {"role": "tool", "tool_call_id": "w", "content": "Wrote a.py", "cria_result_outcome": "landed"},   # as represent_inbound hands a landed write on
         {"role": "user", "content": "Summarize with next steps for continuation"},
     ]
 
@@ -308,9 +309,9 @@ def test_rejected_handoff_ledger_correlates_results_by_id_not_result_order():
     messages = [
         {"role": "user", "content": "Implement all original deliverables"},
         {"role": "assistant", "tool_calls": calls},
-        {"role": "tool", "tool_call_id": "b", "content": denial.mark("not run")},
+        {"role": "tool", "tool_call_id": "b", "content": denial.mark("not run"), bodykeys.RESULT_OUTCOME: denial.REFUSED},
         {"role": "tool", "tool_call_id": "c", "content": "opaque acknowledgement"},
-        {"role": "tool", "tool_call_id": "a", "content": "Wrote a.py"},
+        {"role": "tool", "tool_call_id": "a", "content": "Wrote a.py", bodykeys.RESULT_OUTCOME: denial.LANDED},
         {"role": "user", "content": "Summarize with next steps for continuation"},
     ]
     before, settled = copy.deepcopy(messages), []

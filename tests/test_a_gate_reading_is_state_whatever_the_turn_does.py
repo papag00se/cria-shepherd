@@ -34,6 +34,7 @@ import tempfile
 import unittest
 
 from cria import assistruntime, loop, proberun
+from tests.gatefixture import gate_page
 from cria.loop import GuardState, Loop, LoopContext, gate_error_text, record_gate_state
 from cria.plan import Plan, PlanItem
 from cria.probegate import GateOutcome, GatePlan, SECTION_PREFIX, SECTION_SUFFIX
@@ -254,8 +255,8 @@ class TheRednessDecisionHasOneOwnerTests(unittest.TestCase):
                                     done_probe=not periodic, awaiting_probe=True)
                     gs.gate_plan = GatePlan(workspace="/workspace", candidates=[candidate])
                     body = {"messages": [{"role": "tool", "tool_call_id": "record-probe",
-                        "content": f"{SECTION_PREFIX}probe-0{SECTION_SUFFIX}\n1 failed\nEXIT:1\n"
-                                   f"{SECTION_PREFIX}git{SECTION_SUFFIX}\nabc\n"}]}
+                        "content": gate_page(gs.gate_plan, f"{SECTION_PREFIX}probe-0{SECTION_SUFFIX}\n1 failed\nEXIT:1\n"
+                                   f"{SECTION_PREFIX}git{SECTION_SUFFIX}\nabc\n")}]}
                     reader = loop.guard_periodic_result if periodic else loop.guard_gate_verdict
                     with assistruntime.bound(selected), \
                          mock.patch.object(repositorychecks, "record", wraps=repositorychecks.record) as recorder:
@@ -344,13 +345,16 @@ def _body():
 
 
 def _body_with_probe(call_id, output):
-    b = _body()
-    b["messages"] = b["messages"] + [{"role": "tool", "tool_call_id": call_id, "content": output}]
+    """The probe's result as the harness delivers it: a verified page on THAT call's own transport (see test_loop)."""
+    from tests.test_loop import _body_with_probe as delivered
+    b = delivered(call_id, output)
+    b["messages"] = _body()["messages"] + b["messages"][1:]
     return b
 
 
 def _tc_id(completion):
-    return completion["choices"][0]["message"]["tool_calls"][0]["id"]
+    from tests.test_loop import _tc_id as register          # also records which transport this call's result arrives on
+    return register(completion)
 
 
 def _toolcall():

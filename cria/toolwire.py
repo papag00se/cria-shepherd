@@ -7,7 +7,7 @@ import re
 from shlex import quote as _qbash
 
 from . import denial, prompts
-from .shelltool import _CMD_FIELDS, shell_args
+from .shelltool import _CMD_FIELDS, shell_args, with_output_budget
 from .toolargs import parse_args as _parse
 
 # Existing gate wire facts, lowered here to avoid importing the gate executor.
@@ -78,42 +78,51 @@ def _refusal_command(text: str, survey: str = "") -> str:
     # No wrapper is needed for the exit code either: `survey_command` contains no bare `exit`, so
     # nothing terminates before the final line, and `exit` last sets the code whatever the survey
     # returned. Asserted by a test rather than by this comment.
+    # THE SURVEY RECORD MUST BE THE VERY NEXT RECORD after the refusal's own first record (`resultpacket`): the first record
+    # prints, the survey runs and prints its record, and only then does the refusal's prose.
+    marked, lead = denial.mark(text), denial.frame(denial.REFUSED)
+    if lead and marked.startswith(lead):
+        return f"printf %s {_qbash(lead)}\n{survey}\nprintf %s {_qbash(marked.removeprefix(lead))}\nexit {REFUSED_EXIT_CODE}"
     return f"{body}\n{survey}\nexit {REFUSED_EXIT_CODE}"
 
 
 _SENTINEL = "⟦ctx:tool⟧"
 
 
-_SENTINEL_LINE = re.compile(r"#\s*" + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)")
+# THE DECLARATION LIVES AT ONE POSITION: the very first line of the command, because every call cria composes starts with
+# it (`_shell_call(..., f"{sentinel}\n{cmd}")`). A native command that merely CONTAINS a header — quoted in a variable, a
+# heredoc, a comment, a file it prints — declares nothing: the compiler's declaration must never come from source data.
+_SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
+_GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
-_WROTE = "⟦ctx:wrote⟧"
+def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False) -> str:
+    """The leading comment line that lets inbound rebuild the original tool call, statelessly.
 
-
-def write_landed(result_text: str) -> bool:
-    """Correlate an existing raw marker or rendered write-confirmation prefix."""
-    head = prompts.render("write_confirm", path="").strip()
-    t = result_text.lstrip()
-    return _WROTE in result_text or (bool(head) and t.startswith(head))
-
-
-def _sentinel(name: str, arguments) -> str:
-    """The leading comment line that lets inbound rebuild the original tool call, statelessly."""
-    args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-    payload = base64.b64encode(json.dumps({"name": name, "arguments": args_str}).encode("utf-8")).decode("ascii")
+    It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound) and
+    whether a survey record follows: the typed result record leads stdout at offset 0, so `represent_inbound` tells
+    cria's own result from content that merely quotes the marker by position, never by search. Without a receipt the
+    payload is exactly what it always was."""
+    args_str = denial.canonical_arguments(arguments)
+    body = {"name": name, "arguments": args_str}
+    if receipt:
+        body["rcpt"] = receipt
+        if survey:
+            body["sv"] = 1          # the command carries a survey record, on the line after its first record
+    payload = base64.b64encode(json.dumps(body).encode("utf-8")).decode("ascii")
     return f"# {_SENTINEL}{payload}"
 
 
-def _shell_call(orig_id: str, shell_tool: dict, command: str) -> dict:
+def _shell_call(orig_id: str, shell_tool: dict, command: str, output_tokens: int = 0) -> dict:
+    args = shell_args(shell_tool, command)
+    if output_tokens:
+        args = with_output_budget(shell_tool, args, output_tokens)
     return {"id": orig_id, "type": "function",
-            "function": {"name": shell_tool["name"], "arguments": json.dumps(shell_args(shell_tool, command))}}
+            "function": {"name": shell_tool["name"], "arguments": json.dumps(args)}}
 
 
 def _b64(s: str) -> str:
     return base64.b64encode(s.encode("utf-8")).decode("ascii")
-
-
-REMOVAL_FACTS = "\u27e6ctx:removal\u27e7"
 
 
 _RIDE_ALONG_HOST_RESERVE = 1_000
@@ -145,10 +154,18 @@ def is_crias_own(command: str) -> bool:
     text = command or ""
     if not text:
         return False
-    return _SENTINEL in text or GATE_SENTINEL in text
+    if _decode_sentinel(text) is not None:
+        return True
+    m = _GATE_LINE.match(text)             # the gate's own leading header, at the same position
+    if m is None:
+        return False
+    try:
+        return isinstance(json.loads(base64.b64decode(m.group(1)).decode("utf-8")), list)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return False
 
 
-def original_call(command: str) -> dict | None:
+def original_call(command: str, call_id=None) -> dict | None:
     """The tool call a lowered command was made FROM — ``{"name":…, "arguments":…}`` — or None when
     this is not one of cria's.
 
@@ -162,16 +179,49 @@ def original_call(command: str) -> dict | None:
     written, and then told the model, in its own voice, `FILE FOLD_AT — does NOT exist on disk`.
     Same family as the gate matchers retired on 2026-08-21: cria's own text re-entering as the
     model's work (#12, #17)."""
-    return _read_sentinel(command)
+    return _read_sentinel(command, call_id)
 
 
-def _read_sentinel(command: str) -> dict | None:
-    """The original tool call encoded in a lowered command's sentinel, or None."""
-    m = _SENTINEL_LINE.search(command or "")
+def _decode_sentinel(command: str) -> dict | None:
+    m = _SENTINEL_LINE.match(command or "")
     if not m:
         return None
     try:
         d = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
-        return {"name": d["name"], "arguments": d.get("arguments") or "{}"}
+        d["name"]
+        return d
     except (json.JSONDecodeError, ValueError, KeyError, TypeError):
         return None
+
+
+def _declaration(command: str, call_id=None) -> dict | None:
+    """The leading declaration of a stored command, or None. With ``call_id`` a declaration that carries a receipt must
+    be the one THIS call's compiler made: the receipt is recomputed from the call's own id and the declared original
+    name and arguments, so a header copied from another call (stale, quoted, replayed) is rejected. The receipt is a
+    correlation token, not a secret — this only ties a declaration to the call it was composed for."""
+    d = _decode_sentinel(command)
+    if d is None:
+        return None
+    if call_id is not None and d.get("rcpt"):
+        from . import denial
+        if d["rcpt"] != denial.receipt_for(call_id, d["name"], d.get("arguments") or "{}"):
+            return None
+    return d
+
+
+def _read_sentinel(command: str, call_id=None) -> dict | None:
+    """The original tool call encoded in a lowered command's sentinel, or None."""
+    d = _declaration(command, call_id)
+    return None if d is None else {"name": d["name"], "arguments": d.get("arguments") or "{}"}
+
+
+def survey_declared(command: str, call_id=None) -> bool:
+    """Did the compiler of this stored command declare a survey record? (Only a receipt-bearing sentinel can.)"""
+    d = _declaration(command, call_id)
+    return bool(d is not None and d.get("rcpt") and d.get("sv") == 1)
+
+
+def receipt_of(command: str, call_id=None) -> str:
+    """The receipt a lowered command declared in its sentinel ("" when it declared none, or when it is not this call's)."""
+    d = _declaration(command, call_id)
+    return str(d.get("rcpt") or "") if d is not None else ""

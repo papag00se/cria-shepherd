@@ -90,9 +90,7 @@ def _visible_web_calls(messages: list) -> tuple[list, list]:
     # shipping-rates-rb x nemotron-elastic 1787432916, three refusals deep. The sibling branch — the
     # one that names a spill file — carries a comment describing this same failure costing 8 refusals
     # in an earlier run; the fix was applied there and not here (#5b).
-    refused = {tc_id for m in messages if isinstance(m, dict) and m.get("role") == "tool"
-               and denial.is_denied(str(m.get("content") or ""))
-               for tc_id in (str(m.get("tool_call_id") or ""),) if tc_id}
+    refused = denial.refused_call_ids(messages)
     fetch_keys, queries = [], []
     for m in messages:
         if not isinstance(m, dict) or m.get("role") != "assistant":

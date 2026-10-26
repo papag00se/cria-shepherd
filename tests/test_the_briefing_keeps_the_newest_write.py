@@ -47,7 +47,8 @@ def content_of(msg: dict) -> str:
 
 
 def wrote(tid: str, path: str) -> dict:
-    return {"role": "tool", "tool_call_id": tid, "content": f"⟦ctx:wrote⟧ {path}"}
+    # the write program's own typed `landed` outcome (the flat `⟦ctx:wrote⟧` line it replaces is no longer printed and proves nothing)
+    return {"role": "tool", "tool_call_id": tid, "content": f"Wrote {path}", "cria_result_outcome": "landed"}
 
 
 BIG = "def handler():\n    " + ("x" * 3000)

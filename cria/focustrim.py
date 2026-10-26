@@ -140,7 +140,9 @@ _FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "list_dir", "vi
 _result_key = dedup.volatile_key
 
 
-def _is_failure(content, tool_name: str = "", *, arguments=None) -> bool:
+def _is_failure(content, tool_name: str = "", *, arguments=None, landed: bool = False) -> bool:
+    """``landed``: the call's own program reported (typed record, `denial.landed`) that this write landed — a confirmed
+    write is never a failure whatever words its result contains."""
     if not isinstance(content, str):
         return False
     # Status and payload usefulness are independent. Preserve the public hard
@@ -160,10 +162,8 @@ def _is_failure(content, tool_name: str = "", *, arguments=None) -> bool:
     if any(p.search(content) for p in _SUCCESS_MARKERS):
         return False   # the tool exited 0 / returned 2xx → a success whose body just mentions "not found"
     if mutates:
-        # Reuse the actual write-confirmation reader: a filename containing
-        # failure words does not turn a confirmed write into a failed one.
-        from .selfcompact import write_landed
-        if write_landed(content):
+        # The typed landed fact: a filename containing failure words does not turn a confirmed write into a failed one.
+        if landed:
             return False
     if _is_a_payload(content):
         return False   # a service's own structured answer: the phrase is DATA, not a verdict
@@ -384,7 +384,7 @@ def _repeat_failed(messages: list[dict], call_id: str) -> bool:
         if m.get("role") != "tool" or m.get("tool_call_id") != call_id:
             continue
         body = str(m.get("content") or "")
-        if denial.is_denied(body):
+        if denial.refused(m):
             return True
         # THE EXIT SENTINEL, READ THE ONE WAY IT IS WRITTEN. This scanned top-down for a literal
         # "EXIT:" of its own — so a program that PRINTED that string ("EXIT:1" in a log line, a test
@@ -413,15 +413,14 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         if (tc is not None and nxt.get("role") == "tool"
                 and nxt.get("tool_call_id") == tc.get("id")
                 and _is_failure(nxt.get("content"), str(fn.get("name") or ""),
-                                arguments=fn.get("arguments"))
+                                arguments=fn.get("arguments"), landed=denial.landed(nxt))
                 and not _is_hard_failure(nxt.get("content"))  # hard fail carries diagnostics — keep in full
                 # Authored recovery reports can carry exact current file bytes
                 # or repair windows AND a failed-edit status. Preserve the whole
                 # report, not a prose-derived guess at its data extent. This
                 # does not grant success: _failed_write_ids independently reads
                 # the same producer marker and excludes the mutation.
-                and not any(marker in str(nxt.get("content") or "")
-                            for marker in (editrecovery.EDIT_MARK, editrecovery.EDITFAIL))
+                and not denial.unlanded(nxt)
                 and not _is_gate_probe(tc, nxt)):  # never squash cria's own ground-truth probe
             failed.append((i, i + 1, tc))
             i += 2
@@ -477,6 +476,22 @@ def superseded_pair_identity(call: dict, result: dict | None) -> tuple[str, str 
     return (digest(call), digest(result.get("content")) if result is not None else None)
 
 
+def _terminal_positions(messages: list[dict]) -> dict:
+    """call id -> message index of its result, for every call whose PAIRED result carries a TERMINAL proof: the write program itself
+    reported it landed, or cria proved it changed nothing (`denial.landed_call_ids` / `denial.unlanded_call_ids`, over
+    `denial.paired_results`). A reply merely ARRIVING proves nothing: a lowered command that yielded ("still running"), a cut or
+    unframed result, or an `uncertain`/unknown one leaves the write possibly still executing, so it can neither be ordered before
+    another call nor stand as the file's content. ONE owner for every happens-before question in this module and `selfcompact`."""
+    terminal = denial.landed_call_ids(messages) | denial.unlanded_call_ids(messages)
+    position = {id(m): n for n, m in enumerate(messages)}
+    return {cid: position[id(m)] for cid, m in denial.paired_results(messages).items() if cid in terminal}
+
+
+def _result_id(m: dict):
+    """The call id a tool result answers — under either spelling `denial.paired_results` resolves."""
+    return m.get("tool_call_id") or m.get("call_id")
+
+
 def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     """A write payload that a LATER write to the same path replaced is carried once, as a pointer.
 
@@ -517,15 +532,27 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # and survives. `toolargs.write_target` is the one owner of the distinction — there were three
     # implementations with three different tool-name lists (#23).
     failed = _failed_write_ids(messages)
+    # THE SUPERSEDING WRITE MUST BE PROVEN LANDED (`denial.landed_call_ids`, the one typed accessor): an unknown, `uncertain`
+    # or merely-quoted-confirmation result is not "what is on disk", and dropping an earlier copy on its strength would
+    # delete the only version the model can still read.
+    landed_ids = denial.landed_call_ids(messages)
     landed = [(i, p) for i, m in enumerate(messages)
               if isinstance(m, dict) and m.get("role") == "assistant"
               for tc in (m.get("tool_calls") or [])
               if (pw := toolargs.write_target(tc))[1] and (p := pw[0])
-              and tc.get("id") not in failed]
-    key = _path_identity([p for _, p in landed])
+              and tc.get("id") not in failed and tc.get("id") in landed_ids]
+    # THE CANDIDATE UNIVERSE IS EVERY FILE THE SESSION TRIED TO WRITE, whatever became of the attempt. The identity decides which
+    # spellings could name the same file; building it from the landed writes alone dropped a real rival (a write whose result
+    # was cut, unknown, uncertain or unanswered) and a relative spelling then folded onto the one landed absolute path — deleting a
+    # payload that was still current while the note said "Nothing was lost". Outcomes decide what each write may CLAIM, never which
+    # files exist. An AMBIGUOUS relative spelling (a suffix of two or more of them) is an unknown file: it does not supersede
+    # anything, and it is never itself dropped, because deleting its only copy is the harm.
+    key = _path_identity([p for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
+                          for tc in (m.get("tool_calls") or []) if (p := toolargs.write_path(tc))])
     last: dict = {}
     for i, path in landed:
-        last[key(path)] = i
+        if not key.candidates(path):
+            last[key(path)] = i
     if not last:
         return messages, 0
     # THE WHOLE CALL GOES, NOT THE INSIDE OF ITS ARGUMENT. This used to replace the payload with an
@@ -542,11 +569,27 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # superseded call and its result are REMOVED, the way `_collapse_duplicates` already removes a
     # folded call, and one note says it happened. Nothing is left behind that can be read as content,
     # because nothing is left behind.
+    # REMOVAL IS BY OCCURRENCE, NOT BY ID MEMBERSHIP, AND ONLY FOR A WRITE THAT PROVABLY FINISHED BEFORE ITS REPLACEMENT WAS SENT.
+    # The removal below deletes every call and every result carrying a dropped id, so an id shared by two calls would take an
+    # UNRELATED write with the superseded one; and a write that has not been answered (or whose answer arrives only after the
+    # replacement was dispatched) may still execute AFTER it — dispatch order is not execution order — so deleting it would
+    # destroy the only record of what the disk will hold. `denial.paired_results` (the one pairing owner: exactly one call, exactly
+    # one result, the result after the call, under `tool_call_id` or `call_id`) is therefore the only pairing authority — and a
+    # result that merely ARRIVED is not completion: a lowered command's reply may be "still running", cut, unframed or uncertain.
+    # A call is removable only when its own PAIRED result carries a TERMINAL proof (`_terminal_positions`: proven landed, or
+    # proven to have changed nothing) and sits BEFORE the message that carries the superseding write. Everything else stays,
+    # with its result.
+    result_at = _terminal_positions(messages)
+
+    def removable(cid, superseder_at: int) -> bool:
+        return bool(cid) and result_at.get(cid, superseder_at) < superseder_at
+
     superseded = [(tc.get("id"), p) for i, m in enumerate(messages)
                   if isinstance(m, dict) and m.get("role") == "assistant"
                   for tc in (m.get("tool_calls") or [])
-                  if (p := toolargs.write_path(tc)) and i < last.get(key(p), -1)
-                  and tc.get("id") not in failed and _payload_chars(tc) >= _STUB_MIN_CHARS]
+                  if (p := toolargs.write_path(tc)) and i < last.get(key(p), -1) and not key.candidates(p)
+                  and tc.get("id") not in failed and removable(tc.get("id"), last.get(key(p), -1))
+                  and _payload_chars(tc) >= _STUB_MIN_CHARS]
     drop_ids = {i for i, _ in superseded}
     drop_ids.discard(None)
     if not drop_ids:
@@ -569,8 +612,8 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
             if not kept and not str(m.get("content") or "").strip():
                 continue                      # emptied → the whole assistant turn goes
             out.append({**m, "tool_calls": kept})
-        elif role == "tool" and m.get("tool_call_id") in drop_ids:
-            continue                          # orphaned result of a dropped call
+        elif role == "tool" and _result_id(m) in drop_ids:
+            continue                          # orphaned result of a dropped call (answered under `tool_call_id` OR `call_id`)
         else:
             out.append(m)
     # SAY IT HAPPENED, once, in cria's own marked channel — never in an argument slot. The model is
@@ -578,7 +621,7 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # that concludes the file was never written and starts again (the disown-your-own-work failure
     # the re-orientation seat exists for).
     if dropped:
-        answers = {m.get("tool_call_id"): m for m in messages
+        answers = {_result_id(m): m for m in messages
                    if isinstance(m, dict) and m.get("role") == "tool"}
         replacements = []
         for path in dropped_paths:
@@ -623,9 +666,16 @@ def _path_identity(paths: list[str]):
     AMBIGUITY DOES NOT FOLD. When a relative spelling suffixes two different absolute paths, cria
     cannot know which was meant, so it stays its own key: the cost of not folding is a duplicate the
     model can still read, and the cost of folding wrongly is deleting a file's only copy. Safe null
-    over a guess (#1)."""
+    over a guess (#1).
+
+    NOT FOLDING IS NOT A PROOF OF "DIFFERENT FILE". For a grouping (a duplicate the model can still read) it is the safe default;
+    for any claim that says what is on disk it is UNKNOWN: the harness's cwd decides which absolute path an ambiguous relative
+    spelling names, and cria cannot read it. The returned identity says so: ``identity.candidates(p)`` is the tuple of absolute
+    keys an AMBIGUOUS relative spelling could name (empty for every spelling that resolved or has no rival). Callers that
+    only group ignore it; callers that make a claim must not claim about any file in it."""
     absolute = sorted({p for p in paths if os.path.isabs(p)})
     out: dict[str, str] = {}
+    rivals: dict[str, tuple] = {}
     for p in paths:
         if p in out:
             continue
@@ -636,7 +686,18 @@ def _path_identity(paths: list[str]):
         tail = os.sep + norm.lstrip(os.sep)
         hits = [a for a in absolute if os.path.normpath(a).endswith(tail)]
         out[p] = os.path.normpath(hits[0]) if len(hits) == 1 else norm
-    return lambda p: out.get(p, os.path.normpath(p))
+        if len(hits) > 1:
+            rivals[p] = tuple(sorted({os.path.normpath(a) for a in hits}))
+
+    class _Identity:
+        def __call__(self, p):
+            return out.get(p, os.path.normpath(p))
+
+        @staticmethod
+        def candidates(p):
+            return rivals.get(p, ())
+
+    return _Identity()
 
 
 def _failed_write_ids(messages: list[dict]) -> set[str]:
@@ -652,15 +713,14 @@ def _failed_write_ids(messages: list[dict]) -> set[str]:
              if shelltool.is_write_tool_name(str((tc.get("function") or {}).get("name") or ""))}
     ids: set[str] = set()
     for m in messages:
-        if not isinstance(m, dict) or m.get("role") != "tool" or not m.get("tool_call_id"):
+        if not isinstance(m, dict) or m.get("role") != "tool" or not _result_id(m):
             continue
         body = str(m.get("content") or "")
-        fn = calls.get(m["tool_call_id"])
-        if (denial.is_denied(body)
-                or any(marker in body for marker in (editrecovery.EDIT_MARK, editrecovery.EDITFAIL))
+        fn = calls.get(_result_id(m))
+        if (denial.unlanded(m)
                 or (fn is not None and _is_failure(body, fn.get("name") or "",
-                                                  arguments=fn.get("arguments")))):
-            ids.add(m["tool_call_id"])
+                                                  arguments=fn.get("arguments"), landed=denial.landed(m)))):
+            ids.add(_result_id(m))
     return ids
 
 
@@ -707,7 +767,7 @@ def superseded_writes_truth(messages: list[dict]) -> list[dict]:
             notices.append((i, m, hint))
     if not notices:
         return messages
-    answers = {m.get("tool_call_id"): m for m in messages
+    answers = {_result_id(m): m for m in messages
                if isinstance(m, dict) and m.get("role") == "tool"}
     pairs = {superseded_pair_identity(tc, answers.get(tc.get("id")))
              for m in messages if isinstance(m, dict) and m.get("role") == "assistant"

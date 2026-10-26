@@ -22,6 +22,7 @@ class ObservedDiscovery(Protocol):
     note: str
     routes: list[str]
     shapes: list[str]
+    shape_fields: list[tuple]
     unread: str
 
     def __bool__(self) -> bool: ...

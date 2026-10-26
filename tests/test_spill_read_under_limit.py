@@ -53,6 +53,14 @@ def _lowered(comp):
     return v[-1] if isinstance(v, list) else v
 
 
+
+def _unframed(stdout, command):
+    """The file the real branch's own `ran` record carried (the record is cria's scaffolding, consumed by the inbound pass)."""
+    from cria import resultpacket
+    rec = resultpacket.read_record(stdout, 0, writeproxy.receipt_of(command))
+    assert rec is not None and rec.kind == denial.RAN and rec.body is not None, stdout[:80]
+    return rec.body.decode("utf-8") + stdout[rec.end:]
+
 class _Workspace(unittest.TestCase):
     """A real workspace with a real spill directory — the guard asks the filesystem, so the test
     must give it one."""
@@ -92,7 +100,7 @@ class ThroughTranslateOutboundTests(_Workspace):
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(r.stdout, "a" * LARGEST_REFUSED)
+        self.assertEqual(_unframed(r.stdout, _lowered(comp)), "a" * LARGEST_REFUSED)
 
     def test_the_refusal_TEXT_does_not_reach_the_coder_for_a_small_file(self):
         """The sentence itself is the false fact — assert on cria's own template, not a copy."""
@@ -124,7 +132,7 @@ class ThroughTranslateOutboundTests(_Workspace):
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(r.stdout, "y" * 1024)
+        self.assertEqual(_unframed(r.stdout, _lowered(comp)), "y" * 1024)
 
     def test_an_EDIT_of_a_spilled_file_is_still_refused_at_any_size(self):
         """Reference material is not editable because of what it IS, not how big it is — the size

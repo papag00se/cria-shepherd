@@ -14,7 +14,8 @@ import time
 import uuid
 
 import pytest
-from cria import assistruntime, gatecleanup, loop, probediscovery, probegate, proberun, writeproxy, wsview
+from cria import denial, assistruntime, gatecleanup, loop, probediscovery, probegate, proberun, writeproxy, wsview
+from tests.gatefixture import gate_page, completed
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
 
@@ -49,7 +50,7 @@ def run_gate(tmp_path, monkeypatch, *, working_dir=None, program=None):
     plan = probegate.plan_gate(str(tmp_path))
     result = subprocess.run(['sh', '-c', plan.script], cwd=tmp_path, env=harness_env(tmp_path),
                             capture_output=True, text=True, check=True)
-    probegate.interpret_gate(plan, result.stdout)
+    probegate.interpret_gate(plan, gate_page(plan, result.stdout))
     assert plan.transport_complete, result.stdout + result.stderr
     return plan, plan.transport_data.decode('utf-8')
 
@@ -128,7 +129,7 @@ def test_coder_created_artifact_before_gate_is_not_probe_litter(tmp_path, monkey
     plan, raw = run_gate(tmp_path, monkeypatch, program="print('native build output: already up to date')")
     assert (output / 'compiled').read_text() == 'coder compiled this first\n'
     assert 'output/compiled' not in removal_record(raw)[0]
-    assert 'not project build outputs' in probegate.clean_gate_output(raw, plan)
+    assert 'not project build outputs' in probegate.clean_gate_output(raw, completed(plan, raw))
 
 
 def test_final_survey_observes_post_cleanup_state(tmp_path, monkeypatch):
@@ -141,7 +142,7 @@ def test_final_survey_observes_post_cleanup_state(tmp_path, monkeypatch):
         assert not auxiliary(plan).exists()
     finally:
         wsview.unbind(token)
-    cleaned = probegate.clean_gate_output(raw, plan)
+    cleaned = probegate.clean_gate_output(raw, completed(plan, raw))
     assert 'native build output for output/compiled' in cleaned
     assert 'checks-cleanup' in cleaned
     assert 'exclusively owned private' in cleaned
@@ -200,9 +201,11 @@ def test_failed_removal_is_reported_as_failure_not_completed_work(tmp_path):
     assert removed == []
     assert any(item['error'] == 'injected filesystem denial' for item in failed)
     assert artifact.read_text() == 'generated'
+    # the worker's record names the workspace it was requested for (the unit program above prints only the cleanup half)
+    report = json.dumps({**json.loads(report), 'requested_workspace': str(tmp_path)}) + '\n'
     raw = (f'{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\nNATIVE RESULT\nEXIT:0\n'
            f'{probegate.SECTION_PREFIX}{probegate.LITTER_REMOVED_SECTION}{probegate.SECTION_SUFFIX}\n{report}')
-    cleaned = probegate.clean_gate_output(raw)
+    cleaned = probegate.clean_gate_output(raw, completed(probegate.GatePlan(str(tmp_path)), raw))
     assert 'NATIVE RESULT' in cleaned and 'injected filesystem denial' in cleaned
     assert 'reclaimed these' not in cleaned
 
@@ -243,7 +246,7 @@ def test_ownership_snapshot_cannot_be_reused_in_another_workspace(tmp_path, monk
     script = '__cria_gate_file=' + shlex.quote(plan.transport_path) + '\n' + '\n'.join(guard)
     result = subprocess.run(['sh', '-c', script], env=harness_env(left), capture_output=True, text=True, check=True)
     other = probegate.GatePlan(workspace=str(right), transport_id=plan.transport_id, transport_required=True)
-    outcome = probegate.interpret_gate(other, result.stdout)
+    outcome = probegate.interpret_gate(other, gate_page(other, result.stdout))
     assert outcome.transport_unknown and 'transport_request_changed' in other.transport_error
     assert precious.read_text() == 'unrelated workspace'
 
@@ -307,14 +310,16 @@ def paused_gate(tmp_path, monkeypatch, actor, *, nested=False):
         release.write_text('done')
         output, errors = gate.communicate(timeout=15)
     assert gate.returncode == 0, errors
-    outcome = probegate.interpret_gate(plan, output)
+    outcome = probegate.interpret_gate(plan, gate_page(plan, output))
     assert plan.transport_complete
     return workspace, created, plan, outcome
 
 
 def test_another_supported_writer_during_a_gate_keeps_its_work(tmp_path, monkeypatch):
     def actor(workspace):
-        writer = subprocess.run(['sh', '-c', writeproxy._write_command('report.txt', 'other session work')],
+        with denial.receipt_scope('0123456789abcdef'):
+            command = writeproxy._write_command('report.txt', 'other session work')
+        writer = subprocess.run(['sh', '-c', command],
                                 cwd=workspace, capture_output=True, text=True, check=True)
         assert writer.stdout
         path = workspace / 'report.txt'
@@ -363,7 +368,7 @@ def test_actual_python_floor_keeps_original_source_and_private_bytecode(tmp_path
     plan = probegate.plan_gate(str(tmp_path))
     result = subprocess.run(['sh', '-c', plan.script], cwd=tmp_path, env=harness_env(tmp_path),
                             capture_output=True, text=True, check=True)
-    outcome = probegate.interpret_gate(plan, result.stdout)
+    outcome = probegate.interpret_gate(plan, gate_page(plan, result.stdout))
     assert plan.transport_complete and not probegate.gate_is_partial(outcome)
     assert 'privatecache=True sourcecache=False' in plan.transport_data.decode()
     assert source.read_text() == 'value = 1\n' and source.stat().st_ino == inode

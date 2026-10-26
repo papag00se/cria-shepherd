@@ -15,6 +15,7 @@ destroys is not the bytes, it is the knowledge that it already looked."""
 import json
 import unittest
 
+from cria import bodykeys
 from cria import denial, loop
 
 
@@ -46,7 +47,7 @@ class TheReadLedgerTests(unittest.TestCase):
 
     def test_a_refused_read_is_not(self):
         msgs = [_read("r1", "nope.rb"),
-                {"role": "tool", "tool_call_id": "r1", "content": denial.mark("nope.rb is not there")}]
+                {"role": "tool", "tool_call_id": "r1", "content": denial.mark("nope.rb is not there"), bodykeys.RESULT_OUTCOME: denial.REFUSED}]
         self.assertEqual(loop._extract_reads(msgs), {})
 
     def test_a_claim_without_a_result_is_not(self):
@@ -105,7 +106,7 @@ class TheReadLedgerTests(unittest.TestCase):
                 {"role": "assistant", "tool_calls": [{"id": "w1", "function": {
                     "name": "write_file",
                     "arguments": r'{"path":"/w/c.go","content":"package p\nfunc A(){}\n"}'}}]},
-                {"role": "tool", "tool_call_id": "w1", "content": "Wrote /w/c.go"}]
+                {"role": "tool", "tool_call_id": "w1", "content": "Wrote /w/c.go", "cria_result_outcome": "landed"}]   # as represent_inbound hands it on
         out = loop._read_ground_truth(_Sess(), msgs)
         self.assertIn("/w/c.go (2 lines)", out)      # two lines: a final newline ends one, it does not start a third (`_count_lines`)
         self.assertNotIn("894", out)

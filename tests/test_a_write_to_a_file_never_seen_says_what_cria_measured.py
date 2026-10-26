@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from cria import bodykeys, loop, massage, wsview
+from cria import bodykeys, denial, loop, massage, wsview
 from cria.writeproxy import original_call, translate_outbound
 from tests.test_loop import _Recorder, _Rlog, _ctx, _single_loop, _synth
 from tests.wsfixture import survey
@@ -169,15 +169,20 @@ def test_the_a3_unread_writes_are_answered_with_the_files_and_nothing_is_written
         out = _run(cmd, tmp_path)
         assert out.returncode == 0
         assert (tmp_path / path).read_text() == seed                    # not written
-        assert f"{path} already exists on disk" in out.stdout
-        assert "This write_file call was not run" in out.stdout and "unchanged" in out.stdout
-        head, _, payload = out.stdout.partition("⟦ctx:read-instead⟧\n")
-        assert payload == seed                                          # the file, byte for byte
+        # ONE typed record: the authored prose (`pre`) and the file's bytes (`b`) are separate fields, with the bytes' length
+        # and sha-256, read once by the program that ran — nothing is searched for in this output.
+        from cria import resultpacket
+        rec = resultpacket.read_record(out.stdout, 0, __import__("cria.writeproxy", fromlist=["x"]).receipt_of(cmd))
+        assert rec is not None and rec.kind == denial.REFUSED and rec.observe == "whole" and rec.body == seed.encode()
+        assert f"{path} already exists on disk" in rec.pre and "This write_file call was not run" in rec.pre
+        assert "unchanged" in rec.pre and rec.pre.endswith("⟦ctx:read-instead⟧\n")
         # a later write_file for this path in the history is no longer held: it is a recorded read
-        msgs = [{"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
-                    "name": "write_file", "arguments": json.dumps({"path": path, "content": "x"})}}]},
-                {"role": "tool", "tool_call_id": "w1", "content": out.stdout}]
-        assert path in loop._extract_reads(msgs)
+        from cria.writeproxy import represent_inbound
+        msgs = represent_inbound([{"role": "assistant", "tool_calls": [tc]},      # the REAL producer's proof, not a fixture
+                                  {"role": "tool", "tool_call_id": tc["id"], "content":
+                                   "Chunk ID: a\nWall time: 0.0 seconds\nProcess exited with code 0\n"
+                                   "Original token count: 9\nOutput:\n" + out.stdout}])
+        assert denial.refused(msgs[1]) and path in loop._extract_reads(msgs)
         sess = _synth()
         lp = _single_loop(lambda b, r: b"{}", workspace_root=ROOT)
         lp._store.put("sid:g4", sess)
@@ -198,6 +203,7 @@ def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed
 
 
 def test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read(view, tmp_path):
+    from cria import writeproxy
     from cria.writeproxy import represent_inbound
     (tmp_path / "pom.xml").write_text(SEED_POM)
     comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
@@ -206,9 +212,14 @@ def test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read
     out = _run(_cmd(comp), tmp_path).stdout
     envelope = f"Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n{out}"
     msgs = represent_inbound([{"role": "assistant", "tool_calls": [tc]},
-                              {"role": "tool", "tool_call_id": "c1", "content": envelope}])
+                              {"role": "tool", "tool_call_id": tc["id"], "content": envelope}])
     assert msgs[0]["tool_calls"][0]["function"]["name"] == "write_file"
-    assert msgs[1]["content"] == out and msgs[1]["content"].endswith(SEED_POM)
+    from cria import resultpacket
+    rec = resultpacket.read_record(out, 0, writeproxy.receipt_of(writeproxy._command_of(tc["function"]["arguments"])))
+    assert rec is not None and out.startswith('{"v":1,')           # cria's own record led the raw result ...
+    assert msgs[1]["content"] == rec.pre + SEED_POM                  # ... and the model reads exactly the prose, then the file
+    assert denial.read_payload(msgs[1]) == SEED_POM
+    assert msgs[1]["content"].endswith(SEED_POM) and denial.refused(msgs[1])
     assert "Chunk ID" not in msgs[1]["content"]
     assert "pom.xml" in loop._extract_reads(msgs)
 
@@ -252,10 +263,12 @@ def test_the_hold_is_per_path(view):
     assert write_did_run(_cmd(fresh))
 
 
-def _shell_read(command, result="<project>\n</project>", call_id="s1"):
+def _shell_read(command, result="<project>\n</project>", call_id="s1", outcome=None):
+    tool = {"role": "tool", "tool_call_id": call_id, "content": result}
+    if outcome:                                   # what represent_inbound proved about the result
+        tool[bodykeys.RESULT_OUTCOME] = outcome
     return [{"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps({"cmd": command})}}]},
-            {"role": "tool", "tool_call_id": call_id, "content": result}]
+                "name": "exec_command", "arguments": json.dumps({"cmd": command})}}]}, tool]
 
 
 def test_a_shell_command_that_prints_the_whole_file_is_a_read_so_no_hold(view):
@@ -289,10 +302,10 @@ def test_a_shell_command_naming_a_different_file_is_not_a_read_of_this_one(view)
 
 def test_a_refused_or_empty_shell_result_is_not_a_read(view):
     from cria import denial
-    for result in (denial.mark("that command cannot run here"), "   "):
+    for result, outcome in ((denial.mark("that command cannot run here"), denial.REFUSED), ("   ", None)):
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
-                           unread_target=_check(view, messages=_shell_read("cat pom.xml", result)))
+                           unread_target=_check(view, messages=_shell_read("cat pom.xml", result, outcome=outcome)))
         assert not write_did_run(_cmd(comp))
 
 
@@ -412,7 +425,8 @@ def test_the_answer_carries_the_did_not_run_mark_and_the_file(view, tmp_path):
     assert len(res) == 2
     for text in res:
         assert denial.is_denied(text)
-        assert denial.read_instead_payload(text) in (SEED_POM, SEED_JAVA)     # …and the bytes survive intact
+        assert text.endswith(SEED_POM) or text.endswith(SEED_JAVA)            # …and the bytes survive intact
+        assert ":payload=" not in text                                         # the extent frame is cria's, never the model's
     assert set(loop._extract_reads(msgs)) == {"pom.xml", JAVA}
 
 
@@ -440,7 +454,7 @@ def test_a_later_real_write_does_not_drop_the_read_that_answered_the_first(view,
 def test_the_refused_payload_is_collapsed_not_left_verbatim(view, tmp_path):
     from cria import writeproxy
     msgs = _a3_history(view, tmp_path)
-    assert writeproxy._failed_edit_ids(msgs) == set(_ids(msgs).values())
+    assert denial.unlanded_call_ids(msgs) == set(_ids(msgs).values())
     original = [json.loads(tc["function"]["arguments"])["content"]
                 for tc in A3["choices"][0]["message"]["tool_calls"]
                 if tc["function"]["name"] == "write_file"
@@ -496,5 +510,5 @@ def test_a_large_rejected_payload_is_kept_once_in_the_answer_and_the_file_count_
     assert "content" not in json.loads(msgs[0]["tool_calls"][0]["function"]["arguments"])
     assert msgs[1]["content"].count(big) == 1                     # the payload survives exactly, once
     from cria import denial
-    assert denial.read_instead_payload(msgs[1]["content"]) == SEED_POM
+    assert denial.read_payload(msgs[1]) == SEED_POM and msgs[1]["content"].endswith(SEED_POM)
     assert loop._extract_reads(msgs)["pom.xml"][1] == f"{loop._count_lines(SEED_POM)} lines"

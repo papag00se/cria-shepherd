@@ -36,6 +36,17 @@ def _gate_done(context,token):
     except FileNotFoundError:
         return False
 
+def _gate_bounds(context,token):
+    # The completed transport's PRODUCER-DECLARED extents (see the worker): JSON written by the worker at its own
+    # transitions, read here as bytes and never interpreted.
+    if not _owned_valid(context): raise ValueError('namespace_identity_changed')
+    try:
+        descriptor=os.open(_gate_spool_name(token)+'.done',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=context['fd'])
+    except FileNotFoundError:
+        return b''
+    with os.fdopen(descriptor,'rb') as stream:
+        return stream.read(4096) if stat.S_ISREG(os.fstat(stream.fileno()).st_mode) else b''
+
 def _gate_reader_wait(context,token,wait_s):
     deadline=time.monotonic()+wait_s
     while not _gate_done(context,token) and time.monotonic()<deadline:
@@ -52,11 +63,11 @@ def _gate_create(context,name,data=b''):
     with os.fdopen(descriptor,'wb') as stream:
         stream.write(data)
 
-def _gate_clear(context,descriptor,prefix,removed,failed):
+def _gate_clear(context,descriptor,identity,prefix,removed,failed):
     if not _owned_valid(context):
         failed.append(dict(path=prefix,error='namespace_identity_changed'))
         return
-    for name in os.listdir(descriptor):
+    for name in _owned_listing(descriptor,identity,prefix):
         relative=prefix+name
         try:
             before=os.stat(name,dir_fd=descriptor,follow_symlinks=False)
@@ -64,7 +75,7 @@ def _gate_clear(context,descriptor,prefix,removed,failed):
                 child=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
                 try:
                     if _owned_id(os.fstat(child))!=_owned_id(before): raise ValueError('directory_identity_changed')
-                    _gate_clear(context,child,relative+'/',removed,failed)
+                    _gate_clear(context,child,_owned_id(before),relative+'/',removed,failed)
                 finally:
                     os.close(child)
                 if _owned_id(os.stat(name,dir_fd=descriptor,follow_symlinks=False))!=_owned_id(before):
@@ -89,7 +100,7 @@ def _gate_aux_cleanup(context):
         try:
             identity=_owned_id(os.fstat(descriptor))
             if identity!=context['aux_identity']: raise ValueError('directory_identity_changed')
-            _gate_clear(context,descriptor,'aux/',removed,failed)
+            _gate_clear(context,descriptor,identity,'aux/',removed,failed)
         finally:
             os.close(descriptor)
         if not _owned_valid(context): raise ValueError('namespace_identity_changed')
@@ -153,11 +164,19 @@ elif mode=='worker':
         context['aux_identity']=_owned_id(os.stat('aux',dir_fd=context['fd'],follow_symlinks=False))
         environment=dict(os.environ)
         environment['CTX_PROBE_AUX']=os.path.join(context['parent_path'],context['name'],'aux')
+        environment['CTX_GATE_SPOOL']=os.path.join(context['parent_path'],context['name'],_gate_spool_name(token))
+        environment['CTX_GATE_SECTIONS']=os.path.join(context['parent_path'],context['name'],'sections.declared')
+        _gate_create(context,'sections.declared')
         output=os.open(_gate_spool_name(token),os.O_WRONLY|os.O_APPEND|os.O_NOFOLLOW,dir_fd=context['fd'])
+        bounds={}
         with os.fdopen(output,'wb',buffering=0) as stream:
             try:
                 _gate_run_script(context,'.cria-gate-'+token+'-cmd.sh',environment,stream)
             finally:
+                # THE TRANSITIONS ARE THE BOUNDARIES: everything before this size is native checker output, then
+                # cria's cleanup report, then cria's survey. Declared here, by the producer that writes them, so
+                # no reader ever has to find a marker inside checker output to know where a private report starts.
+                bounds['checker_end']=os.fstat(stream.fileno()).st_size
                 record=_gate_aux_cleanup(context)
                 record['failed'].extend(scope_errors)
                 for directory,identity in original.items():
@@ -168,12 +187,25 @@ elif mode=='worker':
                 record['requested_workspace']=request['workspace']
                 record['scope']='original-workspace; project-native outputs are not owned auxiliary scratch'
                 stream.write(('\n'+request['cleanup_marker']+'\n'+json.dumps(record)+'\n').encode())
+                bounds['report_end']=os.fstat(stream.fileno()).st_size
                 _gate_run_script(context,'survey.sh',os.environ,stream)
         if not _owned_valid(context): raise ValueError('namespace_identity_changed')
         os.unlink('.cria-gate-'+token+'-cmd.sh',dir_fd=context['fd'])
         os.unlink('survey.sh',dir_fd=context['fd'])
         os.unlink('request.json',dir_fd=context['fd'])
-        _gate_create(context,_gate_spool_name(token)+'.done')
+        bounds['total']=os.stat(_gate_spool_name(token),dir_fd=context['fd']).st_size
+        declared={}
+        try:
+            marker=os.open('sections.declared',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=context['fd'])
+            with os.fdopen(marker,'rb') as stream:
+                for line in stream.read(65536).decode('utf-8','replace').splitlines():
+                    name,_,offset=line.partition(' ')
+                    declared[name]=-1 if name in declared else int(offset)       # a name declared twice is no declaration
+        except (OSError,ValueError):
+            declared={}
+        bounds['sections']=declared
+        os.unlink('sections.declared',dir_fd=context['fd'])      # a private side file, consumed
+        _gate_create(context,_gate_spool_name(token)+'.done',json.dumps(bounds).encode())
     finally:
         _owned_close(context)
 elif mode=='dispose':
@@ -182,21 +214,21 @@ elif mode=='dispose':
     if os.path.basename(namespace)!='%%PREFIX%%'+token: raise ValueError('unowned_transport_namespace')
     context=_gate_namespace(token,os.path.dirname(namespace))
     try:
+        done=_gate_spool_name(token)+'.done'
         if not _gate_done(context,token): raise ValueError('transport_still_active')
+        observed=_owned_id(os.stat(done,dir_fd=context['fd'],follow_symlinks=False))
         # Keep the certificate until descendants are gone, so every mutation is
         # bound to the originally allocated directory, not an age/name scan.
         owner=os.open('.owner',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=context['fd'])
         os.close(owner)
         removed,failed=[],[]
-        for name in os.listdir(context['fd']):
-            if name=='.owner': continue
+        for name in _owned_names(context):
+            if name in ('.owner',done): continue     # the producer's completion fact leaves with the directory, not before
             item=os.stat(name,dir_fd=context['fd'],follow_symlinks=False)
             if stat.S_ISDIR(item.st_mode): raise ValueError('unsettled_private_scratch')
             if not _owned_valid(context): raise ValueError('namespace_identity_changed')
             os.unlink(name,dir_fd=context['fd'])
-        if not _owned_valid(context): raise ValueError('namespace_identity_changed')
-        os.unlink('.owner',dir_fd=context['fd'])
-        if _owned_valid(context,owner=False): os.rmdir(context['name'],dir_fd=context['parent_fd'])
+        _owned_retire(context,{done:observed})
     finally:
         _owned_close(context)
 else:

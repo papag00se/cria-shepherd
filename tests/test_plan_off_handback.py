@@ -160,9 +160,10 @@ class TheReadingCheckIsGoneTests(unittest.TestCase):
         """What survives is the deterministic half — judges and steers still get real sources."""
         import cria.research as research
         self.assertTrue(callable(research.sources_read))
-        self.assertEqual(research.grounded_sources({"u": ("200", "/handles/{h}", "holder")}),
-                         [("u", "/handles/{h}", "holder")])
-        self.assertEqual(research.grounded_sources({"u": ("200", "", "")}), [])
+        from cria.fetchfacts import Shape
+        self.assertEqual(research.grounded_sources({"u": ("200", ("/handles/{h}",), (Shape("GET /handles/{h} → holder"),), (), "")}),
+                         [("u", "/handles/{h}", "GET /handles/{h} → holder")])
+        self.assertEqual(research.grounded_sources({"u": ("200", (), (), (), "")}), [])
 
 
 if __name__ == "__main__":

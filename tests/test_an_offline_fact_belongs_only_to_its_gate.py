@@ -7,6 +7,7 @@ represent the gate result currently being interpreted rather than the last clean
 import unittest
 
 from cria import probegate, proberun
+from tests.gatefixture import gate_page, completed
 
 
 class OfflineFactLifetimeTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class OfflineFactLifetimeTests(unittest.TestCase):
             f"{proberun.PROBE_EXIT_SENTINEL}1\n"
         )
 
-        out = probegate.clean_gate_output(raw, plan)
+        out = probegate.clean_gate_output(raw, completed(plan, raw))
 
         self.assertIn("go.mod:5", out or "")
         self.assertEqual(plan.offline_fact, "")
@@ -27,7 +28,7 @@ class OfflineFactLifetimeTests(unittest.TestCase):
     def test_a_non_gate_message_does_not_mutate_the_current_gate(self):
         plan = probegate.GatePlan(workspace="")
         plan.offline_fact = "current fact"
-        self.assertIsNone(probegate.clean_gate_output("ordinary tool output", plan))
+        self.assertIsNone(probegate.clean_gate_output("ordinary tool output", completed(plan, "ordinary tool output")))
         self.assertEqual(plan.offline_fact, "current fact")
 
 

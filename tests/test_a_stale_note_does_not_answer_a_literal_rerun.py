@@ -16,6 +16,7 @@ import tempfile
 import unittest
 
 from cria import probegate
+from tests.gatefixture import gate_page, completed
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 
@@ -73,7 +74,7 @@ RAW_RED = "___CRIA_GATE_probe-0___\ncart.go:8:2: no required module provides pac
 
 class TheSentenceMatchesTheWorldTests(unittest.TestCase):
     def _out(self, reran):
-        return probegate.clean_gate_output(RAW_RED, plan(["go", "build", "./..."]),
+        return probegate.clean_gate_output(RAW_RED, completed(plan(["go", "build", "./..."]), RAW_RED),
                                            changed_paths=frozenset({"go.mod"}),
                                            checks_reran=reran)
 

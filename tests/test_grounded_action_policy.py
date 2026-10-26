@@ -1,7 +1,9 @@
 """Source-owned author/recovery/vet contracts; no model/network/real probes."""
+from cria.fetchfacts import Shape
 from dataclasses import replace
 from types import SimpleNamespace
 import json
+from collections import Counter
 
 import pytest
 from cria import groundedaction as ga, loop, stalledwork as sw, writeobservation as writes
@@ -303,7 +305,7 @@ def test_shared_reader_claims_are_vetted_not_guessed(monkeypatch):
 
 
 def test_ledger_shape_precedes_dictation_and_service_claim_uses_real_fetch_facts():
-    facts = ga.ActionEvidence(fetched_pages={"https://api.example": ("200", "", "→ name(string)")})
+    facts = ga.ActionEvidence(fetched_pages={"https://api.example": ("200", (), (Shape("→ name(string)", fields=("name",)),), (), "")})
     owner = engine()
     def forbidden(*args):
         raise AssertionError("denied field must stop before code-dictation judgment")
@@ -373,8 +375,13 @@ def test_shared_write_results_and_ids_survive_pending_steer_independent_of_selec
     parked = sw.Steer("pending directive", "refusal guard", sw.Trigger.REFUSAL)
     state.pending_steer = parked
     ledger.write_call_ids = ["landed", "failed"]
+    ledger.call_counts = Counter({"landed": 1, "failed": 1})
     calls = (writes.ForwardedCall("next", "c.py"),)
-    history = [{"role": "tool", "tool_call_id": "landed", "content": "Wrote a.py"},
+    # the earlier dispatches and their results, in order: only a call with ONE result after it answers
+    history = [{"role": "assistant", "tool_calls": [{"id": "landed", "type": "function", "function": {
+                   "name": "write_file", "arguments": "{}"}}, {"id": "failed", "type": "function", "function": {
+                   "name": "write_file", "arguments": "{}"}}]},
+               {"role": "tool", "tool_call_id": "landed", "content": "Wrote a.py"},
                {"role": "tool", "tool_call_id": "failed", "content": "did not land"}]
     prepared = writes.record(writes.WriteInput(calls, history, frozenset({"failed"}), ledger,
                                               loop._note_write_results))
@@ -388,7 +395,9 @@ def test_shared_write_results_and_ids_survive_pending_steer_independent_of_selec
     # Reading a prepared snapshot repeatedly never re-registers/recounts; the
     # authoritative bookkeeping remains independent of assist lifecycle effects.
     assert ledger.write_call_ids == ["landed", "failed", "next"] and ledger.write_result_ids == {"landed", "failed"}
-    returned = [{"role": "tool", "tool_call_id": "next", "content": "Wrote c.py"}]
+    returned = history + [{"role": "assistant", "tool_calls": [{"id": "next", "type": "function", "function": {
+                              "name": "write_file", "arguments": "{}"}}]},
+                          {"role": "tool", "tool_call_id": "next", "content": "Wrote c.py"}]
     writes.record(writes.WriteInput((), returned, frozenset(), ledger, loop._note_write_results))
     assert ledger.write_result_ids == {"landed", "failed", "next"}
     assert not state.recent_writes and state.pending_steer is parked

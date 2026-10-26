@@ -37,9 +37,7 @@ def _seq_done(context,index):
             named=os.stat(str(value),dir_fd=context['fd'],follow_symlinks=False)
             if _owned_id(named)!=identity: return
             os.unlink(str(value),dir_fd=context['fd'])
-        if _owned_valid(context) and set(os.listdir(context['fd']))=={'.owner'}:
-            os.unlink('.owner',dir_fd=context['fd'])
-            if _owned_valid(context,owner=False): os.rmdir(context['name'],dir_fd=context['parent_fd'])
+        if _owned_valid(context) and set(_owned_names(context))=={'.owner'}: _owned_retire(context)
     except OSError:
         pass
     finally:

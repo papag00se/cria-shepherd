@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import unittest
 
-from cria import loop, prompts, selfcompact, writeproxy
+from cria import denial, loop, prompts, selfcompact, writeproxy
 from cria.writeproxy import represent_inbound, translate_outbound
 
 _FX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "a8_importer_edit.json").read_text())
@@ -21,6 +21,12 @@ _PATH = _FX["path"]
 
 def _run(args, echo, base=None):
     """Lower an edit_file call, run the lowered command for real, feed the result back inbound."""
+    out, disk, cmd = _run_full(args, echo, base)
+    return out[-1]["content"], disk, cmd
+
+
+def _run_full(args, echo, base=None):
+    """:func:`_run` returning the represented MESSAGES (the typed hints stay on them)."""
     d = tempfile.mkdtemp()
     f = pathlib.Path(d, _PATH)
     f.parent.mkdir(parents=True)
@@ -33,7 +39,7 @@ def _run(args, echo, base=None):
     r = subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True, text=True)
     hist = [{"role": "assistant", "tool_calls": tc}, {"role": "tool", "tool_call_id": "e1", "content": r.stdout + r.stderr}]
     out = represent_inbound(hist)
-    return out[-1]["content"], f.read_text(), cmd
+    return out, f.read_text(), cmd
 
 
 def _numbered_rows(text):
@@ -45,7 +51,8 @@ class EditEchoTests(unittest.TestCase):
         a = _FX["edit"]
         res, _, cmd = _run(a, echo=False)
         self.assertEqual(res.strip(), prompts.render("write_confirm", path=_PATH).strip())
-        self.assertIn(writeproxy._edit_command(_PATH, a["old_string"], a["new_string"], pack=False), cmd)
+        with denial.receipt_scope(writeproxy.receipt_of(cmd)):          # composed for THIS call, receipt and all
+            self.assertIn(writeproxy._edit_command(_PATH, a["old_string"], a["new_string"], pack=False), cmd)
         self.assertNotIn("editview", cmd)
 
     def test_the_a8_method_removal_shows_what_the_file_now_says(self):
@@ -91,11 +98,11 @@ class EditEchoTests(unittest.TestCase):
         self.assertNotIn("WORKERS_ENABLED = true", res)
 
     def test_a_window_is_not_a_whole_read_and_still_counts_as_a_landed_write(self):
-        res, _, _ = _run(_FX["edit"], echo=True)
-        self.assertTrue(selfcompact.write_landed(res))
+        out, _, _ = _run_full(_FX["edit"], echo=True)
+        self.assertTrue(denial.landed(out[-1]))                          # the program's own typed fact, echo window or not
         hist = [{"role": "assistant", "tool_calls": [{"id": "e1", "type": "function", "function": {
                     "name": "edit_file", "arguments": json.dumps({"path": _PATH, "old_string": "a", "new_string": "b"})}}]},
-                {"role": "tool", "tool_call_id": "e1", "content": res}]
+                out[-1]]
         self.assertTrue(loop._observed_successful_write(hist, _PATH, None))
         # K1: cria's own seen-set is built from whole reads only — an echoed window adds nothing
         self.assertFalse(loop._extract_whole_reads(hist, writeproxy.wsview.current()))
@@ -124,8 +131,8 @@ class EditEchoTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected={"edit_file"}, edit_echo=True)
         c = json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
         out = subprocess.run(["bash", "-c", c], cwd=d, capture_output=True, text=True).stdout
-        line = next(l for l in out.splitlines() if l.startswith(writeproxy.EDIT_VIEW))
-        self.assertLessEqual(len(line), writeproxy.ECHO_WIRE_MAX_BYTES)
+        ev = json.loads(out.splitlines()[0])["rep"]["ev"]                # the window report is a typed field of the record
+        self.assertLessEqual(len(ev), writeproxy.ECHO_WIRE_MAX_BYTES)
 
     def test_one_long_line_in_the_context_drops_to_the_lines_that_fit(self):
         base = "a = 1\n" + "x" * 50_000 + "\nb = 2\nc = 3\n"
@@ -182,9 +189,10 @@ class EditEchoTests(unittest.TestCase):
             server.CriaHandler._translate_out(h, comp, "s", None)
             return json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
         l4, l5 = run(DONE_REFUSALS_ENABLED), run(ASSISTS_ENABLED)
-        self.assertIn(writeproxy._edit_command("a.py", "x", "y", pack=True), l4)
-        self.assertNotIn("editview", l4)
-        self.assertIn("editview", l5)
+        with denial.receipt_scope(writeproxy.receipt_of(l4)):
+            self.assertIn(writeproxy._edit_command("a.py", "x", "y", pack=True), l4)
+        self.assertIn("_ev=None", l4)                  # the echo window is not composed below the echo level ...
+        self.assertNotIn("_ev=None", l5)               # ... and is above it
 
     def test_prompts_never_name_the_product(self):
         for n in ("edit_echo", "edit_echo_removed", "edit_echo_span_omitted", "edit_echo_window", "edit_echo_flexible", "edit_echo_omitted"):

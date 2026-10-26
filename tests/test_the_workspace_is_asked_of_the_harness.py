@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from tests.resultshape import LANDED_SHORTHAND
 
 from cria import probegate, wsview, writeproxy
 from wsfixture import survey
@@ -262,14 +263,15 @@ class TheConversationIsEvidenceTooTests(unittest.TestCase):
     """Every synthetic file tool cria lowered is in the history with its path and its bytes. A write
     proves content; an EDIT proves the content changed and is therefore no longer known."""
 
-    def _history(self, name, args, result):
-        sentinel = writeproxy._sentinel(name, json.dumps(args))
+    def _history(self, name, args, result, cid="c1"):
+        from tests.resultshape import lowered
+        sentinel, result = lowered(name, json.dumps(args), result, cid)     # the real programs' own record shape
         return [
             {"role": "assistant", "tool_calls": [
-                {"id": "c1", "type": "function",
+                {"id": cid, "type": "function",
                  "function": {"name": "shell",
                               "arguments": json.dumps({"command": sentinel + "\ncmd"})}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": result},
+            {"role": "tool", "tool_call_id": cid, "content": result},
         ]
 
     def _run(self, msgs, root="/ws"):
@@ -281,7 +283,7 @@ class TheConversationIsEvidenceTooTests(unittest.TestCase):
 
     def test_a_successful_write_proves_the_file_and_its_bytes(self):
         view = self._run(self._history("write_file", {"path": "a.py", "content": "x = 1\n"},
-                                       writeproxy._WROTE))
+                                       LANDED_SHORTHAND))
         self.assertEqual(view.read("/ws/a.py"), "x = 1\n")
         self.assertIs(view.isfile("/ws/a.py"), True)
 
@@ -290,26 +292,24 @@ class TheConversationIsEvidenceTooTests(unittest.TestCase):
         at — the body is unknown, the file is still known to be there. (An exactly-replayable edit keeps
         the body current: see test_a_whole_file_write_that_would_gut_a_read_file_is_held.)"""
         msgs = self._history("write_file", {"path": "a.py", "content": "x = 1\ny = 1\n"},
-                             writeproxy._WROTE)
+                             LANDED_SHORTHAND)
         msgs += self._history("edit_file", {"path": "a.py", "old_string": "1", "new_string": "2"},
-                              writeproxy._WROTE)
-        msgs[2]["tool_calls"][0]["id"] = msgs[3]["tool_call_id"] = "c2"
+                              LANDED_SHORTHAND, cid="c2")
         view = self._run(msgs)
         self.assertIsNone(view.read("/ws/a.py"))          # cria does not know the new bytes
         self.assertIs(view.isfile("/ws/a.py"), True)      # it does still know the file is there
 
     def test_an_exactly_replayable_edit_keeps_the_body_current(self):
         msgs = self._history("write_file", {"path": "a.py", "content": "x = 1\n"},
-                             writeproxy._WROTE)
+                             LANDED_SHORTHAND)
         msgs += self._history("edit_file", {"path": "a.py", "old_string": "1", "new_string": "2"},
-                              writeproxy._WROTE)
-        msgs[2]["tool_calls"][0]["id"] = msgs[3]["tool_call_id"] = "c2"
+                              LANDED_SHORTHAND, cid="c2")
         self.assertEqual(self._run(msgs).read("/ws/a.py"), "x = 2\n")
 
     def test_a_survey_in_the_history_is_folded_in_and_taken_out(self):
         ws = _ws(**{"real.py": "print(1)\n"})
         msgs = self._history("write_file", {"path": "a.py", "content": "x\n"},
-                             writeproxy._WROTE + "\n" + _survey(ws))
+                             LANDED_SHORTHAND + "\n" + _survey(ws))
         out = self._run(msgs, root=str(ws))
         self.assertIs(out.isfile("real.py"), True)
         self.assertNotIn("___CRIA_SV_", json.dumps(

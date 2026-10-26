@@ -19,7 +19,8 @@ def pair(cid, name, args, output):
     return [{"role": "assistant", "content": "", "tool_calls": [{
         "id": cid, "type": "function", "function": {
             "name": name, "arguments": json.dumps(args)}}]},
-        {"role": "tool", "tool_call_id": cid, "content": output}]
+        {"role": "tool", "tool_call_id": cid, "content": output,
+         **({"cria_result_outcome": "landed"} if str(output).startswith("Wrote ") else {})}]   # a landed write, as represent_inbound hands it on
 
 
 def history(n=16):

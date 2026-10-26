@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from cria import bodykeys, denial
+from tests.gatefixture import gate_page
 from cria import assistruntime, config, groundedaction as ga, loop, probegate, repositorychecks, stalledwork as sw
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
@@ -29,7 +31,7 @@ def refused_history():
     history = []
     for i in range(3):
         history += [acting(str(i))['choices'][0]['message'],
-                    {'role': 'tool', 'tool_call_id': str(i), 'content': '⟦ctx:denied⟧ request did not run'}]
+                    {'role': 'tool', 'tool_call_id': str(i), 'content': '⟦ctx:denied⟧ request did not run', bodykeys.RESULT_OUTCOME: denial.REFUSED}]
     return history
 
 
@@ -493,7 +495,7 @@ def test_pending_steer_does_not_suspend_required_forwarded_write_facts(monkeypat
     body['messages'] += [acting('landed', 'write_file', {'path': 'a.py', 'content': 'old\n'})['choices'][0]['message'],
         {'role': 'tool', 'tool_call_id': 'landed', 'content': 'Wrote a.py'},
         acting('failed', 'write_file', {'path': 'a.py', 'content': 'rejected\n'})['choices'][0]['message'],
-        {'role': 'tool', 'tool_call_id': 'failed', 'content': '⟦ctx:denied⟧ not written'}]
+        {'role': 'tool', 'tool_call_id': 'failed', 'content': '⟦ctx:denied⟧ not written', bodykeys.RESULT_OUTCOME: denial.REFUSED}]
     method = '_drive_single_item' if synthetic else '_work'
     original = getattr(driver, method)
     def discarded(*args, **kwargs):
@@ -628,7 +630,8 @@ def test_public_matched_reading_is_required_before_selected_settlement_and_autho
     launch = driver.drive(body, SESSION, None, _Rlog())
     assert launch['choices'][0]['message']['tool_calls'] == [probe]
     body['messages'] += [launch['choices'][0]['message'], {'role': 'tool',
-        'tool_call_id': probe['id'], 'content': '___CRIA_GATE_probe-0___\nx.py:1:1: undefined name \'missing\'\nEXIT:1'}]
+        'tool_call_id': probe['id'], 'content': gate_page(plan,
+            '___CRIA_GATE_probe-0___\nx.py:1:1: undefined name \'missing\'\nEXIT:1')}]
     driver.drive(body, SESSION, None, _Rlog())
     assert len(before_stage) == 1
     ran, red, stall, findings, author_findings, author_stall = before_stage[0]

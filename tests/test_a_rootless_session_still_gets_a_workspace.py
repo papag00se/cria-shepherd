@@ -59,7 +59,9 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
     def _turn(self, sess_key="sid:rootless"):
         """One request whose history carries a cria-lowered call and its survey — and NO `<cwd>`."""
         from cria import writeproxy
-        cmd = writeproxy._sentinel("list_dir", '{"path": "."}') + "\nls -la"
+        from tests.resultshape import lowered
+        sentinel, listing = lowered("list_dir", '{"path": "."}', "lib\n" + _survey(self.ROOT), "t1")
+        cmd = sentinel + "\nls -la"
         handler = srv.CriaHandler.__new__(srv.CriaHandler)
         handler.headers = {}
         # A real default Config: `_setup_translation` reads the engagement level (the tool layer
@@ -70,7 +72,7 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
             {"role": "user", "content": "build the shipping module"},
             {"role": "assistant", "tool_calls": [{"id": "t1", "type": "function", "function": {
                 "name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]},
-            {"role": "tool", "tool_call_id": "t1", "content": "lib\n" + _survey(self.ROOT)},
+            {"role": "tool", "tool_call_id": "t1", "content": listing},
         ], "tools": []}
         rlog = _Rlog()
         token = wsview.bind(wsview.View("", sess_key))
@@ -94,8 +96,9 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
 
     def test_an_announced_cwd_still_wins(self):
         """The harness's own answer is authoritative; this only fills a gap."""
-        from cria import writeproxy
-        cmd = writeproxy._sentinel("list_dir", '{"path": "."}') + "\nls -la"
+        from tests.resultshape import lowered
+        sentinel, listing = lowered("list_dir", '{"path": "."}', _survey(self.ROOT), "t1")
+        cmd = sentinel + "\nls -la"
         handler = srv.CriaHandler.__new__(srv.CriaHandler)
         handler.headers = {}
         handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore()})()
@@ -104,7 +107,7 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
                                         "</environment_context>"},
             {"role": "assistant", "tool_calls": [{"id": "t1", "type": "function", "function": {
                 "name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]},
-            {"role": "tool", "tool_call_id": "t1", "content": _survey(self.ROOT)},
+            {"role": "tool", "tool_call_id": "t1", "content": listing},
         ], "tools": []}
         token = wsview.bind(wsview.View("", "sid:announced"))
         try:

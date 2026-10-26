@@ -14,7 +14,8 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
-from cria import toolwire, webfetch, writeproxy
+from tests.resultshape import leading_frame
+from cria import denial, toolwire, webfetch, writeproxy
 
 
 BAD = ('https://javadoc.java.net/javase platform/api-opencsv/5.12.0/'
@@ -63,7 +64,9 @@ class InvalidFetchBatchTests(unittest.TestCase):
                                  capture_output=True, text=True, check=True,
                                  env={'PATH': '/usr/bin:/bin'})
             self.assertEqual(run.stderr, '')
-            results.append(run.stdout)
+            kind, frame = leading_frame(run.stdout, writeproxy.receipt_of(cmd))
+            self.assertEqual(kind, denial.RAN)         # the real branch's own frame, removed by the inbound pass
+            results.append(run.stdout[len(frame):])
         return results, opened
 
     def test_bad_first_preserves_real_diagnostic_and_independent_later_fetch(self):

@@ -20,7 +20,7 @@ _FX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "a11_call24_batch
 _SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
 
 
-def _lower(edits, path=None, *, sequences=None):
+def _lower(edits, path=None, *, sequences=None, calls=None):
     comp = {"choices": [{"message": {"tool_calls": [
         {"id": f"c{i}", "type": "function", "function": {"name": "edit_file", "arguments": json.dumps(
             {"path": path or _FX["path"], **e})}} for i, e in enumerate(edits)]}}]}
@@ -32,6 +32,8 @@ def _lower(edits, path=None, *, sequences=None):
         return result
     with mock.patch.object(writeproxy, '_edit_sequence', side_effect=observed):
         translate_outbound(comp, _SHELL, injected={"edit_file"})
+    if calls is not None:
+        calls.extend(comp["choices"][0]["message"]["tool_calls"])
     return [json.loads(tc["function"]["arguments"])["cmd"] for tc in comp["choices"][0]["message"]["tool_calls"]]
 
 
@@ -71,7 +73,7 @@ class BatchOrderTests(unittest.TestCase):
             time.sleep(0.05)
         [t.join() for t in ts]
         self.assertEqual(f2.read_text(), expected)
-        self.assertTrue(all(writeproxy.EDIT_ORDER_LATE not in o.stdout + o.stderr for o in outs.values()))
+        self.assertTrue(all('"late":true' not in o.stdout for o in outs.values()))
         self.assertEqual([p.name for p in pathlib.Path(d2).iterdir()], ["src"])        # nothing in the tree
         self.assertEqual(os.listdir(tmp2), [])             # and the queue's marks are gone once the batch is done
 
@@ -85,11 +87,11 @@ class BatchOrderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as scratch:
             path = pathlib.Path(directory, 'f.txt')
             path.write_text('a')
-            self.assertIn(writeproxy._WROTE, _run(first[0], directory, scratch).stdout)
+            self.assertIn('"k":"landed"', _run(first[0], directory, scratch).stdout)
             # A previous batch's completed predecessor must not satisfy a retry's queue.
             result = _run(second[1], directory, scratch)
             self.assertEqual(path.read_text(), 'c')
-            self.assertIn(writeproxy.EDIT_ORDER_LATE, result.stdout + result.stderr)
+            self.assertIn('"late":true', result.stdout)           # the batch-order note is a typed flag
 
     def test_the_wait_is_shorter_than_the_yield_the_call_gets(self):
         """The lowered call is not given a time budget; a harness yields a running command at ~10 s, so a
@@ -123,7 +125,8 @@ class BatchOrderTests(unittest.TestCase):
         r = _run(cmds[1], d, tempfile.mkdtemp())          # call 0 never runs
         self.assertLess(time.time() - t0, 10)
         self.assertEqual(pathlib.Path(d, "f.txt").read_text(), "line 1\ntwo\n")
-        rendered = writeproxy.render_edit_echo(r.stdout, "f.txt")
+        from tests.resultshape import rep_of
+        rendered = writeproxy.render_edit_echo("f.txt", rep_of(r.stdout))
         self.assertIn(prompts.load("edit_order_late").strip(), rendered)
         self.assertNotIn(writeproxy.EDIT_ORDER_LATE, rendered)
 
@@ -131,15 +134,19 @@ class BatchOrderTests(unittest.TestCase):
         old = writeproxy.EDIT_SEQ_WAIT_SECONDS
         writeproxy.EDIT_SEQ_WAIT_SECONDS = 0.3
         try:
+            calls = []
             cmds = _lower([{"old_string": "line 1", "new_string": "one"}, {"old_string": "nope", "new_string": "x"}],
-                          path="f.txt")
+                          path="f.txt", calls=calls)
         finally:
             writeproxy.EDIT_SEQ_WAIT_SECONDS = old
         d = tempfile.mkdtemp()
         pathlib.Path(d, "f.txt").write_text("line 1\n")
         r = _run(cmds[1], d, tempfile.mkdtemp())
         from cria import editrecovery
-        text = editrecovery.recover(r.stdout + r.stderr, [])
+        # through the real inbound owner: the unapplied record's typed fields (`ef`, `late`) become the recovery directive
+        out = writeproxy.represent_inbound([{"role": "assistant", "tool_calls": [calls[1]]},
+                                            {"role": "tool", "tool_call_id": calls[1]["id"], "content": r.stdout + r.stderr}])
+        text = out[1]["content"]
         self.assertIn(prompts.load("edit_order_late").strip(), text)
         self.assertNotIn(editrecovery.ORDER_LATE, text)
 
@@ -151,11 +158,11 @@ class BatchOrderTests(unittest.TestCase):
         pathlib.Path(d, "f.txt").write_text("line 1\nline 2\n")
         # Run the actual refused producer, not a regex reconstruction of its release leg.
         refused = _run(cmds[0], d, tmp)
-        self.assertNotIn(writeproxy._WROTE, refused.stdout)
+        self.assertNotIn('"k":"landed"', refused.stdout)
         t0 = time.time()
         r = _run(cmds[1], d, tmp)
         self.assertLess(time.time() - t0, 5)
-        self.assertNotIn(writeproxy.EDIT_ORDER_LATE, r.stdout)
+        self.assertNotIn('"late":true', r.stdout)
         self.assertEqual(pathlib.Path(d, 'f.txt').read_text(), 'line 1\ntwo\n')
         self.assertEqual(os.listdir(tmp), [])
 
@@ -168,7 +175,7 @@ class BatchOrderTests(unittest.TestCase):
             self.assertTrue(os.listdir(scratch))
             result = _run(cmds[0], directory, scratch)
             self.assertEqual(path.read_text(), 'b')
-            self.assertIn(writeproxy._WROTE, result.stdout)
+            self.assertIn('"k":"landed"', result.stdout)
             self.assertEqual(os.listdir(scratch), [])
 
     def test_one_edit_per_file_carries_no_queue(self):

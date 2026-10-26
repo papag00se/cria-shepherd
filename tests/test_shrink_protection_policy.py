@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from cria import shrinkprotection as policy, wholefile, writeproxy
+from cria import denial, shrinkprotection as policy, toolwire, wholefile, writeproxy
 from cria.toolstages import LoweringRequest, OutboundCall, ToolStages
 
 
@@ -205,23 +205,28 @@ def test_byte_settlement_runs_stale_writes_and_only_emits_successful_current_fac
     target.write_text(CURRENT)
     source = services()
     candidate = REMOVAL if land else FRAGMENT
-    command = 'false' if fail else writeproxy._write_command(str(target), candidate)
-    wrapped = policy.DEFINITION.execute(call(source, candidate, str(target)), command)
+    args = json.dumps({'path': str(target), 'content': candidate})
+    rcpt = denial.receipt_for('c1', 'write_file', args)
+    with denial.receipt_scope(rcpt):             # composed for THIS call, as the compiler does: the program prints its records
+        command = 'false' if fail else writeproxy._write_command(str(target), candidate)
+        wrapped = policy.DEFINITION.execute(call(source, candidate, str(target)), command)
     assert wrapped != command
     if stale:
         target.write_text('disk has changed since survey')
     run = subprocess.run(['bash', '-c', wrapped], capture_output=True, text=True, timeout=10)
     if not land and not stale:
-        assert run.returncode != 0 and run.stdout.startswith('⟦ctx:denied⟧')
+        from tests.resultshape import leading_frame
+        kind, lead = leading_frame(run.stdout, rcpt)
+        assert run.returncode != 0 and kind == denial.REFUSED and run.stdout[len(lead):].startswith('⟦ctx:denied⟧')
         assert target.read_text() == CURRENT
     elif fail:
         assert run.returncode != 0 and target.read_text() == CURRENT
-        assert writeproxy.REMOVAL_FACTS not in run.stdout
+        assert '"rm":' not in run.stdout
     else:
         assert run.returncode == 0 and target.read_text() == candidate
-        assert (writeproxy.REMOVAL_FACTS in run.stdout) == (land and not stale)
+        assert ('"rm":' in run.stdout) == (land and not stale)       # the measured facts: a typed field of the landed record
     # Real result representation must preserve either denial or landed facts.
-    full_command = writeproxy._sentinel('write_file', json.dumps({'path': str(target), 'content': candidate})) + '\n' + wrapped
+    full_command = toolwire._sentinel('write_file', args, rcpt) + '\n' + wrapped
     tc = {'id': 'c1', 'type': 'function', 'function': {'name': 'exec_command', 'arguments': json.dumps({'cmd': full_command})}}
     history = [{'role': 'assistant', 'tool_calls': [tc]},
                {'role': 'tool', 'tool_call_id': 'c1', 'content': run.stdout + run.stderr}]

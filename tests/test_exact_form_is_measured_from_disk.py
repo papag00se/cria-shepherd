@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cria import denial, filefacts, loop, wsview
+from cria import bodykeys, denial, filefacts, loop, wsview
 
 TASK = ('Use the file tools to create probe.txt containing exactly these three lines, including the '
         'final newline:\nsnow 雪\n"quoted"\nbackslash \\\nThen read probe.txt back using a tool. '
@@ -30,13 +30,17 @@ def _call(cid, name, args):
         {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}]}
 
 
-def _res(cid, text):
-    return {"role": "tool", "tool_call_id": cid, "content": text}
+def _res(cid, text, outcome=None):
+    # a result that says "ok"/"Wrote …" with no stated outcome is a LANDED write as `represent_inbound` hands it on
+    outcome = outcome or (denial.LANDED if text in ("ok",) or text.startswith("Wrote ") else None)
+    return {"role": "tool", "tool_call_id": cid, "content": text,
+            **({bodykeys.RESULT_OUTCOME: outcome} if outcome else {})}
 
 
-def write(cid, content, path="probe.txt", result=None):
+def write(cid, content, path="probe.txt", result=None, outcome=None):
     return [_call(cid, "write_file", {"path": path, "content": content}),
-            _res(cid, result if result is not None else json.dumps({"written": True, "bytes": len(content.encode())}))]
+            _res(cid, result if result is not None else json.dumps({"written": True, "bytes": len(content.encode())}),
+                 outcome or (denial.LANDED if result is None else None))]   # a genuine write: its own typed landed fact
 
 
 def read(cid="r"):
@@ -139,7 +143,7 @@ class FactsAreOfCurrentContent(unittest.TestCase):
         self.assertIn("29 bytes", filefacts.extract(loop._satisfaction_evidence(msgs)))
 
     def test_a_refused_write_is_never_presented_as_sent(self):
-        msgs = write("w", C29, result=denial.DENIED_MARKER + " refused")
+        msgs = write("w", C29, result=denial.DENIED_MARKER + " refused", outcome=denial.REFUSED)
         sat, _, chat, ev = judge(msgs)
         self.assertEqual(filefacts.extract(ev), "")
         self.assertEqual(chat.asked(), 0)

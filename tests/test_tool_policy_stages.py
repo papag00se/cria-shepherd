@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from cria import bodykeys, denial
 from cria import massage, outboundpolicies, outputpolicies, returnedpolicies, toolstages, writeproxy
 
 
@@ -21,6 +22,14 @@ def completion(name='write_file', **arguments):
 
 def lower(comp, **kwargs):
     return writeproxy.translate_outbound(comp, SHELL, injected={'write_file', 'edit_file'}, **kwargs)
+
+
+def _whole_read_record(lowered, raw):
+    """What the lowered whole read's own read-once program prints: the typed record carrying the bytes."""
+    from cria import resultpacket
+    tc = lowered['choices'][0]['message']['tool_calls'][0]
+    return resultpacket.line(writeproxy.receipt_of(json.loads(tc['function']['arguments'])['cmd'], tc['id']),
+                             'ran', body=raw, observe='whole')
 
 
 def command(comp):
@@ -106,11 +115,13 @@ def test_disabled_external_guard_does_not_queue_workspace_questions():
 
 
 def test_disabled_advice_cannot_disable_write_evidence_or_eof_read_credit():
+    from tests.resultshape import landed
     stages = replace(toolstages.defaults(), returned=(), history=(), rejected_draft=None)
     view = Mock()
     lowered = lower(completion(path='x', content='bytes without newline'))
     history = [{'role': 'assistant', 'tool_calls': lowered['choices'][0]['message']['tool_calls']},
-               {'role': 'tool', 'tool_call_id': 'c1', 'content': writeproxy._WROTE}]
+               {'role': 'tool', 'tool_call_id': 'c1',
+                'content': landed(lowered['choices'][0]['message']['tool_calls'][0])}]
     with toolstages.bound(stages), patch.object(writeproxy.wsview, 'current', return_value=view):
         result = writeproxy.represent_inbound(history)
     view.note_written.assert_called_once_with('x', 'bytes without newline')
@@ -118,7 +129,7 @@ def test_disabled_advice_cannot_disable_write_evidence_or_eof_read_credit():
     # A successful whole read remains evidence even when every annotation is disabled.
     read = writeproxy.translate_outbound(completion('read_file', path='x'), SHELL, injected={'read_file'})
     history = [{'role': 'assistant', 'tool_calls': read['choices'][0]['message']['tool_calls']},
-               {'role': 'tool', 'tool_call_id': 'c1', 'content': 'Process exited with code 0\nOutput:\nbytes without newline'}]
+               {'role': 'tool', 'tool_call_id': 'c1', 'content': 'Process exited with code 0\nOutput:\n' + _whole_read_record(read, b'bytes without newline')}]
     view.reset_mock()
     with toolstages.bound(stages), patch.object(writeproxy.wsview, 'current', return_value=view):
         writeproxy.represent_inbound(history)
@@ -199,8 +210,10 @@ def test_returned_replacement_runs_before_later_notes_and_keeps_payload_boundary
 def test_rejected_draft_switch_controls_both_payload_movement_and_note():
     body = 'a' * 500
     lowered = lower(completion(path='x', content=body))
-    history = [{'role': 'assistant', 'tool_calls': lowered['choices'][0]['message']['tool_calls']},
-               {'role': 'tool', 'tool_call_id': 'c1', 'content': '⟦ctx:denied⟧ did not run'}]
+    calls = lowered['choices'][0]['message']['tool_calls']
+    rcpt = writeproxy.receipt_of(writeproxy._command_of(calls[0]['function']['arguments']))   # the lowering's own receipt
+    history = [{'role': 'assistant', 'tool_calls': calls},
+               {'role': 'tool', 'tool_call_id': calls[0]['id'], 'content': f"{denial.frame(denial.REFUSED, rcpt)}⟦ctx:denied⟧ did not run"}]
     with toolstages.bound(replace(toolstages.defaults(), history=())):
         active = writeproxy.represent_inbound(copy.deepcopy(history))
     assert body not in active[0]['tool_calls'][0]['function']['arguments']

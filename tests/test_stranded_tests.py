@@ -17,6 +17,7 @@ import tempfile
 import unittest
 
 from cria import probediscovery, probegate
+from tests.gatefixture import gate_page, completed
 from cria.probegate import GatePlan
 import tests.test_probegate as tp
 
@@ -80,21 +81,21 @@ class GateWiringTests(unittest.TestCase):
         ws = _ws({"pytest_da_resolvers.py": _PY_TESTS,
                   "test_live_handle.py": "def test_live():\n    assert 1\n"})
         raw = self._raw("no tests ran in 0.01s\nEXIT:5")
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertIn("pytest_da_resolvers.py", out)
         self.assertIn("will not run", out)
 
     def test_exit5_without_stranded_files_stays_benign(self):
         ws = _ws({"app.py": "def resolve():\n    return 1\n"})
         raw = self._raw("no tests ran in 0.01s\nEXIT:5")
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertIn("exit 5\nno tests ran in 0.01s", out)
         self.assertNotIn("report these error-class problems", out)
 
     def test_a_green_go_run_with_no_test_files_and_a_stranded_suite_is_flagged(self):
         ws = _ws({"resolver_tests.go": _GO_TESTS})
         raw = self._raw("?   \texample.com/x\t[no test files]\nEXIT:0")
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertIn("resolver_tests.go", out)
         self.assertIn("_test.go", out)
 

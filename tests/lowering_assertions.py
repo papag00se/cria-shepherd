@@ -21,7 +21,7 @@ def write_did_run(command):
         path.write_bytes(before)
         result = subprocess.run(['sh', '-c', command], cwd=directory,
                                 env={**os.environ, 'TMPDIR': directory}, capture_output=True, timeout=15)
-        landed = writeproxy._WROTE.encode() in result.stdout
+        landed = b'"k":"landed"' in result.stdout.split(b'\n', 1)[0]      # the program's own typed first record
         assert path.read_bytes() == (arguments['content'].encode() if landed else before), result.stderr
         if landed:
             assert result.returncode == 0, result.stderr

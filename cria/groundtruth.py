@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import prompts
+from . import fetchfacts, prompts
 from . import content_reduce as content_reduce_mod
 from .content_reduce import content_reduce, est_tokens
 from . import wsview
@@ -427,8 +427,14 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
 def fetch_facts(entry) -> tuple:
     """A fetch-ledger entry as ``(status, routes, shapes, catalog)``, accepting every older/shorter
     form. One reader for a tuple that has grown twice."""
-    status, routes, shapes, catalog = (tuple(entry) + ("", "", ""))[:4]
-    return status, routes or "", shapes or "", catalog or ""
+    status, routes, shapes, catalog = (tuple(entry) + ("", (), (), ()))[:4]
+    return status, tuple(routes or ()), tuple(shapes or ()), tuple(catalog or ())
+
+
+def fetch_observed(entry) -> str:
+    """The protocol a SUCCESSFUL discovery probe read at this url (``"mcp"``/``"graphql"``), or "" — the fifth member of a ledger
+    entry, separate from `status` (what the GET answered) so neither fact is traded for the other."""
+    return str((tuple(entry) + ("", (), (), (), ""))[4] or "")
 
 
 def researched_facts(ledger: dict) -> str:
@@ -450,9 +456,9 @@ def researched_facts(ledger: dict) -> str:
     for entry in (ledger or {}).values():
         _status, r, s, _catalog = fetch_facts(entry)
         if r:
-            routes.append(r)
+            routes.append(", ".join(r))
         if s:
-            shapes.append(s)
+            shapes.append(fetchfacts.shapes_text(s))
     if not routes and not shapes:
         return ""
     labels = prompts.load_map("researched_facts")

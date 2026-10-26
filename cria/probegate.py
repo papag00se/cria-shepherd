@@ -40,7 +40,7 @@ import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
+from . import denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
 from . import participation, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -55,7 +55,7 @@ from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: 
 
 # Marker line delimiting each section of the composed script's output. The id after the
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
-from .toolwire import SECTION_PREFIX, GATE_SENTINEL, write_landed
+from .toolwire import SECTION_PREFIX, GATE_SENTINEL
 SECTION_SUFFIX = "___"
 # Historical path listings are not removal acknowledgements. New gates finish cleanup on the
 # harness and carry actual removed paths / failures before the final workspace survey.
@@ -199,6 +199,7 @@ def _helper_reader_program() -> str:
         print("offset\\t" + str(offset))
         print("total\\t" + str(total))
         print("sha256\\t" + digest.hexdigest())
+        print("bounds\\t" + base64.b64encode(_gate_bounds(context,tid)).decode())
         print("enc\\t" + enc)
         print("data\\t" + base64.b64encode(chunk if wire is None else wire).decode())
         print(closing)
@@ -407,6 +408,12 @@ class GatePlan:
     transport_path: str = ""
     transport_total: int | None = None
     transport_sha256: str = ""
+    # The producer-declared extents of the completed stream (checker output | cleanup report | survey), as
+    # `(checker_end, report_end)` byte offsets, or None when the transport carried none (unknown, never inferred).
+    transport_bounds: "tuple[int, int] | None" = None
+    # The byte offset each checker section header was DECLARED to start at (`section id -> offset`), or None when the worker
+    # declared none (then only the producer's own header vocabulary is recognised inside checker bytes).
+    transport_sections: "dict[str, int] | None" = None
     transport_data: bytearray = field(default_factory=bytearray)
     transport_complete: bool = False
     transport_error: str = ""
@@ -649,8 +656,9 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         except Exception:  # noqa: BLE001 — an unreadable error is still a transport failure
             detail = "harness-side page reader failed"
         return fail_transport(plan, detail)
-    if set(fields) not in ({"path", "offset", "total", "sha256", "data"},
-                           {"path", "offset", "total", "sha256", "data", "enc"}):
+    declared = {"bounds"} & set(fields)
+    if set(fields) - declared not in ({"path", "offset", "total", "sha256", "data"},
+                                      {"path", "offset", "total", "sha256", "data", "enc"}):
         return fail_transport(plan, "transport page is missing required fields")
     # A REAL page envelope arrived — the poll channel works, whatever this page's own contents
     # turn out to validate to below. Reset the openerless streak here, not only on eventual success.
@@ -682,6 +690,8 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     plan.transport_path = path
     plan.transport_total = total
     plan.transport_sha256 = digest
+    plan.transport_bounds = _declared_bounds(fields.get("bounds"), total)
+    plan.transport_sections = _declared_sections(fields.get("bounds"))
     plan.transport_data.extend(chunk)
     if len(plan.transport_data) < total:
         return "pending"
@@ -697,6 +707,46 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     # complete, and only from THIS hash-verified moment, is ever queued for removal.
     _queue_spool_cleanup(plan.workspace, plan.transport_path)
     return "complete"
+
+
+def _declared_bounds(field: "str | None", total: int) -> "tuple[int, int] | None":
+    """The extents the gate worker declared for the finished spool, or None (a page without them, or a declaration
+    that is not self-consistent with the spool). Read as data the producer wrote — never searched for in the stream."""
+    if not field:
+        return None
+    try:
+        declared = json.loads(base64.b64decode(field, validate=True).decode("utf-8"))
+        checker_end, report_end = declared["checker_end"], declared["report_end"]
+    except (ValueError, UnicodeError, KeyError, TypeError):
+        return None
+    if (isinstance(checker_end, int) and isinstance(report_end, int) and not isinstance(checker_end, bool)
+            and not isinstance(report_end, bool) and declared.get("total") == total
+            and 0 <= checker_end <= report_end <= total):
+        return checker_end, report_end
+    return None
+
+
+def _declared_sections(field: "str | None") -> "dict[str, int] | None":
+    """The `section id -> header offset` map the script declared, or None (absent, or not a clean map of non-negative ints)."""
+    if not field:
+        return None
+    try:
+        declared = json.loads(base64.b64decode(field, validate=True).decode("utf-8"))["sections"]
+    except (ValueError, UnicodeError, KeyError, TypeError):
+        return None
+    if isinstance(declared, dict) and all(isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+                                          for k, v in declared.items()):
+        return {k: v for k, v in declared.items() if v >= 0}      # -1 marks a name declared twice: no declaration
+    return None
+
+
+def transported_parts(plan: GatePlan) -> "tuple[str, str, str] | None":
+    """``(checker output, cleanup report, survey)`` of the verified complete stream, split at the producer-declared
+    byte extents; None when the transport declared none (the caller then knows no boundary — it never guesses one)."""
+    if not plan.transport_complete or plan.transport_bounds is None:
+        return None
+    data, (checker_end, report_end) = bytes(plan.transport_data), plan.transport_bounds
+    return tuple(part.decode("utf-8", "replace") for part in (data[:checker_end], data[checker_end:report_end], data[report_end:]))
 
 
 def transported_result(plan: GatePlan) -> str:
@@ -809,7 +859,13 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # Native build/test output belongs to the project. No snapshot or untracked
     # enumeration gives this gate ownership of ANY original-workspace path.
     # The supervisor separately allocates and settles its own private scratch.
+    # EVERY SECTION HEADER IS DECLARED AT ITS POSITION. Before each header the script records the spool's size — the byte
+    # offset the header is about to start at — in a private side file the worker folds into the completed transport's
+    # metadata. A header line is a section boundary only where its id and offset were declared; a checker that prints a
+    # header-shaped line (any id, any text around it) cannot have declared its position, so it is just output.
+    parts.append(SECTION_DECLARATION)
     for i, c in enumerate(plan.candidates):
+        parts.append(f"__cria_declare probe-{i}")
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
         if c.kind is probediscovery.ProbeKind.Test:
@@ -823,6 +879,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
                    if c.kind is probediscovery.ProbeKind.Test), None)
     offline = proberun.offline_probe_command(test_c, COMPLETION_PROBE_TIMEOUT_S) if test_c else ""
     if offline:
+        parts.append("__cria_declare offline")
         parts.append(f"echo {_marker('offline')}")
         parts.append(offline)
     # Private scratch cleanup and the following survey are supervisor-finalized,
@@ -894,15 +951,63 @@ def gate_is_partial(outcome) -> bool:
                 or getattr(outcome, "scope_unknown", False))
 
 
-def split_sections(text: str) -> dict[str, str]:
+def gate_sections(stream: str, plan: "GatePlan | None") -> "tuple[dict[str, str], str]":
+    """``(sections, survey text)`` of a gate stream. THE ONE READER of the stream's private segments.
+
+    The gate worker declared where native checker output ends, where cria's cleanup report ends, where cria's survey begins
+    and where each section header starts (`gatecleanup`: byte extents carried in the completed transport's own metadata).
+    With them, checker sections come from the checker bytes ONLY and only at their declared header offsets, the cleanup
+    report from its declared bytes, and the survey from its declared bytes — a checker that prints a valid-looking survey,
+    a cleanup header, a cleanup record or a section header cannot supply any of them.
+
+    EVERYTHING ELSE IS UNKNOWN. A stream that did not arrive as a completed, hash-verified transport — an old raw result in a
+    history, an unframed or unproven byte string — has no declared boundary: it yields no section, no cleanup report and no
+    survey (the bytes stay visible to whoever shows them), and a completed transport whose worker declared no extents claims
+    no cleanup report and no survey (`_cleanup_record` answers unknown). Nothing is ever found by searching."""
+    if not declared_transport(plan):
+        return {}, ""
+    checker, report, survey = transported_parts(plan)
+    # Inside the checker bytes a header is a boundary ONLY at the offset the script declared for its id (an explicitly EMPTY
+    # map declares no check section at all): quoted header-shaped lines, real ids included, are the checker's own output.
+    sections = split_sections(checker, _CHECKER_HEADER, plan.transport_sections)
+    sections.update(split_sections(report))               # the cleanup report's section comes from its declared bytes only
+    return sections, survey
+
+
+def declared_transport(plan: "GatePlan | None") -> bool:
+    """Did this gate arrive as a COMPLETED, hash-verified transport whose worker declared BOTH the segment extents and the
+    header-offset map (valid, self-consistent)? Only then is anything in it a section, a cleanup report or a survey; otherwise
+    the bytes stay visible and establish nothing (unknown) — the hash attests the bytes, it cannot declare their meaning."""
+    return bool(plan is not None and plan.transport_complete and plan.transport_bounds is not None
+                and plan.transport_sections is not None)
+
+
+_CHECKER_HEADER = re.compile(r"probe-\d+|offline|git|litter")      # cria's own section vocabulary (git/litter: historical)
+
+# The script-side half of the declaration: append `<section id> <spool size>` to the worker's private side file. `wc -c` is
+# the size of everything printed so far (every earlier probe has exited and the spool is append-only), i.e. exactly where
+# the next header line will start. Failing quietly declares nothing, which leaves that header unrecognised (never guessed).
+SECTION_DECLARATION = ('__cria_declare(){ printf \'%s %s\\n\' "$1" "$(wc -c < "${CTX_GATE_SPOOL:-/dev/null}" 2>/dev/null | tr -d \' \')" '
+                       '>> "${CTX_GATE_SECTIONS:-/dev/null}" 2>/dev/null; }')
+
+
+def split_sections(text: str, header: "re.Pattern | None" = None,
+                   declared: "dict[str, int] | None" = None) -> dict[str, str]:
     """Marker-delimited output → {section_id: body}. Unknown text before the first
-    marker is ignored (harness banners etc.)."""
+    marker is ignored (harness banners etc.). ``header``: when given, a marker line whose id does not
+    fullmatch it is body text, not a header. ``declared``: when given (the producer's own section offsets), a marker line is
+    a header ONLY at the byte offset the script declared for its id — a header-shaped line anywhere else is output."""
     sections: dict[str, str] = {}
     current: str | None = None
     buf: list[str] = []
-    for line in (text or "").splitlines():
+    offset = 0
+    for line in (text or "").splitlines(keepends=True):
+        at, offset = offset, offset + len(line.encode("utf-8"))
+        line = line.rstrip("\r\n")
         stripped = line.strip()
-        if stripped.startswith(SECTION_PREFIX) and stripped.endswith(SECTION_SUFFIX):
+        if (stripped.startswith(SECTION_PREFIX) and stripped.endswith(SECTION_SUFFIX)
+                and (header is None or header.fullmatch(stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]))
+                and (declared is None or declared.get(stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]) == at)):
             if current is not None:
                 sections[current] = "\n".join(buf).strip("\r\n")
             current = stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]
@@ -1019,6 +1124,7 @@ def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
     message list says exactly which files moved; their findings keep the checker's line, unquoted."""
     calls: dict = {}
     changed = set()
+    landed_ids = denial.landed_call_ids(messages)     # the typed fact of each write's own program, never its wording
     for m in messages[start + 1:]:
         if not isinstance(m, dict):
             continue
@@ -1035,7 +1141,7 @@ def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
         if m.get("role") == "tool" or m.get("type") == "function_call_output":
             tid = m.get("tool_call_id") or m.get("call_id")
             c = m.get("content") if m.get("content") is not None else m.get("output")
-            if tid in calls and isinstance(c, str) and write_landed(c):
+            if tid in calls and isinstance(c, str) and tid in landed_ids:
                 changed.add(calls[tid])
     return frozenset(changed)
 
@@ -1354,6 +1460,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     not a gate result (untouched)."""
     if SECTION_PREFIX not in (raw or ""):
         return None
+    if not declared_transport(plan):
+        return None       # no declared boundary: old / unframed / unproven bytes stay visible and claim nothing
     # This mutable field belongs to THIS interpreted gate event, not to the last clean event that
     # happened to populate the same plan object.  Every non-gate caller leaves it alone; every real
     # gate first makes silence the current fact and only the clean offline branch below may set it.
@@ -1372,9 +1480,9 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     timed_out_output: list[str] = []
     timeout_notes: list[str] = []   # one per genuinely-timed-out (EXIT 124) section, ALWAYS populated
     completed_output: list[str] = []
-    # Historical transport replay can still contain the final survey. It is not
-    # part of the last cleanup/checker section (interpret_gate strips it too).
-    _sections = split_sections(wsview.strip_survey(raw)[0])
+    # The survey and cleanup report are the producer's own segments of the stream, declared by byte extent; nothing is
+    # searched for in checker output (interpret_gate reads the same split).
+    _sections, _survey = gate_sections(raw, plan)
     cleanup_note = cleanup_fact(_sections, plan)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
@@ -2296,6 +2404,8 @@ def _cleanup_record(sections: dict, plan: GatePlan | None = None) -> tuple[list[
     """Authenticate against the originating request, not a receipt's scope claim."""
     if plan is not None and plan.transport_required and not plan.transport_scope_known:
         return None
+    if plan is not None and plan.transport_complete and not declared_transport(plan):
+        return None            # a completed transport whose private segments were never declared: unknown, never found
     return gatecleanup.report(sections.get(LITTER_REMOVED_SECTION),
                               plan.workspace if plan and plan.transport_required else None)
 
@@ -2386,13 +2496,26 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
                       received=len(plan.transport_data), total=plan.transport_total)
         return GateOutcome(ran=False, transport_unknown=True)
-    if state == "complete":
-        result_text = transported_result(plan)
+    if state != "complete":
+        # "legacy": bytes that never arrived as a completed, verified transport (an old raw result, hand-made text). They
+        # declare no boundary, so they establish no section, no cleanup report and no survey: UNKNOWN, never a pass.
+        # (The HARNESS'S OWN WORDS for declining to run the gate claim nothing about a stream: they are still reported.)
+        refused = refusal_reason(result_text) if SECTION_PREFIX not in (result_text or "") else ""
+        if rlog is not None and not refused:
+            rlog.emit("gate.legacy_result_unknown", level="warn")
+        return GateOutcome(ran=False, transport_unknown=not refused, refused=refused)
+    if not declared_transport(plan):
+        # A completed, hash-verified transport whose worker declared no (or an invalid) extent / header-offset map: the bytes are
+        # attested but their MEANING is not. Nothing in them is a section, a cleanup report or a survey — UNKNOWN.
+        if rlog is not None:
+            rlog.emit("gate.undeclared_transport_unknown", level="warn", reason="extents or section offsets not declared")
+        return GateOutcome(ran=False, transport_unknown=True)
+    result_text = transported_result(plan)
     # The workspace survey rode home on this result (see plan_gate). Take it off first — it is
     # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
     # whichever section happened to be open when it started.
-    result_text, survey = wsview.strip_survey(result_text)
-    sections = split_sections(result_text)
+    sections, survey_text = gate_sections(result_text, plan)
+    survey = wsview.strip_survey(survey_text)[1]
     cleanup_record = _cleanup_record(sections, plan)
     scope_unknown = bool((cleanup_record is not None and cleanup_record[1])
                          or (plan.transport_required and cleanup_record is None))
@@ -2410,7 +2533,6 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         if not survey_applied and rlog is not None:
             rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
                       closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
-    sections = split_sections(result_text)
     participation_events = []
     # Read the harness's completed cleanup record, including when checks failed.
     # No cleanup is deferred to another gate or a coder tool.

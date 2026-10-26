@@ -6,15 +6,21 @@ from dataclasses import replace
 
 import pytest
 
-from cria import editrecovery, focustrim, research, shelltool
+from cria import bodykeys, denial, editrecovery, focustrim, research, shelltool
 from cria.assistruntime import AssistRuntime, bound
 
 
-def action(index, name, content, *, arguments=None):
+def action(index, name, content, *, arguments=None, outcome=None):
+    """``outcome`` is the PROVEN hint `represent_inbound` would attach (cria's edit program reported the edit
+    unapplied); the content's wording is never what proves it."""
+    tool = {"role": "tool", "tool_call_id": str(index), "content": content}
+    if outcome:
+        tool[bodykeys.RESULT_OUTCOME] = outcome
+    elif content == "Wrote a.py":
+        tool[bodykeys.RESULT_OUTCOME] = "landed"      # a confirmation cria composes only from a landed record
     return [{"role": "assistant", "tool_calls": [{"id": str(index), "type": "function",
              "function": {"name": name, "arguments": json.dumps(
-                 arguments if arguments is not None else {"path": f"source{index}.py"})}}]},
-            {"role": "tool", "tool_call_id": str(index), "content": content}]
+                 arguments if arguments is not None else {"path": f"source{index}.py"})}}]}, tool]
 
 
 def source_reads(name, *, arguments=None):
@@ -126,8 +132,8 @@ def test_real_later_success_still_supersedes_and_ack_path_words_are_not_errors(n
     assert out[:2] == new and report.squashed_runs == 1
     assert focustrim.focus(focustrim.FocusInput(old + new)).superseded_calls == 1
     assert any(focustrim.bodykeys.SUPERSEDED_WRITES in m for m in out)
-    assert not focustrim._is_failure("Wrote not found.py", name,
-                                    arguments={"path": "not found.py"})
+    # a CONFIRMED write (its own program's typed landed fact) whose path holds failure words is not a failure
+    assert not focustrim._is_failure("Wrote not found.py", name, arguments={"path": "not found.py"}, landed=True)
 
 
 @pytest.mark.parametrize("name", ["files.create_document", "workspace.edit_text", "files.read_for_edit"])
@@ -151,7 +157,8 @@ def test_real_edit_recovery_bytes_are_retained_but_never_credit_a_landed_edit(mo
                                        "current": current, "anchor": current}, prior)
         assert editrecovery.EDIT_MARK in result and current in result
         history += action(i, "edit_file", prefix + result, arguments={"path": f"source{i}.py",
-                          "old_string": f"missing anchor {i}", "new_string": f"changed {i}"})
+                          "old_string": f"missing anchor {i}", "new_string": f"changed {i}"},
+                          outcome=denial.UNAPPLIED)
     before = copy.deepcopy(history)
     out, report = focustrim.trim(history)
     assert out == before and history == before and not report.applied
@@ -169,7 +176,8 @@ def test_structured_edit_failure_provenance_preserves_report_and_excludes_mutati
         token = base64.b64encode(json.dumps(fact).encode()).decode()
         assert editrecovery.decode_report(token) == fact
         history += action(i, "edit_file", prefix + editrecovery.EDITFAIL + token,
-                          arguments={"path": fact["path"], "old_string": f"missing {i}", "new_string": "new"})
+                          arguments={"path": fact["path"], "old_string": f"missing {i}", "new_string": "new"},
+                          outcome=denial.UNAPPLIED)
     out, report = focustrim.trim(history)
     assert out == history and not report.applied
     assert focustrim._failed_write_ids(history) == set(map(str, range(6)))

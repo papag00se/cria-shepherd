@@ -6,6 +6,7 @@ never executable old guard decisions used as expected truth.
 """
 import base64
 import copy
+from collections import Counter
 from dataclasses import replace
 import hashlib
 import json
@@ -14,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from cria import loop, probegate, proberun, repositorychecks as checks, prompts
+from tests.gatefixture import bounds_field_for
 from cria import runnercontract, modulestate
 from cria.probeparse import ProbeResult, parse_output
 from cria.probediscovery import ProbeCandidate, ProbeKind, ProbeCost, Ecosystem
@@ -71,7 +73,8 @@ def marked_state(**kwargs):
     state = loop.GuardState(**kwargs)
     # Plan/session progress attributes also attach to the shared GuardState DTO.
     vars(state).update(action_seq=17,last_gate_seq=3,write_tracking=True,
-        write_call_ids=["known-write"],write_result_ids={"known-write"},refused_write_ids=set(),
+        write_call_ids=["known-write"],call_counts=Counter({"known-write":1}),   # one dispatch, observed once
+        write_result_ids={"known-write"},refused_write_ids=set(),
         gate_write_mark=0,gate_pending_write_ids={"known-write"},gate_sig="prior",
         stall_edit_marks=[0],last_gate_flag="prior")
     return state
@@ -268,6 +271,7 @@ def envelope(plan,fields):
 def page(plan,payload,start,end):
     return envelope(plan,{"path":base64.b64encode(f"/tmp/.cria-gate-{plan.transport_id}.spool".encode()).decode(),
         "offset":str(start),"total":str(len(payload)),"sha256":hashlib.sha256(payload).hexdigest(),
+        "bounds":bounds_field_for(payload.decode())[0].split("\t",1)[1],
         "data":base64.b64encode(payload[start:end]).decode()})
 
 
@@ -439,8 +443,10 @@ def test_actual_construction_and_transport_match_original_support():
     state.probe_call_id = "probe"
     raw = b"complete raw bytes, preserved verbatim"
     src = replace(src,body=body(page(plan,raw,0,8)))
+    declared = probegate.GatePlan("/workspace", transport_required=True, transport_id=plan.transport_id); probegate.ingest_transport(declared, page(declared,raw,0,8))
     expected_plan = replace(plan,helpers_ready=True,transport_path=f"/tmp/.cria-gate-{plan.transport_id}.spool",
-        transport_total=len(raw),transport_sha256=hashlib.sha256(raw).hexdigest(),transport_data=bytearray(b"complete"))
+        transport_total=len(raw),transport_sha256=hashlib.sha256(raw).hexdigest(),transport_data=bytearray(b"complete"),
+        transport_bounds=declared.transport_bounds, transport_sections=declared.transport_sections)
     rendered = []
     render = probegate.continue_transport_command
     def continuation(actual):

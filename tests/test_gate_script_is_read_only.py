@@ -18,6 +18,7 @@ import os
 import pytest
 
 from cria import probegate
+from tests.gatefixture import gate_page, completed
 from test_gate_cleanup_finishes_before_coder_resumes import allocated_resource, private_aux, finish_cleanup
 
 
@@ -87,7 +88,7 @@ def test_a_refused_gate_is_loud_not_silent():
 def test_an_ordinary_empty_result_is_not_called_a_refusal():
     """Silence over noise: a gate that simply returned nothing is not a policy rejection."""
     for text in ("", "   ", "Process exited with code 0"):
-        out = probegate.interpret_gate(probegate.GatePlan(workspace="/tmp/ws"), text)
+        out = probegate.interpret_gate(probegate.GatePlan(workspace="/tmp/ws"), gate_page(probegate.GatePlan(workspace="/tmp/ws"), text))
         assert out.ran is False
         assert out.refused == "", f"invented a refusal from {text!r}"
 
@@ -97,7 +98,7 @@ def test_a_gate_that_ran_and_failed_is_not_a_refusal(tmp_path):
     ws = _workspace(tmp_path, {"app.py": "x = 1\n"})
     plan = probegate.plan_gate(ws)
     body = f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\nboom: permission denied\nEXIT:1\n"
-    out = probegate.interpret_gate(plan, body)
+    out = probegate.interpret_gate(plan, gate_page(plan, body))
     assert out.ran is True
     assert out.refused == ""
 

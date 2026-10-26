@@ -9,6 +9,7 @@ import pathlib
 import unittest
 
 from cria import loop, participation, probediscovery, probegate, wsview
+from tests.gatefixture import gate_page, completed
 
 
 def candidate(ecosystem, command, kind=probediscovery.ProbeKind.Test, cwd="/workspace"):
@@ -219,7 +220,7 @@ class GateAndJudgeWiringTests(unittest.TestCase):
         plan = probegate.GatePlan(workspace="/workspace", candidates=[cand])
         tally = "Tests run: 2, Failures: 0, Errors: 0, Skipped: 0"
         raw = f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n{tally}\nEXIT:0\n"
-        outcome = probegate.interpret_gate(plan, raw)
+        outcome = probegate.interpret_gate(plan, gate_page(plan, raw))
         state = loop.GuardState(workspace_root="/workspace")
         loop.record_gate_state(state, outcome, "")
 
@@ -265,7 +266,7 @@ class GateAndJudgeWiringTests(unittest.TestCase):
         cand = candidate(probediscovery.Ecosystem.Python, "python3 -m pytest -q")
         plan = probegate.GatePlan(workspace="/workspace", candidates=[cand])
         raw = f"{probegate.SECTION_PREFIX}probe-other{probegate.SECTION_SUFFIX}\nEXIT:0\n"
-        outcome = probegate.interpret_gate(plan, raw)
+        outcome = probegate.interpret_gate(plan, gate_page(plan, raw))
         self.assertIs(outcome.participation.support("test"), participation.Support.UNKNOWN)
         self.assertIn('"test": "unknown"', participation.render_for_judge(outcome.participation))
 

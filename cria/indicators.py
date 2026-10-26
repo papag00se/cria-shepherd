@@ -60,13 +60,17 @@ def strip_prose_dropped_marker(messages: list[dict]) -> list[dict]:
     """Unconditional last-resort removal of `PROSE_DROPPED_MARKER` from every message's content —
     string or list-shaped (a Responses-API text part) — regardless of harness, role, or engagement
     level. Returns the SAME list (no copy) when nothing changed, so a caller can cheaply tell
-    whether to write the result back."""
+    whether to write the result back.
+
+    A TOOL RESULT IS NEVER TOUCHED. Its content is a tool's own payload — a file's bytes, a fetched page, a command's
+    output — and may quote the marker; cria never wrote a byte of it, so there is nothing of cria's to take back out.
+    (Every other role is stripped as before: cria's own notes ride in assistant/user text.)"""
     if not messages:
         return messages
     changed = False
     out: list[dict] = []
     for m in messages:
-        if not isinstance(m, dict):
+        if not isinstance(m, dict) or m.get("role") == "tool":
             out.append(m)
             continue
         content = m.get("content")
@@ -125,10 +129,15 @@ def metrics_line(deltas: int, tok_per_s: float) -> str:
 
 def strip_history(messages: list[dict]) -> tuple[list[dict], int]:
     """Remove cria's own `MARKER` lines from message content, so the model never
-    re-reads them. Returns (clean messages, lines stripped)."""
+    re-reads them. Returns (clean messages, lines stripped). A TOOL RESULT is never stripped: it is a tool's own
+    payload (a file, a fetched page, command output) and cria wrote none of it — a quoted marker line or fence pair there
+    is data (see `strip_prose_dropped_marker`)."""
     out: list[dict] = []
     stripped = 0
     for m in messages:
+        if m.get("role") == "tool":
+            out.append(m)
+            continue
         content = m.get("content")
         if isinstance(content, str) and MARKER in content:
             cleaned, n = _strip_marker_lines(content)

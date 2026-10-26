@@ -178,10 +178,11 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
         done it first — the composer is the ONE place, so it can't assume its input is already
         clean."""
         from cria import probegate, selfcompact
+        from tests.gatefixture import gate_page
         raw = (f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n"
                "x.py:5: undefined name 'foo'\nEXIT:1\n")
         out = selfcompact.compaction_request([{"role": "user", "content": "go"},
-                                               {"role": "tool", "content": raw}])
+                                               {"role": "tool", "content": gate_page(probegate.GatePlan(''), raw)}])
         self.assertNotIn(probegate.SECTION_PREFIX, out, "raw gate plumbing must not reach the model")
         self.assertIn("undefined name 'foo'", out, "the real finding must survive the cleaning")
 
@@ -199,10 +200,10 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
             {"role": "user", "content": "write app.py"},
             {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": "app.py", "content": old_body})}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": confirm("app.py")},
+            {"role": "tool", "tool_call_id": "c1", "content": confirm("app.py"), "cria_result_outcome": "landed"},
             {"role": "assistant", "tool_calls": [{"id": "c2", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": "app.py", "content": new_body})}}]},
-            {"role": "tool", "tool_call_id": "c2", "content": confirm("app.py")},
+            {"role": "tool", "tool_call_id": "c2", "content": confirm("app.py"), "cria_result_outcome": "landed"},
         ]
         out = selfcompact.compaction_request(msgs)
         self.assertNotIn(old_body, out, "the superseded body must not reach the model verbatim")

@@ -137,7 +137,8 @@ def test_actual_focus_producer_binding_survives_disabled_production_and_refit(mo
         body['messages'] += [{'role': 'assistant', 'content': None, 'tool_calls': [
             {'id': call_id, 'type': 'function', 'function': {'name': 'write_file',
                 'arguments': json.dumps({'path': 'notes.txt', 'content': text})}}]},
-            {'role': 'tool', 'tool_call_id': call_id, 'content': 'Wrote notes.txt'}]
+            {'role': 'tool', 'tool_call_id': call_id, 'content': 'Wrote notes.txt',
+             'cria_result_outcome': 'landed'}]
     settlements, frames = [], []
     def settle(messages):
         settlements.append(messages)

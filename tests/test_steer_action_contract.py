@@ -12,6 +12,7 @@ import re
 import unittest
 
 from cria import loop, probegate, prompts
+from tests.gatefixture import gate_page, completed
 
 
 class _Rlog:
@@ -101,7 +102,7 @@ class GoCalls0075And0076ReplayTests(unittest.TestCase):
                f"{GO_FINDING}\nEXIT:1\n"
                f"{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}\nabc\n")
         framed = loop._frame_for_item(
-            [{"role": "tool", "tool_call_id": "gate-1", "content": raw}],
+            [{"role": "tool", "tool_call_id": "gate-1", "content": gate_page(probegate.GatePlan(''), raw)}],
             "", "", 1, 1, synthetic=True, gate_plan=None)
         checks = [m["content"] for m in framed
                   if isinstance(m.get("content"), str)

@@ -25,6 +25,7 @@ import tempfile
 import unittest
 
 from cria import proberun, loop as loopmod, prompts, stepreview
+from tests.gatefixture import gate_page, completed
 from cria.loop import Loop
 from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
 
@@ -210,7 +211,7 @@ class BlockFindingsSplitTests(unittest.TestCase):
     def _report(self, probe_body):
         from cria import probegate
         gate = probegate.plan_gate(_ws())
-        return probegate.interpret_gate(gate, _gate(probe_body)).report
+        return probegate.interpret_gate(gate, gate_page(gate, _gate(probe_body))).report
 
     def test_the_nudge_is_the_preamble_plus_the_findings(self):
         report = self._report(RED_TESTS)

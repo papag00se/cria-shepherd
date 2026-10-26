@@ -85,7 +85,8 @@ def test_historical_modified_paths_do_not_certify_current_existence(tmp_path, mo
         {'role': 'assistant', 'tool_calls': [{'id': 'historical-write', 'type': 'function',
          'function': {'name': 'write_file', 'arguments': json.dumps(
              {'path': 'historical.txt', 'content': 'recorded write\n'})}}]},
-        {'role': 'tool', 'tool_call_id': 'historical-write', 'content': 'Wrote historical.txt'},
+        {'role': 'tool', 'tool_call_id': 'historical-write', 'content': 'Wrote historical.txt',
+         'cria_result_outcome': 'landed'},
         {'role': 'assistant', 'content': 'historical discussion\n' * 1800}]
     if state == 'changed':
         source.write_text('independent replacement\n')

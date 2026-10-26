@@ -3,20 +3,22 @@ import json
 
 import pytest
 
-from cria import denial, loop, proberun
+from cria import bodykeys, denial, loop, proberun
 from cria.probeparse import Finding, ProbeResult
 from test_checker_text_is_not_probe_ownership import pair
 from test_only_a_newer_run_of_the_same_check_clears_it import CHECKS, GREEN, gate
 from test_loop import _Rlog
 
 
-def native_call(name, arguments, result="landed", call_id="native-mutation"):
+def native_call(name, arguments, result="landed", call_id="native-mutation", outcome=None):
+    """``outcome`` is the PROVEN hint `represent_inbound` attaches to cria's own refusal; wording proves nothing."""
     messages = [
         {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function",
          "function": {"name": name, "arguments": json.dumps(arguments)}}]},
     ]
     if result is not None:
-        messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+        messages.append({"role": "tool", "tool_call_id": call_id, "content": result,
+                         **({bodykeys.RESULT_OUTCOME: outcome} if outcome else {})})
     return messages
 
 
@@ -70,7 +72,7 @@ def test_a_late_mutation_result_does_not_leave_the_overlapping_check_green(name,
 @pytest.mark.parametrize("name,args", MUTATIONS)
 def test_a_producer_refused_mutation_does_not_invalidate_the_green(name, args):
     assert_supersession(pair("pytest -q", GREEN)
-                        + native_call(name, args, denial.mark("This call did not run")), True)
+                        + native_call(name, args, denial.mark("This call did not run"), outcome=denial.REFUSED), True)
 
 
 @pytest.mark.parametrize("name,args", MUTATIONS)

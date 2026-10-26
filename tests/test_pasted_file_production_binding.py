@@ -317,7 +317,7 @@ def test_public_pending_nudge_is_retryable_without_credit_or_readmission(product
 @pytest.mark.parametrize('kind,expected', [('denied', (False, False)), ('read-instead', (False, False)),
     ('wrote', (True, None)), ('opaque', (None, None)), ('exit-zero', (None, None))])
 def test_public_settlement_uses_only_correlated_authoritative_result_facts(production, synthetic, kind, expected):
-    from cria import denial, toolwire
+    from cria import bodykeys, denial
     definition, seen = tracking()
     driver, state, body, _, _ = rig(production, runtime(definition, synthetic=synthetic), synthetic=synthetic)
     out = driver.drive(body, SESSION, _Classification(), _Rlog())
@@ -326,10 +326,13 @@ def test_public_settlement_uses_only_correlated_authoritative_result_facts(produ
     view = seen['execute'][0][0][1]
     raw = {'denied': denial.mark('the proposed mutation did not run'),
            'read-instead': denial.READ_INSTEAD_MARKER + '\noriginal file bytes',
-           'wrote': toolwire._WROTE, 'opaque': 'ordinary returned content',
+           'wrote': 'Wrote notes.txt', 'opaque': 'ordinary returned content',
            'exit-zero': 'Process exited with code 0'}[kind]
+    # cria's own refusal branches (a denial, a read-instead answer) are PROVEN by the producer; the others are not
+    proven = ({bodykeys.RESULT_OUTCOME: denial.REFUSED} if kind in ('denied', 'read-instead')
+              else {bodykeys.RESULT_OUTCOME: denial.LANDED} if kind == 'wrote' else {})   # the write program's own typed fact
     body['messages'] += [deepcopy(final['choices'][0]['message']),
-        {'role': 'tool', 'tool_call_id': delivery.call_ids[0], 'content': raw}]
+        {'role': 'tool', 'tool_call_id': delivery.call_ids[0], 'content': raw, **proven}]
     driver.drive(body, SESSION, _Classification(), _Rlog())
     assert len(seen['settle']) == 1
     args, facts, result = seen['settle'][0]

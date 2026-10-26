@@ -12,7 +12,7 @@ Incidents, phi4 / feed-pipeline-java A2 (capture 20261010T230133-01a1298d-…):
 import json
 from pathlib import Path
 
-from cria import loop, modelview, prompts, upstream
+from cria import bodykeys, loop, modelview, prompts, upstream
 
 FIX = Path(__file__).parent / "fixtures" / "phi4_java_a2"
 REFERENCE = prompts.load('continuation_results_reference').strip()
@@ -100,10 +100,11 @@ class _Sess:
                   "pom.xml": (980, "28 lines")}
 
 
-def _read_pair(path, text):
+def _read_pair(path, text, outcome=None):
     return [{"role": "assistant", "tool_calls": [{"id": "r1", "type": "function", "function": {
                 "name": "read_file", "arguments": json.dumps({"path": path})}}]},
-            {"role": "tool", "tool_call_id": "r1", "content": text}]
+            {"role": "tool", "tool_call_id": "r1", "content": text,
+             **({bodykeys.RESULT_OUTCOME: outcome} if outcome else {})}]
 
 
 def test_a_file_read_earlier_without_a_supported_read_in_the_window_is_unknown():
@@ -125,5 +126,5 @@ def test_a_refused_read_does_not_count_as_text_in_the_conversation():
     from cria import denial
     refused = "⟦ctx:denied⟧ reading that whole is not allowed"
     assert denial.is_denied(refused)
-    out = loop._read_ground_truth(_Sess(), _read_pair("pom.xml", refused))
+    out = loop._read_ground_truth(_Sess(), _read_pair("pom.xml", refused, denial.REFUSED))
     assert "pom.xml (28 lines) — availability of its read text is not established here" in out

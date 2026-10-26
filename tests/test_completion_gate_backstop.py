@@ -66,6 +66,18 @@ def _body():
             "tools": [_SHELL], "stream": True}
 
 
+def _delivered(probe, raw):
+    """The page the harness delivers for THIS probe call: a verified transport on the call's own transport id, carrying the worker's
+    declared extents (`tests.gatefixture.gate_page`, the fixture producer of that stream) — a bare raw string is no transport."""
+    import json as _json
+    import re as _re
+    from types import SimpleNamespace
+    from tests.gatefixture import gate_page
+    args = probe["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+    m = _re.search(r"\.cria-gate-([0-9a-f]{16,})\.spool", _json.dumps(args) if not isinstance(args, str) else args)
+    return gate_page(SimpleNamespace(transport_id=m.group(1)), raw) if m else raw
+
+
 def _body_with_probe(call_id, output):
     b = _body()
     b["messages"] = b["messages"] + [{"role": "tool", "tool_call_id": call_id, "content": output}]
@@ -111,7 +123,7 @@ class CompletionGateBackstopTests(unittest.TestCase):
             call_id = probe["choices"][0]["message"]["tool_calls"][0]["id"]
             red = ("___CRIA_GATE_probe-0___\napp.py:3: undefined name 'x'\nEXIT:1\n"
                    "___CRIA_GATE_git___\nabc\n")
-            out = loop._work(sess, "k", _body_with_probe(call_id, red), rlog)
+            out = loop._work(sess, "k", _body_with_probe(call_id, _delivered(probe, red)), rlog)
             self.assertNotIn("loop.done", rlog.kinds())
             self.assertTrue(out["choices"][0]["message"].get("tool_calls"))  # coder re-driven to fix
             self.assertEqual(sess.plan.status, "in_progress")
@@ -129,7 +141,7 @@ class CompletionGateBackstopTests(unittest.TestCase):
         probe = loop._work(sess, "k", _body(), rlog)
         call_id = probe["choices"][0]["message"]["tool_calls"][0]["id"]
         clean = "___CRIA_GATE_probe-0___\nEXIT:0"
-        out = loop._work(sess, "k", _body_with_probe(call_id, clean), rlog)
+        out = loop._work(sess, "k", _body_with_probe(call_id, _delivered(probe, clean)), rlog)
         self.assertIn("loop.done", rlog.kinds())
         self.assertIn("plan complete", out["choices"][0]["message"]["content"])
 

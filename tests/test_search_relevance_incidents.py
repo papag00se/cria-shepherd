@@ -53,7 +53,7 @@ def test_registry_page_success_never_erases_real_load_refusal_or_fetch_facts(mon
         events.append(event(refusalledger.SUCCEEDED, 2))
     ledger = refusalledger.RefusalLedger(events)
     state.refusal_events = ledger
-    facts = {'https://rubygems.org/gems/eu_countries': (200, ''), 'https://github.com/oklog/decimal': (404, '')}
+    facts = {'https://rubygems.org/gems/eu_countries': (200, (), (), (), ''), 'https://github.com/oklog/decimal': (404, (), (), (), '')}
     state.fetched_pages = facts.copy()
     driver.drive(body, SESSION, None, _Rlog())
     assert questions == []

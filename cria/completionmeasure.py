@@ -46,8 +46,10 @@ def written_file_facts(messages: list[dict], services: MeasurementServices) -> l
         if tid in pending:
             result = message.get("content") if message.get("content") is not None else message.get("output")
             result = result if isinstance(result, str) else ""
-            if tid in failed or denial.is_denied(result):
+            if tid in failed or denial.unlanded(message):
                 continue
+            if pending[tid][0] in services.write_tools and not denial.landed(message):
+                continue          # a write/edit tool's bytes are a fact only when its own program said it landed
             name, args = pending[tid]
             whole = None
             if name in services.whole_write_tools:

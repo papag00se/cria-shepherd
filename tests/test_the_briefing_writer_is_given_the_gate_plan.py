@@ -46,12 +46,17 @@ def gate_blob(body: str, exit_code: int) -> str:
             + body + f"\nEXIT:{exit_code}\n")
 
 
-def transcript(raw: str) -> list[dict]:
+def transcript(raw: str, plan=None) -> list[dict]:
+    """A history whose gate result arrived as the harness delivers it: a verified page on ``plan``'s own transport."""
+    from tests.gatefixture import completed, gate_page
+    plan = plan if plan is not None else probegate.GatePlan('')
+    completed(plan, raw)                      # the transport arrived (the plan the loop holds is complete when it is read)
+    page = gate_page(plan, raw)
     return [{"role": "user", "content": "Build the cart library."},
             {"role": "assistant", "content": None,
              "tool_calls": [{"id": "c1", "type": "function",
                              "function": {"name": "exec_command", "arguments": '{"cmd": "gate"}'}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": raw}]
+            {"role": "tool", "tool_call_id": "c1", "content": page}]
 
 
 WARNINGS_ONLY = ("warning: unused variable `n`\n"
@@ -101,7 +106,7 @@ class TheRetryIsGroundedLikeTheFirstPassTests(unittest.TestCase):
             sess = SimpleNamespace(gate_plan=plan, last_gate_flag="")
             _Srv.loop = SimpleNamespace(_store=SimpleNamespace(get=lambda k: sess))
 
-            msgs = transcript(gate_blob(WARNINGS_ONLY, 1))
+            msgs = transcript(gate_blob(WARNINGS_ONLY, 1), plan)
             msgs[0] = {**msgs[0], "content": msgs[0]["content"]
                       + f"\n<environment_context><cwd>{tmp}</cwd></environment_context>"}
             comp = {"choices": [{"message": {"role": "assistant", "content": ""}}]}  # empty → retry
@@ -205,9 +210,9 @@ class WhatThePlanWouldChangeIfItArrivedTests(unittest.TestCase):
     """Pinned so the difference is a measured fact rather than a claim in a commit message."""
 
     def setUp(self):
-        self.msgs = transcript(gate_blob(WARNINGS_ONLY, 1))
         self.plan = probegate.GatePlan(workspace=tempfile.gettempdir(),
                                        candidates=[cand(ProbeKind.BuildCheck)])
+        self.msgs = transcript(gate_blob(WARNINGS_ONLY, 1), self.plan)
 
     def test_with_the_plan_a_deny_warnings_build_reads_as_failed(self):
         out = selfcompact.compaction_request(self.msgs, "", self.plan)
@@ -215,7 +220,7 @@ class WhatThePlanWouldChangeIfItArrivedTests(unittest.TestCase):
         self.assertNotIn("no error-class problems", out)
 
     def test_without_it_the_same_bytes_remain_advisory_without_a_kind(self):
-        out = selfcompact.compaction_request(self.msgs)
+        out = selfcompact.compaction_request(transcript(gate_blob(WARNINGS_ONLY, 1)))   # a gate no plan registered a kind for
         self.assertIn("advisory line(s)", out)
         self.assertNotIn("FAILED", out)
 
@@ -224,16 +229,16 @@ class WhatThePlanWouldChangeIfItArrivedTests(unittest.TestCase):
         lint exit on advisory-shaped output must still not send the coder chasing style."""
         lint = probegate.GatePlan(workspace=tempfile.gettempdir(),
                                   candidates=[cand(ProbeKind.Lint)])
-        out = selfcompact.compaction_request(self.msgs, "", lint)
+        out = selfcompact.compaction_request(transcript(gate_blob(WARNINGS_ONLY, 1), lint), "", lint)
         self.assertIn("advisory line(s)", out)
         self.assertNotIn("FAILED", out)
 
     def test_the_untested_qualifier_travels_with_it(self):
         """"the checks reported no problems" is half a sentence when no test could be found."""
-        msgs = transcript(gate_blob("all good", 0))
         plan = probegate.GatePlan(workspace=tempfile.gettempdir(),
                                   candidates=[cand(ProbeKind.Lint)],
                                   untested=["no file matching *_test.go exists"])
+        msgs = transcript(gate_blob("all good", 0), plan)
         self.assertIn("*_test.go", selfcompact.compaction_request(msgs, "", plan))
         self.assertNotIn("*_test.go", selfcompact.compaction_request(msgs))
 

@@ -189,26 +189,41 @@ def outer_shell(source: str, substitutions: list[Substitution]) -> str:
     return _project(source, ((s.start, s.end) for s in substitutions), opaque=True)
 
 
+# Bash's metacharacters: a `#` that follows one of these, or opens a script, begins a COMMENT that runs to
+# the next newline and in which quotes, parentheses and backticks mean nothing. Anywhere else in a word
+# (`a#b`, `$#`, `${#x}`, `\#`, after a quote) it is data. The rule `dirguard._join_continuations` uses;
+# `layout` above keeps its own narrower set.
+_COMMENT_LEAD = " \t\n;&|()<>"
+
+
 def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution], bool]:
     """Commands expanded in an UNQUOTED heredoc, even inside body quote marks.
 
     Escaped dollars/backticks are data; ordinary body quotes do not suppress
     expansions. Unknown/unbalanced substitutions are reported, never erased.
+
+    With ``shell`` a real comment (see ``_COMMENT_LEAD``) is skipped to its newline wherever a script is
+    being read — the text itself and the body of every `$( … )` — so an apostrophe in a comment
+    (`# it's`) opens no quote and a `)` in one closes nothing.
     """
-    commands, i, double_quote = [], 0, False
+    commands, i, double_quote, at_start = [], 0, False, True
     while i < len(source):
         if shell and source[i] == "'" and not double_quote:
             end = source.find("'", i + 1)
             if end < 0:
                 return commands, True
-            i = end + 1
+            i, at_start = end + 1, False
             continue
         if shell and source[i] == '"':
             double_quote = not double_quote
-            i += 1
+            i, at_start = i + 1, False
+            continue
+        if shell and source[i] == '#' and at_start and not double_quote:
+            end = source.find('\n', i)
+            i = len(source) if end < 0 else end
             continue
         if source[i] == '\\':
-            i += 2
+            i, at_start = i + 2, False
             continue
         if source[i] == '`':
             j = i + 1
@@ -216,28 +231,64 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution],
                 j += 2 if source[j] == '\\' else 1
             if j >= len(source):
                 return commands, True
-            commands.append(Substitution(i, j + 1, (i + 1, j))); i = j + 1
+            commands.append(Substitution(i, j + 1, (i + 1, j))); i, at_start = j + 1, False
             continue
         if source.startswith('$(', i) and not source.startswith('$((', i):
-            j, depth, quote = i + 2, 1, ''
-            while j < len(source) and depth:
+            # The body is a script; a `$(` inside it (even inside double quotes) opens a script of its own
+            # whose quotes are its own, so each level keeps its own quote and parenthesis depth.
+            j, quote, body_start = i + 2, '', True
+            levels = [[1, '']]                      # [open parentheses, quote of the text AROUND this level]
+            while j < len(source) and levels:
                 c = source[j]
                 if c == '\\' and quote != "'":
-                    j += 2
+                    j, body_start = j + 2, False
                     continue
                 if quote:
                     if c == quote:
                         quote = ''
+                    elif quote == '"' and c == '$' and source.startswith('(', j + 1) and not source.startswith('((', j + 1):
+                        levels.append([1, quote])
+                        quote, body_start, j = '', True, j + 2
+                        continue
+                    elif quote == '"' and c == '`':
+                        k = j + 1
+                        while k < len(source) and source[k] != '`':
+                            k += 2 if source[k] == '\\' else 1
+                        j = k
+                    body_start = False
                 elif c in "\"'":
-                    quote = c
+                    quote, body_start = c, False
+                elif shell and c == '#' and body_start:
+                    end = source.find('\n', j)
+                    j = len(source) if end < 0 else end
+                    continue
+                elif c == '`':
+                    k = j + 1
+                    while k < len(source) and source[k] != '`':
+                        k += 2 if source[k] == '\\' else 1
+                    j, body_start = k, False
+                elif c == '$' and source.startswith('(', j + 1) and not source.startswith('((', j + 1):
+                    levels.append([1, quote])
+                    quote, body_start, j = '', True, j + 2
+                    continue
                 elif c == '(':
-                    depth += 1
+                    levels[-1][0] += 1
+                    body_start = True
                 elif c == ')':
-                    depth -= 1
+                    levels[-1][0] -= 1
+                    body_start = True
+                    if levels[-1][0] == 0:
+                        quote = levels.pop()[1]
+                        if not levels:
+                            j += 1
+                            break
+                else:
+                    body_start = c in _COMMENT_LEAD
                 j += 1
-            if depth:
+            if levels:
                 return commands, True
-            commands.append(Substitution(i, j, (i + 2, j - 1))); i = j
+            commands.append(Substitution(i, j, (i + 2, j - 1))); i, at_start = j, False
             continue
+        at_start = source[i] in _COMMENT_LEAD
         i += 1
     return commands, False

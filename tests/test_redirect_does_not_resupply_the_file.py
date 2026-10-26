@@ -12,6 +12,7 @@ was bounded for the record and unbounded for the model.
 """
 import unittest
 
+from cria import bodykeys, denial
 from cria import loop, prompts
 
 
@@ -28,7 +29,7 @@ class RepeatActionIsBoundedTests(unittest.TestCase):
             {"role": "assistant", "tool_calls": [
                 {"id": "c1", "type": "function", "function": {"name": "write_file",
                  "arguments": '{"path": "handle_resolver.py", "content": "%s"}' % body}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": denial.mark("outside the workspace")},
+            {"role": "tool", "tool_call_id": "c1", "content": denial.mark("outside the workspace"), bodykeys.RESULT_OUTCOME: denial.REFUSED},
         ]
         n, last = loop._refusals_in_window(messages)
         self.assertEqual(n, 1)

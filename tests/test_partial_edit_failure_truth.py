@@ -89,9 +89,9 @@ os.replace=_uncertain_replace
 
 def test_partial_failure_does_not_claim_that_the_edit_never_ran(failure):
     assert not denial.is_denied(failure.native)
-    assert writeproxy.EDIT_MUTATION_UNKNOWN in failure.native
+    assert '"k":"uncertain"' in failure.native            # the program's own typed record: the target MAY have changed
     assert 'Nothing was changed' not in failure.native
-    assert not writeproxy._failed_edit_ids(failure.history)
+    assert not denial.unlanded_call_ids(failure.represented)
 
 
 def test_partial_failure_invalidates_target_and_unresolved_alias_facts(failure):

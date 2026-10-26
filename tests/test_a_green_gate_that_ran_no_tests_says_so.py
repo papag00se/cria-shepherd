@@ -30,6 +30,7 @@ import tempfile
 import unittest
 
 from cria import probediscovery, probegate
+from tests.gatefixture import gate_page, completed
 
 
 class _Project:
@@ -110,7 +111,7 @@ class ItReachesTheCoderTests(unittest.TestCase):
                                        may_hang=False, may_need_services=False, reason="t")],
             untested=["Test files for jest/vitest are present, but no command to run them was "
                       "found in this project — nothing here has run them."])
-        out = probegate.clean_gate_output("___CRIA_GATE_probe-0___\nclean\nEXIT:0\n", plan)
+        out = probegate.clean_gate_output("___CRIA_GATE_probe-0___\nclean\nEXIT:0\n", completed(plan, "___CRIA_GATE_probe-0___\nclean\nEXIT:0\n"))
         self.assertIn("exit 0\nclean", out)
         self.assertIn("no command to run them", out)
 

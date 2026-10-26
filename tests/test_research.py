@@ -27,12 +27,14 @@ class ReadingBackYourOwnWritingIsNotResearchTests(unittest.TestCase):
                                 "function": {"name": name,
                                              "arguments": '{"path": "%s"}' % path}}]}
 
-    def result(self, tid, body):
-        return {"role": "tool", "tool_call_id": tid, "content": body}
+    def result(self, tid, body, outcome=None):
+        from cria import bodykeys
+        return {"role": "tool", "tool_call_id": tid, "content": body,
+                **({bodykeys.RESULT_OUTCOME: outcome} if outcome else {})}
 
     def test_a_file_the_coder_wrote_does_not_count(self):
         from cria.research import files_read
-        msgs = [self.call("write_file", "tests/mine.rs", "w1"), self.result("w1", "Wrote it"),
+        msgs = [self.call("write_file", "tests/mine.rs", "w1"), self.result("w1", "Wrote it", "landed"),
                 self.call("read_file", "tests/mine.rs", "r1"), self.result("r1", "fn t() {}")]
         self.assertEqual(files_read(msgs), [])
 
@@ -44,14 +46,14 @@ class ReadingBackYourOwnWritingIsNotResearchTests(unittest.TestCase):
 
     def test_both_at_once(self):
         from cria.research import files_read
-        msgs = [self.call("write_file", "tests/mine.rs", "w1"), self.result("w1", "Wrote it"),
+        msgs = [self.call("write_file", "tests/mine.rs", "w1"), self.result("w1", "Wrote it", "landed"),
                 self.call("read_file", "tests/mine.rs", "r1"), self.result("r1", "fn t() {}"),
                 self.call("read_file", "Cargo.toml", "r2"), self.result("r2", "[package]")]
         self.assertEqual([p for p, _ in files_read(msgs)], ["Cargo.toml"])
 
     def test_an_edit_counts_as_writing_it(self):
         from cria.research import files_read
-        msgs = [self.call("edit_file", "src/main.rs", "e1"), self.result("e1", "Edited"),
+        msgs = [self.call("edit_file", "src/main.rs", "e1"), self.result("e1", "Edited", "landed"),
                 self.call("read_file", "src/main.rs", "r1"), self.result("r1", "fn main() {}")]
         self.assertEqual(files_read(msgs), [])
 
@@ -60,5 +62,5 @@ class ReadingBackYourOwnWritingIsNotResearchTests(unittest.TestCase):
         from cria.research import files_read
         from cria import denial
         msgs = [self.call("read_file", "big.json", "r1"),
-                self.result("r1", denial.mark("too large to return"))]
+                self.result("r1", denial.mark("too large to return"), denial.REFUSED)]
         self.assertEqual(files_read(msgs), [])

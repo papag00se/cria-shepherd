@@ -56,6 +56,16 @@ def _paired_public_history(lowered_completion, payload, *, call_id='research-cal
             {'role': 'tool', 'tool_call_id': call_id, 'content': payload}]
 
 
+def _record_split(raw):
+    """``(first record as a dict, the rest of the program's output)`` — the stored fact is a TYPED field of that record."""
+    first, _, rest = raw.partition('\n')
+    return json.loads(first), rest
+
+
+def _with_record(record, rest):
+    return json.dumps(record, separators=(',', ':')) + '\n' + rest
+
+
 def _run_actual_emitted_search_parser(command, provider_response, monkeypatch, files, *,
                                       close_error=False, output_sink=None):
     """Run ONLY the actual public lowered parser, in-process with fake IO.
@@ -334,7 +344,7 @@ def test_public_actual_parser_canonical_program_inclusive_utf8_literal_boundary(
     _, command, _ = _lower_search(owner, _externalization_runtime())
     files = {}
     raw = _run_actual_emitted_search_parser(command, prepared_public_search['provider_response'], monkeypatch, files)
-    assert raw.split('⟦ctx:stored⟧', 1)[0] == (pointer if over_by else brief) + '\n'
+    assert _record_split(raw)[1] == (pointer if over_by else brief) + '\n'
     assert files == {'./tmp/reference/search-q-c3156e00.txt':
                      '1 results:\nTitle\n  https://example.test\n  α tail'}
 
@@ -372,9 +382,9 @@ def test_public_search_joint_real_writer_and_retention_commit_once(
     lowered, command, offer = _session_lower_search(owner, runtime)
     files = {}
     raw = _run_actual_emitted_search_parser(command, prepared_public_search['provider_response'], monkeypatch, files)
-    stored_lines = [line for line in raw.splitlines() if line.startswith('⟦ctx:stored⟧')]
-    assert len(stored_lines) == 1
-    fact = json.loads(stored_lines[0][len('⟦ctx:stored⟧'):])
+    record, _ = _record_split(raw)
+    assert raw.count('"st":') == 1                      # ONE stored fact, a typed field of the program's first record
+    fact = record['rep']['st']
     expected = '1 results:\nTitle\n  https://example.test\n  α tail'
     assert files == {offer.delivery.result.spill.target: expected}
     assert fact == {'operation': offer.operation, 'target': offer.delivery.result.spill.target,
@@ -393,7 +403,7 @@ def test_public_search_joint_real_writer_and_retention_commit_once(
     assert research_ledgers.spilled_search_files('sid:externalization-before') == {
         offer.delivery.result.spill.target: 'Q'}
     represented = writeproxy.represent_inbound(messages, sess_key='sid:externalization-before')
-    assert '⟦ctx:stored⟧' not in str(represented)
+    assert '"st":' not in str(represented)
 
 
 @pytest.mark.parametrize('defect', ['missing', 'cut', 'malformed', 'wrong-operation',
@@ -408,22 +418,26 @@ def test_public_search_invalid_raw_fact_or_pair_stays_pending_for_original(
     writeproxy.retain_externalizations(owner, lowered)
     messages = _paired_public_history(lowered, raw)
     bad = deepcopy(messages)
-    marker = '⟦ctx:stored⟧'
+    record, rest = _record_split(raw)
     if defect in ('missing', 'cut', 'malformed'):
-        bad[-1]['content'] = raw.split(marker)[0] + (
-            '' if defect == 'missing' else marker + ('{"operation":' if defect == 'cut' else 'not json'))
+        if defect == 'missing':
+            record.pop('rep')                                   # the producer declared no stored fact
+            bad[-1]['content'] = _with_record(record, rest)
+        elif defect == 'cut':
+            bad[-1]['content'] = raw[:len(raw.partition('\n')[0]) // 2]
+        else:
+            record['rep']['st'] = 'not a fact'
+            bad[-1]['content'] = _with_record(record, rest)
     elif defect in ('wrong-call-id', 'wrong-arguments'):
         if defect == 'wrong-call-id':
             bad[-1]['tool_call_id'] = 'foreign-call'
         else:
             bad[0]['tool_calls'][0]['function']['arguments'] += ' '
     else:
-        line = next(line for line in raw.splitlines() if line.startswith(marker))
-        fact = json.loads(line[len(marker):])
         key, value = {'wrong-operation': ('operation', 'foreign'), 'wrong-target': ('target', 'foreign'),
             'invalid-count': ('byte_count', True), 'invalid-digest': ('sha256', 'a' * 63)}[defect]
-        fact[key] = value
-        bad[-1]['content'] = raw.replace(line, marker + json.dumps(fact))
+        record['rep']['st'][key] = value
+        bad[-1]['content'] = _with_record(record, rest)
     writeproxy.observe_externalization_results(owner, bad)
     assert _ledger(owner, research_ledgers) == ''
     writeproxy.observe_externalization_results(owner, messages)
@@ -467,7 +481,7 @@ def test_public_search_writer_close_failure_cannot_emit_storage_fact(
     with pytest.raises(OSError, match='writer close failed'):
         _run_actual_emitted_search_parser(command, prepared_public_search['provider_response'],
                                           monkeypatch, {}, close_error=True, output_sink=output)
-    assert '⟦ctx:stored⟧' not in output.getvalue()
+    assert '"st":' not in output.getvalue()
     writeproxy.retain_externalizations(owner, lowered)
     writeproxy.observe_externalization_results(owner, _paired_public_history(lowered, 'no storage fact'))
     assert _ledger(owner, research_ledgers) == ''
@@ -607,7 +621,7 @@ def test_real_server_retention_routes_and_raw_ingest_before_representation(
     original_representation = server_module.represent_inbound
     observed = []
     def representation(messages, *args, **kwargs):
-        assert '⟦ctx:stored⟧' in str(messages)
+        assert '"st":' in str(messages)
         assert _ledger(owner, research_ledgers) == offer.delivery.result.spill.target
         observed.append(True)
         return original_representation(messages, *args, **kwargs)
@@ -616,7 +630,7 @@ def test_real_server_retention_routes_and_raw_ingest_before_representation(
     with assistruntime.bound(runtime):
         handler._setup_translation(incoming, 'sid:externalization-before', log)
     assert observed == [True]
-    assert '⟦ctx:stored⟧' not in str(incoming['messages'])
+    assert '"st":' not in str(incoming['messages'])
 
 
 @pytest.mark.parametrize('writer_failure,changed_owner', [(False, False), (True, False), (False, True)])

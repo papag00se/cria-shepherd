@@ -42,6 +42,7 @@ surviving route says what it counted, and counts what it says.
 
 import unittest
 
+from cria import bodykeys, denial
 from cria import loop, prompts
 
 
@@ -128,7 +129,7 @@ class TheCountComesFromTheEventTests(unittest.TestCase):
             messages.extend([
                 {'role': 'assistant', 'tool_calls': [{'id': cid, 'type': 'function', 'function': {
                     'name': 'exec_command', 'arguments': json.dumps({'cmd': command})}}]},
-                {'role': 'tool', 'tool_call_id': cid, 'content': denial.mark('This call did not run.')}])
+                {'role': 'tool', 'tool_call_id': cid, 'content': denial.mark('This call did not run.'), bodykeys.RESULT_OUTCOME: denial.REFUSED}])
         current = {'choices': [{'message': {'role': 'assistant', 'tool_calls': [{'id': 'unrefused-current',
             'type': 'function', 'function': {'name': 'exec_command',
                 'arguments': json.dumps({'cmd': 'which bundler'})}}]}}]}

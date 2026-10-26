@@ -154,15 +154,15 @@ def check_write(services: ShrinkServices, path: str, content: str, edit_tool: st
 def wrap_finding(path: str, finding: ShrinkFinding, command: str) -> str:
     """Settle against measured bytes; stale views never refuse or emit old facts."""
     from shlex import quote as _qbash
-    from .toolwire import _b64, _refusal_command, REMOVAL_FACTS
+    from .toolwire import _b64, _refusal_command
     same = ('import base64,pathlib,sys; '
             'p=pathlib.Path(base64.b64decode(' + repr(_b64(path)) + ').decode()); '
             'sys.exit(0 if p.is_file() and p.read_bytes()==base64.b64decode('
             + repr(base64.b64encode(finding['bytes']).decode('ascii')) + ') else 1)')
     if finding.get('land'):
-        facts = f"printf '%s\\n' {_qbash(REMOVAL_FACTS + finding['text'])}"
-        run = f'{command}\n_rc=$?\nif [ $_rc -eq 0 ]; then {facts}; fi\n(exit $_rc)'
-        return f'if python3 -c {_qbash(same)}; then\n{run}\nelse\n{command}\nfi'
+        # The measured facts ride into the write program, which reports them as the typed `rm` field of ITS OWN `landed`
+        # record — only when it actually landed, only when the disk still held the measured bytes (the `same` check).
+        return f'if python3 -c {_qbash(same)}; then\nexport CRIA_RM={_qbash(finding["text"])}\n{command}\nelse\n{command}\nfi'
     return f"if python3 -c {_qbash(same)}; then\n{_refusal_command(finding['text'])}\nelse\n{command}\nfi"
 
 

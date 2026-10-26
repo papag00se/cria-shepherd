@@ -30,6 +30,7 @@ designated single copy of its content and folding it at a later duplicate would 
 out of the protected head.
 """
 
+from cria.fetchfacts import Shape
 import json
 import unittest
 import unittest.mock
@@ -239,7 +240,7 @@ class ItIsWiredIntoTheOutboundViewTests(unittest.TestCase):
         from cria import assistruntime, selfcompact
         url = "https://api.handle.me/openapi.json"
         payload = "GET /handles → " + ("literal fields " * 100).rstrip()
-        pages = {url: ("HTTP 200", "", payload)}
+        pages = {url: ("HTTP 200", (), (Shape(payload),), (), "")}
         body = {"messages": [{"role": "user", "content": "resolve a handle"},
                 call("fetch spec", "fetch"), tool("  " + payload, "fetch")],
                 "tools": [shell], "stream": True}

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cria import bodykeys, focustrim, massage, prompts, upstream
+from cria import bodykeys, denial, focustrim, massage, prompts, upstream
 
 
 PATH = "/w/src/source.txt"
@@ -38,7 +38,10 @@ def call(cid, name, args, content=None):
 
 
 def result(cid, content):
-    return {"role": "tool", "tool_call_id": cid, "content": content}
+    """A tool result as `represent_inbound` hands it on: the rendered confirmation ("Wrote …") is composed ONLY from a landed
+    record, so those results carry the write program's typed landed fact."""
+    return {"role": "tool", "tool_call_id": cid, "content": content,
+            **({"cria_result_outcome": "landed"} if content.startswith("Wrote ") else {})}
 
 
 def write(cid, payload, path=PATH, name="write_file"):
@@ -76,7 +79,8 @@ def prepare(messages, window=100_000, *, level=5, merge=False, up=None):
 
 def pairs(messages):
     calls = {tc["id"]: tc for m in messages for tc in m.get("tool_calls", [])}
-    results = {m["tool_call_id"]: m for m in messages if m["role"] == "tool"}
+    results = {m["tool_call_id"]: {k: v for k, v in m.items() if not k.startswith("cria_")}      # internal hints are not wire facts
+               for m in messages if m["role"] == "tool"}
     assert calls.keys() == results.keys()
     return calls, results
 
@@ -116,7 +120,8 @@ def test_no_pressure_matches_the_pre_release_body_including_the_reread_tail():
     raw, sent, _ = prepare(focused)
     # Strip only internal fields to obtain the old model-facing body.
     expected = [{k: v for k, v in m.items() if not k.startswith("cria_")} for m in focused]
-    assert json.loads(raw) == {"model": "fixture", "messages": expected, "stream": False}
+    assert json.loads(raw) == {"model": "fixture", "messages": [{k: v for k, v in m.items() if not k.startswith("cria_")} for m in expected],
+                               "stream": False}
     assert PROMISE in notice(sent)
     assert sent[-1]["content"].endswith("search it for the part you care about instead.")
     assert json.loads(pairs(sent)[0]["new"]["function"]["arguments"])["content"] == NEW
@@ -127,17 +132,19 @@ def test_unhinted_lower_levels_and_unrelated_marker_text_are_identity(level):
     messages = history(later=False)
     messages.append({"role": "user", "content": prompts.render("superseded_writes_dropped", count="1", paths=PATH)})
     raw, _, _ = prepare(messages, level=level)
-    assert json.loads(raw) == {"model": "fixture", "messages": messages, "stream": False}
+    wire = [{k: v for k, v in m.items() if not k.startswith("cria_")} for m in messages]   # internal hints never reach the wire
+    assert json.loads(raw) == {"model": "fixture", "messages": wire, "stream": False}
 
 
 def test_refused_newest_never_displaces_landed_content_or_rejected_bytes():
     messages = history(later=False)[:2] + write("old", FULL)
     rejected = write("refused", NEW)
     rejected[-1]["content"] = "⟦ctx:denied⟧ Not run.\n⟦ctx:rejected-candidate⟧\n" + NEW
+    rejected[-1][bodykeys.RESULT_OUTCOME] = denial.REFUSED               # proven by the producer, not read off the words
     messages += rejected
     focused, _ = focustrim.trim(messages)
     _, sent, _ = prepare(focused)
-    assert sent == messages
+    assert sent == [{k: v for k, v in m.items() if k != bodykeys.RESULT_OUTCOME} for m in messages]   # hint stays off the wire
     assert pairs(sent)[1]["refused"]["content"] == rejected[-1]["content"]
 
 
@@ -156,7 +163,7 @@ def test_later_edit_and_shell_do_not_supersede_or_claim_current_disk_state():
     messages += [call("shell", "exec_command", {"cmd": "formatter src/source.txt"}), result("shell", "formatted")]
     focused, _ = focustrim.trim(messages)
     _, sent, _ = prepare(focused)
-    assert sent == messages
+    assert sent == [{k: v for k, v in m.items() if not k.startswith("cria_")} for m in messages]   # hints never reach the wire
     assert "old" in pairs(sent)[0]
 
 
@@ -229,7 +236,7 @@ def test_original_0027_pair_and_0059_negative_oracle_with_real_producer(window):
     fixture = json.loads((Path(__file__).parent / "fixtures/c21_u2_historical_pair.json").read_text())
     args = json.loads(fixture["call"]["tool_calls"][0]["function"]["arguments"])
     messages = history()[:2] + write("older", FULL, args["path"])
-    messages += [fixture["call"], fixture["result"]]
+    messages += [fixture["call"], {**fixture["result"], "cria_result_outcome": "landed"}]   # the captured result, as `represent_inbound` hands it on
     messages += history()[8:-1]
     messages += [call("read", "read_file", {"path": args["path"]}), result("read", args["content"])]
     messages.append(history()[-1])
@@ -267,8 +274,10 @@ def test_an_unanswered_replacement_is_not_promoted_to_a_landed_pair():
     focused, _ = focustrim.trim(messages)
     _, sent, _ = prepare(focused)
     assert "new" not in pairs(sent)[0]
-    assert PROMISE not in notice(sent)
-    assert "current file contents" in notice(sent)
+    # An UNANSWERED replacement is not proven landed, so it supersedes NOTHING: the earlier copy is the only version the model
+    # can still read and stays whole, and no note claims otherwise.
+    assert "old" in pairs(sent)[0]
+    assert not any("earlier write(s) in this conversation" in str(m.get("content", "")) for m in sent)
 
 
 def test_exact_argument_spelling_and_result_voice_are_not_approximated():
@@ -303,7 +312,7 @@ def test_multiple_calls_in_a_batch_and_ambiguous_paths_keep_selection_semantics(
                  + write("old", FULL, "relative.txt") + write("new", NEW, "/unknown/relative.txt"))
     focused, _ = focustrim.trim(ambiguous)
     _, sent, _ = prepare(focused)
-    assert sent == ambiguous
+    assert sent == [{k: v for k, v in m.items() if not k.startswith("cria_")} for m in ambiguous]
 
 
 def test_distinct_notices_settle_independently_and_l0_strips_the_carrier():
@@ -332,4 +341,5 @@ def test_distinct_notices_settle_independently_and_l0_strips_the_carrier():
     assert not any(bodykeys.SUPERSEDED_WRITES in m for m in lower_sent)
     # Every other byte/message, including the second notice and surviving
     # assistant arguments + correlated tool results, is still the input fixture.
-    assert json.loads(raw) == {"model": "fixture", "messages": expected, "stream": False}
+    assert json.loads(raw) == {"model": "fixture", "messages": [{k: v for k, v in m.items() if not k.startswith("cria_")} for m in expected],
+                               "stream": False}

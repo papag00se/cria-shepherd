@@ -30,12 +30,13 @@ TWO HALVES, BOTH ALREADY HALF-BUILT IN CRIA.
 import unittest
 
 from cria import loop, probegate, prompts
+from tests.gatefixture import gate_page
 from test_checker_text_is_not_probe_ownership import pair
 
 
 def gate(finding):
     return {"role": "tool", "tool_call_id": "g1",
-            "content": probegate.SECTION_PREFIX + "probe-0___\n" + finding}
+            "content": gate_page(probegate.GatePlan(''), probegate.SECTION_PREFIX + "probe-0___\n" + finding)}
 
 
 def coder_ran(output):

@@ -183,7 +183,8 @@ def test_real_history_parsers_preserve_refused_unknown_reads_and_totals():
             'function': {'name': 'read_file', 'arguments': json.dumps({'path': 'a.py'})}}]}
     original_totals = dict(sess.read_files)
     for messages in ([call], [call, {'role': 'tool', 'tool_call_id': 'r',
-                                     'content': denial.mark('could not read file')}]):
+                                     'content': denial.mark('could not read file'),
+                                     bodykeys.RESULT_OUTCOME: denial.REFUSED}]):
         def facts():
             ledger, _, key = loop._ledger_state(sess, messages)
             return policy.FileHistory(tuple(ledger), tuple(sess.written_files),

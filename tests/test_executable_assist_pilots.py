@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from cria import assistruntime, completionapproval, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, memoryhandoff, semanticquery, stalledwork, pastedfile, loop, massage, probegate
+from tests.gatefixture import gate_page
 from cria.argumentconversion import ArgumentInput, DEFINITION as ARGUMENTS
 from cria.config import AssistConfig, Config, Role
 from cria.modulestate import DEFINITION as MODULE, Judgment, ModuleInput, ModuleResult, ModuleState
@@ -162,7 +163,7 @@ def rig(synthetic, runtime, *, periodic=False):
                f"{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}\nabc\n")
         body["messages"] += [{"role": "assistant", "tool_calls": [{"id": "gate", "type": "function",
                               "function": {"name": "exec_command", "arguments": '{"cmd":"checks"}'}}]},
-                             {"role": "tool", "tool_call_id": "gate", "content": raw}]
+                             {"role": "tool", "tool_call_id": "gate", "content": gate_page(session.gate_plan, raw)}]
 
     def coder(frame, log):
         seen.append(copy.deepcopy(frame))

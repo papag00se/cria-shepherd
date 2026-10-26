@@ -8,7 +8,7 @@ import base64
 import json
 from pathlib import Path
 
-from cria import editrecovery, loop
+from cria import bodykeys, denial, editrecovery, loop
 from cria.loop import GuardState, WHEEL_SPIN_WRITES, guard_track_write_streak
 
 
@@ -30,8 +30,12 @@ def _completion(tcs):
     return {"choices": [{"message": {"role": "assistant", "tool_calls": tcs}}]}
 
 
-def _results(tcs, body):
-    return [{"role": "tool", "tool_call_id": t["id"], "content": body(t)} for t in tcs]
+def _results(tcs, body, outcome=None):
+    """The history as `represent_inbound` hands it on: the calls, then their results; ``outcome`` is the
+    PROVEN hint (cria's refusal ran / its edit program reported 'not applied'), never the wording."""
+    hint = {bodykeys.RESULT_OUTCOME: outcome} if outcome else {}
+    return [{"role": "assistant", "tool_calls": list(tcs)}] + [
+        {"role": "tool", "tool_call_id": t["id"], "content": body(t), **hint} for t in tcs]
 
 
 FAIL = lambda t: f"{editrecovery.EDIT_MARK} Importer.java — your old_string is not in the file (likely a stale copy)."
@@ -46,7 +50,7 @@ def test_nine_refused_edits_in_one_turn_never_trip_the_spin_guard():
     gs, log = GuardState(), _Rlog()
     guard_track_write_streak(gs, _completion(JAVA), log, messages=[])
     assert not gs.spin_probe_due and "loop.wheel_spinning" not in log.events      # unknown yet: counted once
-    guard_track_write_streak(gs, _completion([OTHER]), log, messages=_results(JAVA, FAIL))
+    guard_track_write_streak(gs, _completion([OTHER]), log, messages=_results(JAVA, FAIL, denial.UNAPPLIED))
     assert not gs.spin_probe_due and "loop.wheel_spinning" not in log.events
     assert gs.recent_writes.count(loop._write_path(JAVA[0]["function"])) == 0   # taken back
 
@@ -64,7 +68,7 @@ def test_cria_own_refusals_are_not_rewrites_either():
     gs, log = GuardState(), _Rlog()
     guard_track_write_streak(gs, _completion(JAVA), log, messages=[])
     guard_track_write_streak(gs, _completion([OTHER]), log,
-                             messages=_results(JAVA, lambda t: denial.mark("this write was not run")))
+                             messages=_results(JAVA, lambda t: denial.mark("this write was not run"), denial.REFUSED))
     assert not gs.spin_probe_due
 
 
@@ -89,7 +93,7 @@ def _answer_batch(out, n):
     got = []
     for k in range(n):
         text = editrecovery.recover(_report(), out)
-        out.append({"role": "tool", "tool_call_id": f"b{k}", "content": text})
+        out.append({"role": "tool", "tool_call_id": f"b{k}", "content": text, bodykeys.RESULT_OUTCOME: denial.UNAPPLIED})
         got.append(text)
     return got
 
@@ -112,7 +116,8 @@ def test_the_clock_still_runs_across_turns():
 
 def test_a_self_resolving_report_in_the_batch_is_not_swallowed():
     out = [{"role": "assistant", "tool_calls": [{"id": "a"}, {"id": "b"}]}]
-    out.append({"role": "tool", "tool_call_id": "a", "content": editrecovery.recover(_report(), out)})
+    out.append({"role": "tool", "tool_call_id": "a", "content": editrecovery.recover(_report(), out),
+                bodykeys.RESULT_OUTCOME: denial.UNAPPLIED})
     text = editrecovery.recover(_report("identical"), out)
     assert "identical" in text and "did not apply either" not in text
 
@@ -120,5 +125,6 @@ def test_a_self_resolving_report_in_the_batch_is_not_swallowed():
 def test_the_escalation_event_is_emitted_once_per_batch():
     out, log = [{"role": "assistant", "tool_calls": [{"id": f"b{k}"} for k in range(9)]}], _Rlog()
     for k in range(9):
-        out.append({"role": "tool", "tool_call_id": f"b{k}", "content": editrecovery.recover(_report(), out, log)})
+        out.append({"role": "tool", "tool_call_id": f"b{k}", "content": editrecovery.recover(_report(), out, log),
+                    bodykeys.RESULT_OUTCOME: denial.UNAPPLIED})
     assert log.events.count("editrecovery.escalated") == 1

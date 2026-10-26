@@ -129,14 +129,14 @@ def test_participation_matches_original_barrier(proven, answers, status):
 def services(root=""):
     return measure.MeasurementServices(
         frozenset(loop._WRITE_TOOLS), frozenset(loop.writeproxy_names), frozenset(loop.writeproxy._EDIT_NAMES),
-        loop.writeproxy._failed_edit_ids, shelltool.writes_something, loop.writeproxy._command_of,
+        loop.denial.unlanded_call_ids, shelltool.writes_something, loop.writeproxy._command_of,
         loop._args_of, loop._path_of_args, lambda a,b: loop._same_workspace_path(a,b,root),
         lambda: loop.wsview.current(root) if root else None)
 
 
 def action(name, args, tid):
     return [{"role":"assistant", "tool_calls":[{"id":tid,"function":{"name":name,"arguments":json.dumps(args)}}]},
-            {"role":"tool", "tool_call_id":tid,"content":"ok"}]
+            {"role":"tool", "tool_call_id":tid,"content":"ok","cria_result_outcome":"landed"}]    # the write program's typed fact
 
 
 @pytest.mark.parametrize("tail", [[], action("edit_file", {"path":"out.txt", "old_string":"a", "new_string":"b"}, "e"),

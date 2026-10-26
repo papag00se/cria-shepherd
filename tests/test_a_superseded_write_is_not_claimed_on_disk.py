@@ -25,7 +25,8 @@ BIG = selfcompact._STUB_MIN_CHARS + 50
 def write(i, path, ch):
     return [{"role": "assistant", "tool_calls": [{"id": f"w{i}", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": path, "content": ch * BIG})}}]},
-            {"role": "tool", "tool_call_id": f"w{i}", "content": f"Wrote {path}"}]
+            # the result as `represent_inbound` hands it on: the write program's own typed `landed` outcome
+            {"role": "tool", "tool_call_id": f"w{i}", "content": f"Wrote {path}", "cria_result_outcome": "landed"}]
 
 
 def rendered(msgs):
@@ -56,7 +57,7 @@ class OnlyTheCurrentVERSIONIsCalledOnDiskTests(unittest.TestCase):
 class TheOtherOutcomesAreUnchangedTests(unittest.TestCase):
     def test_a_refused_write_still_says_it_never_reached_disk(self):
         msgs = write(1, "a.rb", "x") + write(2, "a.rb", "y")
-        msgs[1] = {"role": "tool", "tool_call_id": "w1",
+        msgs[1] = {"role": "tool", "tool_call_id": "w1", "cria_result_outcome": "refused",       # cria's own typed refusal
                    "content": "⟦ctx:denied⟧ Nothing was run — the write was refused"}
         out = rendered(msgs)
         self.assertIn("never reached disk", out)

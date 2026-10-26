@@ -12,19 +12,19 @@ This is the discriminator the DICTATES guard cannot make: the gemma4 4/4 runs we
 dictated steers, and one of them wrote `data.get("resolved_addresses", {}).get("ada")` — right.
 Dictating code is not the fault. Stating a false fact about a source cria has read is.
 """
+from cria.fetchfacts import Shape
 import unittest
 
 from cria import loop
 
 # The real shape line from maple-preview 1786053138's own coder prompt, verbatim.
 REAL_SHAPE = (
-    "GET /handles/{handle} (replace in the URL path: {handle} = The Handle name) → hex(string), "
-    "name(string, e.g. my.handle), handle_type(string), virtual{expires_time(number), "
-    "public_mint(boolean)}, holder(string, e.g. stake1uxxxxxxxx…xxxx), holder_type(string), "
-    "resolved_addresses{ada(string, e.g. addr1e000000000…0001), eth(string), btc(string)}\n"
-    "GET /holders/{address} → total_handles(integer, e.g. 1421), address(string), type(string)"
+    Shape("GET /handles/{handle}", route="/handles/{handle}", params=("{handle} = The Handle name",),
+          fields=("hex", "name", "handle_type", "virtual", "expires_time", "public_mint", "holder", "holder_type",
+                  "resolved_addresses", "ada", "eth", "btc")),
+    Shape("GET /holders/{address}", route="/holders/{address}", fields=("total_handles", "address", "type")),
 )
-LEDGER = {"https://api.handle.me/openapi.json": ("HTTP 200", "", REAL_SHAPE, "")}
+LEDGER = {"https://api.handle.me/openapi.json": ("HTTP 200", (), REAL_SHAPE, ())}
 
 # verbatim from the two captures
 MAPLE_BAD = ("The coder is still stuck on reading rather than writing. I will write the actual "
@@ -44,9 +44,7 @@ class LedgerFieldNamesTests(unittest.TestCase):
         self.assertIn("total_handles", names)
 
     def test_the_header_and_the_elision_note_contribute_nothing(self):
-        noise = {"u": ("HTTP 200", "",
-                       "the fields each endpoint RETURNS (extract these; don't guess field names):\n"
-                       "(identical fetched-spec content is shown once, IN FULL, elsewhere)\n", "")}
+        noise = {"u": ('HTTP 200', (), (Shape(head='(identical fetched-spec content is shown once, IN FULL, elsewhere)'), ), (), '')}
         self.assertEqual(loop._ledger_field_names(noise), set())
 
 
@@ -61,7 +59,7 @@ class TheGuardSeparatesTheTwoRealSteersTests(unittest.TestCase):
         """Silence over noise: with no fetched shape there is no fact to check against."""
         self.assertIsNone(loop._field_the_ledger_denies(MAPLE_BAD, {}))
         self.assertIsNone(loop._field_the_ledger_denies(
-            MAPLE_BAD, {"u": ("HTTP 200", "GET /a, GET /b", "", "")}))
+            MAPLE_BAD, {"u": ('HTTP 200', ('GET /a, GET /b',), (), (), '')}))
 
     def test_a_local_variable_is_not_an_api_claim(self):
         """Narrow on purpose — a backtick is not enough. Only an access on a response-shaped name."""

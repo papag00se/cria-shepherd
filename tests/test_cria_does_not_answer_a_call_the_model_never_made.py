@@ -27,6 +27,7 @@ import json
 import unittest
 
 from cria import probegate as pg
+from tests.gatefixture import gate_page
 
 _RESULT = f"{pg.SECTION_PREFIX}probe-0___\nno problems reported\nEXIT:0"
 
@@ -38,7 +39,7 @@ def _gate(retypable):
         {"role": "user", "content": "build it"},
         {"role": "assistant", "tool_calls": [{"id": "g1", "type": "function", "function": {
             "name": "exec_command", "arguments": json.dumps({"cmd": script})}}]},
-        {"role": "tool", "tool_call_id": "g1", "content": _RESULT},
+        {"role": "tool", "tool_call_id": "g1", "content": gate_page(pg.GatePlan(''), _RESULT)},   # delivered by its transport
     ]
 
 

@@ -1,3 +1,5 @@
+from cria import fetchfacts
+from cria.fetchfacts import Shape
 import json
 import os
 import pathlib
@@ -8,10 +10,12 @@ from unittest import mock
 from pathlib import Path
 
 from cria.probegate import GATE_SENTINEL
+from tests.resultshape import fetch_pair
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key,
                        Confirmation, Verification, VerdictNudge, _record_satisfaction)
+from cria import bodykeys
 from cria import assistruntime, completedwork, livingplan, planner, prompts, stepreview, webfetch
 from cria.config import Role
 
@@ -654,7 +658,7 @@ class GroundedEvidenceTests(unittest.TestCase):
     def test_durable_fetch_facts_are_folded_into_evidence(self):
         loop = self._loop()
         sess = PlanSession(plan=_plan(2))
-        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}, /holders/{address}")}
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, ('/handles/{handle}', '/holders/{address}'), (), (), '')}
         ev = loop._grounded_evidence(sess, {"messages": []})   # empty window — the fetch was compacted away
         self.assertIn("openapi.json", ev)
         self.assertIn("/handles/{handle}", ev)                 # the critic now SEES the coder read the spec
@@ -679,7 +683,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         from cria.loop import _fetched_facts_anchor
         from cria import selfcompact
         sess = PlanSession(plan=_plan(2))
-        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}, /holders/{address}")}
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, ('/handles/{handle}', '/holders/{address}'), (), (), '')}
         anchor = _fetched_facts_anchor(sess)
         self.assertIsNotNone(anchor)
         self.assertIn(selfcompact.FACTS_MARKER, anchor["content"])   # tagged so compaction/floor keep it verbatim
@@ -698,8 +702,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         plan = Plan(id="p1", task="resolve an ada handle", created="2026-07-27T00:00:00",
                     items=[PlanItem(text="write the resolver")],
                     gather_facts={"https://api.handle.me/openapi.json":
-                                  ("HTTP 200", "/handles/{handle}, /holders/{address}",
-                                   "GET /handles/{handle} → holder, resolved_addresses{ada}")})
+                                  ('HTTP 200', ('/handles/{handle}', '/holders/{address}'), (Shape(head='GET /handles/{handle} → holder, resolved_addresses{ada}', fields=('resolved_addresses',)), ), (), '')})
         anchor = _fetched_facts_anchor(PlanSession(plan=plan))
         self.assertIsNotNone(anchor, "the planner's findings must survive into the coder's context")
         self.assertIn("/handles/{handle}", anchor["content"])
@@ -721,30 +724,12 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         from cria.loop import _fetched_facts_anchor
         self.assertIsNone(_fetched_facts_anchor(PlanSession(plan=_plan(2))))
 
-    def test_shape_block_survives_an_array_field(self):
-        # MEASURED: the shape block was read with a non-greedy regex terminating on `]`, and a field
-        # summary marks an array as `k[]` — so the FIRST entry line ending in an array closed the
-        # match and every endpoint after it vanished from the durable ledger. What that dropped, in
-        # this task, was `/holders/{address} → total_handles`: the second call the work needs, under
-        # a prompt telling the coder to "use these EXACT names ... do not guess".
-        from cria.loop import _shape_block
-        from cria import webfetch
-        block = (f"{webfetch.SHAPE_MARKER} the fields each endpoint RETURNS:\n"
-                 "  GET /handles/{handle} → name, holders[]\n"
-                 "  GET /holders/{address} → total_handles, default_handle]\n")
-        out = _shape_block(block, 0)
-        self.assertIn("/holders/{address}", out)      # the endpoint after the array survives
-        self.assertIn("total_handles", out)
-        self.assertIn("holders[]", out)               # ...and the array marker is not mangled
-        self.assertFalse(out.rstrip().endswith("]") and not out.rstrip().endswith("[]"))
-
     def test_ledger_keeps_the_endpoint_cap_disclosure(self):
         # webfetch discloses its 12-endpoint shape cap with "…+more endpoints have shapes not shown
         # here". The ledger filter kept only lines containing `→`, and that note carries an em dash —
         # so the cap disclosure was dropped and a capped list read as the complete set.
         from cria.loop import _format_fetches
-        led = {"https://x/spec": ("HTTP 200", "/a, /b",
-                                  "GET /a → f1\n…+more endpoints have shapes not shown here")}
+        led = {"https://x/spec": ('HTTP 200', ('/a', '/b'), (Shape(head='GET /a → f1', fields=()), Shape(head='…+more endpoints have shapes not shown here'), ), (), '')}
         body = _format_fetches(led, header="PAGES")
         self.assertIn("…+more endpoints", body)
 
@@ -762,7 +747,10 @@ class FetchedFactsAnchorTests(unittest.TestCase):
                   f'{webfetch.SHAPE_MARKER} the fields each endpoint RETURNS:\n'
                   '  GET /handles/{handle} → holder, resolved_addresses{ada, eth, btc}\n'
                   '  GET /holders/{address} → total_handles, address]\n')
-        facts = _extract_fetches([{"role": "tool", "content": result}])
+        shapes = (Shape('GET /handles/{handle} → holder, resolved_addresses{ada, eth, btc}',
+                        fields=('holder', 'resolved_addresses', 'ada', 'eth', 'btc')),
+                  Shape('GET /holders/{address} → total_handles, address', fields=('total_handles', 'address')))
+        facts = _extract_fetches(fetch_pair(result, routes=('/handles/{handle}', '/holders/{address}', ), shapes=shapes))
         sess = PlanSession(plan=_plan(2)); sess.fetched_pages = facts
         body = _fetched_facts_anchor(sess)["content"]
         self.assertIn("/handles/{handle}", body)                     # routes still there...
@@ -780,15 +768,18 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # must not clobber the full outline captured earlier — same rule the routes already had.
         from cria.loop import _extract_fetches, _fetch_facts, _merge_fetches
         from cria import webfetch
-        full = _extract_fetches([{"role": "tool", "content":
+        full = _extract_fetches(fetch_pair(
             'HTTP 200 OK · https://api.x/openapi.json\n'
             f'{webfetch.ROUTES_MARKER}1): /handles/{{handle}}]\n'
-            f'{webfetch.SHAPE_MARKER} fields:\n  GET /handles/{{handle}} → holder, resolved_addresses{{ada}}]\n'}])
-        thin = _extract_fetches([{"role": "tool", "content": 'HTTP 200 OK · https://api.x/openapi.json\n(a subsection)'}])
+            f'{webfetch.SHAPE_MARKER} fields:\n  GET /handles/{{handle}} → holder, resolved_addresses{{ada}}]\n',
+            routes=('/handles/{handle}', ),
+            shapes=(Shape('GET /handles/{handle} → holder, resolved_addresses{ada}',
+                          fields=('holder', 'resolved_addresses', 'ada')),)))
+        thin = _extract_fetches([*fetch_pair('HTTP 200 OK · https://api.x/openapi.json\n(a subsection)')])
         merged = _merge_fetches(dict(full), thin)
         status, routes, shapes, _cat = _fetch_facts(merged["https://api.x/openapi.json"])
         self.assertIn("/handles/{handle}", routes)
-        self.assertIn("resolved_addresses{ada}", shapes)
+        self.assertIn("resolved_addresses{ada}", fetchfacts.shapes_text(shapes))
 
     def test_ledger_ignores_coder_PROSE_and_reads_only_real_tool_results(self):
         # The coder READS cria's rendered "HTTP 200 · <url>" header in its own context and can parrot it.
@@ -798,8 +789,9 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # insisted on a 400 the server never sent) re-entering through the ledger built to stop it.
         from cria.loop import _extract_fetches, _fetch_facts
         msgs = [
-            {"role": "tool", "content": "HTTP 200 OK \u00b7 https://api.x/openapi.json\n"
-                                        "[API endpoints (2): /handles/{handle}, /holders/{address}]"},
+            *fetch_pair("HTTP 200 OK \u00b7 https://api.x/openapi.json\n"
+                        "[API endpoints (2): /handles/{handle}, /holders/{address}]",
+                        routes=('/handles/{handle}', '/holders/{address}', )),
             {"role": "assistant", "content": "I tried again and got HTTP 400 \u00b7 https://api.x/openapi.json"},
             {"role": "user", "content": "also HTTP 500 \u00b7 https://api.x/openapi.json"},
         ]
@@ -817,8 +809,8 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # it must be labelled a dead end, never merged into the list of things to code against.
         from cria.loop import _fetched_facts_anchor
         sess = PlanSession(plan=_plan(2))
-        sess.fetched_pages = {"https://ada-handles.github.io/resolve-handle": (404, ""),
-                              "https://ada-handles.github.io/resolve-handle?handle=goose": (404, "")}
+        sess.fetched_pages = {"https://ada-handles.github.io/resolve-handle": (404, (), (), (), ''),
+                              "https://ada-handles.github.io/resolve-handle?handle=goose": (404, (), (), (), '')}
         body = _fetched_facts_anchor(sess)["content"]
         # Labelled as errored — but NOT as proof the address is absent. A 401 says the route exists
         # and wants a key; a 429/5xx says come back. Blacklisting those is how a real endpoint gets
@@ -834,8 +826,8 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         # Both kinds present: the real endpoints stay actionable, the 404 is quarantined under its own label.
         from cria.loop import _fetched_facts_anchor
         sess = PlanSession(plan=_plan(2))
-        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}"),
-                              "https://api.handle.me/resolve-handle": (404, "")}
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, ('/handles/{handle}',), (), (), ''),
+                              "https://api.handle.me/resolve-handle": (404, (), (), (), '')}
         body = _fetched_facts_anchor(sess)["content"]
         ok_at, dead_at = body.index("SUCCEEDED"), body.index("THESE FETCHES FAILED")
         self.assertLess(ok_at, dead_at)                                       # successes lead
@@ -858,7 +850,7 @@ class FetchedFactsAnchorTests(unittest.TestCase):
         rec = _Recorder([_toolcall()])
         loop = Loop(_ctx(rec, None))
         sess = PlanSession(plan=_plan(2))
-        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}, /holders/{address}")}
+        sess.fetched_pages = {"https://api.handle.me/openapi.json": (200, ('/handles/{handle}', '/holders/{address}'), (), (), '')}
         item = sess.plan.items[0]                                     # a plain step, not the pinned research step
         loop._work_item(sess, "k", {"messages": [{"role": "user", "content": "resolve a handle"}],
                                     "tools": [_SHELL]}, _Rlog(), item, 1)
@@ -1101,19 +1093,34 @@ def _body_with_refusals(n=3, cmd="gem install eu_countries"):
                      "function": {"name": "exec_command",
                                   "arguments": json.dumps({"cmd": f"{cmd} --try{i}"})}}]})
         msgs.append({"role": "tool", "tool_call_id": f"r{i}",
-                     "content": denial.mark("that command cannot run here")})
+                     "content": denial.mark("that command cannot run here"), bodykeys.RESULT_OUTCOME: denial.REFUSED})
     return {"messages": msgs, "tools": [_SHELL], "stream": True}
 
 
+_GATE_TRANSPORT_IDS: dict = {}
+
+
 def _body_with_probe(call_id, output):
-    """Simulate the harness having run cria's ground-truth probe: its result is now in the stream."""
+    """Simulate the harness having run cria's ground-truth probe: its result is now in the stream — as the harness delivers
+    it, a verified transport page for THAT call's transport, with the worker's declared extents."""
+    from types import SimpleNamespace
+    from tests.gatefixture import gate_page
+    if call_id in _GATE_TRANSPORT_IDS and isinstance(output, str):
+        output = gate_page(SimpleNamespace(transport_id=_GATE_TRANSPORT_IDS[call_id]), output)
     b = _body()
     b["messages"] = b["messages"] + [{"role": "tool", "tool_call_id": call_id, "content": output}]
     return b
 
 
 def _tc_id(completion):
-    return completion["choices"][0]["message"]["tool_calls"][0]["id"]
+    import json as _json
+    import re as _re
+    call = completion["choices"][0]["message"]["tool_calls"][0]
+    args = call["function"]["arguments"]
+    script = _json.dumps(_json.loads(args)) if isinstance(args, str) and args.startswith("{") else str(args)
+    if (m := _re.search(r"\.cria-gate-([0-9a-f]{16,})\.spool", script)):
+        _GATE_TRANSPORT_IDS[call["id"]] = m.group(1)           # which transport this call's result will arrive on
+    return call["id"]
 
 
 def _result_for(completion, first: str = "EXIT:0", git: str = "abc") -> str:
@@ -2080,8 +2087,9 @@ def _gate_result(gs, first: str = "EXIT:0", git: str = "abc") -> str:
     from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
     n = len((gs.gate_plan.candidates if gs.gate_plan else []) or [])
     parts = [f"{P}probe-{i}{S}\n" + (first if i == 0 else "EXIT:0") + "\n" for i in range(max(n, 1))]
-    from tests.gatefixture import completed_cleanup
-    return "".join(parts) + completed_cleanup(gs.gate_plan.workspace) + f"{P}git{S}\n{git}\n"
+    from tests.gatefixture import completed_cleanup, gate_page
+    raw = "".join(parts) + completed_cleanup(gs.gate_plan.workspace) + f"{P}git{S}\n{git}\n"
+    return gate_page(gs.gate_plan, raw)           # as the harness delivers it: a verified transport page with declared extents
 
 
 class PeriodicGateTests(unittest.TestCase):
@@ -2666,7 +2674,7 @@ class FetchGroundTruthTests(unittest.TestCase):
         result = ("HTTP 200 OK · https://api.handle.me/openapi.json\nContent-Type: application/json\n"
                   "[structured doc] [API endpoints (3): /handles/{handle}, /holders/{address}, /stats]\n...")
         out = self._fgt([{"role": "user", "content": "resolve a handle"},
-                         {"role": "tool", "content": result}])
+                         *fetch_pair(result, routes=('/handles/{handle}', '/holders/{address}', '/stats', ))])
         self.assertIn("https://api.handle.me/openapi.json", out)
         self.assertIn("HTTP 200", out)
         self.assertIn("/handles/{handle}", out)
@@ -2681,8 +2689,8 @@ class FetchGroundTruthTests(unittest.TestCase):
         self.assertEqual(out, "")
 
     def test_last_status_per_url_wins(self):
-        msgs = [{"role": "tool", "content": "HTTP 500 err · https://x.test/openapi.json"},
-                {"role": "tool", "content": "HTTP 200 OK · https://x.test/openapi.json [API endpoints (1): /a]"}]
+        msgs = [*fetch_pair("HTTP 500 err · https://x.test/openapi.json", status=500),
+                *fetch_pair("HTTP 200 OK · https://x.test/openapi.json [API endpoints (1): /a]", routes=('/a', ))]
         out = self._fgt(msgs)
         self.assertIn("HTTP 200", out)
         self.assertNotIn("HTTP 500", out)
@@ -2695,8 +2703,9 @@ class FetchGroundTruthTests(unittest.TestCase):
         # _track_fetched_pages persists it on the session so _fetch_ground_truth still cites it.
         from cria.loop import _fetch_ground_truth, _track_fetched_pages, GuardState
         gs = GuardState()
-        early = [{"role": "tool", "content": "HTTP 200 OK · https://api.handle.me/openapi.json "
-                                             "[API endpoints (2): /handles/{handle}, /holders/{address}]"}]
+        early = [*fetch_pair("HTTP 200 OK · https://api.handle.me/openapi.json "
+                             "[API endpoints (2): /handles/{handle}, /holders/{address}]",
+                             routes=('/handles/{handle}', '/holders/{address}', ))]
         _track_fetched_pages(gs, early)
         # a LATER body no longer contains that result (floored out) — only a Windows-handle search
         later = [{"role": "assistant", "content": "searching GetHandleInformation hObject flags"}]
@@ -2707,8 +2716,8 @@ class FetchGroundTruthTests(unittest.TestCase):
     def test_in_window_status_wins_over_stale_durable(self):
         from cria.loop import _fetch_ground_truth, _track_fetched_pages, GuardState
         gs = GuardState()
-        _track_fetched_pages(gs, [{"role": "tool", "content": "HTTP 500 err · https://x.test/openapi.json"}])
-        fresh = [{"role": "tool", "content": "HTTP 200 OK · https://x.test/openapi.json [API endpoints (1): /a]"}]
+        _track_fetched_pages(gs, [*fetch_pair("HTTP 500 err · https://x.test/openapi.json", status=500)])
+        fresh = [*fetch_pair("HTTP 200 OK · https://x.test/openapi.json [API endpoints (1): /a]", routes=('/a', ))]
         out = _fetch_ground_truth(fresh, gs)
         self.assertIn("HTTP 200", out)
         self.assertNotIn("HTTP 500", out)
@@ -2718,10 +2727,11 @@ class FetchGroundTruthTests(unittest.TestCase):
         # sub-section with NO outline. The endpoints must survive (they name /handles/{handle}).
         from cria.loop import _fetch_ground_truth, _track_fetched_pages, GuardState
         gs = GuardState()
-        _track_fetched_pages(gs, [{"role": "tool", "content":
-            "HTTP 200 OK · https://api.handle.me/openapi.json [API endpoints (2): /handles/{handle}, /holders/{address}]"}])
+        _track_fetched_pages(gs, fetch_pair(
+            "HTTP 200 OK · https://api.handle.me/openapi.json [API endpoints (2): /handles/{handle}, /holders/{address}]",
+            routes=('/handles/{handle}', '/holders/{address}', )))
         # a subsequent find-fetch of the same URL, no outline this time
-        _track_fetched_pages(gs, [{"role": "tool", "content": "HTTP 200 OK · https://api.handle.me/openapi.json (paths section)"}])
+        _track_fetched_pages(gs, [*fetch_pair("HTTP 200 OK · https://api.handle.me/openapi.json (paths section)")])
         out = _fetch_ground_truth([], gs)
         self.assertIn("/handles/{handle}", out)   # endpoints preserved, not clobbered
         self.assertIn("/holders/{address}", out)
@@ -3478,7 +3488,8 @@ class VerifyEvidenceTests(unittest.TestCase):
         msgs = [{"role": "assistant", "tool_calls": [
                     {"id": "r1", "function": {"name": "read_file",
                                               "arguments": '{"path":"./tmp/reference/search-x.txt"}'}}]},
-                {"role": "tool", "tool_call_id": "r1", "content": note},
+                {"role": "tool", "tool_call_id": "r1", "content": note,
+                 bodykeys.RESULT_OUTCOME: denial.REFUSED},
                 {"role": "tool", "content": "real tool output"}]
         ev = _work_log(msgs)
         self.assertIn("real tool output", ev)
@@ -3690,7 +3701,7 @@ class SharedRefusalGuardTests(unittest.TestCase):
                          "function": {"name": "exec_command",
                                       "arguments": json.dumps({"cmd": cmd})}}]})
             msgs.append({"role": "tool", "tool_call_id": f"d{i}",
-                         "content": denial.mark("blocked")})
+                         "content": denial.mark("blocked"), bodykeys.RESULT_OUTCOME: denial.REFUSED})
         return msgs
 
     def test_refusals_trip_redirect(self):
@@ -3815,7 +3826,8 @@ class DirectCompletionGateTests(unittest.TestCase):
                                  "content": _gate_result(gs, '  File "h.py", line 1\nSyntaxError: bad\nEXIT:1', git="z")}]}
             self.assertIsNotNone(guard_gate_verdict(gs, red, _Rlog()))
             self.assertTrue(gs.last_gate_red)               # a failing done-gate → RED
-            clean = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,   # reuse the same plan
+            guard_gate_op(gs, body, _Rlog())              # the next gate is a NEW plan (one transport per gate)
+            clean = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
                                    "content": _gate_result(gs, git="z")}]}
             self.assertIsNone(guard_gate_verdict(gs, clean, _Rlog()))
             self.assertFalse(gs.last_gate_red)              # ran and clean → GREEN
@@ -4784,7 +4796,8 @@ class PeriodicGateSilentOnCleanTests(unittest.TestCase):
                               mutates_code=False, may_hang=False, may_need_services=False, reason="t")
         gs = GuardState(); gs.periodic_probe = True; gs.probe_call_id = "p1"
         gs.gate_plan = GatePlan(workspace="/tmp", candidates=[cand])
-        clean = f"{P}probe-0{S}\n3 passed in 0.1s\nEXIT:0\n{P}git{S}\nabc\n"
+        from tests.gatefixture import gate_page
+        clean = gate_page(gs.gate_plan, f"{P}probe-0{S}\n3 passed in 0.1s\nEXIT:0\n{P}git{S}\nabc\n")
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": clean}]}
         with assistruntime.bound(assistruntime.current()):
             self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # clean → no injection
@@ -5068,7 +5081,7 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
     def test_a_2xx_with_no_structure_says_it_carries_no_structure(self):
         from cria.loop import _format_fetches
         self._cache("https://api.handle.me/swagger/", "<html><body>Swagger UI</body></html>")
-        out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
+        out = _format_fetches({"https://api.handle.me/swagger/": ('HTTP 200', (), (), (), '')})
         self.assertIn("HTTP 200", out)
         # The narrow fact survives — the page answered but cria parsed no structure — now in words
         # that import no API subtask (ornith15 x shipping-rates-rb read the old "endpoint
@@ -5080,7 +5093,7 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
     def test_an_entry_WITH_facts_is_not_given_the_note(self):
         from cria.loop import _format_fetches
         out = _format_fetches({"https://api.handle.me/openapi.json":
-                               ("HTTP 200", "/handles/{handle}", "GET /handles/{handle} → holder")})
+                               ('HTTP 200', ('/handles/{handle}',), (Shape(head='GET /handles/{handle} → holder', fields=()), ), (), '')})
         self.assertIn("/handles/{handle}", out)
         self.assertNotRegex(out, r"no endpoints|no routes")
 
@@ -5096,8 +5109,8 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         self._cache("https://api.handle.me/handles/goose", '{"holder":"stake_test"}',
                     "application/json")
         out = _format_fetches({
-            "https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", ""),
-            "https://api.handle.me/handles/goose": ("HTTP 200", "", ""),
+            "https://api.handle.me/openapi.json": ('HTTP 200', ('/handles/{handle}',), (), (), ''),
+            "https://api.handle.me/handles/goose": ('HTTP 200', (), (), (), ''),
         })
         self.assertNotIn("no field names could be read", out)
         self.assertNotIn("no structured data could be parsed out of it", out)
@@ -5110,7 +5123,7 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         # fact — page answered, no structure parsed — stays; the API words are gone.
         from cria.loop import _format_fetches
         self._cache("https://api.handle.me/swagger/", "<html><body>Swagger UI</body></html>")
-        out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
+        out = _format_fetches({"https://api.handle.me/swagger/": ('HTTP 200', (), (), (), '')})
         self.assertIn("no structured data could be parsed out of it", out)
         self.assertNotIn("machine-readable API definition", out)
         self.assertNotIn("endpoint definitions", out)
@@ -5118,14 +5131,14 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
     def test_it_no_longer_asserts_the_task_has_an_api(self):
         from cria.loop import _format_fetches
         self._cache("https://docs.rs/toml", "<html><body>toml docs</body></html>")
-        out = _format_fetches({"https://docs.rs/toml": ("HTTP 200", "", "")})
+        out = _format_fetches({"https://docs.rs/toml": ('HTTP 200', (), (), (), '')})
         self.assertNotIn("DEFINES the API's routes", out)
         self.assertIn("no structured data could be parsed out of it", out)   # the narrow fact stays
         self.assertNotIn("endpoint", out)                                    # …now with no API word at all
 
     def test_a_failed_fetch_keeps_its_own_wording(self):
         from cria.loop import _format_fetches
-        out = _format_fetches({"https://nope.example/x": ("HTTP 404", "", "")})
+        out = _format_fetches({"https://nope.example/x": ('HTTP 404', (), (), (), '')})
         self.assertIn("404", out)
         self.assertNotRegex(out, r"no endpoints|no routes")   # the failed section already explains it
 
@@ -5463,7 +5476,7 @@ class ReplannerToldNothingDefinesARouteTests(unittest.TestCase):
 
     def test_with_real_routes_known_it_stays_quiet(self):
         ev = self._seen_evidence({"https://api.handle.me/openapi.json":
-                                  ("HTTP 200", "/handles/{handle}, /holders/{address}", "")})
+                                  ('HTTP 200', ('/handles/{handle}', '/holders/{address}'), (), (), '')})
         self.assertNotIn("DEFINES a route", ev)
 
 
@@ -6373,7 +6386,7 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
             {"satisfied": False, "reason": "no resolver exists yet",
              "proposed_fix": "Write resolver.py using GET /v1/resolve/{handle}"})}}]}
         ok, reason, _fx = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
-                                        routes="/handles/{handle}, /holders/{address}")
+                                        routes=('/handles/{handle}', '/holders/{address}', ))
         self.assertFalse(ok)
         self.assertEqual(reason, "")
 
@@ -6383,7 +6396,7 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
             {"satisfied": False, "reason": "r",
              "proposed_fix": "Call GET /handles/{handle} and read resolved_addresses"})}}]}
         ok, reason, _fx = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
-                                        routes="/handles/{handle}, /holders/{address}")
+                                        routes=('/handles/{handle}', '/holders/{address}', ))
         self.assertFalse(ok)
         self.assertEqual(reason, "")  # even a real route is not task/evidence provenance
 
@@ -6746,10 +6759,10 @@ class AuthorSessionStubsSupersededWritesTests(unittest.TestCase):
         msgs = [
             {"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": "t.py", "content": old_body})}}]},
-            {"role": "tool", "tool_call_id": "w1", "content": "Wrote t.py"},
+            {"role": "tool", "tool_call_id": "w1", "content": "Wrote t.py", "cria_result_outcome": "landed"},
             {"role": "assistant", "tool_calls": [{"id": "w2", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": "t.py", "content": new_body})}}]},
-            {"role": "tool", "tool_call_id": "w2", "content": "Wrote t.py"},
+            {"role": "tool", "tool_call_id": "w2", "content": "Wrote t.py", "cria_result_outcome": "landed"},
         ]
         out = selfcompact.serialize(selfcompact.stub_old_write_args(msgs))
         self.assertNotIn("def test_live_api(self)", out)        # superseded body → stub
@@ -6916,12 +6929,12 @@ class ContinuationKeepsFetchLedgerTests(unittest.TestCase):
     a false fact about a spec cria had fully surfaced 60 calls earlier, at exactly the boundary
     the durable ledger exists to survive."""
 
-    ROUTES = "/handles, /handles/{handle}, /holders/{address}"
+    ROUTES = ("/handles", "/handles/{handle}", "/holders/{address}")
 
     def _old_sess(self):
         s = PlanSession(plan=_plan(1))
         s.fetched_pages = {"https://api.handle.me/openapi.json":
-                           ("HTTP 200", self.ROUTES, "GET /handles/{handle} → holder(string)", "")}
+                           ("HTTP 200", self.ROUTES, (Shape("GET /handles/{handle} → holder(string)", fields=("holder",)),), (), "")}
         return s
 
     def test_a_replacing_put_on_a_stable_key_carries_the_ledger(self):
@@ -6937,7 +6950,7 @@ class ContinuationKeepsFetchLedgerTests(unittest.TestCase):
         store.put("sid:abc", self._old_sess())
         new = PlanSession(plan=_plan(2))
         new.fetched_pages = {"https://api.handle.me/openapi.json":
-                             ("HTTP 200", "", "", "")}       # find= result: header, no outline
+                             ('HTTP 200', (), (), (), '')}       # find= result: header, no outline
         store.put("sid:abc", new)
         kept = store.get("sid:abc").fetched_pages
         self.assertIn("/handles/{handle}", kept["https://api.handle.me/openapi.json"][1],

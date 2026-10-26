@@ -20,7 +20,7 @@ from tests.test_loop import _SHELL, _Recorder, _Rlog, _ctx, _plan, _single_loop,
 
 class _Sess:
     workspace_root = ""
-    fetched_pages = {"https://api.handle.me": ("HTTP 200", "", "", "")}
+    fetched_pages = {"https://api.handle.me": ('HTTP 200', (), (), (), '')}
 
 
 CODER_403 = [{"role": "tool",

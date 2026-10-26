@@ -67,7 +67,7 @@ def test_a_partial_window_does_not_displace_a_newer_whole_read_but_a_later_whole
 def test_a_write_after_a_read_wins_and_an_old_write_does_not_beat_a_newer_read_once_compacted():
     sess = _Sess()
     _ledger(sess, [_call("a", path="a.java"), _res("a", "x\n" * 129 + "x")])
-    got = _ledger(sess, [_call("w", "write_file", path="a.java", content="a\nb\nc"), _res("w", "Wrote a.java")])
+    got = _ledger(sess, [_call("w", "write_file", path="a.java", content="a\nb\nc"), {**_res("w", "Wrote a.java"), "cria_result_outcome": "landed"}])   # as represent_inbound hands a landed write on)
     assert got["a.java"] == "3 lines"
     # the write scrolls out; a later read is the newest thing known
     got = _ledger(sess, [_call("c", path="a.java"), _res("c", "x\n" * 9 + "x")])

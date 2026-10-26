@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import re
 
-from . import bodykeys, wsview
+from . import bodykeys, payloadboundary, wsview
 from .toolwire import SECTION_PREFIX
 
 _ENVELOPE_OUTPUT_LINE = re.compile(r"^Output:[ \t]*$", re.M)
@@ -52,8 +52,7 @@ def _noted(m: dict, content: str, note: str) -> dict:
     return out
 
 
-def _digest(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+_digest = payloadboundary.digest
 
 
 def append_note(m: dict, note: str, content: str | None = None) -> None:
@@ -68,18 +67,7 @@ def append_note(m: dict, note: str, content: str | None = None) -> None:
     m["content"] = c + "\n\n" + note
 
 
-def payload_of(m: dict, content: str) -> str | None:
-    """The tool's own payload within ``content``. No boundary ever stamped: the whole content (nothing was
-    appended). A boundary still true of these bytes (length AND digest): the content cut there. A boundary
-    that no longer verifies: None — the payload is UNKNOWN and a reader must abstain, never count the
-    annotated carrier and never guess from marker text."""
-    if bodykeys.PAYLOAD_BOUNDARY not in m:
-        return content
-    b = m[bodykeys.PAYLOAD_BOUNDARY]
-    if isinstance(b, (tuple, list)) and len(b) == 2 and isinstance(b[0], int) \
-            and 0 <= b[0] <= len(content) and _digest(content[:b[0]]) == b[1]:
-        return content[:b[0]]
-    return None
+payload_of = payloadboundary.payload_of
 
 
 def _workspace_ecosystem(workspace_root) -> str:

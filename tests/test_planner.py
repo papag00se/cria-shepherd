@@ -1,3 +1,4 @@
+from cria.fetchfacts import Shape
 import json
 import json as _json
 import pathlib
@@ -591,7 +592,7 @@ class GatherLoopTests(unittest.TestCase):
                                       "/holders/{address}": {"get": {}}}})
         pt._record_fetch(facts, "https://api.handle.me/openapi.json", 200, spec, "application/json")
         self.assertIn("https://api.handle.me/openapi.json", facts)
-        status, routes, _fields = facts["https://api.handle.me/openapi.json"]
+        status, routes, *_rest = facts["https://api.handle.me/openapi.json"]
         self.assertEqual(status, "HTTP 200")
         self.assertIn("/handles/{handle}", routes)      # the exact route the coder kept inventing
         self.assertIn("/holders/{address}", routes)     # ...and the second call it never knew it needed
@@ -613,7 +614,7 @@ class GatherLoopTests(unittest.TestCase):
         # rides in the LAST turn, which the floor drops LAST. It is an ADDITION: the transcript stays.
         from cria.planner import _facts_digest
         digest = _facts_digest({"https://api.handle.me/openapi.json":
-                                ("HTTP 200", "/handles/{handle}, /holders/{address}", "GET → holder")})
+                                ('HTTP 200', ('/handles/{handle}', '/holders/{address}'), (Shape(head='GET → holder', fields=()), ), (), '')})
         self.assertIn("https://api.handle.me/openapi.json", digest)
         self.assertIn("/handles/{handle}", digest)
         self.assertIn("GET → holder", digest)
@@ -632,7 +633,7 @@ class UnreadHostTests(unittest.TestCase):
     def test_unread_hosts_are_the_named_ones_minus_the_fetched_ones(self):
         from cria.planner import _unread_hosts
         task = "resolve a handle with api.handle.me and link docs.example.com in the README"
-        facts = {"https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", "")}
+        facts = {"https://api.handle.me/openapi.json": ('HTTP 200', ('/handles/{handle}',), (), (), '')}
         steps = ["Call api.handle.me to resolve the handle", "Link to docs.example.com in the README"]
         self.assertEqual(_unread_hosts(steps, facts, task), ["docs.example.com"])  # the fetched one is gone
 
@@ -715,7 +716,7 @@ class UnreadHostTests(unittest.TestCase):
     def test_a_host_that_was_fetched_costs_no_reasoner_call_at_all(self):
         # Zero cost when there is no discrepancy: the deterministic half found nothing to ask about.
         from cria.planner import _unread_hosts
-        facts = {"https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", "")}
+        facts = {"https://api.handle.me/openapi.json": ('HTTP 200', ('/handles/{handle}',), (), (), '')}
         self.assertEqual(_unread_hosts(["call api.handle.me for the handle"], facts,
                                        "resolve with api.handle.me"), [])
 

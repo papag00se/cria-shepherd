@@ -8,19 +8,43 @@ import unittest
 from pathlib import Path
 
 from cria import probediscovery, probegate, proberun
+from tests.gatefixture import gate_page, completed
 from cria.probediscovery import ProbeKind
 from cria.probegate import GatePlan, interpret_gate, plan_gate, split_sections
 from cria.proberun import completion_block_nudge, completion_probe_digest, syntax_floor_clean
 
 
-def _ws(with_pytest=True, py_body="print(1)\n"):
-    t = tempfile.mkdtemp()
+def _ws(with_pytest=True, py_body="print(1)\n", prefix=None):
+    t = tempfile.mkdtemp(prefix=prefix) if prefix else tempfile.mkdtemp()
     with open(os.path.join(t, "x.py"), "w") as f:
         f.write(py_body)
     if with_pytest:
         with open(os.path.join(t, "pyproject.toml"), "w") as f:
             f.write("[tool.pytest.ini_options]\n")
     return t
+
+
+def _tool_of(command):
+    """The tool a candidate's argv actually RUNS: the module after `python -m`, else the executable's own name. (Never a substring of
+    the joined command: an argument — a workspace path under a directory named `…pytest…` — is not the tool.)"""
+    argv = list(command)
+    if "-m" in argv[:3] and argv.index("-m") + 1 < len(argv):
+        return argv[argv.index("-m") + 1]
+    return os.path.basename(argv[0]) if argv else ""
+
+
+def _candidate_index(plan, tool):
+    for i, c in enumerate(plan.candidates):
+        if _tool_of(c.command) == tool:
+            return i
+    raise AssertionError(f"no candidate running {tool}")
+
+
+def _cd_commands(script):
+    """The `cd` COMMANDS of a shell script: `cd` in command position (start of a line, or after `;` `&` `|` `(` `{`) followed by a word
+    break. A `cd ` that is merely the tail of a word — the random transport token happens to end in `cd` — is not a command."""
+    import re
+    return re.findall(r"(?m)(?:^|[;&|(){}])[ \t]*cd(?=[ \t]|$)[^\n]*", script)
 
 
 def _sec(i, body):
@@ -65,9 +89,23 @@ class PlanTests(unittest.TestCase):
         is the workspace survey, which is how a rootless session ever learns anything at all."""
         plan = plan_gate("")
         self.assertEqual(plan.candidates, [])
-        self.assertNotIn("cd ", plan.script)
+        self.assertEqual(_cd_commands(plan.script), [])                    # no `cd` COMMAND (a token ending in `cd` is not one)
         self.assertNotIn(probegate.SECTION_PREFIX + "git" + probegate.SECTION_SUFFIX, plan.script)
         self.assertIn("___CRIA_SURVEY_CMD___", plan.script)
+
+    def test_a_transport_token_ending_in_cd_is_not_a_cd_command(self):
+        """The gate script embeds a random 24-hex transport token; when it ended in `cd` followed by a space the old
+        `assertNotIn("cd ", script)` failed about 1 run in 256 although the script ran no `cd`. Pin the token, then ask the question
+        the test means: is there a `cd` command?"""
+        from unittest import mock
+        token = "00112233445566778899aacd"
+        with mock.patch.object(probegate.secrets, "token_hex", return_value=token):
+            plan = plan_gate("")
+        self.assertEqual(plan.transport_id, token)
+        self.assertIn("cd ", plan.script)                                  # the substring IS there (inside the token's neighbourhood)…
+        self.assertEqual(_cd_commands(plan.script), [])                    # …and no command is
+        real = "cd /tmp\nx=1; cd -- y\n(cd z)"
+        self.assertEqual(len(_cd_commands(real)), 3)                       # the helper does see real `cd` commands
 
     def test_split_sections_roundtrip(self):
         text = "banner noise\n___CRIA_GATE_a___\nline1\nline2\n___CRIA_GATE_b___\nEXIT:0"
@@ -81,19 +119,16 @@ class InterpretTests(unittest.TestCase):
             return plan_gate(_ws())
 
     def _i(self, plan, name_frag):
-        for i, c in enumerate(plan.candidates):
-            if name_frag in " ".join(c.command):
-                return i
-        raise AssertionError(f"no candidate matching {name_frag}")
+        return _candidate_index(plan, name_frag)
 
     def test_no_markers_means_did_not_run(self):
-        self.assertFalse(interpret_gate(plan_gate(""), "PROBE_EXIT=0 old-style").ran)
+        self.assertFalse(interpret_gate(plan_gate(""), gate_page(plan_gate(""), "PROBE_EXIT=0 old-style")).ran)
 
     def test_syntax_floor_failure_blocks_with_file_line(self):
         plan = self._plan()
         result = _sec(self._i(plan, "compileall"),
                       '*** Error compiling x.py\n  File "x.py", line 3\nSyntaxError: invalid syntax\nEXIT:1') + _git()
-        out = interpret_gate(plan, result)
+        out = interpret_gate(plan, gate_page(plan, result))
         self.assertTrue(out.ran)
         self.assertIs(syntax_floor_clean(out.report), False)
         nudge = completion_block_nudge(out.report)
@@ -104,7 +139,7 @@ class InterpretTests(unittest.TestCase):
         # The congruence exception: a tier-0 check that RAN red is itself the diagnosis.
         plan = self._plan()
         result = _sec(self._i(plan, "compileall"), "some unparseable garbage output\nEXIT:1") + _git()
-        out = interpret_gate(plan, result)
+        out = interpret_gate(plan, gate_page(plan, result))
         self.assertIsNotNone(completion_block_nudge(out.report))
 
     def test_failing_test_probe_blocks_with_findings(self):
@@ -113,9 +148,26 @@ class InterpretTests(unittest.TestCase):
                   + _sec(self._i(plan, "pytest"),
                          "FAILED tests/test_x.py::test_a - AssertionError: boom\n1 failed\nEXIT:1")
                   + _git("def456"))
-        out = interpret_gate(plan, result)
+        out = interpret_gate(plan, gate_page(plan, result))
         nudge = completion_block_nudge(out.report)
         self.assertIsNotNone(nudge)
+        self.assertIn("tests/test_x.py", nudge)
+        self.assertIn("GROUND TRUTH", nudge)
+
+    def test_a_workspace_path_that_contains_the_tool_name_does_not_change_which_candidate_is_the_tool(self):
+        """The launcher's own temp directory was `…/final-full-pytest/…`, so the pyflakes candidate (`pyflakes <workspace>/x.py`)
+        contained the substring `pytest` and was picked as "the pytest probe": its section was written under the wrong index and the
+        failing test's findings never reached the nudge. A candidate is identified by the tool its argv runs, not by its path."""
+        with _fake_pyflakes_on_path():
+            plan = plan_gate(_ws(prefix="final-full-pytest-"))
+        self.assertIn("pytest", " ".join(plan.candidates[_candidate_index(plan, "pyflakes")].command))     # the collision is real
+        test_i = _candidate_index(plan, "pytest")
+        self.assertEqual(plan.candidates[test_i].kind, ProbeKind.Test)
+        self.assertEqual(plan.candidates[test_i].command[:3], ["python3", "-m", "pytest"])
+        result = (_sec(_candidate_index(plan, "compileall"), "EXIT:0")
+                  + _sec(test_i, "FAILED tests/test_x.py::test_a - AssertionError: boom\n1 failed\nEXIT:1")
+                  + _git("def456"))
+        nudge = completion_block_nudge(interpret_gate(plan, gate_page(plan, result)).report)
         self.assertIn("tests/test_x.py", nudge)
         self.assertIn("GROUND TRUTH", nudge)
 
@@ -125,7 +177,7 @@ class InterpretTests(unittest.TestCase):
                   + _sec(self._i(plan, "pyflakes"), "EXIT:0")
                   + _sec(self._i(plan, "pytest"), "3 passed in 0.1s\nEXIT:0")
                   + _git("feed99"))
-        out = interpret_gate(plan, result)
+        out = interpret_gate(plan, gate_page(plan, result))
         self.assertIsNone(completion_block_nudge(out.report))
         self.assertIs(syntax_floor_clean(out.report), True)
         digest = completion_probe_digest(out.report)
@@ -135,7 +187,7 @@ class InterpretTests(unittest.TestCase):
     def test_missing_probe_section_never_blocks(self):
         plan = self._plan()
         result = _sec(self._i(plan, "compileall"), "EXIT:0") + _git()
-        out = interpret_gate(plan, result)
+        out = interpret_gate(plan, gate_page(plan, result))
         self.assertIsNone(completion_block_nudge(out.report))  # absent test section ≠ diagnosis
 
     def test_launch_failure_never_blocks_but_digest_tells(self):
@@ -143,7 +195,7 @@ class InterpretTests(unittest.TestCase):
         result = (_sec(self._i(plan, "compileall"), "EXIT:0")
                   + _sec(self._i(plan, "pytest"), "bash: pytest: command not found\nEXIT:127")
                   + _git())
-        out = interpret_gate(plan, result)
+        out = interpret_gate(plan, gate_page(plan, result))
         self.assertIsNone(completion_block_nudge(out.report))
         self.assertIn("did NOT launch", completion_probe_digest(out.report))
 
@@ -197,7 +249,7 @@ class PyflakesDroppedWhenAbsentTests(unittest.TestCase):
         out = interpret_gate(plan, proc.stdout)
         self.assertTrue(out.ran)
         raw = probegate.transported_result(plan) or proc.stdout
-        checks = probegate.clean_gate_output(raw, plan=plan)
+        checks = probegate.clean_gate_output(raw, plan=completed(plan, raw))
         self.assertIsNotNone(checks)
         self.assertNotIn("pyflakes", checks)
         self.assertIn("exit 0", checks.lower())
@@ -223,7 +275,7 @@ class PyflakesDroppedWhenAbsentTests(unittest.TestCase):
         self.assertIsNotNone(nudge)
         self.assertIn("undefined name", nudge)
         raw = probegate.transported_result(plan) or proc.stdout
-        checks = probegate.clean_gate_output(raw, plan=plan)
+        checks = probegate.clean_gate_output(raw, plan=completed(plan, raw))
         self.assertIsNotNone(checks)
         self.assertIn("undefined name", checks)
         self.assertIn("report these error-class problems", checks)
@@ -242,7 +294,7 @@ class PyflakesDroppedWhenAbsentTests(unittest.TestCase):
         proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=15)
         self.assertIn("EXIT:127", proc.stdout)
         raw = _sec(0, proc.stdout) + _git()
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no usable result", out.lower())
         self.assertNotIn("report these error-class problems", out)
 
@@ -311,7 +363,7 @@ class CleanGateOutputTests(unittest.TestCase):
 
     def test_strips_plumbing_and_advisory_keeps_error(self):
         raw = self._raw("x.py:1:1 'os' imported but unused\nx.py:5:4 undefined name 'foo'\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIsNotNone(out)
         self.assertIn("x.py:5:4 undefined name 'foo'", out)   # the real error survives
         self.assertNotIn("imported but unused", out)          # advisory dropped
@@ -322,7 +374,7 @@ class CleanGateOutputTests(unittest.TestCase):
 
     def test_clean_keeps_tool_output_without_a_doubt_hedge(self):
         raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:0")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIsNotNone(out)
         self.assertIn("exit 0", out.lower())
         self.assertIn("x.py:1:1 'os' imported but unused", out)  # real successful output, not a finding
@@ -337,7 +389,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # E501 sits AFTER the file:line:col prefix — is_advisory's anchored code check only fires
         # once clean_gate_output strips that prefix.
         raw = self._raw("x.py:80:1: E501 line too long (99 > 88 characters)\nEXIT:0")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("exit 0", out.lower())
         self.assertIn("x.py:80:1: E501 line too long (99 > 88 characters)", out)
         self.assertNotIn("report these error-class problems", out)
@@ -347,7 +399,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # setup gap and there is no other check's verdict to fall back on. The model sees a neutral
         # non-actionable note — never an error to "fix", never a pass/clean claim.
         raw = self._raw_solo("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())            # not framed as a fixable code error
         self.assertNotIn("pass", out.lower())           # not a pass/clean claim
@@ -358,7 +410,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # THE regression: a probe that couldn't launch (`python` absent) is cria's OWN setup gap. The
         # model sees a neutral non-actionable note — never an error to "fix", never a pass/clean claim.
         raw = self._raw("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())            # not framed as a fixable code error
         self.assertNotIn("pass", out.lower())           # not a pass/clean claim
@@ -377,7 +429,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # 127, "command not found" -- landing in the SAME generic couldn't-run bucket as every
         # other absent tool, with no pyflakes-specific handling in this function at all.
         raw = self._raw_solo("bash: pyflakes: command not found\nEXIT:127")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no usable result", out.lower())         # abstain: neutral, not an error to fix
         self.assertNotIn("pyflakes", out)                      # the absent tool's own name never ships
         self.assertNotIn("report these error-class problems", out)  # never framed as the repo's own defect
@@ -391,7 +443,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # shipped could still carry it, and this function reads it exactly as base always did --
         # documented here so a future reader does not mistake this for a still-open gap here.
         raw = self._raw_solo("/usr/bin/python3: No module named pyflakes\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("report these error-class problems", out)
 
 
@@ -399,7 +451,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # The other half of C39: a REAL pyflakes finding (present, installed, and failing) must still
         # surface exactly as before — the fix only changes what happens when the module is ABSENT.
         raw = self._raw("orders/app.py:12:1: undefined name 'db'\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIsNotNone(out)
         self.assertIn("orders/app.py:12:1: undefined name 'db'", out)
         self.assertIn("error-class problems", out)
@@ -408,7 +460,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # If something both failed to launch AND a real error was reported, surface the real error.
         raw = self._raw("timeout: failed to run command 'python': No such file or directory\n"
                         "x.py:5:4 undefined name 'foo'\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("undefined name 'foo'", out)
         self.assertIn("checker's own message", out.lower())
 
@@ -418,7 +470,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # the section's non-zero EXIT — not be hidden as "couldn't run" by a substring.
         raw = self._raw("FAILED tests/t.py::test_reads - FileNotFoundError: "
                         "[Errno 2] No such file or directory: 'data.csv'\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("No such file or directory", out)     # surfaced, not swallowed
         self.assertIn("checker's own message", out.lower())
         self.assertNotIn("no usable result", out.lower())   # NOT the couldn't-run message
@@ -429,7 +481,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # wholesale). Its lines must NOT become error-class findings, though — post-timeout output is
         # mostly noise, which is the false-red class.
         raw = self._raw("(killed mid-run)\nEXIT:124")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no verdict either way", out.lower())   # not a pass, not a verdict
         self.assertNotIn("fix", out.lower())
         self.assertNotIn("checker's own message", out.lower())  # NOT reported as error-class findings
@@ -445,7 +497,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # to cria's own missing pyflakes). What this test's own comment always guaranteed --
         # "never presented as something to fix" -- still holds and is kept as its own assertion.
         raw = self._raw("EXIT:124")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertNotIn("fix", out.lower())
 
     def test_timeout_with_no_output_still_names_the_timeout_not_no_usable_result(self):
@@ -453,7 +505,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # probe-0 genuinely ran clean, the message must say so too rather than collapsing to the
         # generic (and here false) "no usable result".
         raw = self._raw("EXIT:124")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no verdict either way", out.lower())
         self.assertNotIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())
@@ -462,7 +514,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # The TRUE solo case (nothing else in the gate at all): still named, per the reviewer's
         # directive that a 124 section is ALWAYS stated as a timeout, even printing nothing.
         raw = self._raw_solo("EXIT:124")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no verdict either way", out.lower())
         self.assertNotIn("fix", out.lower())
 
@@ -473,13 +525,13 @@ class CleanGateOutputTests(unittest.TestCase):
         # `could_not_run and timeout_notes` branch returned the named timeout note alone the moment
         # any section was a confirmed timeout, dropping the cut section's real content entirely.
         raw = (_sec(0, "EXIT:124") + _sec(1, "E AssertionError: boom") + _git())
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("no verdict either way", out.lower())   # the named timeout note survives
         self.assertIn("E AssertionError: boom", out)           # ...and so does the cut section's output
 
     def test_nonzero_exit_empty_output_is_a_failure(self):
         raw = self._raw("EXIT:1")   # exited non-zero, printed nothing usable
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("failed", out.lower())
         self.assertIn("run it yourself", out.lower())
         self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message
@@ -489,7 +541,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # must NOT scrape as an error-class finding, and — with probe-0 clean — the gate must read as
         # clean-ish ("no error-class problems"), NEVER "one of the checks FAILED".
         raw = self._raw("no tests ran in 0.01s\nEXIT:5")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("exit 5", out.lower())
         self.assertIn("no tests ran in 0.01s", out.lower())  # evidence, not a finding
         self.assertNotIn("report these error-class problems", out)
@@ -501,7 +553,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # started), the gate must not read as a failure or "no usable result".
         raw = ("Chunk ID: 7f3\n" + _sec(0, "no tests ran in 0.01s\nEXIT:5")
                + _git("deadbeef") + "Process exited with code 1\n")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertNotIn("failed", out.lower())
         self.assertNotIn("no usable result", out.lower())
 
@@ -510,7 +562,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # "the repo's own checks report these error-class problems ...": 4
         # passed". A passing check's stdout is not a finding.
         raw = self._raw("....                                    [100%]\n4 passed in 0.06s\nEXIT:0")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("exit 0", out.lower())
         self.assertIn("4 passed in 0.06s", out)
         self.assertNotIn("report these error-class problems", out)
@@ -522,7 +574,7 @@ class CleanGateOutputTests(unittest.TestCase):
                + _sec(0, "....  [100%]\n4 passed in 0.06s\nEXIT:0")           # green — skipped
                + _sec(1, "x.py:5:4 undefined name 'foo'\nEXIT:1")            # red — surfaced
                + _git("deadbeef") + "Process exited with code 1\n")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("undefined name 'foo'", out)
         self.assertNotIn("4 passed", out)
 
@@ -531,7 +583,7 @@ class CleanGateOutputTests(unittest.TestCase):
         # ruff/tsc-style: exited non-zero but every line is advisory (unused import). Must read as
         # advisory-clean, NEVER "a check failed" — that's the footgun the user cares about.
         raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("exit 0", out.lower())  # the sibling syntax probe completed
         self.assertNotIn("failed", out.lower())
         self.assertNotIn("imported but unused", out)
@@ -542,21 +594,22 @@ class CleanGateOutputTests(unittest.TestCase):
         # while real errors below the fold stayed invisible. Every error-class finding must appear.
         lines = [f"x.py:{i}:4 undefined name 'v{i}'" for i in range(1, 51)]   # 50 distinct real errors
         raw = self._raw("\n".join(lines) + "\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertIn("x.py:1:4 undefined name 'v1'", out)
         self.assertIn("x.py:50:4 undefined name 'v50'", out)   # the 50th survives — no 40-line clip
         self.assertEqual(sum(1 for l in out.splitlines() if "undefined name" in l), 50)
 
     def test_non_gate_text_untouched(self):
-        self.assertIsNone(probegate.clean_gate_output("just some tool output, no markers"))
-        self.assertIsNone(probegate.clean_gate_output(""))
+        self.assertIsNone(probegate.clean_gate_output("just some tool output, no markers", completed(probegate.GatePlan(''), "just some tool output, no markers")))
+        self.assertIsNone(probegate.clean_gate_output("", completed(probegate.GatePlan(''), "")))
 
     def test_clean_gate_results_rewrites_tool_and_fco_messages(self):
         raw = self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")
+        page = gate_page(probegate.GatePlan(''), raw)          # the result as the harness delivers it: a verified page
         msgs = [
             {"role": "user", "content": "go"},
-            {"role": "tool", "content": raw},                                  # chat-style tool result
-            {"type": "function_call_output", "output": raw},                   # responses-style result
+            {"role": "tool", "content": page},                                 # chat-style tool result
+            {"type": "function_call_output", "output": gate_page(probegate.GatePlan(''), raw)},   # responses-style result (its own transport)
             {"role": "tool", "content": "unrelated tool output"},              # non-gate — untouched
         ]
         out = probegate.clean_gate_results(msgs)
@@ -568,7 +621,7 @@ class CleanGateOutputTests(unittest.TestCase):
 
     def test_idempotent(self):
         raw = self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")
-        msgs = [{"role": "tool", "content": raw}]
+        msgs = [{"role": "tool", "content": gate_page(probegate.GatePlan(''), raw)}]
         once = probegate.clean_gate_results(msgs)
         twice = probegate.clean_gate_results(once)
         self.assertEqual(once, twice)
@@ -586,7 +639,8 @@ class CleanGateOutputTests(unittest.TestCase):
         # command, leaving only the real probe (pytest). The result is still cleaned to ⟦ctx:checks⟧.
         import json
         msgs = [self._gate_cmd(),
-                {"role": "tool", "tool_call_id": "g1", "content": self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")}]
+                {"role": "tool", "tool_call_id": "g1",
+                 "content": gate_page(probegate.GatePlan(''), self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1"))}]
         out = probegate.clean_gate_results(msgs)
         cmd = json.loads(out[0]["tool_calls"][0]["function"]["arguments"])["cmd"]
         self.assertEqual(cmd, "pytest -q")                        # scaffolding gone
@@ -600,7 +654,7 @@ class CleanGateOutputTests(unittest.TestCase):
         import json
         no_probe = "Chunk ID: 1\n" + probegate.SECTION_PREFIX + "git___\ndeadbeef\n"  # git only → no signal
         msgs = [{"role": "user", "content": "go"}, self._gate_cmd(),
-                {"role": "tool", "tool_call_id": "g1", "content": no_probe}]
+                {"role": "tool", "tool_call_id": "g1", "content": gate_page(probegate.GatePlan(''), no_probe)}]
         out = probegate.clean_gate_results(msgs)
         self.assertEqual([m.get("role") for m in out], ["user"])   # both the call and result are gone
 
@@ -616,6 +670,8 @@ class CleanGateOutputTests(unittest.TestCase):
         plan.transport_data = bytearray(raw.encode())
         plan.transport_total = len(plan.transport_data)
         plan.transport_complete = True
+        from tests.gatefixture import declare
+        declare(plan, raw)                                  # the worker's declared extents and header offsets for this stream
         marker = probegate._transport_marker(plan.transport_id)
         first_command = probegate._gate_sentinel(["pytest -q"]) + "\ninternal transport"
         next_command = probegate._gate_sentinel([]) + "\ninternal next page"
@@ -664,6 +720,7 @@ class CleanGateOutputTests(unittest.TestCase):
                 f"offset\t{offset}",
                 f"total\t{len(raw_bytes)}",
                 f"sha256\t{digest}",
+                *__import__("tests.gatefixture", fromlist=["x"]).bounds_field_for(raw),
                 "data\t" + base64.b64encode(chunk).decode(),
                 probegate._transport_marker(old.transport_id, end=True),
             ]))
@@ -711,12 +768,12 @@ class GitOnlyGateTests(unittest.TestCase):
 
     def test_interpret_git_only_gate_is_not_ran(self):
         from cria.probegate import GatePlan, interpret_gate, SECTION_PREFIX as P, SECTION_SUFFIX as S
-        out = interpret_gate(GatePlan(workspace="/tmp", candidates=[]), f"{P}git{S}\nabc123\n")
+        out = interpret_gate(GatePlan(workspace="/tmp", candidates=[]), gate_page(GatePlan(workspace="/tmp", candidates=[]), f"{P}git{S}\nabc123\n"))
         self.assertFalse(out.ran)          # only a git snapshot came back → no check ran → not clean
 
     def test_clean_gate_output_git_only_is_not_a_pass(self):
         from cria.probegate import clean_gate_output, SECTION_PREFIX as P, SECTION_SUFFIX as S
-        out = clean_gate_output(f"pre\n{P}git{S}\nabc123\n")
+        out = clean_gate_output(f"pre\n{P}git{S}\nabc123\n", completed(probegate.GatePlan(''), f"pre\n{P}git{S}\nabc123\n"))
         self.assertIn("no usable result", out.lower())     # the neutral no-signal branch...
         self.assertNotIn("no error-class", out.lower())    # ...NOT the clean/pass message
 
@@ -734,23 +791,20 @@ class CutShortGateTests(unittest.TestCase):
             return plan_gate(t)
 
     def _i(self, plan, name_frag):
-        for i, c in enumerate(plan.candidates):
-            if name_frag in " ".join(c.command):
-                return i
-        raise AssertionError(f"no candidate matching {name_frag}")
+        return _candidate_index(plan, name_frag)
 
     def test_cut_short_section_is_not_a_pass_and_digest_says_unfinished(self):
         plan = self._plan()
         raw = (_sec(self._i(plan, "compileall"), "EXIT:0")
                + _sec(self._i(plan, "pyflakes"), "EXIT:0")
                + _sec(self._i(plan, "pytest"), ""))                    # header came back, then the cut
-        out = interpret_gate(plan, raw)
+        out = interpret_gate(plan, gate_page(plan, raw))
         self.assertIsNone(completion_block_nudge(out.report))          # unknown ≠ a failure to fix
         digest = completion_probe_digest(out.report)
         self.assertIn("UNFINISHED", digest)
         self.assertNotIn("tool missing", digest)                       # the old false fact
         from cria.probegate import clean_gate_output
-        nudge = clean_gate_output(raw, plan)
+        nudge = clean_gate_output(raw, completed(plan, raw))
         self.assertNotIn("no problems reported", nudge or "")          # and never reads clean
 
 
@@ -852,7 +906,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             ws = self._ws(tmp, **{"resolve_handle.py":
                                   "import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n"})
             plan = probegate.plan_gate(ws)
-            out = probegate.clean_gate_output(self.CLEAN, plan)
+            out = probegate.clean_gate_output(self.CLEAN, completed(plan, self.CLEAN))
         self.assertIn("exit 0", out)  # successful syntax status is retained
         self.assertIn("no test command was composed", out)            # ...and no longer half a sentence
         self.assertIn("test_*.py or *_test.py", out)       # the convention cria SEARCHED by
@@ -862,7 +916,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"resolve_handle.py": "x = 1\n",
                                   "tests|test_resolve.py": "def test_ok():\n    assert True\n"})
-            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+            out = probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN))
         self.assertNotIn("No tests ran", out)
         self.assertIn("exit 0", out)
         self.assertIn("[no output recorded]", out)
@@ -874,13 +928,12 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n#[cfg(test)]\nmod t {\n #[test]\n fn x(){}\n}\n",
                                   "Cargo.toml": "[package]\nname='x'\n"})
-            self.assertNotIn("no test command was composed", probegate.clean_gate_output(self.CLEAN,
-                                                                             probegate.plan_gate(ws)))
+            self.assertNotIn("no test command was composed", probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN)))
 
     def test_a_decoration_language_with_no_tests_is_told_the_decoration(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"src|lib.rs": "fn a(){}\n", "Cargo.toml": "[package]\nname='x'\n"})
-            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+            out = probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN))
         # `cargo test` IS composed for a Cargo project, so the lead sentence may not claim none was.
         self.assertNotIn("no test command was composed", out)
         self.assertIn("does not establish that this project's tests pass", out)
@@ -891,7 +944,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"resolve_handle.py":
                                   "import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n"})
-            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+            out = probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN))
         self.assertIn("Test code in resolve_handle.py will not run", out)
 
     def test_go_with_a_manifest_and_no_test_file_is_covered_too(self):
@@ -900,7 +953,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         # FILES, so it needs no parsing of a runner output cria has no toolchain to verify against.
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"main.go": "package main\n", "go.mod": "module x\ngo 1.21\n"})
-            out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
+            out = probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN))
         # `go test ./...` IS composed here, so the lead sentence may not say none was — that claim
         # went out over a gate script containing `mvn test` on cycle 4 cell 16. What it says instead
         # is the fact that still holds: the green does not establish the tests pass.
@@ -915,8 +968,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
             ws = self._ws(tmp, **{"resolve.py": "x = 1\n",
                                   ".venv|lib|python3.12|site-packages|_pytest|test_main.py": "def test_x(): pass\n",
                                   ".venv|lib|python3.12|site-packages|_pytest|test_cfg.py": "def test_y(): pass\n"})
-            self.assertIn("no test command was composed", probegate.clean_gate_output(self.CLEAN,
-                                                                          probegate.plan_gate(ws)))
+            self.assertIn("no test command was composed", probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN)))
 
     def test_findings_are_never_buried_under_the_note(self):
         # Where a real error-class finding exists the coder has concrete work; a naming note on top of
@@ -924,7 +976,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         failing = "___CRIA_GATE_probe-0___\napp.py:3: undefined name 'x'\nEXIT:1\n___CRIA_GATE_git___\nabc\n"
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"app.py": "import unittest\n"})
-            out = probegate.clean_gate_output(failing, probegate.plan_gate(ws))
+            out = probegate.clean_gate_output(failing, completed(probegate.plan_gate(ws), failing))
         self.assertIn("undefined name", out)
         self.assertNotIn("No tests ran", out)
 
@@ -936,7 +988,7 @@ class VerbatimMeansVerbatimTests(unittest.TestCase):
     twice over.
 
     Walked on ada-handles_fabliq_codex_pon_1785721353. A reader fed real pytest output through
-    cria's own clean_gate_output() and reproduced its exact call-0185 bytes, closing brace missing.
+    cria's own clean_gate_output(, completed(probegate.GatePlan(''), )) and reproduced its exact call-0185 bytes, closing brace missing.
     The file parsed cleanly and `compileall` exited 0 in that same gate. cria manufactured
     "handle_resolver.py has a syntax error — missing a closing parenthesis", restated it in every
     prompt for 45 straight calls, and the coder copied the de-indented text into edit_file
@@ -955,7 +1007,7 @@ class VerbatimMeansVerbatimTests(unittest.TestCase):
         from cria import proberun
         raw = (f"{probegate.SECTION_PREFIX}probe-1{probegate.SECTION_SUFFIX}\n"
                f"{body}{proberun.PROBE_EXIT_SENTINEL}1\n")
-        return probegate.clean_gate_output(raw, None) or ""
+        return probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw)) or ""
 
     def test_the_closing_brace_is_not_deleted(self):
         self.assertIn("}", self._clean(self.SRC))
@@ -1001,19 +1053,19 @@ class F811ShadowInGateOutputTests(unittest.TestCase):
     def test_a_def_shadow_survives_to_the_model(self):
         ws = self._ws("import json\n" + "\n" * 3 + "def resolve_handle(h, live_test=False):\n    pass\n")
         raw = self._raw("x.py:5:1: redefinition of unused 'resolve_handle' from line 2\nEXIT:1")
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertIn("redefinition of unused 'resolve_handle'", out)
         self.assertIn("def resolve_handle(h, live_test=False):", out)   # flagged-line fact rides along
 
     def test_an_import_rebinding_is_still_filtered(self):
         ws = self._ws("import json\nimport os\nimport json\n")
         raw = self._raw("x.py:3:1: redefinition of unused 'json' from line 1\nEXIT:1")
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertNotIn("redefinition", out)
 
     def test_no_workspace_keeps_the_old_advisory_default(self):
         raw = self._raw("x.py:5:1: redefinition of unused 'resolve_handle' from line 2\nEXIT:1")
-        out = probegate.clean_gate_output(raw)
+        out = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
         self.assertNotIn("redefinition", out)
 
 

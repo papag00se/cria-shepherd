@@ -32,11 +32,13 @@ import unittest
 
 from cria import loop, prompts
 
-ROUTES = "/, /handles, /handles/{handle}, /holders, /holders/{address}, /stats, /health"
-SHAPES = ("GET /handles/{handle} (replace in the URL path: {handle} = The Handle name) returns:\n"
-          "GET /holders/{address} (replace in the URL path: {address} = The stake/enterprise/script/"
-          "other address of the Holder) returns:")
-LEDGER = {"https://api.handle.me/openapi.json": ("HTTP 200", ROUTES, SHAPES, "")}
+from cria.fetchfacts import Shape
+
+ROUTES = ("/", "/handles", "/handles/{handle}", "/holders", "/holders/{address}", "/stats", "/health")
+SHAPES = (Shape("GET /handles/{handle}", route="/handles/{handle}", params=("{handle} = The Handle name",)),
+          Shape("GET /holders/{address}", route="/holders/{address}",
+                params=("{address} = The stake/enterprise/script/other address of the Holder",)))
+LEDGER = {"https://api.handle.me/openapi.json": ("HTTP 200", ROUTES, SHAPES, ())}
 
 # verbatim coder tool output from the two walked runs
 MELLUM = ("Error resolving handle: 404 Client Error: Not Found for url: "
@@ -64,7 +66,7 @@ class ItNamesTheHalfThatIsActuallyWrongTests(unittest.TestCase):
 
     def test_with_no_parsed_routes_it_asserts_neither(self):
         """Silence over a guess — and the rest of the anchor, which cria DID observe, still ships."""
-        fact = _fact(MAPLE, {"https://api.handle.me/x": ("HTTP 200", "", "", "")})
+        fact = _fact(MAPLE, {"https://api.handle.me/x": ('HTTP 200', (), (), (), '')})
         self.assertIn("The host answers", fact)
         for guess in ("No such route", "This route exists", "about the path"):
             self.assertNotIn(guess, fact)

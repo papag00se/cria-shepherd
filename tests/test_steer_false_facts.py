@@ -117,7 +117,7 @@ class SteerAuthClaimTests(unittest.TestCase):
 
     def test_invented_auth_claim_is_refutable(self):
         # FAILS BEFORE THE FIX: 0191 was delivered with no question asked.
-        sess = _Sess(TASK, {"https://api.handle.me/openapi.json": ("HTTP 200", "", "", "")})
+        sess = _Sess(TASK, {"https://api.handle.me/openapi.json": ('HTTP 200', (), (), (), '')})
         rlog = _Rlog()
         self.assertTrue(_steer_auth_refuted(STEER_0191, "all fetches clean", sess,
                                             self._ask("REFUTED"), rlog))
@@ -125,7 +125,7 @@ class SteerAuthClaimTests(unittest.TestCase):
         self.assertIn("HTTP 200", self.asked)          # the gathered facts reached the judge
 
     def test_stands_delivers(self):
-        sess = _Sess(TASK, {"https://api.example.com": ("HTTP 401", "", "", "")})
+        sess = _Sess(TASK, {"https://api.example.com": ('HTTP 401', (), (), (), '')})
         self.assertFalse(_steer_auth_refuted(STEER_0191, "got 401 Unauthorized", sess,
                                              self._ask("STANDS"), _Rlog()))
 
@@ -140,7 +140,7 @@ class SteerAuthClaimTests(unittest.TestCase):
         task = TASK + ' Use the api key I gave you.'
         sess = PlanSession(plan=Plan(id='auth-task-owner', task=task, created='now',
                                      items=[PlanItem(task)]))
-        sess.fetched_pages = {'https://api.handle.me/openapi.json': ('HTTP 200', '', '', '')}
+        sess.fetched_pages = {'https://api.handle.me/openapi.json': ('HTTP 200', (), (), (), '')}
         self.assertFalse(_steer_auth_refuted(STEER_0191, 'all fetches clean', sess,
                                             self._ask('REFUTED'), _Rlog()))
         self.assertEqual(self.asked, '')
@@ -148,7 +148,7 @@ class SteerAuthClaimTests(unittest.TestCase):
     def test_adapter_normalizes_raw_facts_but_preserves_an_existing_evidence_owner(self):
         from unittest.mock import patch
         from cria import groundedaction
-        pages = {'https://api.handle.me/openapi.json': ('HTTP 200', '', '', '')}
+        pages = {'https://api.handle.me/openapi.json': ('HTTP 200', (), (), (), '')}
         raw = _Sess(TASK, pages)
         normalized = groundedaction.ActionEvidence(original_task='Explicit original task',
             fetched_pages=pages, last_gate_flag='EXACT unrelated session fact')
@@ -170,7 +170,7 @@ class SteerAuthClaimTests(unittest.TestCase):
         for original_task in (TASK, ''):
             with self.subTest(original_task=original_task):
                 sess = _Sess(TASK + ' Use the api key I gave you.',
-                             {'https://api.handle.me/openapi.json': ('HTTP 200', '', '', '')})
+                             {'https://api.handle.me/openapi.json': ('HTTP 200', (), (), (), '')})
                 sess.original_task = original_task
                 self.assertTrue(_steer_auth_refuted(STEER_0191, 'all fetches clean', sess,
                                                    self._ask('REFUTED'), _Rlog()))

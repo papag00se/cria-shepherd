@@ -30,10 +30,10 @@ def test_rehunt_live_cache_reset_and_real_store_durable_cleanliness(monkeypatch,
         assert 'rehunt_verdicts' not in encoded and 'semantic_pending' not in encoded
         restored = loop.LoopStore(str(tmp_path / 'sessions.json')).get(SESSION)
         assert restored is not state and restored.rehunt_verdicts is None and restored.semantic_pending is None
-        state.fetched_pages = {'https://api.handle.me/': ('HTTP 200', '')}
+        state.fetched_pages = {'https://api.handle.me/': ('HTTP 200', (), (), (), '')}
         policy.reset_turn(state)
         assert state.rehunt_verdicts is None and state.semantic_pending is None
-        assert state.fetched_pages == {'https://api.handle.me/': ('HTTP 200', '')}
+        assert state.fetched_pages == {'https://api.handle.me/': ('HTTP 200', (), (), (), '')}
         assert webfetch.prior_matching_search(SESSION, QUERY) == PRIOR.lower()
         driver.drive(body, SESSION, None, _Rlog())
         assert len(questions) == 2 and len(posted) == 2

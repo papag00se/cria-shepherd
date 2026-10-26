@@ -4,6 +4,7 @@ Measured over every captured coder turn: gemma4 0.0% tool-call-less turns (n=3,9
 qwythos 4.5%, mellum2 29.4% (192 of 653). Run 20260801T160104 call 0012 is the complete resolver
 typed into chat; call 0033 is a polished rewrite with the correct endpoint. Neither was ever written.
 """
+from cria.fetchfacts import Shape
 import json
 import pathlib
 import unittest
@@ -225,5 +226,5 @@ class SelfQuoteExemptionTests(unittest.TestCase):
         self.assertTrue(loop.unexecuted_write(both, [self.SHAPE]))
 
     def test_the_gather_reads_the_same_ledger_the_anchor_renders(self):
-        class S: fetched_pages = {"u": ("HTTP 200", "/a, /b", "the shapes text", "")}
+        class S: fetched_pages = {"u": ('HTTP 200', ('/a', '/b'), (Shape(head='the shapes text'), ), (), '')}
         self.assertEqual(loop._injected_fence_texts(S()), ["the shapes text"])

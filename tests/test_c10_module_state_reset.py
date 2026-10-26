@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from cria import assistruntime, probediscovery
+from tests.gatefixture import gate_page
 from cria.config import Role
 from cria.loop import GuardState, guard_periodic_result
 from pilot_support import module_result
@@ -64,7 +65,7 @@ class C10ModuleStateResetTests(unittest.TestCase):
                f"{SECTION_PREFIX}git{SECTION_SUFFIX}\nabc\n")
         with assistruntime.bound(assistruntime.current()):
             steer = guard_periodic_result(
-                state, _body(({"role": "tool", "tool_call_id": "c10-gate", "content": raw},)),
+                state, _body(({"role": "tool", "tool_call_id": "c10-gate", "content": gate_page(state.gate_plan, raw)},)),
                 _Log(), reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local"))
 
         self.assertFalse(state.periodic_probe)

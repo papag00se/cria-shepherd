@@ -21,8 +21,8 @@ class _Sess:
     def __init__(self, pages): self.fetched_pages = pages
 
 
-ANSWERED = {"https://api.handle.me/handles/goose": ("HTTP 200 OK", "/handles/{handle}", "", "")}
-ALL_DEAD = {"https://api.handle.me/handles/goose": ("HTTP 503 Service Unavailable", "", "", "")}
+ANSWERED = {"https://api.handle.me/handles/goose": ('HTTP 200 OK', ('/handles/{handle}',), (), (), '')}
+ALL_DEAD = {"https://api.handle.me/handles/goose": ('HTTP 503 Service Unavailable', (), (), (), '')}
 
 # Verbatim from run 1785714194 call 0026.
 REAL_BLAME = ("This is stuck. The Ada Handles API does not support /holders/{address} returning "

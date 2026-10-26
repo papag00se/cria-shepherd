@@ -31,6 +31,7 @@ from pathlib import Path
 from unittest import mock
 
 from cria import loop, probegate, proberun, wsview
+from tests.gatefixture import gate_page, completed
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 FIXTURE = Path(__file__).parent / "fixtures" / "n1_a6_maven_compile_failure.txt"
@@ -180,7 +181,7 @@ class AVanishedHelperIsUnknownNeverCleanTests(unittest.TestCase):
         self.assertIn("helper", plan.transport_error)
         self.assertFalse(plan.transport_complete)
         self.assertEqual(probegate.transported_result(plan), "")
-        outcome = probegate.interpret_gate(plan, poll)
+        outcome = probegate.interpret_gate(plan, gate_page(plan, poll))
         self.assertTrue(outcome.transport_unknown)
         self.assertFalse(outcome.ran)
         self.assertTrue(probegate.gate_is_partial(outcome))
@@ -191,7 +192,7 @@ class AVanishedHelperIsUnknownNeverCleanTests(unittest.TestCase):
         self.assertIn("helper-gone", result)
         self.assertEqual(probegate.ingest_transport(plan, result), "unknown")
         self.assertFalse(plan.helpers_ready)
-        self.assertFalse(probegate.interpret_gate(plan, result).ran)
+        self.assertFalse(probegate.interpret_gate(plan, gate_page(plan, result)).ran)
 
     def test_the_session_reinstalls_for_its_next_gate(self):
         gs = loop.GuardState(gate_helpers_ready=True)
@@ -233,7 +234,7 @@ class APlantedHelperNeverRunsTests(unittest.TestCase):
         self.assertEqual(probegate.ingest_transport(plan, result), "unknown")
         self.assertFalse(plan.helpers_ready)
         self.assertEqual(probegate.transported_result(plan), "")
-        self.assertFalse(probegate.interpret_gate(plan, result).ran)
+        self.assertFalse(probegate.interpret_gate(plan, gate_page(plan, result)).ran)
 
     def test_a_poll_over_a_planted_file_is_unknown(self):
         noise = "import hashlib\nfor i in range(1500): print(hashlib.sha256(str(i).encode()).hexdigest())"

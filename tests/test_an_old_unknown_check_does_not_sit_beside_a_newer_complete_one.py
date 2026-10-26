@@ -17,6 +17,7 @@ import hashlib
 import json
 
 from cria import probegate, prompts
+from tests.gatefixture import bounds_field_for
 
 UNKNOWN = prompts.load("probe_transport_unknown").strip()
 
@@ -30,6 +31,7 @@ def _page(transport_id: str, result: str, *, claim_total_extra: int = 0) -> str:
         "offset\t0",
         f"total\t{len(data) + claim_total_extra}",
         "sha256\t" + hashlib.sha256(data).hexdigest(),
+        *bounds_field_for(result),                      # the worker's declared extents and header offsets
         "data\t" + base64.b64encode(data).decode(),
         probegate._transport_marker(transport_id, end=True),
     ])

@@ -29,6 +29,7 @@ import tempfile
 import unittest
 
 from cria import probegate
+from tests.gatefixture import gate_page, completed
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 
@@ -91,7 +92,7 @@ class ItReachesTheCoderOnTheGreenBranchTests(unittest.TestCase):
         plan = probegate.GatePlan(workspace=tempfile.gettempdir(),
                                   candidates=[cand(ProbeKind.Lint, tempfile.gettempdir())])
         plan.ran_in = ran_in
-        return probegate.clean_gate_output("___CRIA_GATE_probe-0___\nclean\nEXIT:0\n", plan)
+        return probegate.clean_gate_output("___CRIA_GATE_probe-0___\nclean\nEXIT:0\n", completed(plan, "___CRIA_GATE_probe-0___\nclean\nEXIT:0\n"))
 
     def test_the_folder_is_named(self):
         out = self._out("toml-cli")

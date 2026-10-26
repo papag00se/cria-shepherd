@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 from cria import assistruntime, loop, probegate, wsview
+from tests.gatefixture import gate_page, completed
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 
@@ -77,7 +78,7 @@ class SurveyGateProvenanceTests(_GateFixtures, unittest.TestCase):
                 result = subprocess.run(
                     ["sh", "-c", plan.script], capture_output=True, text=True, check=True
                 ).stdout
-                outcome = probegate.interpret_gate(plan, result, _Rlog())
+                outcome = probegate.interpret_gate(plan, gate_page(plan, result), _Rlog())
                 self.assertTrue(view.surveyed)
                 self.assertFalse(outcome.ran)
                 self.assertTrue(outcome.replan_after_survey)
@@ -98,7 +99,7 @@ class SurveyGateProvenanceTests(_GateFixtures, unittest.TestCase):
                 result = subprocess.run(
                     ["sh", "-c", bootstrap.script], capture_output=True, text=True, check=True
                 ).stdout
-                probegate.interpret_gate(bootstrap, result, _Rlog())
+                probegate.interpret_gate(bootstrap, gate_page(bootstrap, result), _Rlog())
 
                 planned_after_survey = probegate.plan_gate(root, "session")
                 self.assertTrue(planned_after_survey.surveyed_before)
@@ -108,7 +109,7 @@ class SurveyGateProvenanceTests(_GateFixtures, unittest.TestCase):
                     text=True,
                     check=True,
                 ).stdout
-                outcome = probegate.interpret_gate(planned_after_survey, result, _Rlog())
+                outcome = probegate.interpret_gate(planned_after_survey, gate_page(planned_after_survey, result), _Rlog())
                 self.assertFalse(outcome.ran)
                 self.assertFalse(outcome.replan_after_survey)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cria import loop, wsview
+from cria import bodykeys, loop, wsview
 from cria.writeproxy import translate_outbound
 from tests.test_loop import _single_loop, _synth
 from tests.wsfixture import survey
@@ -40,11 +40,13 @@ def _result(messages, reply=None, path="pom.xml"):
     return args["cmd"]
 
 
-def _read(start=None, end=None, body=None, rid="r1"):
+def _read(start=None, end=None, body=None, rid="r1", outcome=None):
     args = {"path": "pom.xml", **({"start_line": start} if start else {}), **({"end_line": end} if end else {})}
+    tool = {"role": "tool", "tool_call_id": rid, "content": body}
+    if outcome:                                        # what represent_inbound proved about the result
+        tool[bodykeys.RESULT_OUTCOME] = outcome
     return [{"role": "assistant", "tool_calls": [{"id": rid, "type": "function", "function": {
-                "name": "read_file", "arguments": json.dumps(args)}}]},
-            {"role": "tool", "tool_call_id": rid, "content": body}]
+                "name": "read_file", "arguments": json.dumps(args)}}]}, tool]
 
 
 def test_the_a4_prefix_read_does_not_lift_the_hold(view):
@@ -116,7 +118,7 @@ def test_a_cat_of_another_directorys_pom_does_not_lift_the_hold(view):
 
 def test_extract_whole_reads_ignores_refused_and_empty_results():
     from cria import denial
-    assert loop._extract_whole_reads(_read(body=denial.mark("too large"))) == set()
+    assert loop._extract_whole_reads(_read(body=denial.mark("too large"), outcome=denial.REFUSED)) == set()
     assert loop._extract_whole_reads(_read(body="  ")) == set()
 
 
@@ -130,18 +132,19 @@ def _big_file(tmp_path, lines=200):
     return len(body)
 
 
-def _run_read(tmp_path, **args):
-    """The REAL lowered read command, run in a shell — its output is what the coder's result holds."""
-    from cria import writeproxy
-    out = subprocess.run(["bash", "-c", writeproxy._read_command({"path": "Big.java", **args})],
-                         cwd=tmp_path, capture_output=True, text=True)
-    return out.stdout + out.stderr
-
-
 def _exchange(tmp_path, n, **args):
-    return [{"role": "assistant", "tool_calls": [{"id": f"b{n}", "type": "function", "function": {
-                "name": "read_file", "arguments": json.dumps({"path": "Big.java", **args})}}]},
-            {"role": "tool", "tool_call_id": f"b{n}", "content": _run_read(tmp_path, **args)}]
+    """The REAL lowering of the read, run in a shell, then represented exactly as the inbound pass hands it on:
+    the coder's result is that output, and the outcome is whatever cria's own branch PROVED."""
+    from cria.writeproxy import represent_inbound, translate_outbound
+    comp = {"choices": [{"message": {"tool_calls": [{"id": f"b{n}", "type": "function", "function": {
+        "name": "read_file", "arguments": json.dumps({"path": "Big.java", **args})}}]}}]}
+    translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
+                       injected={"read_file"}, workspace_root=str(tmp_path))
+    tc = comp["choices"][0]["message"]["tool_calls"][0]
+    out = subprocess.run(["bash", "-c", json.loads(tc["function"]["arguments"])["cmd"]],
+                         cwd=tmp_path, capture_output=True, text=True)
+    return represent_inbound([{"role": "assistant", "tool_calls": [tc]},
+                              {"role": "tool", "tool_call_id": tc["id"], "content": out.stdout + out.stderr}])
 
 
 def _big_view(size):

@@ -69,6 +69,22 @@ def _owned_valid(context, owner=True):
     except OSError:
         return False
 
+def _owned_listing(descriptor,identity,label):
+    # What an authenticated directory holds NOW. A descriptor can keep answering from the moment it was opened on
+    # some filesystems (btrfs: entries added afterwards are invisible), so the directory is listed through a FRESH
+    # descriptor opened relative to the authenticated one and closed here. Same directory, same inode, checked
+    # against ``identity`` — the certificate's for the root, the caller's already-checked one for a nested
+    # directory: never a path, never a prefix, nothing widened. The ONLY place a program lists a directory.
+    probe=os.open('.',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
+    try:
+        if _owned_id(os.fstat(probe))!=identity: raise OSError(errno.ESTALE,os.strerror(errno.ESTALE),label)
+        return os.listdir(probe)
+    finally:
+        os.close(probe)
+
+def _owned_names(context):
+    return _owned_listing(context['fd'],context['root'],context['name'])
+
 def _owned_abandon(context,allocated_owner):
     # Only a fresh allocation can authorize settlement of an incomplete record.
     # Keep the original descriptors open until every identity check is finished.
@@ -78,10 +94,106 @@ def _owned_abandon(context,allocated_owner):
             marker=os.stat('.owner',dir_fd=context['fd'],follow_symlinks=False)
             if not stat.S_ISREG(marker.st_mode) or tuple(_owned_id(marker))!=allocated_owner: return
             os.unlink('.owner',dir_fd=context['fd'])
-        if _owned_valid(context,owner=False) and not os.listdir(context['fd']):
+        if _owned_valid(context,owner=False) and not _owned_names(context):
             os.rmdir(context['name'],dir_fd=context['parent_fd'])
     except OSError:
         pass
+
+class _OwnedRetireError(OSError):
+    pass
+
+def _owned_drop(parent_fd,name,identity):
+    # Remove ``name`` from the parent ONLY while it is still the inode we linked there. True: it is gone (removed now,
+    # or already absent). False: something else occupies the name; it is left exactly as found.
+    try:
+        value=os.stat(name,dir_fd=parent_fd,follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    if not stat.S_ISREG(value.st_mode) or _owned_id(value)!=identity: return False
+    os.unlink(name,dir_fd=parent_fd)
+    return True
+
+def _owned_hold(context,source,identity):
+    # A second, EXCLUSIVE name for ``source`` in the parent (an existing name is never replaced), plus a descriptor on
+    # the inode that name holds for as long as the removal lasts. What was linked must be the inode the caller
+    # authenticated; otherwise only the name created here is removed and ``source`` is left exactly as found.
+    parent=context['parent_fd']
+    link=context['name']+'.retiring'+('' if source=='.owner' else source)
+    os.link(source,link,src_dir_fd=context['fd'],dst_dir_fd=parent,follow_symlinks=False)
+    descriptor=os.open(link,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
+    current=os.fstat(descriptor)
+    if not stat.S_ISREG(current.st_mode) or _owned_id(current)!=identity:
+        os.close(descriptor)
+        _owned_drop(parent,link,_owned_id(current))
+        raise _OwnedRetireError(errno.ESTALE,source+'_identity_changed',context['name'])
+    return [source,link,identity,descriptor]
+
+def _owned_restore(context,held,gone,error):
+    # The directory could not be removed. Every name taken out of it goes back AS THE SAME INODE (linked from the
+    # descriptor verified when it was held — never from a name, never rewritten), then the extra name is removed only
+    # while it is still that inode. Anything that cannot be put back, or no longer matches, is left exactly as found
+    # and reported together with the original error; nothing is overwritten, adopted or retried.
+    problems=[]
+    for item in held:
+        source,link,identity,descriptor=item
+        if item in gone:
+            try:
+                if os.fstat(descriptor).st_nlink==0:
+                    raise OSError(errno.ENOENT,'the original inode no longer has any name (the retiring name was replaced)')
+                os.link('/proc/self/fd/'+str(descriptor),source,dst_dir_fd=context['fd'],follow_symlinks=True)
+            except OSError as blocked:
+                problems.append(source+' was not restored ('+str(blocked)+'); '+link+' left as found')
+                continue
+        else:
+            # Never unlinked from the directory. The extra name is disposable ONLY while the original is still named
+            # there; if that name is gone or now belongs to something else, the extra name is the original's last one.
+            try:
+                current=os.stat(source,dir_fd=context['fd'],follow_symlinks=False)
+                named=stat.S_ISREG(current.st_mode) and _owned_id(current)==identity
+            except FileNotFoundError:
+                named=False
+            except OSError:
+                named=None
+            if not named:
+                problems.append(source+' in the directory is '+('unreadable' if named is None else 'no longer the original (left untouched)')+'; the original inode is kept as '+link)
+                continue
+        try:
+            if not _owned_drop(context['parent_fd'],link,identity):
+                problems.append(link+' is no longer the held inode and was left in place')
+        except OSError as failed:
+            problems.append(link+' could not be removed ('+str(failed)+')')
+    if problems:
+        raise _OwnedRetireError(errno.EEXIST,'not_restored: '+'; '.join(problems)+'; original error: '+repr(error),context['name']) from error
+
+def _owned_retire(context,facts=None):
+    # Remove the authenticated directory. The certificate — and each authoritative ``facts`` file the caller verified
+    # (name -> identity) — leaves it ONLY for the instant of removal, as a second name for the same inode in the parent,
+    # and goes back as that inode if the directory cannot be removed. A writer that lands after the last listing
+    # therefore leaves a certified directory (and its completion facts) and an accurate error, so the removal can be
+    # repeated; it never leaves an uncertified one. No recovery or retry here. Process death between the first link and
+    # the end of this function leaves ``<name>.retiring*`` in the parent and a directory without them; nothing repairs that.
+    fd,parent,name=context['fd'],context['parent_fd'],context['name']
+    if not _owned_valid(context): raise _OwnedRetireError(errno.ESTALE,'namespace_identity_changed',name)
+    held,gone=[],[]
+    try:
+        try:
+            for source,identity in [('.owner',context['owner'])]+sorted((facts or {}).items()):
+                held.append(_owned_hold(context,source,identity))
+            for item in held[1:]+held[:1]:                              # the facts first, the certificate last
+                value=os.stat(item[0],dir_fd=fd,follow_symlinks=False)
+                if not stat.S_ISREG(value.st_mode) or _owned_id(value)!=item[2]:
+                    raise _OwnedRetireError(errno.ESTALE,item[0]+'_identity_changed',name)
+                os.unlink(item[0],dir_fd=fd)
+                gone.append(item)
+            if not _owned_valid(context,owner=False): raise _OwnedRetireError(errno.ESTALE,'namespace_identity_changed',name)
+            os.rmdir(name,dir_fd=parent)
+        except BaseException as error:
+            _owned_restore(context,held,gone,error)
+            raise
+        left=[item[1] for item in held if not _owned_drop(parent,item[1],item[2])]
+        if left: raise _OwnedRetireError(errno.ESTALE,'directory removed, but '+', '.join(left)+' is not the held inode and was left in place',name)
+    finally:
+        for item in held: os.close(item[3])
 
 def _owned_open(credential,prefix,scope,deadline,*,parent_path=None,create=True):
     if not credential or '/' in credential or credential in ('.','..'): raise ValueError(credential)

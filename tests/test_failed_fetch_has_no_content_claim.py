@@ -22,6 +22,7 @@ import urllib.error
 from unittest import mock
 
 from cria import denial, loop, prompts, upstream, webfetch
+from tests.resultshape import fetch_pair
 
 class NoPromptClaimsAFailedFetchIsEmptyTests(unittest.TestCase):
     def test_failed_fetch_diagnosis_survives_the_model_facing_wire(self):
@@ -122,9 +123,7 @@ def _sent_failed_fetch(body=None):
         repeat = webfetch.fetch_nav(_URL, session=session)
         remote.assert_called_once()
         messages = [{'role': 'user', 'content': 'Use the actual response to correct the request.'},
-                    {'role': 'assistant', 'tool_calls': [{'id': 'fetch', 'type': 'function', 'function': {
-                        'name': 'web_fetch', 'arguments': json.dumps({'url': _URL})}}]},
-                    {'role': 'tool', 'tool_call_id': 'fetch', 'content': result}]
+                    *fetch_pair(result, _URL, status=404)]
         sess = SimpleNamespace(fetched_pages={}, web_session=session, workspace_root='')
         anchor = loop._fetched_facts_anchor(sess, messages)
         u = upstream.Upstream('http://fake.invalid', api_key='offline', context_window=100000, engagement_level=0)

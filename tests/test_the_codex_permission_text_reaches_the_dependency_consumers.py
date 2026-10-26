@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cria import depsurface, dirguard, loop, responses, wsview
+from cria import denial, depsurface, dirguard, loop, resultpacket, responses, wsview
 from cria import writeproxy
 
 FIX = Path(__file__).parent / "fixtures"
@@ -35,7 +35,33 @@ def cell(tmp_path):
         d.clear()
     raw = (FIX / "o8_b2_codex_inbound_083dc698.json").read_text()
     raw = raw.replace("@INSTALL@", str(install)).replace("@WORKSPACE@", str(ws))
-    return install, ws, json.loads(raw)
+    return install, ws, _as_the_current_producer_lowers_it(json.loads(raw))
+
+
+def _as_the_current_producer_lowers_it(rbody):
+    """The recorded request predates the typed result records: its lowered calls carry no receipt and their results no
+    record, so today they are (correctly) UNKNOWN. Re-lower each recorded call with the real compiler and give its result the
+    record its real program prints, so this test keeps pinning the Codex SHAPE, not the legacy proof."""
+    calls = {i["call_id"]: i for i in rbody["input"] if i.get("type") == "function_call"}
+    for cid, item in calls.items():
+        orig = writeproxy.original_call(json.loads(item["arguments"])["cmd"])
+        if orig is None or orig["name"] not in ("read_file", "edit_file"):
+            continue
+        comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {
+            "name": orig["name"], "arguments": orig["arguments"]}}]}}]}
+        writeproxy.translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
+                                      injected={orig["name"]})
+        cmd = comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+        item["arguments"] = cmd
+        receipt = writeproxy.receipt_of(json.loads(cmd)["cmd"], cid)
+        for out in rbody["input"]:
+            if out.get("type") == "function_call_output" and out.get("call_id") == cid:
+                head, sep, body = out["output"].partition("Output:\n")
+                if orig["name"] == "read_file":     # the read-once program's record: the file's bytes, length and digest
+                    out["output"] = head + sep + resultpacket.line(receipt, denial.RAN, body=body.encode(), observe="whole")
+                else:                                # a landed edit: the program's typed `landed` record, then its own lines
+                    out["output"] = head + sep + resultpacket.line(receipt, denial.LANDED) + body
+    return rbody
 
 
 def put_jar(install):

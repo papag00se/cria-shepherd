@@ -25,6 +25,7 @@ reducers and the token estimate.
 """
 from __future__ import annotations
 
+import contextvars
 import difflib
 import ipaddress
 import hashlib
@@ -38,7 +39,7 @@ from dataclasses import dataclass
 from http.client import InvalidURL
 from typing import Any, Optional
 
-from . import apidiscovery, brave, denial, prompts
+from . import apidiscovery, brave, denial, fetchfacts, prompts
 from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
                              SPILL_CONTENT_MAX, clip, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
@@ -925,7 +926,7 @@ def _schema_field_summary(sch: Any, schemas: dict, max_fields: int, _depth: int 
 FIELD_CAP = 40
 
 
-def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> dict:
+def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0) -> fetchfacts.Fields:
     """The response schema as a JSON OBJECT — the form every API doc on the internet uses.
 
     THE NOTATION HAD NO TRAINING DATA BEHIND IT. cria invented `hex(string), name(string, e.g.
@@ -954,63 +955,74 @@ def _schema_json_shape(sch: Any, schemas: dict, max_fields: int, _depth: int = 0
     sch = _deref(sch, schemas)
     props = (sch or {}).get("properties")
     if not isinstance(props, dict):
-        return {}
+        return fetchfacts.Fields()
     req = {str(r) for r in ((sch or {}).get("required") or []) if isinstance(r, (str, int))}
-    out: dict = {}
+    out: list[fetchfacts.Field] = []
     items = list(props.items())
     for k, v in items[:max_fields]:
-        # A schema with NO `required` array declares nothing mandatory — every key is then optional
-        # and every key gets the marker. Saying "all optional" is the spec's own answer; assuming
-        # the opposite is what shipped a CLI that dies on a field the API omits.
-        k = k if k in req else f"{k}?"
+        # The property keeps its RAW name; whether the schema marks it required is a field of its own. A schema with NO `required`
+        # array declares nothing mandatory — every property is then optional. Saying "all optional" is the spec's own answer;
+        # assuming the opposite is what shipped a CLI that dies on a field the API omits.
+        name = str(k)
+        required = name in req
         v = _deref(v if isinstance(v, dict) else {}, schemas)
         if _depth == 0 and (v.get("type") == "object" or "properties" in v):
-            out[k] = _schema_json_shape(v, schemas, max_fields, _depth + 1) or ("object", "")
+            children = _schema_json_shape(v, schemas, max_fields, _depth + 1)
+            out.append(fetchfacts.Field(name, required, "object", "", children if children else None))
         elif v.get("type") == "array":
-            out[k] = ("array", "")
+            out.append(fetchfacts.Field(name, required, "array"))
         else:
             # (type, example) — kept APART so the example can be a comment rather than being
             # crammed into the value, where it read as part of the type.
-            out[k] = (str(v.get("type") or "?"), _example_hint(v).strip().lstrip("(").rstrip(")"))
+            note = _example_hint(v).strip().lstrip("(").rstrip(")")
+            out.append(fetchfacts.Field(name, required, str(v.get("type") or "?"), " ".join(note.split())))
     # DISCLOSE the cap — a silently-cut list reads as the complete set, and a coder looking for a
     # field that sits past it concludes the API does not return it, under a header saying "do not
-    # guess". Same rule as the endpoint list and the find residual: never a silent slice.
-    if len(items) > max_fields:
-        out[f"…+{len(items) - max_fields} more field(s)"] = ("", "")
-    return out
+    # guess". Same rule as the endpoint list and the find residual: never a silent slice. The count is typed; the renderer words it.
+    return fetchfacts.Fields(tuple(out), max(0, len(items) - max_fields))
 
 
 # A key TypeScript can write bare. Anything else gets quoted, which TS also accepts.
-_TS_IDENT = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_TS_IDENT = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")   # tested with `.fullmatch` ONLY: `$` would also match before a trailing newline
 # OpenAPI's type names -> TypeScript's. `?` means the spec declared none; `unknown` is TS's word
 # for exactly that, and it is honest where `any` would be a shrug.
 _TS_TYPES = {"integer": "number", "number": "number", "string": "string", "boolean": "boolean",
              "array": "unknown[]", "object": "object", "null": "null", "?": "unknown"}
 
 
-def _ts_rows(shape: dict, indent: int) -> list[tuple[str, str]]:
+def _ts_key(name: str, required: bool) -> str:
+    """A TypeScript object key for a declared name: bare when TypeScript can write it bare, else a JSON-quoted string (escapes and
+    all, so no name can end its own line or close its own quote); ``?`` marks an OPTIONAL field and always sits OUTSIDE the key."""
+    return (name if _TS_IDENT.fullmatch(name) else _quoted_key(name)) + ("" if required else "?")
+
+
+# The characters JSON leaves literal that every line-oriented reader (str.splitlines, a terminal) nevertheless treats as a LINE BREAK.
+_LINE_BREAKS = re.compile("[\u0085\u2028\u2029]")
+
+
+def _quoted_key(name: str) -> str:
+    """A declared name as one JSON string on ONE line: JSON's own escapes, plus the three separators JSON allows raw."""
+    return _LINE_BREAKS.sub(lambda m: "\\u%04x" % ord(m.group()), json.dumps(name, ensure_ascii=False))
+
+
+def _ts_rows(level: fetchfacts.Fields, indent: int) -> list[tuple[str, str]]:
     """(code, comment) per line, so the comment column can be aligned once over the whole block."""
     pad = " " * indent
     rows: list[tuple[str, str]] = []
-    for k in shape:
-        v = shape[k]
-        opt = k.endswith("?")
-        name = k[:-1] if opt else k
-        if name.startswith("…"):                       # the cap disclosure is a note, not a field
-            rows.append((f"{pad}// {name}", ""))
-            continue
-        key = (name if _TS_IDENT.match(name) else f'"{name}"') + ("?" if opt else "")
-        if isinstance(v, dict):
+    for f in level.fields:
+        key = _ts_key(f.name, f.required)
+        if f.children is not None:
             rows.append((f"{pad}{key}: {{", ""))
-            rows.extend(_ts_rows(v, indent + 2))
+            rows.extend(_ts_rows(f.children, indent + 2))
             rows.append((f"{pad}}};", ""))
         else:
-            typ, note = v if isinstance(v, tuple) else (str(v), "")
-            rows.append((f"{pad}{key}: {_TS_TYPES.get(typ, typ)};", note))
+            rows.append((f"{pad}{key}: {_TS_TYPES.get(f.type, f.type)};", f.note))
+    if level.elided:                                    # the cap disclosure is a note about the level, not a field
+        rows.append((f"{pad}// …+{level.elided} more field(s)", ""))
     return rows
 
 
-def render_jsonc(shape: dict) -> str:
+def render_jsonc(shape: fetchfacts.Fields) -> str:
     """The shape as a fenced TypeScript object type — `{ field?: type; }`, no interface name.
 
     THE `?` HAS TO LIVE OUTSIDE THE KEY. The version before this marked optionality inside a JSON
@@ -1038,6 +1050,11 @@ def render_jsonc(shape: dict) -> str:
 
 
 def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = FIELD_CAP) -> list[str]:
+    """The DISPLAY of :func:`_endpoint_response_shapes` — one entry per element, exactly as the model reads it."""
+    return [fetchfacts.text(s) for s in _endpoint_response_shapes(parsed, max_endpoints, max_fields)]
+
+
+def _endpoint_response_shapes(parsed: Any, max_endpoints: int = 12, max_fields: int = FIELD_CAP) -> list[fetchfacts.Shape]:
     """For an OpenAPI/Swagger-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through
     the response schema's ``$ref`` (see :func:`_ref_map`) — so a coder knows WHAT an endpoint returns
     (the exact field names to extract, plus one level of nesting), not just WHERE to call. The recurring
@@ -1053,7 +1070,7 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
         return []
     schemas = _ref_map(parsed)
     base = _base_path(parsed)
-    lines: list[str] = []
+    lines: list[fetchfacts.Shape] = []
     shaped: list[str] = []  # paths already given a shape — used to collapse a resource's own sub-paths
     capped = False
     for path, ops in paths.items():
@@ -1092,25 +1109,22 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 # model chained the payment address it had just resolved into it and got a 404, in
                 # every single run. Outputs without inputs is half a spec.
                 params = _path_param_notes(op, ops, schemas)
-                head = f"{str(method).upper()} {base}{path}"
-                if params:
-                    # WORDING IS LOAD-BEARING: the first cut said "(takes {address} = …)" and the
-                    # model read "takes" as "accepts an argument" — it turned BOTH path parameters
-                    # into query strings (?handle=…, ?address=…) and got 400/404 on every call,
-                    # where every earlier run had built the path form correctly. Say plainly that
-                    # the placeholder is part of the URL and must be replaced in place.
-                    head += f" (replace in the URL path: {'; '.join(params)})"
-                # The JSON body is INDENTED under its endpoint line. The caller prefixes each
-                # entry with two spaces, so an unindented body would make every `{`, every field
-                # and every `}` look like a new endpoint to anything reading the block by line.
-                lines.append(f"{head} returns:\n" + render_jsonc(shape))
+                # (`fetchfacts.text` renders the params clause; its WORDING IS LOAD-BEARING: the first cut said "(takes {address} = …)"
+                # and the model read "takes" as "accepts an argument" — it turned BOTH path parameters into query strings
+                # (?handle=…, ?address=…) and got 400/404 on every call. Say plainly that the placeholder is part of the URL and
+                # must be replaced in place.)
+                # The entry is carried TYPED — head, route, the spec's parameter notes, the generated body, and the field names read
+                # from the parsed shape itself — so nothing downstream scans the rendered text to recover any of them.
+                lines.append(fetchfacts.Shape(head=f"{str(method).upper()} {base}{path}", route=f"{base}{path}",
+                                              params=tuple(params), body=render_jsonc(shape),
+                                              fields=fetchfacts.field_names(shape)))
                 shaped.append(path)
                 # EVERY METHOD, not the first one that happens to have a schema. `break` here meant
                 # a path whose GET was shaped never showed its POST — and a coder writing the POST
                 # body is exactly who needs that shape. The skip was undisclosed, so the block read
                 # as the complete set of shapes for that path.
     if capped:
-        lines.append(f"…+more endpoints have shapes not shown here — web_fetch find=\"<path>\" for one")
+        lines.append(fetchfacts.Shape(head="…+more endpoints have shapes not shown here — web_fetch find=\"<path>\" for one"))
     return lines
 
 
@@ -1397,10 +1411,15 @@ def _search_input(session, query, action) -> researchpolicies.SearchInput:
 
 # --- the entry point (web_fetch.rs::fetch_nav) ---------------------------------------------
 
-def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = None,
-              cap_tokens: int = CONTENT_CAP_TOKENS, user_agent: Optional[str] = None,
-              session: Optional[str] = None, raw: bool = False,
-              workspace_root: Optional[str] = None) -> str:
+def fetch_nav(url: str, **kwargs) -> str:
+    """:func:`fetch_nav_result` without the typed facts — the text the model reads."""
+    return fetch_nav_result(url, **kwargs)[0]
+
+
+def fetch_nav_result(url: str, *, find: Optional[str] = None, cursor: Optional[str] = None,
+                     cap_tokens: int = CONTENT_CAP_TOKENS, user_agent: Optional[str] = None,
+                     session: Optional[str] = None, raw: bool = False,
+                     workspace_root: Optional[str] = None) -> tuple[str, bool, Optional[int], Optional[dict]]:
     """Plain fetch, ``find=`` selection, or ``cursor=`` pagination, backed by the URL cache.
     Always surfaces the real HTTP status AND the body (never suppresses content on a non-2xx).
 
@@ -1411,7 +1430,12 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
 
     ``session`` enables the coder-loop gates: an exact repeat of an EXTERNAL fetch already made this
     session is refused (it can only return what the model has), and after GUESS_STREAK_THRESHOLD
-    consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate."""
+    consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate.
+
+    Returns ``(text, refused, status, facts)``. ``facts`` is the typed fetch fact (`resultpacket` ``rep.fx``: url, status, routes,
+    shapes, catalog), built from the parsed / discovered STRUCTURE — never from the rendered text — or None. ``status`` is the HTTP status the fetch actually got (None when the call was refused
+    before fetching). ``refused`` is the typed fact the repeat gate decided (`Effect.REFUSED`) — the caller
+    lowers a refusal from THAT, never by looking for the denied marker in text that also holds a fetched page."""
     if raw:
         # `find` used to be nulled here alongside `cursor`, discarding the model's narrowing request
         # with NO notice — it asked one question and was answered another, undetectably. Observed live
@@ -1432,15 +1456,23 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
             status_label, _guard_msg)
         decision = definition.execute(source)
         if decision.effect is researchpolicies.Effect.REFUSED:
-            return decision.note
+            return decision.note, True, None, None
+    _CAPTURE.set(None)
     out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
+    captured = _CAPTURE.get()
+    _CAPTURE.set(None)
     observation = researchpolicies.current().failure
     if observation is not None:
         decision = observation.execute(researchpolicies.FailureInput(
             session, url, status, discovered, is_internal_url, _bound, guess_hint),
             researchpolicies.FailureState(_FETCH_STREAK))
         out += decision.note or ""
-    return out
+    facts = None
+    if isinstance(status, int):
+        facts = {"url": url, "status": f"HTTP {int(status)}",
+                 **(structure_facts(*captured) if captured
+                                                  else {"routes": [], "shapes": [], "catalog": [], "observed": ""})}
+    return out, False, status, facts
 
 
 def _render_discovery(url: str, status: int, ct: Optional[str], found) -> str:
@@ -1495,6 +1527,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         reduced, parsed = reduce_for_cache(r.body, r.content_type, url, raw)
         status, ct, truncated = r.status, r.content_type, r.truncated
         _cache_put(url, status, ct, reduced, parsed, truncated)
+    _CAPTURE.set(("doc", parsed))          # the structure this fetch parsed (a cached navigation holds the same parse)
 
     # An MCP or GraphQL endpoint has no document to read — a GET of it answers 405, or 400, or a
     # playground shell. Ask it what it offers instead of handing the model a dead end (api.handle.me
@@ -1517,6 +1550,11 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         discoverypolicy.DiscoveryInput(url, status, reduced, ct, find, cursor, raw),
         discovery_services)
     if discovered.discovered:
+        found = getattr(discovered, "observed", None)
+        if found is not None and not getattr(found, "unread", ""):
+            _CAPTURE.set(("discovery", found))         # the probe's own observation, not the GET cache's
+        else:
+            _CAPTURE.set(None)
         return discovered.text, status, True
     if not reduced.strip():
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
@@ -2059,6 +2097,43 @@ _STATUS_REASON = {
     410: "Gone", 429: "Too Many Requests", 500: "Internal Server Error", 501: "Not Implemented",
     502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
 }
+
+
+# THE STRUCTURES THE LAST FETCH ACTUALLY PARSED OR DISCOVERED, handed from `_fetch_and_render` to `fetch_nav_result` without going
+# through any rendered text: ("doc", the parsed document) or ("discovery", the protocol probe's observation).
+_CAPTURE: "contextvars.ContextVar[Optional[tuple]]" = contextvars.ContextVar("cria_fetch_structures", default=None)
+
+
+def _flat(text) -> str:
+    """One source string as ONE line: a key, route or field name that carries a newline (or a lookalike marker after it) can
+    neither start a line of its own nor close a block in anything that later reads these facts."""
+    return " ".join(str(text).split())
+
+
+def _flat_shape(s: fetchfacts.Shape) -> fetchfacts.Shape:
+    """An entry with every SOURCE-derived one-line DISPLAY leaf (head, route, parameter notes) made one line. The generated BODY —
+    the fenced schema block cria rendered — is the generator's own multi-line grammar and is kept verbatim, and the declared field
+    names are kept exactly as the schema spelled them (typed data nothing re-scans; a newline in one is just a character of it)."""
+    return fetchfacts.Shape(_flat(s.head), _flat(s.route), tuple(_flat(p) for p in s.params), s.body, s.fields)
+
+
+def structure_facts(kind: str, value) -> dict:
+    """The typed fetch facts (`resultpacket` ``rep.fx`` less url/status) straight from the parsed / discovered STRUCTURE, in the
+    same typed entries the renderer's own display is made from — never from a rendered outline or block, even one cria composed
+    itself (it embeds source keys): structure → typed facts → display, one way. Source-derived one-line leaves are flattened to
+    one line; generated multi-line grammar (a fenced schema body) is retained as generated."""
+    observed, catalog = "", []
+    if kind == "discovery":
+        routes = [_flat(r) for r in value.routes]
+        names = getattr(value, "shape_fields", None) or []
+        shapes = [fetchfacts.Shape(_flat(s), fields=tuple(names[i]) if i < len(names) else ())
+                  for i, s in enumerate(value.shapes)]
+        observed = _flat(value.kind)            # a protocol observation that SUCCEEDED, whatever the GET answered
+    else:
+        routes = [_flat(r) for r in _endpoint_routes(value)]
+        shapes = [_flat_shape(s) for s in _endpoint_response_shapes(value)] if routes else []   # shapes ride only with routes
+        catalog = [_flat(c) for c in _catalog_links(value)]
+    return {"routes": routes, "shapes": [fetchfacts.report(s) for s in shapes], "catalog": catalog, "observed": observed}
 
 
 def status_label(status: int) -> str:

@@ -39,6 +39,12 @@ def forward(s, name, args, cid):
     loop.guard_track_refusals(s, coder, _Log(), step=1, messages=[])
 
 
+def call_msg(name, args, cid):
+    """The assistant turn that dispatched a call: a result answers only a call in view that precedes it."""
+    return {"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {
+        "name": name, "arguments": json.dumps(args)}}]}
+
+
 def session(calls_before=2, calls_after=3, flag=FLAG):
     s = loop.PlanSession(plan=[])
     for i in range(calls_before):
@@ -77,7 +83,8 @@ class TheHandoffClaimsOnlyWhatCriaObserved(unittest.TestCase):
     def test_an_edit_before_the_gate_does_not_count(self):
         s = loop.PlanSession(plan=[])
         forward(s, "edit_file", {"path": "src/A.java", "old_string": "a", "new_string": "b"}, "e0")
-        loop.track_gate_progress(s, FLAG, [{"role": "tool", "tool_call_id": "e0", "content": "Edited src/A.java"}])
+        loop.track_gate_progress(s, FLAG, [call_msg("edit_file", {"path": "src/A.java", "old_string": "a", "new_string": "b"}, "e0"),
+                                           {"role": "tool", "tool_call_id": "e0", "content": "Edited src/A.java"}])
         for i in range(3):
             forward(s, "read_file", {"path": "a.java"}, f"r{i}")
         self.assertTrue(loop.gate_unedited(s))
@@ -111,7 +118,8 @@ class TheHandoffClaimsOnlyWhatCriaObserved(unittest.TestCase):
         s = loop.PlanSession(plan=[])
         forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "old")
         # the result came back in a transcript the harness then compacted away: the coder window never held it
-        loop._note_write_results(s, [{"role": "tool", "tool_call_id": "old", "content": "Wrote src/A.java"}])
+        loop._note_write_results(s, [call_msg("write_file", {"path": "src/A.java", "content": "x"}, "old"),
+                                     {"role": "tool", "tool_call_id": "old", "content": "Wrote src/A.java"}])
         loop.track_gate_progress(s, FLAG, [])
         self.assertTrue(loop.gate_unedited(s))
 
@@ -120,6 +128,7 @@ class TheHandoffClaimsOnlyWhatCriaObserved(unittest.TestCase):
         forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "old")
         srv = SimpleNamespace(loop=SimpleNamespace(_store={"k": s}), cfg=SimpleNamespace(routing=SimpleNamespace(roles={})))
         body = {"messages": [{"role": "user", "content": "x"},
+                             call_msg("write_file", {"path": "src/A.java", "content": "x"}, "old"),
                              {"role": "tool", "tool_call_id": "old", "content": "Wrote src/A.java"}]}
         comp = {"choices": [{"message": {"role": "assistant", "content": "summary"}, "finish_reason": "stop"}]}
         server._harden_compaction_reply(comp, body, None, srv, _Log(), sess_key="k")

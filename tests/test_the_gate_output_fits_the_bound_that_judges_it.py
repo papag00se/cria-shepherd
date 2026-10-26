@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 from cria import loop, probegate, proberun
+from tests.gatefixture import gate_page, completed
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 
@@ -73,11 +74,11 @@ class CompleteEvidenceCrossesAsynchronousTurnsTests(unittest.TestCase):
             pages = []
             result = run(plan.script, workspace, spooldir)
             pages.append(result)
-            outcome = probegate.interpret_gate(plan, result)
+            outcome = probegate.interpret_gate(plan, gate_page(plan, result))
             while outcome.transport_pending:
                 result = run(probegate.continue_transport_command(plan), workspace, spooldir)
                 pages.append(result)
-                outcome = probegate.interpret_gate(plan, result)
+                outcome = probegate.interpret_gate(plan, gate_page(plan, result))
 
             self.assertGreater(len(pages), 2)
             self.assertTrue(outcome.ran)
@@ -136,14 +137,14 @@ class CompleteEvidenceCrossesAsynchronousTurnsTests(unittest.TestCase):
             self.assertGreater(pages, 2)
             self.assertTrue(plan.transport_complete)
             self.assertEqual(state.probe_call_id, current_id)
-            self.assertTrue(probegate.interpret_gate(plan, result).ran)
+            self.assertTrue(probegate.interpret_gate(plan, gate_page(plan, result)).ran)
 
 
 class IncompleteEvidenceIsExplicitlyUnknownTests(unittest.TestCase):
     def test_a_cut_page_is_unknown_not_clean(self):
         plan = probegate.GatePlan(workspace="/remote", transport_required=True)
         opening = probegate._transport_marker(plan.transport_id)
-        outcome = probegate.interpret_gate(plan, opening + "\npath\tcut-before-close")
+        outcome = probegate.interpret_gate(plan, gate_page(plan, opening + "\npath\tcut-before-close"))
         self.assertFalse(outcome.ran)
         self.assertTrue(outcome.transport_unknown)
         self.assertTrue(probegate.gate_is_partial(outcome))
@@ -163,12 +164,12 @@ class IncompleteEvidenceIsExplicitlyUnknownTests(unittest.TestCase):
                     mock.patch.object(probegate.probediscovery, "tests_with_no_command", return_value=[]):
                 plan = probegate.plan_gate(workspace)
             first = run(plan.script, workspace, spooldir)
-            self.assertTrue(probegate.interpret_gate(plan, first).transport_pending)
+            self.assertTrue(probegate.interpret_gate(plan, gate_page(plan, first)).transport_pending)
             next_command = probegate.continue_transport_command(plan)
             second = run(next_command, workspace, spooldir)
             # Replaying an already-consumed offset instead of the next page is a protocol gap.
-            self.assertTrue(probegate.interpret_gate(plan, first).transport_unknown)
-            self.assertFalse(probegate.interpret_gate(plan, second).ran)
+            self.assertTrue(probegate.interpret_gate(plan, gate_page(plan, first)).transport_unknown)
+            self.assertFalse(probegate.interpret_gate(plan, gate_page(plan, second)).ran)
 
 
 if __name__ == "__main__":

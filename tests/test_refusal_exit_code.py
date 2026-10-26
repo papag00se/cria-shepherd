@@ -106,10 +106,10 @@ class OneOwnerTests(unittest.TestCase):
                             self.assertEqual(path.read_bytes(), original)
 
     @staticmethod
-    def _lower_fetch(result):
-        """``_fetch_command`` with fetch_nav's answer supplied — the one thing that decides the shape."""
+    def _lower_fetch(result, refused=False):
+        """``_fetch_command`` with fetch_nav's typed answer supplied — the one thing that decides the shape."""
         import unittest.mock as mock
-        with mock.patch.object(writeproxy.webfetch, "fetch_nav", return_value=result), \
+        with mock.patch.object(writeproxy.webfetch, "fetch_nav_result", return_value=(result, refused, None if refused else 200, None)), \
                 mock.patch.object(writeproxy.webfetch, "already_spilled", return_value=True):
             return writeproxy._fetch_command({"url": "https://api.handle.me/handles/goose"})
 
@@ -123,12 +123,19 @@ class OneOwnerTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout, page)
 
+    def test_a_fetched_page_that_quotes_the_denied_marker_is_a_page_not_a_refusal(self):
+        # The refusal is the repeat gate's TYPED decision. A real page whose bytes quote the marker is a RESULT.
+        page = "HTTP 200 OK · https://x.example/\n" + denial.mark("this page is documenting cria's own refusal marker")
+        cmd = self._lower_fetch(page, refused=False)
+        self.assertNotIn(f"exit {writeproxy.REFUSED_EXIT_CODE}", cmd)
+        self.assertEqual(subprocess.run(["bash", "-c", cmd], capture_output=True, text=True).returncode, 0)
+
     def test_a_REFUSED_fetch_does_not_report_success(self):
         # The repeat gate answers inside fetch_nav and its text was printf'd at exit 0 — the one site
         # the exit-code contract never reached. Which results are refusals is webfetch's own decision,
         # read off the mark it applied, never re-derived from the wording here.
         refusal = denial.mark("You already fetched web_fetch … with these exact params.")
-        cmd = self._lower_fetch(refusal)
+        cmd = self._lower_fetch(refusal, refused=True)
         r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
         self.assertEqual(r.returncode, writeproxy.REFUSED_EXIT_CODE)
         self.assertEqual(r.stdout, refusal)   # marked ONCE — mark is idempotent
@@ -173,6 +180,26 @@ class MissingRequiredArgIsNotAnEmptyOneTests(unittest.TestCase):
     def test_a_normal_edit_is_untouched(self):
         cmd = self._lower({"path": "x.py", "old_string": "a", "new_string": "b"})
         self.assertNotIn("missing its `new_string`", cmd)
+
+
+class FetchPageThatQuotesTheMarkerThroughTheProductionPath(unittest.TestCase):
+    """The real `webfetch.fetch_nav_result` (repeat gate, cache and all) with the NETWORK fake — only the HTTP fetch is replaced —
+    lowered by the real `writeproxy._fetch_command`. A fetched page whose bytes quote cria's denied marker is a RESULT: the typed
+    refusal decision (`Effect.REFUSED`) is what lowers a refusal, never a marker found in text that also holds the page."""
+
+    PAGE = "HTTP 200 OK · https://docs.example/refusals\n" + denial.DENIED_MARKER + " this page documents the marker\n"
+
+    def _command(self, fetch=None):
+        import unittest.mock as mock
+        fetch = fetch or writeproxy._fetch_command
+        with mock.patch.object(writeproxy.webfetch, "_fetch_and_render", return_value=(self.PAGE, 200, None)):
+            return fetch({"url": "https://docs.example/refusals"}, session="fresh-session-for-the-quote-test")
+
+    def test_the_page_is_a_result_and_exits_zero(self):
+        cmd = self._command()
+        r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("this page documents the marker", r.stdout)
 
 
 if __name__ == "__main__":

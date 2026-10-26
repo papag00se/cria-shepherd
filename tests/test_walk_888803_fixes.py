@@ -22,6 +22,7 @@ import unittest
 from unittest.mock import patch
 
 from cria import config, editrecovery, focustrim, loop, probegate, prompts
+from tests.gatefixture import gate_page, completed
 from cria.writeproxy import translate_outbound
 import tests.test_probegate as tp
 import tests.test_writeproxy as tw
@@ -133,11 +134,10 @@ class TheEditAnchorShowsWhereTheCopyIsWrongTests(unittest.TestCase):
             cmd = tw._lowered_cmd(comp)
             r = subprocess.run(["bash", "-lc", cmd], cwd=d, capture_output=True, text=True,
                                timeout=120)
-            out = r.stdout + r.stderr   # the fact-report is emitted on stderr
-        for line in out.splitlines():
-            if editrecovery.EDITFAIL in line:
-                blob = line.split(editrecovery.EDITFAIL, 1)[1].strip()
-                return editrecovery.decode_report(blob)
+            out = r.stdout + r.stderr
+        first = json.loads(r.stdout.split("\n", 1)[0]) if r.stdout.startswith('{"v":1,') else {}
+        if first.get("k") == "unapplied":     # the fact report is a TYPED field (`ef`) of the program's own first record
+            return editrecovery.decode_report(first["rep"]["ef"])
         self.fail(f"no editfail report in:\n{out}")
 
     def test_the_window_covers_the_line_that_differs(self):
@@ -265,7 +265,7 @@ class TwoFailuresThatShareALineAreTwoFactsTests(unittest.TestCase):
     def test_the_second_failure_keeps_its_assertion_and_its_reason(self):
         from cria.probegate import GatePlan
         raw = "Chunk ID: 7f3\n" + tp._sec(0, "EXIT:0") + tp._sec(1, self._pytest_output()) + tp._git() + "\n"
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=""))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=""), raw))
         self.assertEqual(out.count("E       AssertionError: unexpectedly None"), 2, out)
         self.assertEqual(out.count(">       self.assertIsNotNone(result[\"holder_address\"])"), 2, out)
 
@@ -273,7 +273,7 @@ class TwoFailuresThatShareALineAreTwoFactsTests(unittest.TestCase):
         from cria.probegate import GatePlan
         spam = "app.py:1:1: E999 SyntaxError: bad\n" * 5 + "EXIT:1"
         raw = "Chunk ID: 7f3\n" + tp._sec(0, "EXIT:0") + tp._sec(1, spam) + tp._git() + "\n"
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=""))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=""), raw))
         self.assertEqual(out.count("E999 SyntaxError: bad"), 1, out)
 
 
@@ -601,7 +601,8 @@ class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):
         from cria.probegate import GatePlan
         ws = self._ws("import os\nx = 1\nTHE_REAL_LINE = 2\n")
         raw = self._raw("t.py:3:1: undefined name 'zzz'\nEXIT:1")
-        out = probegate.clean_gate_results([{"role": "tool", "content": raw}], GatePlan(workspace=ws))
+        current = completed(GatePlan(workspace=ws), raw)     # the gate's transport arrived (and registered its scope)
+        out = probegate.clean_gate_results([{"role": "tool", "content": gate_page(current, raw)}], current)
         self.assertIn("THE_REAL_LINE", out[0]["content"])
 
     def test_an_older_gate_result_is_not_annotated_from_todays_file(self):
@@ -609,9 +610,11 @@ class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):
         ws = self._ws("import os\nx = 1\nTHE_REAL_LINE = 2\n")
         stale = self._raw("t.py:3:1: undefined name 'zzz'\nEXIT:1")
         fresh = self._raw("t.py:2:1: undefined name 'qqq'\nEXIT:1")
+        older, current = completed(GatePlan(workspace=ws), stale), completed(GatePlan(workspace=ws), fresh)
         out = probegate.clean_gate_results(
-            [{"role": "tool", "content": stale}, {"role": "tool", "content": fresh}],
-            GatePlan(workspace=ws))
+            [{"role": "tool", "content": gate_page(older, stale)},          # an OLDER gate's transport
+             {"role": "tool", "content": gate_page(current, fresh)}],       # the newest is the current plan's own
+            current)
         self.assertNotIn("THE_REAL_LINE", out[0]["content"])   # the stale one keeps its own words
         self.assertIn("x = 1", out[1]["content"])              # the newest still gets the quote
 
@@ -619,14 +622,14 @@ class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):
         from cria.probegate import GatePlan
         ws = self._ws("x = 1\n")
         raw = self._raw("/usr/lib/python3.12/unittest/mock.py:1: in assert_called_once_with\nEXIT:1")
-        out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
+        out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertNotIn("the flagged line on disk", out or "")
 
 
 class AFindScopedFetchStillNamesTheRoutesTests(unittest.TestCase):
     """mellum2 1785996352 fetched the OpenAPI spec with find="paths" raw=true — the one combination
     that disabled BOTH the route outline and the API probe. `_extract_fetches` harvests routes only
-    from the `[API endpoints (N): …]` marker, so the ledger told the model in EVERY prompt of the run
+    from the producer's typed `rep.fx`, so the ledger told the model in EVERY prompt of the run
     that nothing read so far DEFINES the API's routes, with the route table twenty lines above it. It
     built the whole deliverable against the MCP tool names."""
 
@@ -648,11 +651,17 @@ class AFindScopedFetchStillNamesTheRoutesTests(unittest.TestCase):
         finally:
             self.wf.fetch = orig
 
-    def test_the_route_marker_the_ledger_reads_survives_a_find(self):
-        from cria import loop
-        out = self._fetch(find="paths")
-        self.assertTrue(loop._FETCH_ROUTES_RE.search(out),
-                        f"no [API endpoints] marker for the ledger to harvest:\n{out[:400]}")
+    def test_the_typed_routes_the_ledger_holds_survive_a_find(self):
+        # The ledger no longer harvests a marker from text: the producer declares the routes it parsed. A find-scoped fetch
+        # must still declare them (the parsed document is the same one the unscoped fetch read).
+        self.wf._DOC_CACHE.clear()
+        orig, body = self.wf.fetch, self.spec
+        self.wf.fetch = lambda url, ua=None: self.wf.FetchResult(200, url, "application/json", body, False)
+        try:
+            out, _refused, _status, facts = self.wf.fetch_nav_result("https://api.example.test/openapi.json", find="paths")
+        finally:
+            self.wf.fetch = orig
+        self.assertEqual(facts["routes"], ["/handles/{handle}", "/holders/{address}", "/mcp"])
         self.assertIn("/handles/{handle}", out)
 
     def test_it_does_not_name_a_spill_file_this_branch_never_wrote(self):
@@ -906,7 +915,7 @@ class OfflineSectionIsNeverScrapedAsAFindingTests(unittest.TestCase):
                "E   OSError: [Errno 101] Network is unreachable\n"
                "1 failed, 1 passed in 0.1s\nEXIT:1\n"
                f"{self.P}git{self.S}\nabc123\n")
-        out = probegate.clean_gate_output(raw, self._plan()) or ""
+        out = probegate.clean_gate_output(raw, completed(self._plan(), raw)) or ""
         self.assertNotIn("Network is unreachable", out)
         self.assertNotIn("test_resolve.py:31", out)
         self.assertIn("exit 0\n2 passed in 0.4s", out)
@@ -916,7 +925,7 @@ class OfflineSectionIsNeverScrapedAsAFindingTests(unittest.TestCase):
         raw = (f"{self.P}probe-0{self.S}\n2 passed in 0.4s\nEXIT:0\n"
                f"{self.P}offline{self.S}\n"
                f"{self.P}git{self.S}\nabc123\n")
-        out = probegate.clean_gate_output(raw, self._plan()) or ""
+        out = probegate.clean_gate_output(raw, completed(self._plan(), raw)) or ""
         self.assertIn("exit 0\n2 passed in 0.4s", out)
         self.assertNotIn("could not", out.lower())
         self.assertNotIn("network switched off", out)

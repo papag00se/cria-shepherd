@@ -722,10 +722,9 @@ class GateTests(unittest.TestCase):
                         lexer = shlex.shlex(tail, posix=True, punctuation_chars=";")
                         lexer.whitespace_split = True
                         tokens = list(lexer)
-                        self.assertEqual(tokens[:3] + tokens[4:7] + tokens[8:],
-                            ["then", "printf", "%s", ";", "printf", r"\n%s\n",
-                             ";", "else", "exit", "1", ";", "fi"])
-                        self.assertEqual(len(tokens), 14)
+                        # ONE printf: the typed first record (stored fact included) + the pointer message
+                        self.assertEqual(tokens[:3] + tokens[4:], ["then", "printf", "%s", ";", "else", "exit", "1", ";", "fi"])
+                        self.assertEqual(len(tokens), 10)
                         self.assertFalse(os.environ.get("BASH_ENV"))
                         self.assertFalse(any(k.startswith("BASH_FUNC_") for k in os.environ))
                         writeproxy.retain_externalizations(owner, comp)
@@ -739,8 +738,8 @@ class GateTests(unittest.TestCase):
                         writeproxy.observe_externalization_results(store.get_guard("sp1"), history)
                         represented = writeproxy.represent_inbound(history, workspace_root=workspace,
                                                                   sess_key="sp1")
-                        self.assertIn("⟦ctx:stored⟧", result.stdout)
-                        self.assertNotIn("⟦ctx:stored⟧", represented[-1]["content"])
+                        self.assertIn('"st":', result.stdout.split("\n", 1)[0])           # the stored fact: a typed field
+                        self.assertNotIn("⟦ctx:stored⟧", result.stdout + represented[-1]["content"])
                     return json.dumps(call)
 
                 first = lower(deliver=True)
@@ -1245,24 +1244,23 @@ class OptionalFieldsAreMarkedTests(unittest.TestCase):
 
     def test_only_the_declared_required_field_is_unmarked(self):
         shape = wf._schema_json_shape(self.SPEC, {}, 30)
-        self.assertIn("name", shape)
-        self.assertIn("holder?", shape)
-        self.assertIn("original_address?", shape)
-        self.assertNotIn("name?", shape)
+        required = {f.name: f.required for f in shape.fields}
+        self.assertEqual(required, {"name": True, "holder": False, "original_address": False})   # typed, never a `?` in a name
 
     def test_a_schema_declaring_nothing_marks_everything_optional(self):
         """No `required` array means the spec guarantees nothing. Saying so is its own answer;
         assuming the opposite is what shipped a CLI that dies on a field the API omits."""
         shape = wf._schema_json_shape({"properties": {"a": {"type": "string"}}}, {}, 30)
-        self.assertEqual(list(shape), ["a?"])
+        self.assertEqual([(f.name, f.required) for f in shape.fields], [("a", False)])
 
     def test_nested_objects_carry_their_own_required_list(self):
         spec = {"required": ["outer"], "properties": {
             "outer": {"type": "object", "required": ["kept"], "properties": {
                 "kept": {"type": "string"}, "maybe": {"type": "string"}}}}}
         shape = wf._schema_json_shape(spec, {}, 30)
-        self.assertIn("outer", shape)
-        self.assertEqual(sorted(shape["outer"]), ["kept", "maybe?"])
+        (outer,) = shape.fields
+        self.assertEqual((outer.name, outer.required), ("outer", True))
+        self.assertEqual(sorted((f.name, f.required) for f in outer.children.fields), [("kept", True), ("maybe", False)])
 
     def test_the_header_no_longer_promises_every_field_comes_back(self):
         """Asserted on the RENDERED block, and on EVERY site that renders one.

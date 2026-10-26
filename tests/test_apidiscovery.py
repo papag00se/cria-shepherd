@@ -1,3 +1,5 @@
+from cria import fetchfacts
+from cria.fetchfacts import Shape
 """Discovery for APIs with no fetchable description: MCP and GraphQL (cria.apidiscovery), plus the
 document-side dialects webfetch reads (Swagger 2 / JSON Schema $defs, base paths, RFC 9727 catalogues).
 
@@ -8,6 +10,7 @@ import json
 import unittest
 
 from cria import apidiscovery as ad
+from tests.resultshape import fetch_pair
 from cria import webfetch as wf
 
 
@@ -210,11 +213,12 @@ class DiscoveryRendersThroughTheExistingMarkersTests(unittest.TestCase):
 
     def test_the_durable_fetch_ledger_picks_it_up(self):
         from cria.loop import _extract_fetches, _fetch_facts
-        entry = _extract_fetches([{"role": "tool", "content": self._rendered()}])
+        entry = _extract_fetches(fetch_pair(self._rendered(), routes=('mcp tool resolve_handle(handle: string)', ),
+                                            shapes=(Shape("get_holder → total_handles: integer", fields=("total_handles",)),), observed="mcp"))
         status, routes, shapes, _cat = _fetch_facts(entry["https://api.handle.me/mcp"])
         self.assertEqual(status, "HTTP 200")
-        self.assertIn("resolve_handle", routes)
-        self.assertIn("total_handles", shapes)
+        self.assertTrue(any("resolve_handle" in r for r in routes))
+        self.assertIn("total_handles", fetchfacts.shapes_text(shapes))
 
 
 class SwaggerAndBasePathTests(unittest.TestCase):
@@ -311,9 +315,11 @@ class ApiCatalogTests(unittest.TestCase):
         from cria.loop import _extract_fetches, _fetch_facts, _format_fetches
         rendered = wf.render_page("https://x/.well-known/api-catalog", 200, "application/linkset+json",
                                   json.dumps(self.CATALOG), self.CATALOG, 0, 100000)
-        entry = _extract_fetches([{"role": "tool", "content": rendered}])
+        entry = _extract_fetches(fetch_pair(
+            rendered, "https://x/.well-known/api-catalog",
+            catalog=("api → https://api.example.com/one/openapi.json",)))
         _s, _r, _sh, catalog = _fetch_facts(entry["https://x/.well-known/api-catalog"])
-        self.assertIn("one/openapi.json", catalog)
+        self.assertIn("one/openapi.json", " ".join(catalog))
         # ...and it is no longer filed as "answered, but no structure could be read from it"
         out = _format_fetches(entry)
         self.assertNotIn("no endpoints or field names could be read", out)

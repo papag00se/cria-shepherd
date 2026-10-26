@@ -8,7 +8,7 @@ result), or ranged reads that together cover a file of known size. Without a bas
 read or wrote it", only the current count."""
 import json
 
-from cria import denial, loop, prompts, wsview
+from cria import bodykeys, denial, loop, prompts, wsview
 from tests.test_c13b_the_wire_claims_are_true import ROOT, _bind, _sess, _view, _facts, JAVA
 
 N0, N1 = 246, 267
@@ -19,8 +19,9 @@ def _call(cid, name="read_file", **args):
         {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}
 
 
-def _res(cid, body):
-    return {"role": "tool", "tool_call_id": cid, "content": body}
+def _res(cid, body, outcome=None):
+    return {"role": "tool", "tool_call_id": cid, "content": body,
+            **({bodykeys.RESULT_OUTCOME: outcome} if outcome else {})}
 
 
 def _numbered(a, b):
@@ -56,6 +57,12 @@ def _line_with(view, s, msgs):
         wsview.unbind(tok)
 
 
+def _landed(result):
+    """The result of a landed edit as `represent_inbound` hands it on: its own program reported it landed."""
+    from cria import bodykeys, denial
+    return {**result, bodykeys.RESULT_OUTCOME: denial.LANDED}
+
+
 WHOLE = [_call("w", path=JAVA), _res("w", "x\n" * (N0 - 1) + "x")]
 
 
@@ -70,7 +77,7 @@ def test_ranged_reads_covering_the_whole_file_are_the_basis():
 
 
 def test_a_landed_edit_moves_the_basis_to_the_size_its_echo_reports():
-    msgs = WHOLE + [_call("e", name="edit_file", path=JAVA, old_string="a", new_string="b"), _res("e", _echo(N1))]
+    msgs = WHOLE + [_call("e", name="edit_file", path=JAVA, old_string="a", new_string="b"), _landed(_res("e", _echo(N1)))]
     s, led = _ledger(msgs)
     assert led[JAVA][1] == f"{N1} lines"
     line = _line_with(_view_of(N1), s, msgs)
@@ -82,7 +89,7 @@ def test_a_landed_edit_moves_the_basis_to_the_size_its_echo_reports():
 
 def test_an_edit_with_no_reported_size_claims_no_count_it_does_not_have():
     msgs = WHOLE + [_call("e", name="edit_file", path=JAVA, old_string="a", new_string="b"),
-                    _res("e", prompts.render("write_confirm", path=JAVA))]
+                    _landed(_res("e", prompts.render("write_confirm", path=JAVA)))]
     s, _ = _ledger(msgs)
     assert "246" not in _line_with(_view_of(N1), s, msgs) and f"{N1} lines now" in _line_with(_view_of(N1), s, msgs)
     out = _line_with(_view(body_for=()), s, msgs)
@@ -100,7 +107,7 @@ def test_0105_the_refusal_count_plus_pages_without_a_view_is_the_current_size_no
     """0105: no workspace view in the body at all; refusal says 267 lines; pages 1-113 and 113-267 follow."""
     tpl = prompts.load("large_read_steer")
     refused = denial.mark(tpl.replace("{{PATH}}", JAVA).replace("{{LINES}}", str(N1)))
-    msgs = [_call("f", path=JAVA), _res("f", refused),
+    msgs = [_call("f", path=JAVA), _res("f", refused, denial.REFUSED),
             _call("a", path=JAVA, start_line=1, end_line=113), _res("a", _numbered(1, 113)),
             _call("b", path=JAVA, start_line=113, end_line=N1), _res("b", _numbered(113, N1))]
     s = _sess({JAVA: (10000, f"{N0} lines")})              # the durable ledger still holds the old whole reading

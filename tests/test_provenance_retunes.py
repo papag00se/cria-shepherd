@@ -11,7 +11,7 @@ import base64
 import json
 import unittest
 
-from cria import editrecovery
+from cria import bodykeys, denial, editrecovery
 from cria.loop import GuardState, PlanSession, track_gate_progress
 from cria.plan import Plan, PlanItem
 
@@ -76,7 +76,7 @@ class EditRecoveryTelemetryTests(unittest.TestCase):
         rlog = _Rlog()
         # Enough prior edit-steer tags in history to trip the escalation clock.
         tag = editrecovery._tag("handle.py")
-        prior = [{"role": "user", "content": tag + " earlier edit steer"}
+        prior = [{"role": "tool", "content": tag + " earlier edit steer", bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}
                  for _ in range(editrecovery.ESCALATE_AFTER)]
         out = editrecovery.recover(self._fail_report(), prior, rlog)
         self.assertIn("editrecovery.escalated", rlog.kinds())

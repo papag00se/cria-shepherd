@@ -7,15 +7,15 @@ import json
 import copy
 
 import pytest
-from cria import assistruntime, bodykeys, config, contextfloor, focustrim, loop, selfcompact, wsview
+from cria import assistruntime, bodykeys, config, contextfloor, denial, focustrim, loop, selfcompact, wsview
 from cria.memoryeffects import Effect
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
 
 
 def test_raw_authority_survives_empty_outgoing_history_without_mutating_visibility(monkeypatch):
-    raw = [{'role': 'tool', 'tool_call_id': 'f',
-            'content': 'HTTP 200 · https://example.test/docs'}]
+    from tests.resultshape import fetch_pair
+    raw = fetch_pair('HTTP 200 · https://example.test/docs')
     sess = SimpleNamespace(read_files={'notes.txt': (7, '2 lines')}, read_ledger_seen=set(),
                            fetched_pages={}, workspace_root='', written_files={}, file_touch={})
     monkeypatch.setattr(loop, '_route_mismatch_fact', lambda fetches, messages, root: 'Observed HTTP mismatch')
@@ -122,9 +122,8 @@ def test_raw_fetch_and_file_authority_survive_both_reducers_with_current_notes_o
     # The raw-task driver derives a guard steer through its own authority; the
     # shared entry receives the same live-note contract without inventing a cursor.
     events = []
-    body['messages'] += [{'role': 'assistant', 'tool_calls': [{'id': 'fetch', 'type': 'function',
-        'function': {'name': 'web_fetch', 'arguments': '{"url":"https://example.test/docs"}'}}]},
-        {'role': 'tool', 'tool_call_id': 'fetch', 'content': 'HTTP 200 · https://example.test/docs'}]
+    from tests.resultshape import fetch_pair
+    body['messages'] += fetch_pair('HTTP 200 · https://example.test/docs')
     def rolling(source, state):
         events.append(('rolling', source.messages, source.force))
         return selfcompact.RollingResult([{'role': 'user', 'content': 'historical rollup'}],
@@ -448,7 +447,8 @@ def test_surviving_whole_copy_prevents_duplicate_restoration(tmp_path, monkeypat
         {'id': 'whole', 'type': 'function', 'function': {'name': kind + '_file',
                                                        'arguments': json.dumps(args)}}]},
         {'role': 'tool', 'tool_call_id': 'whole',
-         'content': fresh if kind == 'read' else 'Wrote notes.txt'}]
+         'content': fresh if kind == 'read' else 'Wrote notes.txt',
+         **({bodykeys.RESULT_OUTCOME: denial.LANDED} if kind == 'write' else {})}]   # as represent_inbound hands it on
     if kind == 'write':
         assert list(loop._write_events_paths(body['messages'])) == [(2, 'whole', 'notes.txt')]
     offered = []

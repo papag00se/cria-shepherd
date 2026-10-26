@@ -16,6 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from cria.config import Backend, Config, IndicatorsConfig, LoggingConfig, Role, ServerConfig, UpstreamConfig
+from tests.resultshape import fetch_pair
 from cria.events import EventLog
 from cria.probegate import GATE_SENTINEL
 from cria.server import CriaServer, _has_visible_output, _proxy_body
@@ -996,9 +997,9 @@ class HardenCompactionReplyTests(unittest.TestCase):
     @staticmethod
     def _history():
         return [{"role": "user", "content": "task"},
-                {"role": "tool", "tool_call_id": "f1", "content":
-                    "HTTP 200 OK · https://api.example.com/openapi.json\n"
-                    "[API endpoints (2): /handles/{handle}, /holders/{address}]"},
+                *fetch_pair("HTTP 200 OK · https://api.example.com/openapi.json\n"
+                            "[API endpoints (2): /handles/{handle}, /holders/{address}]",
+                            routes=('/handles/{handle}', '/holders/{address}', )),
                 {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
 
     def test_a_summary_without_a_validator_is_withheld_but_facts_survive(self):

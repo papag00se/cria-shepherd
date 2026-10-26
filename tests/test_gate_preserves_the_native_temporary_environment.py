@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 
 from cria import probediscovery, probegate, proberun
+from tests.gatefixture import gate_page, completed
 
 
 @pytest.mark.parametrize('inherited', [True, False])
@@ -47,7 +48,7 @@ def test_gate_keeps_native_tmpdir_and_only_reclaims_its_private_aux(tmp_path, mo
                                 capture_output=True, text=True, env=dict(os.environ))
         assert probegate.ingest_transport(plan, result.stdout) == 'complete'
         decoded = probegate.transported_result(plan)
-        outcome = probegate.interpret_gate(plan, decoded)
+        outcome = probegate.interpret_gate(plan, gate_page(plan, decoded))
         assert plan.transport_complete and not outcome.scope_unknown
         assert native.stdout.strip() in decoded, decoded
         assert not (Path(plan.transport_path).parent / 'aux').exists()

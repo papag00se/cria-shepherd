@@ -50,6 +50,8 @@ import time
 import zlib
 from dataclasses import dataclass
 
+from . import denial, resultpacket
+
 # --------------------------------------------------------------------------- wire format
 
 # Marker opening the survey block appended to a cria-composed command. Everything from this line
@@ -1409,6 +1411,23 @@ _SURVEY_PACKED_PY = (
     .replace('W("{close}\\n")\n', 'W("{close}\\n")' + _PACK_EPILOGUE, 1))
 assert _SURVEY_PACKED_PY.count("PIECES") >= 4 and "{zopen}" in _SURVEY_PACKED_PY
 
+# THE RECORD VARIANT: the survey of an OWN lowered call leaves as ONE typed record (`resultpacket`, kind `survey`) whose
+# body is the survey text with its original length and digest, on the very line after the call's first record. The
+# sentinel declares it; the reader never looks for the block's own markers in a result. The text inside is exactly what
+# the program always printed (`apply_survey` is unchanged) and the codec (text / zlib) is chosen by serialized length.
+_RECORD_EPILOGUE = (
+    '\nLEGACY = "".join(p if isinstance(p, str) else base64.b64encode(p).decode() + "\\n" for p in PIECES)\n'
+    + resultpacket.ENCODER_PY.replace("{", "{{").replace("}", "}}")   # the template is str.format-ed
+    + '\nimport json\n'
+    'sys.stdout.write(json.dumps({{"v": 1, "r": "{receipt}", "k": "survey", "b": encode_body(LEGACY.encode())}},'
+    ' separators=(",", ":")) + "\\n")\n')
+_SURVEY_RECORD_PY = (
+    _SURVEY_PY
+    .replace("W = sys.stdout.write\n", "PIECES = []\nW = PIECES.append\n", 1)
+    .replace('    W(base64.b64encode(raw).decode() + "\\n")\n', "    W(raw)\n", 1)
+    .replace('W("{close}\\n")\n', 'W("{close}\\n")' + _RECORD_EPILOGUE, 1))
+assert _SURVEY_RECORD_PY.count("PIECES") >= 3 and "{receipt}" in _SURVEY_RECORD_PY
+
 _HEREDOC = "__CRIA_SV_PY__"
 
 
@@ -1482,8 +1501,11 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
                 "} 2>/dev/null\n"
                 "( exit $__cria_sv_ec )\n"
                 f"{SURVEY_CMD_CLOSE}")
-    body = (_SURVEY_PACKED_PY if pack else _SURVEY_PY).format(
-        tree_max=TREE_MAX_ENTRIES, tree_bytes=tree_bytes,
+    receipt = denial.active_receipt()
+    if receipt:
+        denial.declare_survey()        # the sentinel declares the record that follows the call's own first record
+    body = (_SURVEY_RECORD_PY if receipt else _SURVEY_PACKED_PY if pack else _SURVEY_PY).format(
+        receipt=receipt, tree_max=TREE_MAX_ENTRIES, tree_bytes=tree_bytes,
         fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,

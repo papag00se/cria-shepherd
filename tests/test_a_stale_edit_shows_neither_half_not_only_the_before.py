@@ -58,6 +58,12 @@ def _write(path, content, cid="w1"):
                      "arguments": json.dumps({"path": path, "content": content})}}]}
 
 
+def _landed(cid, text="Wrote it"):
+    """A write's result as `represent_inbound` hands it on: the program's own typed `landed` outcome (an unanswered or merely
+    worded confirmation is not proof, and supersedes nothing)."""
+    return {"role": "tool", "tool_call_id": cid, "content": text, "cria_result_outcome": "landed"}
+
+
 class TheSupersededEditGOESTests(unittest.TestCase):
     """The fix this file recorded — hide BOTH halves of a stale edit, not only the after — was right
     about the diagnosis and wrong about the remedy. Eliding a half still leaves cria's prose in an
@@ -68,8 +74,22 @@ class TheSupersededEditGOESTests(unittest.TestCase):
     def _edit_then_write(self):
         """A stale edit to a file, then a later whole-file write to the same path."""
         return [edit("lib/shipping/rates.rb", BIG_OLD, BIG_NEW),
-                {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-                _write("lib/shipping/rates.rb", "NEWEST" + ("\n# v2" * 200))]
+                _landed("c1", "ok"),               # the stale edit's own program reported it landed (an unframed "ok" proves nothing)
+                _write("lib/shipping/rates.rb", "NEWEST" + ("\n# v2" * 200)),
+                _landed("w1")]                      # the superseding write is ANSWERED, and its own program says it landed
+
+    def test_an_unanswered_or_merely_worded_superseding_write_supersedes_nothing(self):
+        """The proof is the write program's own typed outcome. A write with no result yet, or one whose result only SAYS it wrote,
+        is not what is on disk — dropping the earlier copy on its strength would delete the only version the model can read."""
+        base = self._edit_then_write()[:-1]              # the same history WITHOUT the typed landed answer
+        for label, tail in (("unanswered", []),
+                            ("worded confirmation", [{"role": "tool", "tool_call_id": "w1", "content": "Wrote it"}]),
+                            ("uncertain", [{"role": "tool", "tool_call_id": "w1", "content": "?", "cria_result_outcome": "uncertain"}])):
+            with self.subTest(label):
+                msgs = base + tail
+                out, n = focustrim._drop_superseded_writes(msgs)
+                self.assertEqual(n, 0)
+                self.assertEqual(out, msgs)                       # nothing removed, no note added
 
     def test_the_superseded_edit_is_gone_entirely(self):
         out, n = focustrim._drop_superseded_writes(self._edit_then_write())
@@ -119,8 +139,9 @@ class TheCompactViewFoldsItTooTests(unittest.TestCase):
                 # one (toolargs.write_target). What is under test here is unchanged: that both
                 # folding paths recognise the same argument keys as write payload.
                 msgs = [edit_key("lib/x.rb", key, "x" * 500, "a"),
-                        {"role": "tool", "tool_call_id": "a", "content": "ok"},
-                        _write("lib/x.rb", "NEWEST" + "\n# v2" * 200, "b")]
+                        _landed("a", "ok"),
+                        _write("lib/x.rb", "NEWEST" + "\n# v2" * 200, "b"),
+                        _landed("b")]
                 out, n = focustrim._drop_superseded_writes(msgs)
                 self.assertEqual(n, 1, f"{key} was not recognized as a stubbable write payload")
                 self.assertNotIn("x" * 500, json.dumps(out))

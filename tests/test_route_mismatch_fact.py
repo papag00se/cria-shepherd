@@ -8,14 +8,15 @@ description warns about exactly this, and the reasoner's own prompt already carr
 was blocking the network, a satisfaction judge certified it, and the coder wrote that falsehood into
 two shipped documents. live_test MISS.
 """
+from cria.fetchfacts import Shape
 import os
 import tempfile
 import unittest
 
 from cria import loop
 
-LEDGER = {"https://api.handle.me": ("HTTP 200", "", "", ""),
-          "https://api.handle.me/openapi.json": ("HTTP 200", "GET /handles/{handle}", "x", "")}
+LEDGER = {"https://api.handle.me": ('HTTP 200', (), (), (), ''),
+          "https://api.handle.me/openapi.json": ('HTTP 200', ('GET /handles/{handle}',), (Shape(head='x'), ), (), '')}
 # the coder's real failure line — note it carries NO url of its own
 CODER_403 = [{"role": "tool",
               "content": "Chunk ID: 0fe1a1\nProcess exited with code 1\nOutput:\n"
@@ -63,7 +64,7 @@ class ItStaysSilentWithoutBothHalvesTests(unittest.TestCase):
 
     def test_a_host_cria_could_not_reach_either(self):
         self.assertEqual(loop._route_mismatch_fact(
-            {"https://api.handle.me": ("HTTP 500", "", "", "")}, CODER_403, ""), "")
+            {"https://api.handle.me": ('HTTP 500', (), (), (), '')}, CODER_403, ""), "")
 
     def test_no_failure_in_the_coders_output(self):
         ok = [{"role": "tool", "content": "Output:\naddr1qxsfzsmy… resolved fine"}]
@@ -144,7 +145,7 @@ class TheStatusDecidesTheDiagnosisTests(unittest.TestCase):
     401/403/429 is a rejected request. One cause for both sent the coder at its headers while the
     path stayed broken. Everything else gets silence — cria has no cause it can name."""
 
-    L = {"https://api.handle.me/openapi.json": ("HTTP 200", "", "", "")}
+    L = {"https://api.handle.me/openapi.json": ('HTTP 200', (), (), (), '')}
 
     def _fact(self, out):
         return loop._route_mismatch_fact(self.L, [{"role": "tool", "content": "Output:\n" + out}], "")

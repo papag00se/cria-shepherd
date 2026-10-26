@@ -248,7 +248,7 @@ class TextWriteTests(unittest.TestCase):
         self.assertEqual([c[0] for c in calls], ["write_file"])
         wrote = [{"role": "assistant", "content": None, "tool_calls": [{"id": "w1", "type": "function", "function": {
                     "name": "write_file", "arguments": json.dumps({"path": path, "content": "x\n" * 30})}}]},
-                 {"role": "tool", "tool_call_id": "w1", "content": "Wrote it"}]
+                 {"role": "tool", "tool_call_id": "w1", "content": "Wrote it", "cria_result_outcome": "landed"}]   # as represent_inbound hands it on
         _, calls, _, _, _ = self.turn(content, tools, fin, read=False, messages=wrote)
         self.assertEqual([c[0] for c in calls], ["write_file"])
 

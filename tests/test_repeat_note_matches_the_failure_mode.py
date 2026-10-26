@@ -17,11 +17,13 @@ empty answer a failure cost twelve turns in a walked run.
 """
 import unittest
 
-from cria import denial, focustrim, prompts
+from cria import bodykeys, denial, focustrim, prompts
 
 
-def _result(body):
-    return [{"role": "tool", "tool_call_id": "c1", "content": body}]
+def _result(body, outcome=None):
+    """``outcome`` is the PROVEN hint `represent_inbound` attaches; the wording proves nothing."""
+    return [{"role": "tool", "tool_call_id": "c1", "content": body,
+             **({bodykeys.RESULT_OUTCOME: outcome} if outcome else {})}]
 
 
 class TheNoteTellsTheTruthAboutWhatHappenedTests(unittest.TestCase):
@@ -45,7 +47,7 @@ class TheNoteTellsTheTruthAboutWhatHappenedTests(unittest.TestCase):
 class WhatCountsAsFailedTests(unittest.TestCase):
     def test_a_refusal_cria_authored(self):
         self.assertTrue(focustrim._repeat_failed(
-            _result(denial.mark("that path is outside the workspace")), "c1"))
+            _result(denial.mark("that path is outside the workspace"), denial.REFUSED), "c1"))
 
     def test_an_empty_body_is_NOT_a_known_failure(self):
         """This assertion used to read True, and it contradicted this file's own rule.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from shlex import quote as _qbash
 
-from . import content_reduce as content_reduce_mod, dirguard, prompts, webfetch, wsview
+from . import content_reduce as content_reduce_mod, dirguard, prompts, resultpacket, webfetch, wsview
 from .assistcontract import Policy, Reference
 from .toolcontracts import OutboundCall, OutboundDefinition, MutationDefinition, RewrittenCall, ShellCommand
 from .shrinkprotection import DEFINITION as SHRINK_PROTECTION
@@ -52,7 +52,8 @@ def external_boundary(source: OutboundCall) -> ShellCommand | None:
     if (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root, declared_roots)) is not None:
         ride = ''
         if wsview.pending(session or '')[1]:
-            room = content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE - len(reason)
+            room = resultpacket.max_text_for_wire(     # the survey travels as an encoded record: budget its worst-case wire cost
+                content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE - len(reason))
             if room >= wsview.TREE_MIN_BYTES:
                 ride = wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)
             elif rlog is not None:

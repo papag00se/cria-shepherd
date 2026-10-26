@@ -22,6 +22,15 @@ import unittest
 
 from cria import wsview, writeproxy
 from tests.wsfixture import survey
+from tests.resultshape import lowered
+
+
+def _turn(cid, text):
+    """One cria-lowered call and the result its own program printed (the survey rides ONLY on a lowered call, as a record)."""
+    sentinel, result = lowered("list_dir", json.dumps({"path": "."}), text, cid)
+    return [{"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {
+                "name": "exec_command", "arguments": json.dumps({"cmd": sentinel + "\nls"})}}]},
+            {"role": "tool", "tool_call_id": cid, "content": result}]
 
 ROOT = "/workspace"
 SESSION = "01a0d5d1-c38b-b1"
@@ -69,11 +78,8 @@ class ACacheCandidateIsRecheckedAgainstEveryLaterTreeTests(unittest.TestCase):
         the pre-bump version, exactly like main."""
         # Request 1: go.mod's old body is delivered (S1: mtime 1000) and cached for the session.
         msgs1 = [
-            {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps({"command": "cat go.mod"})}}]},
-            {"role": "tool", "tool_call_id": "c1", "content":
-                "go.mod contents\n" + wsview.SURVEY_OPEN + "\n" +
-                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT, blob=_blob_for("go.mod", GO_MOD_OLD))},
+            *_turn("c1", "go.mod contents\n" + wsview.SURVEY_OPEN + "\n" +
+                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT, blob=_blob_for("go.mod", GO_MOD_OLD))),
         ]
         view1 = wsview.View(ROOT, SESSION)
         tok1 = wsview.bind(view1)
@@ -86,11 +92,8 @@ class ACacheCandidateIsRecheckedAgainstEveryLaterTreeTests(unittest.TestCase):
         # UNCHANGED (nothing about past history is rewritten), plus this turn's own NEW gate result
         # carrying S2 (mtime 2000, same size — the shell's own write left a newer mtime on disk).
         msgs2 = msgs1 + [
-            {"role": "assistant", "tool_calls": [{"id": "c2", "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps({"command": "go build ./..."})}}]},
-            {"role": "tool", "tool_call_id": "c2", "content":
-                "build output\n" + wsview.SURVEY_OPEN + "\n" +
-                survey(_tree(2000, len(GO_MOD_OLD)), root=ROOT)},
+            *_turn("c2", "build output\n" + wsview.SURVEY_OPEN + "\n" +
+                survey(_tree(2000, len(GO_MOD_OLD)), root=ROOT)),
         ]
         view2 = wsview.View(ROOT, SESSION)
         tok2 = wsview.bind(view2)
@@ -107,21 +110,12 @@ class ACacheCandidateIsRecheckedAgainstEveryLaterTreeTests(unittest.TestCase):
         """C38's benefit must hold across a full multi-survey replay too, not just a single tree:
         the SAME (size, mtime) repeated across every tree in the history is still reused."""
         msgs = [
-            {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps({"command": "cat go.mod"})}}]},
-            {"role": "tool", "tool_call_id": "c1", "content":
-                "go.mod contents\n" + wsview.SURVEY_OPEN + "\n" +
-                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT, blob=_blob_for("go.mod", GO_MOD_OLD))},
-            {"role": "assistant", "tool_calls": [{"id": "c2", "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps({"command": "go vet ./..."})}}]},
-            {"role": "tool", "tool_call_id": "c2", "content":
-                "vet output\n" + wsview.SURVEY_OPEN + "\n" +
-                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)},
-            {"role": "assistant", "tool_calls": [{"id": "c3", "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps({"command": "go build ./..."})}}]},
-            {"role": "tool", "tool_call_id": "c3", "content":
-                "build output\n" + wsview.SURVEY_OPEN + "\n" +
-                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)},
+            *_turn("c1", "go.mod contents\n" + wsview.SURVEY_OPEN + "\n" +
+                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT, blob=_blob_for("go.mod", GO_MOD_OLD))),
+            *_turn("c2", "vet output\n" + wsview.SURVEY_OPEN + "\n" +
+                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)),
+            *_turn("c3", "build output\n" + wsview.SURVEY_OPEN + "\n" +
+                survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)),
         ]
         view = wsview.View(ROOT, SESSION)
         tok = wsview.bind(view)

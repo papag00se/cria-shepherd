@@ -6,6 +6,7 @@ import json
 import unittest
 
 from cria import probegate, upstream
+from tests.gatefixture import bounds_field_for
 
 
 class _Rlog:
@@ -24,6 +25,7 @@ def _transport_page(transport_id: str, result: str) -> str:
         "offset\t0",
         f"total\t{len(data)}",
         "sha256\t" + hashlib.sha256(data).hexdigest(),
+        *bounds_field_for(result),                      # the worker's declared extents and header offsets
         "data\t" + base64.b64encode(data).decode(),
         probegate._transport_marker(transport_id, end=True),
     ])

@@ -12,6 +12,7 @@ import unittest
 from types import SimpleNamespace
 
 from cria import probediscovery, probegate
+from tests.gatefixture import gate_page, completed
 
 
 class MavenFlaggedLineGroundingTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class MavenFlaggedLineGroundingTests(unittest.TestCase):
                 workspace=workspace,
                 candidates=[SimpleNamespace(kind=probediscovery.ProbeKind.BuildCheck)],
             )
-            out = probegate.clean_gate_output(raw, plan)
+            out = probegate.clean_gate_output(raw, completed(plan, raw))
 
         self.assertIn(finding, out)  # the checker's message stays byte-identical
         self.assertIn(
@@ -59,7 +60,7 @@ class MavenFlaggedLineGroundingTests(unittest.TestCase):
                 workspace=workspace,
                 candidates=[SimpleNamespace(kind=probediscovery.ProbeKind.Test)],
             )
-            out = probegate.clean_gate_output(raw, plan)
+            out = probegate.clean_gate_output(raw, completed(plan, raw))
 
         self.assertIn(finding, out)
         self.assertNotIn("the flagged line on disk", out)

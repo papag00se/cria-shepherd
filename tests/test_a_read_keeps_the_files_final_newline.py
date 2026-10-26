@@ -12,10 +12,10 @@ import subprocess
 
 import pytest
 
-from cria import writeproxy, wsview
+from cria import denial, resultpacket, writeproxy, wsview
 
 
-def assert_surveyed_roundtrip(tmp_path, path, payload, call, output):
+def assert_surveyed_roundtrip(tmp_path, path, payload, call, output, proven=True):
     file = tmp_path / path
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_bytes(payload.encode())
@@ -32,7 +32,9 @@ def assert_surveyed_roundtrip(tmp_path, path, payload, call, output):
     try:
         represented = writeproxy.represent_inbound(history)
         assert represented[-1]["content"] == payload
-        assert view.read_bytes(str(file)) == payload.encode()
+        # POSITIVE PROOF ONLY: the real producer's `ran` frame makes the read the file's bytes; an archived pre-frame
+        # capture displays the same bytes but attributes nothing (unknown is not positive).
+        assert view.read_bytes(str(file)) == (payload.encode() if proven else None)
         assert view.size(str(file)) == file.stat().st_size
     finally:
         wsview.unbind(token)
@@ -46,7 +48,7 @@ def test_raw_ingress_preserves_surveyed_body_and_size(tmp_path, fixture):
     call = {"id": raw_call["call_id"], "type": "function", "function": {
         "name": raw_call["name"], "arguments": raw_call["arguments"]}}
     assert_surveyed_roundtrip(tmp_path, fixture["path"], fixture["expected"],
-                             call, fixture["result"]["output"])
+                             call, fixture["result"]["output"], proven=False)
 
 
 @pytest.mark.parametrize("payload", ["package pipeline;", "package pipeline;\n", "package pipeline;\n\n",
@@ -56,7 +58,11 @@ def test_file_bytes_survive_the_read_envelope(tmp_path, payload):
         "function": {"name": "read_file", "arguments": json.dumps({"path": "source.txt"})}}]}}]}
     shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
     writeproxy.translate_outbound(comp, shell, injected={"read_file"})
-    envelope = "Chunk ID: capture\nProcess exited with code 0\nOutput:\n" + payload
+    call = comp["choices"][0]["message"]["tool_calls"][0]
+    # what the lowered read's own read-once program prints: ONE typed record carrying the file's bytes, length and digest
+    record = resultpacket.line(denial.receipt_for(call["id"], "read_file", json.dumps({"path": "source.txt"})),
+                               denial.RAN, body=payload.encode(), observe="whole")
+    envelope = "Chunk ID: capture\nProcess exited with code 0\nOutput:\n" + record
     assert_surveyed_roundtrip(tmp_path, "source.txt", payload,
                              comp["choices"][0]["message"]["tool_calls"][0], envelope)
 

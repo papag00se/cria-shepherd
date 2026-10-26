@@ -13,7 +13,7 @@ nothing" is not a test of anything, so each one pins both sides of the line.
 import json
 import unittest
 
-from cria import loop, massage
+from cria import bodykeys, loop, massage
 from cria.massage import (apply, content_text, recover_leaked_tool_calls,
                           recover_reasoning_tool_calls)
 
@@ -502,7 +502,8 @@ class TheRepeatGuardSeesTheRecoveredCall(unittest.TestCase):
             tc = comp["choices"][0]["message"]["tool_calls"][0]
             msgs.append({"role": "assistant", "tool_calls": [dict(tc, id=f"f{i}")]})
             msgs.append({"role": "tool", "tool_call_id": f"f{i}",
-                         "content": denial.mark("you already fetched this page")})
+                         "content": denial.mark("you already fetched this page"),
+                         bodykeys.RESULT_OUTCOME: denial.REFUSED})
         gs = loop.GuardState()
         loop.guard_track_refusals(gs, comp, Rec(), messages=msgs)
         self.assertTrue(gs.redirect_due)

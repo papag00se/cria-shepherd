@@ -1,3 +1,4 @@
+from cria.fetchfacts import Shape
 import contextlib
 import json
 import pathlib
@@ -471,10 +472,10 @@ class NoPackageManagerCanRunFromAGatherTests(unittest.TestCase):
 
 
 class LedgerShapeFormatTests(unittest.TestCase):
-    """Two producers fill the SAME ledger field — the coder-side `_extract_fetches` (via `_shape_block`)
+    """Two producers fill the SAME ledger field — the coder-side fact producer (`webfetch.structure_facts`)
     and the planner's gather (`_record_fetch`) — and they merge into one ⟦ctx:facts⟧ anchor. They must
-    agree on how entries are separated, because the reader's contract is line-based: `_shape_block`'s
-    own docstring says "entry lines are the ones carrying →".
+    carry the SAME typed entries (`fetchfacts.Shape`, one per endpoint), because the anchor renders each
+    entry on its own lines.
 
     MEASURED (run 0727-134912): the planner joined five endpoint shapes with "; ", so the coder was
     handed 1,534 characters on ONE unbroken line — `/handles/{handle}`, `/holders/{address}`, `/stats`,
@@ -483,42 +484,33 @@ class LedgerShapeFormatTests(unittest.TestCase):
     fix, not a claim about what the model then does with it."""
 
     def test_both_producers_separate_endpoint_shapes_the_same_way(self):
-        from cria import loop
-        rendered = ('HTTP 200 OK · https://api.example.com/openapi.json\n'
-                    '[response shape — the fields each endpoint RETURNS:\n'
-                    'GET /handles/{handle} → holder, resolved_addresses{ada}\n'
-                    'GET /holders/{address} → total_handles, address]\n')
-        coder_side = loop._shape_block(rendered, 0)
-        self.assertEqual(len(coder_side.splitlines()), 3)     # header + 2 entries, one per line
-
+        from cria import fetchfacts, loop, webfetch as wf
+        doc = {"paths": {
+            "/handles/{handle}": {"get": {"responses": {"200": {"content": {
+                "application/json": {"schema": {"properties": {
+                    "holder": {"type": "string"},
+                    "resolved_addresses": {"type": "object", "properties": {"ada": {}}}}}}}}}}},
+            "/holders/{address}": {"get": {"responses": {"200": {"content": {
+                "application/json": {"schema": {"properties": {
+                    "total_handles": {"type": "integer"},
+                    "address": {"type": "string"}}}}}}}}}}}
+        coder_side = wf.structure_facts("doc", doc)["shapes"]          # the coder-side producer (typed reports)
         facts = {}
-        pt._record_fetch(facts, "https://api.example.com/openapi.json", 200,
-                         json.dumps({"paths": {
-                             "/handles/{handle}": {"get": {"responses": {"200": {"content": {
-                                 "application/json": {"schema": {"properties": {
-                                     "holder": {"type": "string"},
-                                     "resolved_addresses": {"type": "object", "properties": {"ada": {}}}}}}}}}}},
-                             "/holders/{address}": {"get": {"responses": {"200": {"content": {
-                                 "application/json": {"schema": {"properties": {
-                                     "total_handles": {"type": "integer"},
-                                     "address": {"type": "string"}}}}}}}}}}}),
-                         "application/json")
-        shapes = facts["https://api.example.com/openapi.json"][2]
-        self.assertIn("/holders/{address}", shapes)
-        # ONE UNINDENTED LINE PER ENDPOINT. A nested group now gets its own INDENTED continuation
-        # line (see webfetch._schema_json_shape — the flat run was burying resolved_addresses 74% into
-        # a 1,486-char line and every maple run read `name` as the address instead). The invariant
-        # the original assertion was protecting — the planner must not smash all endpoints onto one
-        # line — is unchanged and now stated directly, rather than as a raw line count that also
-        # forbade an endpoint's own shape from wrapping.
+        pt._record_fetch(facts, "https://api.example.com/openapi.json", 200, json.dumps(doc), "application/json")
+        planner_side = facts["https://api.example.com/openapi.json"][2]  # the planner's gather: the SAME typed entries
+        self.assertEqual([fetchfacts.report(s) for s in planner_side], coder_side)
+        # ONE ENTRY PER ENDPOINT, never all endpoints smashed onto one line (the 1,534-character incident).
+        self.assertEqual([s.route for s in planner_side], ["/handles/{handle}", "/holders/{address}"])
+        shapes = fetchfacts.shapes_text(planner_side)
         heads = [ln for ln in shapes.splitlines() if ln.lstrip().startswith(("GET ", "POST "))]
         self.assertEqual(len(heads), 2, "one endpoint header per endpoint")
         self.assertEqual(shapes.count("```ts"), 2, "each shape is its own fenced ts block")
         self.assertEqual(shapes.count("```"), 4, "every fence is closed")
-        # the fixture declares no type for `ada`, so it renders "?" — the nesting is the point
-        self.assertTrue(any('ada?:' in ln for ln in shapes.splitlines()),
-                        "the nested field is visible as real JSON nesting")
-        self.assertIn('resolved_addresses?: {', shapes)
+        self.assertIn('resolved_addresses?: {', shapes)          # a nested group is real nesting
+        self.assertEqual({f for s in planner_side for f in s.fields}, {"holder", "resolved_addresses", "ada", "total_handles", "address"})
+        shown = loop._format_fetches(facts)                       # and the durable display carries both endpoints' fields
+        self.assertIn("total_handles", shown)
+        self.assertIn("resolved_addresses", shown)
 
 
 class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):
@@ -551,7 +543,7 @@ class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):
 
     def test_it_goes_quiet_once_a_spec_has_been_read(self):
         facts = {"https://api.handle.me/openapi.json":
-                 ("HTTP 200", "/handles/{handle}, /holders/{address}", "GET /handles/{handle} → holder")}
+                 ('HTTP 200', ('/handles/{handle}', '/holders/{address}'), (Shape(head='GET /handles/{handle} → holder', fields=()), ), (), '')}
         out = self._fetch("<html><body>Swagger UI</body></html>", facts)
         self.assertNotIn("no endpoints", out.lower())
 
@@ -610,7 +602,7 @@ class SearchNoStructureNoteTests(unittest.TestCase):
         self.assertIn("web_fetch the document", r.text)
 
     def test_search_goes_quiet_once_any_spec_was_read(self):
-        r = self._search(facts={"https://api.x/openapi.json": (200, "/handles/{handle}", "fields")})
+        r = self._search(facts={"https://api.x/openapi.json": (200, ('/handles/{handle}',), (Shape(head='fields'), ), (), '')})
         self.assertNotIn("POINTERS", r.text)
 
 

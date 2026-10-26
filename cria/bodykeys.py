@@ -113,6 +113,15 @@ RUMINATION = "cria_rumination"
 #: Stripped from every message at the wire (`Upstream._prep`).
 PAYLOAD_BOUNDARY = "cria_payload_boundary"
 
+#: MESSAGE-level (not body): what cria's own lowering PROVED about a tool result's branch — ``"refused"`` (cria's
+#: own refusal branch ran, so the call did not) or ``"unapplied"`` (cria's edit program reported the edit was
+#: not applied). Set — and any value the client sent overwritten — ONLY by `writeproxy.represent_inbound`, from
+#: the receipt cria embedded in the lowered command it declared in its own sentinel; read ONLY through
+#: `denial.outcome`/`denial.unlanded_call_ids`. Absent means unknown, never "ran". Stripped at the wire.
+RESULT_OUTCOME = "cria_result_outcome"
+READ_OBSERVATION = "cria_read_observation"
+RESULT_REPORT = "cria_result_report"
+
 #: The kind of request for learned token density ("summary" for flattened-history summary work).
 #: Written by summary producers, read by the floor's density lookup, stripped at the wire.
 DENSITY_KIND = "cria_density_kind"
@@ -120,4 +129,4 @@ DENSITY_KIND = "cria_density_kind"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, DENSITY_KIND)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT)

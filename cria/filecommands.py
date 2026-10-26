@@ -6,12 +6,13 @@ never looks up a web-fetch cache or selects an intervention.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import os
 from pathlib import Path
 import re
 from shlex import quote as _qbash
 
-from . import content_reduce as content_reduce_mod, denial, prompts
+from . import content_reduce as content_reduce_mod, denial, prompts, resultpacket
 from .privatepaths import CRIA_HOME
 from .toolargs import tool_path as _tool_path
 from .toolwire import _oversize_command, _refusal_command
@@ -116,6 +117,20 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
     # cria declined to hand over the bytes — so nothing claims it failed. The denied mark still
     # rides, so cria's own readers know no content came back (operator ruling, 2026-08-12).
     steer = _oversize_command(prompts.render("large_range_steer", path=str(path)))
+    receipt = denial.active_receipt()
+    if receipt:
+        end = int(sed_end.partition(",")[2]) if sed_end.partition(",")[2].isdigit() else 0
+        past = ("(no lines in that range — %s has %%N%% lines; line %d is past the end of the file)\n" % (path, start))
+        return (f"{_read_failure_branches(q, path)}"
+                f"python3 - {q} {start} {end} {READ_INLINE_MAX} {receipt} {_qbash(past)} <<'{_RANGE_HD}'\n{_RANGE_PY}{_RANGE_HD}\n"
+                f'__cria_rd=$?\n'
+                f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {steer}; '
+                f'else {_ranged_read_shell(q, path, sed_end, start, steer)}; fi')
+    return _ranged_read_shell(q, path, sed_end, start, steer, guards=True)
+
+
+def _ranged_read_shell(q: str, path: str, sed_end: str, start: int, steer: str, guards: bool = False) -> str:
+    """The shell window cut — the plain shape outside a lowering, and the unframed fallback when python3 is unavailable."""
     return (
         # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
         # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
@@ -131,7 +146,7 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
         # printf of bash's wording. Unmarked error text is indistinguishable from the file's contents
         # to everything downstream: the read ledger counted exactly this shape as "261 chars read
         # from disk" for a file nobody opened. One owner, one answer, whichever read was asked for.
-        f"{_read_failure_branches(q, path)}"
+        f"{_read_failure_branches(q, path) if guards else ''}"
         f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
         f'if [ {start} -gt "$__n" ]; then '
         f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '
@@ -144,8 +159,90 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
         # one line. Numbering is why the crew never has that problem.
         f'else __s=$(sed -n \'{sed_end}p\' {q} | awk -v s={start} \'{{printf "%d: %s\\n", s+NR-1, $0}}\'); '
         f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then {steer}; '
-        f'else printf \'%s\\n\' "$__s"; fi; fi'
+        f'else {denial.ran_command()}printf \'%s\\n\' "$__s"; fi; fi'
     )
+
+
+# THE WHOLE-READ PRODUCER. One python3 program reads the file ONCE (no `wc` then `cat`, so the size test and the bytes
+# cannot disagree) and prints ONE typed record carrying the bytes with their length and sha-256 (`resultpacket`). Exit
+# 0 = the record was printed; 3 = over the inline limit (nothing printed: the caller's steer answers); anything else
+# (no python3, a vanished file) = nothing printed and the caller falls back to a plain `cat`, whose result carries no
+# record and is therefore UNKNOWN to every reader — never a wrong claim. python3 is already required by lowered
+# writes, edits and the survey.
+# The most a whole-read record can occupy on the wire: the codec never picks anything longer than base64 (4/3 of the
+# bytes), plus the record's own fields and a prefix's prose. The result's output allowance is raised to this where the
+# harness's schema states a token unit; where it states none, the harness's own cap is an immutable external limit.
+READ_RECORD_WIRE_MAX = READ_INLINE_MAX * 4 // 3 + 1_500
+_READ_HD = "__CRIA_RD_PY__"
+_READ_PY = resultpacket.ENCODER_PY + r'''
+import base64, json, os, stat, sys
+path, limit, receipt, kind, pre = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], base64.b64decode(sys.argv[5]).decode()
+try:
+    fd = os.open(path, os.O_RDONLY)
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            sys.exit(4)
+        raw = f.read(limit + 1)
+except OSError:
+    sys.exit(4)
+if len(raw) > limit:
+    sys.exit(3)
+rec = {"v": 1, "r": receipt, "k": kind}
+if pre:
+    rec["pre"] = pre
+rec["b"] = encode_body(raw)
+rec["o"] = "whole"
+sys.stdout.write(json.dumps(rec, separators=(",", ":")) + "\n")
+sys.stdout.flush()
+'''
+
+
+# THE RANGED-READ PRODUCER: the same read-once program shape, cutting a numbered window (`N: text`, as the crew's read_file
+# always numbered it). The window's bytes ride in the record with their length and digest and are declared `range`, so what
+# a window carried is verified — a pty cannot rewrite it and a harness cut makes it unverifiable (UNKNOWN), never a window
+# that looks complete. Exit 0 = record printed; 3 = the window is over the inline limit (the caller's steer answers).
+_RANGE_HD = "__CRIA_RG_PY__"
+_RANGE_PY = resultpacket.ENCODER_PY + r'''
+import json, os, stat, sys
+path, start, end, limit, receipt, past = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], sys.argv[6]
+try:
+    fd = os.open(path, os.O_RDONLY)
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            sys.exit(4)
+        raw = f.read()
+except OSError:
+    sys.exit(4)
+lines = raw.split(b"\n")
+if lines and lines[-1] == b"":
+    lines.pop()
+if start > len(lines):
+    sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran"}, separators=(",", ":")) + "\n")
+    sys.stdout.write(past.replace("%N%", str(len(lines))))
+    sys.exit(0)
+window = lines[start - 1:end] if end else lines[start - 1:]
+body = b"".join(b"%d: %s\n" % (start + i, ln) for i, ln in enumerate(window))
+if len(body) > limit:
+    sys.exit(3)
+sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran", "b": encode_body(body), "o": "range"}, separators=(",", ":")) + "\n")
+sys.stdout.flush()
+'''
+
+
+def _whole_read(q: str, over: str, *, kind: str = denial.RAN, pre: str = "", otherwise: str = "") -> str:
+    """The command that returns the WHOLE of ``q`` when it fits one read, else runs ``over`` (the steer).
+
+    Under a lowering it is the record-printing program above; outside one (no receipt: nothing to declare to) it is the
+    plain size test and `cat`. ``otherwise`` runs when the record could not be produced for a reason other than size
+    (default: a plain `cat`)."""
+    receipt = denial.active_receipt()
+    if not receipt:
+        return f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; then {over}; else cat {q}; fi'
+    pre_b64 = base64.b64encode(pre.encode("utf-8")).decode("ascii")
+    return (f"python3 - {q} {READ_INLINE_MAX} {receipt} {kind} '{pre_b64}' <<'{_READ_HD}'\n{_READ_PY}{_READ_HD}\n"
+            f'__cria_rd=$?\n'
+            f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {over}; '
+            f'else {otherwise or "cat " + q}; fi')
 
 
 def _read_failure_branches(q: str, path: str) -> str:
@@ -240,29 +337,43 @@ def _read_command(args: dict) -> str | None:
              f"CRIA_WH={_qbash(win_head)} CRIA_WT={_qbash(win_tail)} "
              f"LC_ALL=C awk {_qbash(prog)} {q}")
     return (f"{_read_failure_branches(q, str(path))}"
-            f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f"then {steer}; else cat {q}; fi")
+            f"{_whole_read(q, steer)}")
 
 
 def _read_in_place_of_write(path: str, fact: str) -> str:
     """The command that answers a ``write_file`` for an unread existing file with that file.
 
-    Whole file when it fits one read: the measured ``fact``, the call-not-run statement, a marker line
-    (:data:`denial.READ_INSTEAD_MARKER`) and then ``cat`` — the bytes unaltered. A file over
+    Whole file when it fits one read: ONE typed record (`resultpacket`, kind ``refused``) whose ``pre`` is the measured
+    ``fact`` + the call-not-run statement + a marker line (:data:`denial.READ_INSTEAD_MARKER`, words for the model — never
+    searched for) and whose body is the file's bytes with their length and sha-256, read once. Whether the write ran and
+    whether the file was returned are two typed facts. A file over
     :data:`READ_INLINE_MAX` (or unreadable) falls to the ordinary whole-read owner, whose steer to
     read it in ranges is the lossless paging path; the result then states the call was not run
     and carries no read marker, so nothing is recorded as seen until a read has actually come back."""
     q = _qbash(path)
     labels = prompts.load_map("write_unread_target")
     # MARKED AS A CALL THAT DID NOT RUN, because the write did not: every reader that asks "did this
-    # write land?" (`_extract_writes`, contextfloor, focustrim's supersede rule, `_failed_edit_ids`) asks
-    # `denial.is_denied`. The read marker rides inside the same text, and the readers that want the FILE
-    # (`_extract_reads`, `represent_inbound`) look for it before they look at the denial.
-    read = denial.mark(prompts.fill(labels["read"], fact=fact))
+    # write land?" (`_extract_writes`, contextfloor, focustrim's supersede rule, the ledger) asks
+    # `denial.unlanded_call_ids` — proven by the receipt this very text carries. The readers that want the
+    # FILE (`_extract_reads`, `represent_inbound`) ask `denial.read_payload`: the extent frame this branch prints
+    # before `cat` is the only thing that says where the file's bytes begin.
+    with denial.unframed():      # the prose is the record's `pre` field and the answer runs inside a branch that already printed its own record
+        read = denial.mark(prompts.fill(labels["read"], fact=fact))
     not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
-    return (f'if [ -f {q} ] && [ -r {q} ] && [ "$(wc -c < {q} 2>/dev/null || echo 0)" -le {READ_INLINE_MAX} ]; '
-            f"then printf %s {_qbash(read)}; cat {q}; "
-            f"else printf %s {_qbash(not_read)}; {_read_command({'path': path})}; fi")
+    receipt = denial.active_receipt()
+    with denial.unframed():
+        answer = _read_command({'path': path})
+    if not receipt:                                    # outside a lowering: the plain shape, no record to declare
+        return (f'if [ -f {q} ] && [ -r {q} ] && [ "$(wc -c < {q} 2>/dev/null || echo 0)" -le {READ_INLINE_MAX} ]; '
+                f"then printf %s {_qbash(read)}; cat {q}; "
+                f"else printf %s {_qbash(not_read)}; {answer}; fi")
+    # THE FILE'S BYTES RIDE INSIDE THE RECORD (a `refused` record whose `pre` is the prose and whose body is the file):
+    # whether the write ran and whether the file was returned are two separate typed facts. Anything the program could
+    # not return (over the limit, vanished, no python3) answers with the not-read prose and the ordinary read.
+    return (f'if [ -f {q} ] && [ -r {q} ]; then\n'
+            f"{_whole_read(q, 'false', kind=denial.REFUSED, pre=read, otherwise='false')}\n"
+            f'fi\n'
+            f'if [ "${{__cria_rd:-1}}" -ne 0 ]; then printf %s {_qbash(not_read)}; {answer}; fi')
 
 
 def _under_spill_dir(path: str, spill_dir: str) -> bool:
@@ -333,5 +444,4 @@ def _spill_read_command(path: str, steer: str) -> str:
     # but carries NO denied mark — so the ledger counted the error text as the file's contents. Same
     # owner, same mark, one statement of what happened (see _read_failure_branches).
     return (f"{_read_failure_branches(q, path)}"
-            f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f'then {_oversize_command(steer)}; else cat {q}; fi')
+            f"{_whole_read(q, _oversize_command(steer))}")

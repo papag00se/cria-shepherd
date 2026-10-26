@@ -40,6 +40,8 @@ import unittest
 from unittest import mock
 
 from cria import loop, probegate, repositorychecks, shelltool
+from tests.gatefixture import bounds_field_for
+from tests.gatefixture import gate_page, completed
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 # Verbatim from inbound-ce7f6c3d-responses.json, function_call_output for call_4b4fca253d184e38
@@ -80,6 +82,7 @@ def _page(plan: probegate.GatePlan, body: str, *, offset: int = 0) -> str:
         "offset\t" + str(offset),
         "total\t" + str(len(payload)),
         "sha256\t" + hashlib.sha256(payload).hexdigest(),
+        *bounds_field_for(body),
         "data\t" + base64.b64encode(payload[offset:]).decode(),
         probegate._transport_marker(plan.transport_id, end=True),
     ])
@@ -136,7 +139,7 @@ class CaptureShapedFailsBeforePassesAfterTests(unittest.TestCase):
         page = _page(plan, _TIMED_OUT_GATE_BODY)
         self.assertEqual(probegate.ingest_transport(plan, page), "complete")
 
-        rendered = probegate.clean_gate_output(probegate.transported_result(plan))
+        rendered = probegate.clean_gate_output(probegate.transported_result(plan), plan)
         self.assertIn("did not finish (timed out)", rendered)
         self.assertIn("tests/test_orders_integration.py::test_polls_forever", rendered)
         self.assertNotIn("fix", rendered.lower())   # not a pass, not a fix demand — cria's own words
@@ -413,7 +416,7 @@ class ConsecutiveOpenerlessBoundTests(unittest.TestCase):
         self.assertEqual(plan.transport_openerless_streak, 0)   # a real envelope reset it
         page = _page(plan, _TIMED_OUT_GATE_BODY)
         self.assertEqual(probegate.ingest_transport(plan, page), "complete")
-        rendered = probegate.clean_gate_output(probegate.transported_result(plan))
+        rendered = probegate.clean_gate_output(probegate.transported_result(plan), plan)
         self.assertIn("did not finish (timed out)", rendered)
 
     def test_b_three_consecutive_openerless_reads_are_terminal_promptly(self):
@@ -863,7 +866,7 @@ class CompactionDuringRunningTransportPollsNotReplansTests(unittest.TestCase):
             #    the SAME rendering the gate already knows how to produce for a timed-out check.
             page = _page(gs.gate_plan, _TIMED_OUT_GATE_BODY)
             self.assertEqual(probegate.ingest_transport(gs.gate_plan, page), "complete")
-            rendered = probegate.clean_gate_output(probegate.transported_result(gs.gate_plan))
+            rendered = probegate.clean_gate_output(probegate.transported_result(gs.gate_plan), gs.gate_plan)
             self.assertIn("did not finish (timed out)", rendered)
             self.assertIn("tests/test_orders_integration.py::test_polls_forever", rendered)
 

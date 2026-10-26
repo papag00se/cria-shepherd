@@ -199,7 +199,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/filecommands.py', '_read_command'),
             SourceOwner('cria/writeproxy.py', 'note_harness_cuts'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
-            SourceOwner('cria/denial.py', 'read_instead_payload'),
+            SourceOwner('cria/denial.py', 'read_payload'),
         ),
     ),
     AssistFamily(
@@ -375,7 +375,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         ('A124',),
         (
             SourceOwner('cria/shelltool.py', 'writes_something'),
-            SourceOwner('cria/toolwire.py', 'write_landed'),
+            SourceOwner('cria/denial.py', 'landed_call_ids'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
         ),
     ),
@@ -976,7 +976,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/focustrim.py', '_drop_superseded_writes'),
             SourceOwner('cria/focustrim.py', '_repeat_failed'),
             SourceOwner('cria/focustrim.py', 'superseded_writes_truth'),
-            SourceOwner('cria/selfcompact.py', '_last_write_index_by_path'),
+            SourceOwner('cria/selfcompact.py', '_later_write_fates'),
         ),
     ),
     AssistFamily(

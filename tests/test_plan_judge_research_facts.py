@@ -6,6 +6,7 @@ Measured over the recorded drops: 57% named a snake_case field, 17% named a URL 
 `GET /holders/{address} … extract the total_handles field`, where both names came out of the
 fetched spec.
 """
+from cria.fetchfacts import Shape
 import json
 from pathlib import Path
 import tempfile
@@ -16,11 +17,7 @@ from test_loop import _select_test_planning
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 
-LEDGER = {"https://api.handle.me/openapi.json": (
-    "HTTP 200 OK",
-    "/handles/{handle} /holders/{address}",
-    "/handles/{handle} → name(string), holder(string), resolved_addresses{ada(string)}",
-    "")}
+LEDGER = {"https://api.handle.me/openapi.json": ('HTTP 200 OK', ('/handles/{handle} /holders/{address}',), (Shape(head='/handles/{handle} → name(string), holder(string), resolved_addresses{ada(string)}', fields=('name', 'holder', 'resolved_addresses', 'ada')), ), (), '')}
 
 
 class _Rlog:
@@ -41,10 +38,10 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(groundtruth.researched_facts(None), "")
 
     def test_a_status_only_entry_renders_nothing(self):
-        self.assertEqual(groundtruth.researched_facts({"u": ("HTTP 404", "", "", "")}), "")
+        self.assertEqual(groundtruth.researched_facts({"u": ('HTTP 404', (), (), (), '')}), "")
 
     def test_short_legacy_tuples_still_read(self):
-        self.assertIn("/x", groundtruth.researched_facts({"u": ("HTTP 200", "/x")}))
+        self.assertIn("/x", groundtruth.researched_facts({"u": ('HTTP 200', ('/x',), (), (), '')}))
 
     def test_absence_is_explicitly_NOT_called_evidence(self):
         # Without this the judge treats "not in the list" as "invented" and the fix inverts into

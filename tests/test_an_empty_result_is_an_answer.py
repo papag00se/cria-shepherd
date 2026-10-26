@@ -23,13 +23,15 @@ the answer a failure.
 
 import unittest
 
-from cria import focustrim
+from cria import bodykeys, focustrim
 
 
-def _call(cid, body, name="read_file", args='{"path":"orders/__init__.py"}'):
+def _call(cid, body, name="read_file", args='{"path":"orders/__init__.py"}', outcome=None):
+    tool = {"role": "tool", "tool_call_id": cid, "content": body}
+    if outcome:                                        # PROVEN by the producer, never read off the wording
+        tool[bodykeys.RESULT_OUTCOME] = outcome
     return [{"role": "assistant", "tool_calls": [
-                {"id": cid, "type": "function", "function": {"name": name, "arguments": args}}]},
-            {"role": "tool", "tool_call_id": cid, "content": body}]
+                {"id": cid, "type": "function", "function": {"name": name, "arguments": args}}]}, tool]
 
 
 class AnEmptyBodyIsAValueTests(unittest.TestCase):
@@ -55,7 +57,7 @@ class RealFailuresStillCountTests(unittest.TestCase):
     def test_a_refusal_cria_authored(self):
         from cria import denial
         self.assertTrue(focustrim._repeat_failed(
-            _call("c1", denial.mark("that path is not there — nothing was read")), "c1"))
+            _call("c1", denial.mark("that path is not there — nothing was read"), outcome=denial.REFUSED), "c1"))
 
 
 if __name__ == "__main__":

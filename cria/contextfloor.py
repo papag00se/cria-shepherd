@@ -340,7 +340,7 @@ def _turn_stub(m: dict, text: str) -> str:
     if "\n" in text:
         # A real first line exists — the writer's own sentence boundary, not a cap.
         first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-        if first.startswith(editrecovery.EDIT_MARK):
+        if denial.unlanded(m) and first.startswith(editrecovery.EDIT_MARK):
             first = selfcompact.edit_note_headline(text)   # never quote a promise of a body that is not here
         return f"{mark}[{role}] {first}" if first else ""
     # ONE UNBROKEN BLOB has no first line to quote, and quoting part of it would be the very cut
@@ -971,36 +971,23 @@ def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "") -
     return kept, dropped
 
 
-def _refused_write_ids(msgs: list[dict]) -> set:
-    """tool_call ids whose paired result says the write never landed — cria's own denial mark, or an
-    edit-recovery mark. The same two signals `focustrim._failed_write_ids` reads."""
-    out: set = set()
-    for m in msgs or []:
-        if not isinstance(m, dict) or m.get("role") != "tool":
-            continue
-        body = str(m.get("content") or "")
-        cid = m.get("tool_call_id") or m.get("call_id")
-        if cid and (denial.is_denied(body) or editrecovery.EDIT_MARK in body):
-            out.add(cid)
-    return out
-
-
 def _modified_files(msgs: list[dict]) -> list[str]:
     """Deduped paths of files that the given (dropped) assistant turns WROTE/EDITED — the fact that
     survives the drop even though the content doesn't."""
     out: list[str] = []
-    refused = _refused_write_ids(msgs)
+    landed = denial.landed_call_ids(msgs)
     for m in msgs:
         if m.get("role") != "assistant":
             continue
         for tc in m.get("tool_calls") or []:
             fn = tc.get("function") or {}
-            # …AND IT HAS TO HAVE LANDED. The note this feeds names historical modifications,
-            # and nothing here checked. Walked on feed-pipeline-java x nemotron-elastic
-            # 20260820T103857: a `pom.xml` write cria itself refused as malformed XML was named in
-            # that sentence. Its two siblings — selfcompact's stubber and focustrim's superseded-
-            # write rule — both learned this already; this one had not (#5b, #23).
-            if (fn.get("name") or "") in _WRITE_TOOL_NAMES and tc.get("id") not in refused:
+            # …AND IT HAS TO HAVE LANDED — PROVEN, not merely "not refused". The note this feeds names historical
+            # modifications as FACT. Walked on feed-pipeline-java x nemotron-elastic 20260820T103857: a `pom.xml` write
+            # cria itself refused as malformed XML was named in that sentence. An unknown result (no record, a cut or
+            # unpaired one), an `uncertain` write and a result that merely QUOTES a confirmation are not confirmed
+            # modifications: only the write program's own typed `landed` fact (`denial.landed_call_ids`, the ONE accessor
+            # every positive write-fact reader uses) names a path here.
+            if (fn.get("name") or "") in _WRITE_TOOL_NAMES and tc.get("id") in landed:
                 p = toolargs.tool_path(toolargs.parse_args(fn.get("arguments")))
                 if p and p not in out:
                     out.append(p)

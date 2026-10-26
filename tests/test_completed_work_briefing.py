@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from cria import completedwork as cw, denial, indicators, loop
+from cria import bodykeys, completedwork as cw, denial, indicators, loop
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 
@@ -227,6 +227,7 @@ def test_large_summary_and_quotes_are_not_clipped_or_promoted_to_evidence():
 def test_shared_renderer_gets_original_transcript_gate_and_denial_provenance():
     source, chat = make()
     source.messages[2]['content'] = denial.mark('The write was refused; exact observed bytes remain here.')
+    source.messages[2][bodykeys.RESULT_OUTCOME] = denial.REFUSED      # proven by the producer, not read off the words
     gate = object()
     seen = []
 

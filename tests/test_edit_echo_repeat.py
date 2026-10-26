@@ -16,7 +16,7 @@ import tempfile
 import threading
 import unittest
 
-from cria import prompts, writeproxy
+from cria import denial, prompts, writeproxy
 
 _CASES = {c["name"]: c for c in json.loads(
     (pathlib.Path(__file__).parent / "fixtures" / "a11_head_anchor_leftover.json").read_text())}
@@ -27,9 +27,11 @@ def _land(case, name="Importer.java"):
     f = pathlib.Path(d, case["path"])
     f.parent.mkdir(parents=True)
     f.write_text(case["base"])
-    cmd = writeproxy._edit_command(case["path"], case["old_string"], case["new_string"], echo=True)
+    with denial.receipt_scope('0123456789abcdef'):
+        cmd = writeproxy._edit_command(case["path"], case["old_string"], case["new_string"], echo=True)
     r = subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True, text=True)
-    return writeproxy.render_edit_echo(r.stdout, name), f.read_text()
+    from tests.resultshape import rep_of
+    return writeproxy.render_edit_echo(name, rep_of(r.stdout)), f.read_text()
 
 
 def _claim(echo):
@@ -117,8 +119,9 @@ class LinkAndFailureTests(unittest.TestCase):
     """An edit goes THROUGH a link; it never replaces one (AGENTS.md-style symlinks, hard links)."""
 
     def _edit(self, d, name, old, new):
-        return subprocess.run(["bash", "-c", writeproxy._edit_command(name, old, new)], cwd=d, capture_output=True,
-                              text=True)
+        with denial.receipt_scope("0123456789abcdef"):
+            command = writeproxy._edit_command(name, old, new)
+        return subprocess.run(["bash", "-c", command], cwd=d, capture_output=True, text=True)
 
     def test_a_symlink_stays_a_symlink_and_the_target_changes(self):
         import os
@@ -128,7 +131,7 @@ class LinkAndFailureTests(unittest.TestCase):
         link = pathlib.Path(d, "CLAUDE.md")
         os.symlink("AGENTS.md", link)
         r = self._edit(d, "CLAUDE.md", "two", "three")
-        self.assertIn("wrote", r.stdout.lower())
+        self.assertIn('"k":"landed"', r.stdout)
         self.assertTrue(link.is_symlink())
         self.assertEqual(os.readlink(link), "AGENTS.md")
         self.assertEqual(real.read_text(), "one\nthree\n")
@@ -198,10 +201,11 @@ class LinkAndFailureTests(unittest.TestCase):
         d = tempfile.mkdtemp()
         f = pathlib.Path(d, "A.txt")
         f.write_text("head\nclass A {\n  int x;\n  int y;\n}\ntail\n")
-        r = subprocess.run(["bash", "-c", writeproxy._edit_command(
-            "A.txt", "class A {\n", "class A {\n  int x;\n  int y;\n}\n", echo=True)], cwd=d, capture_output=True,
-            text=True)
-        echo = writeproxy.render_edit_echo(r.stdout, "A.txt")
+        with denial.receipt_scope("0123456789abcdef"):
+            command = writeproxy._edit_command("A.txt", "class A {\n", "class A {\n  int x;\n  int y;\n}\n", echo=True)
+        r = subprocess.run(["bash", "-c", command], cwd=d, capture_output=True, text=True)
+        from tests.resultshape import rep_of
+        echo = writeproxy.render_edit_echo("A.txt", rep_of(r.stdout))
         self.assertIn("Your old_string covered 1 line(s) and your new_string is 4 lines.", echo)
         self.assertIn("(blank lines aside)", echo)
 

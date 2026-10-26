@@ -403,7 +403,7 @@ class FloorSynthesisTests(unittest.TestCase):
             {"role": "assistant", "content": "writing",
              "tool_calls": [{"id": "c1", "function": {"name": "write_file",
                              "arguments": '{"path": "app/resolver.py", "content": "x"}'}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "wrote"},
+            {"role": "tool", "tool_call_id": "c1", "content": "wrote", "cria_result_outcome": "landed"},   # the write's own typed fact
             {"role": "user", "content": "x" * 4000},
         ]
         out, dropped = contextfloor._drop_oldest(msgs, msg_budget=50)
@@ -482,12 +482,63 @@ class FloorSynthesisTests(unittest.TestCase):
                    "tool_calls": [{"id": f"c{i}", "function": {"name": "write_file",
                                    "arguments": json.dumps({"path": f"pkg/mod_{i}.py", "content": "x"})}}]}
                   for i in range(40)]
-        msgs = [{"role": "system", "content": "sys"}] + writes + [{"role": "user", "content": "y" * 4000}]
+        results = [{"role": "tool", "tool_call_id": f"c{i}", "content": "ok", "cria_result_outcome": "landed"} for i in range(40)]
+        msgs = [{"role": "system", "content": "sys"}] + [m for pair in zip(writes, results) for m in pair] \
+            + [{"role": "user", "content": "y" * 4000}]
         out, dropped = contextfloor._drop_oldest(msgs, msg_budget=200)
-        self.assertEqual(dropped, 40)
+        self.assertEqual(dropped, 80)
         note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
         for i in range(40):
             self.assertIn(f"pkg/mod_{i}.py", note["content"])   # all 40 listed, no silent omission
+
+
+class ModifiedPathsAreOnlyProvenLandedWritesTests(unittest.TestCase):
+    """The compacted note names modified paths as FACT, so only a write whose OWN program said (typed record, stamped on the
+    result by `represent_inbound`) that it landed may be named. Unknown (no record), `uncertain`, a cut/unpaired result and a
+    result that merely QUOTES a confirmation are not confirmed modifications. Asserted on the actual compacted-note output."""
+
+    def _note(self, result):
+        msgs = [{"role": "system", "content": "sys"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "w1", "type": "function", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": "pkg/target.py", "content": "x"})}}]},
+                result,
+                {"role": "user", "content": "y" * 4000}]
+        out, dropped = contextfloor._drop_oldest(msgs, msg_budget=50)
+        self.assertGreater(dropped, 0)
+        return " ".join(str(m.get("content")) for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
+
+    def _sentence(self):
+        """The note's own claim that the dropped turns MODIFIED the path (cria's sentence, not a digest of tool text)."""
+        from cria import prompts
+        return prompts.render("compacted_modified_paths", files="pkg/target.py")
+
+    def _tool(self, content="Wrote pkg/target.py", **hint):
+        return {"role": "tool", "tool_call_id": "w1", "content": content, **hint}
+
+    def test_a_genuine_landed_write_is_named(self):
+        self.assertIn(self._sentence(), self._note(self._tool(cria_result_outcome="landed")))
+
+    def test_unknown_or_missing_or_uncertain_or_quoted_confirmation_is_never_named(self):
+        for label, result in (("no record at all", self._tool()),
+                              ("a quoted confirmation", self._tool("⟦ctx:wrote⟧ pkg/target.py\nWrote pkg/target.py")),
+                              ("unknown (lowered, unproven)", self._tool(cria_result_outcome="unknown")),
+                              ("uncertain", self._tool(cria_result_outcome="uncertain")),
+                              ("refused", self._tool(cria_result_outcome="refused")),
+                              ("unapplied", self._tool(cria_result_outcome="unapplied")),
+                              ("a result for another id", {"role": "tool", "tool_call_id": "other", "content": "x",
+                                                           "cria_result_outcome": "landed"})):
+            with self.subTest(label):
+                self.assertNotIn(self._sentence(), self._note(result))     # (a digest line may still quote the tool's words)
+
+    def test_an_ambiguous_pairing_names_nothing(self):
+        msgs = [{"role": "system", "content": "sys"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "w1", "type": "function", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": "pkg/target.py", "content": "x"})}}]},
+                self._tool(cria_result_outcome="landed"), self._tool(cria_result_outcome="landed"),
+                {"role": "user", "content": "y" * 4000}]
+        out, _ = contextfloor._drop_oldest(msgs, msg_budget=50)
+        note = " ".join(str(m.get("content")) for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
+        self.assertNotIn(self._sentence(), note)
 
 
 class NoteCostsLessThanItReplacesTests(unittest.TestCase):

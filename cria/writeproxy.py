@@ -22,6 +22,7 @@ shell it didn't call. `web_search` routes to the harness's own search tool when 
 from __future__ import annotations
 
 import base64
+from typing import NamedTuple
 import hashlib
 import uuid
 import json
@@ -30,7 +31,7 @@ import re
 from dataclasses import dataclass
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import bodykeys, brave, denial, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
+from . import bodykeys, brave, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
 from .toolstages import EditSequence, LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
@@ -50,13 +51,12 @@ from .callliterals import (
 from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _FileMutation, _prepare_file_mutation,
     _targets_cria_home, _guarded_path, READ_INLINE_MAX, _ranged_read, _read_failure_branches,
-    _read_command, _read_in_place_of_write)
+    _read_command, _read_in_place_of_write, READ_RECORD_WIRE_MAX)
 from .toolwire import (
-    REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE, _WROTE,
-    _sentinel, _shell_call, _b64, REMOVAL_FACTS, _RIDE_ALONG_HOST_RESERVE,
-    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel,
+    REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
+    _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
+    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared,
     GATE_SENTINEL)
-_STORED_MARKER = '⟦ctx:stored⟧'
 
 from .resultnotes import (
     _ENVELOPE_OUTPUT_LINE, _ENVELOPE_ADVISORY, _ENVELOPE_CUT_WARNING, _EXIT_CODE,
@@ -162,6 +162,7 @@ def observe_externalization_results(owner, messages) -> None:
     from . import externalization as e
     calls = {}
     offers = getattr(owner, 'externalization_offers', None) or {}
+    proofs = _frame_proofs(messages)       # the typed first records of the paired lowered calls: the stored fact is a field
     for message in messages:
         if message.get('role') == 'assistant':
             calls.update({str(call.get('id') or ''): call for call in message.get('tool_calls') or []})
@@ -181,11 +182,9 @@ def observe_externalization_results(owner, messages) -> None:
         if exit_match is not None and int(exit_match.group(1)) != 0:
             offer.delivery.settle(e.Outcome.FAILED, stored=False)
             continue
-        for line in content.splitlines():
-            if not line.startswith(_STORED_MARKER):
-                continue
+        proof = proofs.get(cid)
+        for fact in ([proof.rep["st"]] if proof is not None and proof.rep and "st" in proof.rep else []):
             try:
-                fact = json.loads(line[len(_STORED_MARKER):])
                 if fact.get('operation') != offer.operation:
                     continue
                 stored = e.SearchStored(fact['target'], fact['byte_count'], fact['sha256'])
@@ -240,7 +239,6 @@ EDIT_ORDER_LATE = editrecovery.ORDER_LATE
 EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
 EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
 _TMP_SUFFIX = ownedfiles.TEMP_SUFFIX   # shared atomic resource contract; no PID-derived allocations
-EDIT_MUTATION_UNKNOWN = '⟦ctx:mutation-unknown⟧'
 _FETCH_TIMEOUT_S = 20
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
 # actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
@@ -492,6 +490,7 @@ def _at(raw, msg):
 # no chunking), with validate-before-write: refuse only when this would replace a currently-VALID file
 # with content that does not parse. A new file or an already-broken file writes freely.
 _WRITE_PY = r'''import base64,sys,pathlib,os
+%%RECORD%%
 p=pathlib.Path(base64.b64decode('{path}').decode())
 raw=base64.b64decode('{content}')
 _after=_v(str(p),raw)
@@ -513,8 +512,11 @@ except OSError:
 try:
     _atomic_replace(p,raw)
 except _TargetMutationUncertain as _e:
+    sys.stdout.write(_rec('uncertain')); sys.stdout.flush()
     sys.exit(base64.b64decode('{uncertain}').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
-print('{wrote}')
+# THE LANDED FACT, and the removal facts the shrink protection measured (handed in by its wrapper), are TYPED fields of the
+# record — never lines a reader has to find.
+sys.stdout.write(_rec('landed', **({{'rm':os.environ['CRIA_RM']}} if os.environ.get('CRIA_RM') else {{}})))
 '''
 
 
@@ -543,7 +545,7 @@ def _write_command(path: str, content: str) -> str:
     7)" before any of this runs. Not observed from a model yet (see docs/open-threads.md); the
     fetch-spill path, where it WAS observed, states its own bound and cuts with disclosure."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
-                                           suffix=_TMP_SUFFIX, wrote=_WROTE,
+                                           suffix=_TMP_SUFFIX,
                                            uncertain=_b64(prompts.load('edit_mutation_unknown')),
                                            # Both are REFUSALS decided inside the lowered heredoc —
                                            # validate-before-lower rejected the content, or the path
@@ -557,7 +559,7 @@ def _write_command(path: str, content: str) -> str:
                                            # FileExistsError traceback — cause invisible, three
                                            # identical retries, tests never landed. Name the block.
                                            parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
-    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py
+    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
     return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
 
@@ -572,6 +574,7 @@ def _write_command(path: str, content: str) -> str:
 # monotonic directive (surgical → committed whole-file rewrite), keyed on the file's failure history.
 # This keeps the history-blind, whipsawing rewrite/don't-rewrite advice OUT of the per-call heredoc.
 _EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
+%%RECORD%%
 import fcntl,os
 p=pathlib.Path(base64.b64decode('{path}').decode())
 rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is read and written THROUGH, never replaced
@@ -594,10 +597,11 @@ def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
     _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
     _r=_b(kw)
-    if _late: print('%%LATE%%')
     if len('{editfail}')+len(_r)>{cap}:
         kw.pop('current',None); _r=_b(kw)
-{packblock}    sys.exit('{editfail}'+_r)
+{packblock}    # THE FACT REPORT IS A TYPED FIELD of the record (`ef`), and the batch-order note a flag (`late`): nothing for a reader to find.
+    sys.stdout.write(_rec('unapplied', ef=_r, **({{'late':True}} if _late else {{}}))); sys.stdout.flush()
+    sys.exit(1)
 if old==new:
     _fail('identical')
 _before=_v(str(p),s)
@@ -617,10 +621,11 @@ _before=_v(str(p),s)
             _atomic_replace(rp,res.encode(),preserve=True)
     except OSError as _e:
         _template='%%UNCERTAIN%%' if _inplace_started or isinstance(_e,_TargetMutationUncertain) else '%%UNWRITABLE%%'
+        if _template=='%%UNCERTAIN%%': sys.stdout.write(_rec('uncertain')); sys.stdout.flush()
         sys.exit(base64.b64decode(_template).decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
-    print('{wrote}')
-    if _late: print('%%LATE%%')
-    {echocall}sys.exit()
+    _ev={echocall}
+    sys.stdout.write(_rec('landed', **({{'ev':_ev}} if _ev else {{}}), **({{'late':True}} if _late else {{}})))
+    sys.exit()
 n=s.count(old)
 if n==1:
     {posx}_w(s.replace(old,new,1))
@@ -703,16 +708,8 @@ ECHO_CONTEXT = 3
 # span, and over it again to the header alone, which says so. A window is never cut mid-way.
 ECHO_MAX_BYTES = 3000
 ECHO_WIRE_MAX_BYTES = content_reduce_mod.INLINE_RESULT_MAX_BYTES
-EDIT_VIEW = "\u27e6ctx:editview\u27e7"
 
 
-def removal_facts(content: str) -> str:
-    """The removal facts a landed write printed (marker stripped), or "" — read off the raw result."""
-    for ln in content.splitlines():
-        ln = ln.strip()
-        if ln.startswith(REMOVAL_FACTS):
-            return ln[len(REMOVAL_FACTS):].strip()
-    return ""
 _ECHO_DEF = r'''def _echo(res):
     a0,a1,flex=_pos
     L=res.split(chr(10))
@@ -767,7 +764,7 @@ _ECHO_DEF = r'''def _echo(res):
         if sum(len(t.encode()) for _,t in segs)>{maxb} and i<len(cands)-1: continue
         r=_rep(segs,omitted)
         if len(r)>{wire} and i<len(cands)-1: continue
-        print('{editview}'+r); break
+        return r
 '''
 
 
@@ -815,19 +812,19 @@ def _seq_release(sequence: EditSequence) -> str:
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}\n"
 
 
-def render_edit_echo(content: str, path: str) -> str:
-    """The landed edit's confirmation, plus the window of the file the executor reported (when it did).
-    Everything after the confirmation is facts read off the post-edit bytes; a missing or unreadable
-    report leaves the plain confirmation — saying less is allowed."""
+def render_edit_echo(path: str, rep: "dict | None" = None) -> str:
+    """The landed write's confirmation, plus the window of the file the executor reported (when it did).
+
+    ``rep`` is the record's TYPED reports (`ev` the window report token, `late` the batch-order flag): this reads those
+    fields and nothing else — no tail is searched. Everything after the confirmation is facts read off the post-edit
+    bytes; a missing or unreadable report leaves the plain confirmation — saying less is allowed."""
+    rep = rep or {}
     confirm = prompts.render("write_confirm", path=path)
-    if any(ln.strip() == EDIT_ORDER_LATE for ln in content.splitlines()):
-        return render_edit_echo(content.replace(EDIT_ORDER_LATE, ""), path) + "\n" + prompts.load("edit_order_late")
-    for ln in content.splitlines():
-        ln = ln.strip()
-        if not ln.startswith(EDIT_VIEW):
-            continue
+    if rep.get("late"):
+        return render_edit_echo(path, {k: v for k, v in rep.items() if k != "late"}) + "\n" + prompts.load("edit_order_late")
+    for token in ([rep["ev"]] if "ev" in rep else []):
         try:
-            d = editrecovery.decode_report(ln[len(EDIT_VIEW):])
+            d = editrecovery.decode_report(token)
             first, last, total = int(d["first"]), int(d["last"]), int(d["total"])
             segs = [(int(n), str(t)) for n, t in d["segs"]]
         except (ValueError, KeyError, TypeError):
@@ -862,14 +859,15 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                   seq: EditSequence | None = None) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
-                                     zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
-        echocall="_echo(res); " if echo else "",
+                                     zprefix=editrecovery.PACKED_PREFIX) if echo else ""),
+        echocall="_echo(res)" if echo else "None",
         posx="_pos=(s.find(old),s.find(old)+len(new),False)\n    " if echo else "",
         posf="_pos=(a,a+len(new),True)\n        " if echo else "",path=_b64(path), old=_b64(old), new=_b64(new),
-                                          wrote=_WROTE, editfail=editrecovery.EDITFAIL,
+                                          editfail=editrecovery.EDITFAIL,
                                           packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
+    py = py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
     py = py.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable"))))
     py = py.replace('%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown")))
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py
@@ -896,7 +894,7 @@ def _list_command(args: dict) -> str:
     return (f'__o=$(ls -la {q} 2>&1); '
             f'if [ "$(printf %s "$__o" | wc -c)" -gt {READ_INLINE_MAX} ]; then '
             f'printf "%s%s%s\\n" {_qbash(head)} "$(ls -1A {q} 2>/dev/null | wc -l | tr -cd 0-9)" {_qbash(tail)}; '
-            f"else printf '%s\\n' \"$__o\"; fi")
+            f"else {denial.ran_command()}printf '%s\\n' \"$__o\"; fi")
 
 
 def _fetch_command(args: dict, session: str | None = None, workspace_root: str | None = None) -> str | None:
@@ -919,8 +917,8 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
         # died here before fetch_nav could act on it — and a nulled find also forces the oversized-spill
         # branch below, reproducing the "saved N chars, go grep it" reply that fix set out to kill.
         cursor = None
-    result = webfetch.fetch_nav(str(url), find=find, cursor=cursor, session=session, raw=raw,
-                                workspace_root=workspace_root)
+    result, refused, status, facts = webfetch.fetch_nav_result(str(url), find=find, cursor=cursor, session=session, raw=raw,
+                                                               workspace_root=workspace_root)
     # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
     # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
     # …but only the FIRST time. Once cria has written the doc to the workspace that file outlives the
@@ -933,9 +931,11 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
     # documents, at the one site that still had it. Which results are refusals is webfetch's own
     # decision, recorded on the text at the key it rendered (denial), never re-derived from wording:
     # a real 404 page is a RESULT and still exits 0 here.
-    if denial.is_denied(result):
+    if refused:                    # the repeat gate's own typed decision — a fetched page quoting the marker is a page
         return _refusal_command(result)
-    return f"printf %s {_qbash(result)}"
+    # THE FETCH'S OWN FACTS ride as a typed field of the `ran` record (`rep.fx`: url, status, routes, shapes, catalog), computed
+    # from the producer's parse of the document — never re-read from the rendered page, whose body may quote any marker.
+    return f"printf %s {_qbash(denial.frame(denial.RAN, rep={'fx': facts} if facts else None) + result)}"
 
 
 
@@ -962,6 +962,24 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
 COMMAND_ARG_BUDGET = content_reduce_mod.COMMAND_ARG_BUDGET
 # base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
 # needs room too.
+def _survey_after_first_record(cmd: str, ride: str) -> str:
+    """``cmd`` and its survey, composed so the survey's record is the VERY NEXT record after the command's own first record.
+
+    A write or edit prints its first record (`landed` / `unapplied` / ...) and then its own lines; the survey must run AFTER
+    the command (it reports the post-write tree). The command's combined output is therefore held in a shell variable, its
+    first line (record 1) is printed, the survey prints its record, and the rest of the command's own output follows — so a
+    reader never has to look past record 1 for the survey, and never searches for it. The exit status is the command's own,
+    saved before and restored last (the survey wrapper preserves it too). Only cria's OWN lowered commands are composed this
+    way; a native command is never wrapped."""
+    return ("__cria_o=$( { " + cmd + "\n} 2>&1 )\n"
+            "__cria_ec=$?\n"
+            "printf '%s\\n' \"${__cria_o%%$'\\n'*}\"\n"
+            "( exit $__cria_ec )\n"
+            + ride + "\n"
+            "case \"$__cria_o\" in *$'\\n'*) printf '%s\\n' \"${__cria_o#*$'\\n'}\" ;; esac\n"
+            "exit $__cria_ec")
+
+
 SPILL_CONTENT_MAX = content_reduce_mod.SPILL_CONTENT_MAX
 
 
@@ -982,14 +1000,15 @@ def _spill_command(target: str, content: str, msg: str, *, operation=None) -> st
     through a command, and a command is one argv string."""
     tdir = os.path.dirname(target) or "."
     body, note = _spill_body(content)
-    command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
-               f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
-               f"then printf %s {_qbash(msg + (chr(10) + note if note else ''))}")
+    # THE STORED FACT IS A TYPED FIELD of the `ran` record printed once the file has landed (the `then` branch): the producer
+    # declares it, so no reader looks for a marker line in a tail a page could end with.
+    stored = None
     if operation is not None:
         raw = body.encode('utf-8')
-        fact = _STORED_MARKER + json.dumps(dict(operation=operation, target=target,
-            byte_count=len(raw), sha256=hashlib.sha256(raw).hexdigest()), sort_keys=True)
-        command += f"; printf '\\n%s\\n' {_qbash(fact)}"
+        stored = dict(operation=operation, target=target, byte_count=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+    command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
+               f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
+               f"then printf %s {_qbash(denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else ''))}")
     return command + '; else exit 1; fi'
 
 
@@ -1117,7 +1136,8 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
     # never opened the file — zero tool calls in 89 touched the spill directory, and four of the
     # nine saved files contain `in_eu?`. Measured over those nine files, the rule below keeps 9 of
     # 20 descriptions on the search that mattered (3,054 characters) and 250-1,750 on the rest.
-    script = ('import sys,json,os,re,hashlib\n'
+    script = (resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()) +
+              'import sys,json,os,re,hashlib\n'
               'd=json.load(sys.stdin)\nr=(d.get("web") or {}).get("results") or []\n'
               'e=d.get("error") or d.get("message")\n'
               'full="\\n".join("%s\\n  %s\\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)\n'
@@ -1132,9 +1152,10 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
                    'pointer=' + repr(msg) + '\n'
                    'os.makedirs(os.path.dirname(T) or ".",exist_ok=True)\n'
                    'with open(T,"w",encoding="utf-8") as f:\n    f.write(stored)\n'
-                   'print(' + search_offer.program.expression + ') if r else print("search API error: "+json.dumps(e) if e else "no results")\n'
                    'raw=stored.encode("utf-8")\n'
-                   'print(' + repr(_STORED_MARKER) + '+json.dumps({"operation":' + repr(operation) + ',"target":T,"byte_count":len(raw),"sha256":hashlib.sha256(raw).hexdigest()},sort_keys=True))\n')
+                   # the stored fact is a TYPED field of the program's own first record, printed before the results
+                   'sys.stdout.write(_rec("ran", st={"operation":' + repr(operation) + ',"target":T,"byte_count":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}))\n'
+                   'print(' + search_offer.program.expression + ') if r else print("search API error: "+json.dumps(e) if e else "no results")\n')
     parse = 'python3 -c ' + _qbash(script)
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
     # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
@@ -1152,8 +1173,10 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
     fallback = prompts.load("search_unparsable")
     # The parse writes the spill file itself now (it decides what to print based on size), so this is
     # a plain pipeline rather than a redirect-then-announce.
-    return (f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
-            f"|| printf %s {_qbash(fallback)}")
+    # With a search offer the PROGRAM prints the first record (it carries the stored fact); otherwise the shell does.
+    lead = "" if search_offer is not None else denial.ran_command()
+    return (f"{lead}curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
+            f"|| printf %s {_qbash(denial.frame(denial.RAN) + fallback if search_offer is not None else fallback)}")
 
 
 
@@ -1310,12 +1333,20 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             fn = tc.get("function") or {}
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
-            tc, args, effect = toolstages.current().outbound_call(
-                OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
-            fn = tc.get("function") or {}
-            name = fn.get("name")
-            if effect is None:
-                effect = _lower_synthetic(OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
+            # THE CORRELATION TOKEN FOR THIS CALL, derived once and held while its command is composed: every
+            # program authored inside prints it in its typed result record, which is the first line of stdout; the
+            # sentinel below declares it (and any survey record), and `represent_inbound` accepts a result as cria's
+            # own only by POSITION (the leading record) plus a recomputed canonical correlation — never by finding
+            # the marker or the token anywhere in the text.
+            receipt = denial.receipt_for(tc.get("id"), name, fn.get("arguments"))
+            declaration = denial.Declaration()      # what this call's compiler declares for its sentinel (a survey record)
+            with denial.receipt_scope(receipt, declaration):
+                tc, args, effect = toolstages.current().outbound_call(
+                    OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
+                fn = tc.get("function") or {}
+                name = fn.get("name")
+                if effect is None:
+                    effect = _lower_synthetic(OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
             if isinstance(effect, dict):
                 rebuilt.append(effect)
                 if observe_lowering is not None:
@@ -1344,16 +1375,22 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     # content, on a result cria itself composed. cria does not truncate; asking for
                     # more than a result's worth let something else do it on cria's behalf, which
                     # the never-truncate rule covers just the same.
-                    room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES
-                            - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
+                    # The survey leaves as a typed record whose body costs up to 4/3 of its text on the wire (the codec
+                    # picks the shortest of text / zlib / base64): budget the ENCODED record, not the raw tree.
+                    room = resultpacket.max_text_for_wire(content_reduce_mod.INLINE_RESULT_MAX_BYTES
+                                                          - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
                     if room >= wsview.TREE_MIN_BYTES:
-                        cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)}")
+                        with denial.receipt_scope(receipt, declaration):      # the survey record follows THIS call's first record
+                            ride = wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)
+                        cmd = _survey_after_first_record(cmd, ride)
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
                     cmd = _seq_release(edit_seq[ti]) + cmd
-                rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
+                rebuilt.append(_shell_call(tc.get("id"), shell_tool,
+                                           f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey)}\n{cmd}",
+                                           READ_RECORD_WIRE_MAX if (name in _READ_NAMES or read_in_place) else 0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
                     pending.lowered_arguments = rebuilt[-1]['function']['arguments']
@@ -1482,35 +1519,89 @@ def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
 _REJECTED_PAYLOAD_CHARS = 400
 
 
-def _failed_edit_ids(messages: list[dict]) -> set[str]:
-    """Calls explicitly refused before mutation, NOT arbitrary execution/I/O failures.
+# `Output:` with the line ending a pty may have given the harness's own header (LF or CRLF). Locating the offset
+# only — `resultnotes._ENVELOPE_OUTPUT_LINE` (the display strip) is unchanged, and no payload byte is rewritten.
+_ENVELOPE_OUTPUT_LINE_ANY_EOL = re.compile(r"^Output:[ \t]*\r?$", re.M)
 
-    A partial or uncertain mutation cannot earn a 'never reached disk' draft label.
 
-    Keyed on cria's OWN marker. Every edit-failure directive is composed by `editrecovery.compose`
-    and every one of them is prefixed with `EDIT_MARK` (see `_tag`), so the marker is the
-    authoritative record of "cria refused this edit" — #12, from the event rather than from prose.
+def _payload_offset(content: str) -> int:
+    """Where the tool's own stdout begins in ``content``: after the harness exec envelope (and the advisory / cut
+    warning lines it may put above the payload), or 0 when no envelope is present."""
+    m = _ENVELOPE_OUTPUT_LINE_ANY_EOL.search(content)
+    if not m or "Process exited with code" not in content[:m.start()]:
+        return 0
+    pos = m.end() + (1 if content[m.end():m.end() + 1] == "\n" else 0)
+    while pos < len(content):
+        nl = content.find("\n", pos)
+        line = content[pos:nl if nl >= 0 else len(content)].removesuffix("\r")   # matching only; offsets stay exact
+        if not (_ENVELOPE_ADVISORY.match(line) or _ENVELOPE_CUT_WARNING.match(line)):
+            break
+        pos = nl + 1 if nl >= 0 else len(content)
+    return pos
 
-    It used to ask `hasattr(editrecovery, "is_edit_failure")` and fall back to a substring scan for
-    `old_string` when the attribute was missing. It has always been missing: no such function has
-    ever existed in that module, so the fallback WAS the rule, and a `hasattr` guarding a name that
-    never existed is a mitigation for a problem that isn't there (#4). The scan is also wrong in
-    principle — `old_string` is an ordinary token that appears in any source file that documents the
-    edit tool, so reading such a file would collapse the coder's own successful payloads. It happens
-    not to have cost anything yet: over every captured session the two rules agree on all 9,248
-    matches, zero disagreements. Ground truth is available, so use it rather than the coincidence."""
-    ids: set[str] = set()
+
+class _Proof(NamedTuple):
+    """What cria's own records PROVED about one paired lowered result (see :func:`_frame_proofs`)."""
+    kind: str | None          # the first record's branch kind, or None (no record: unknown)
+    content: str              # the result with cria's records removed. A body-bearing record's result is
+                              # `pre + body + tail` with the harness envelope dropped; anything else keeps the envelope
+    text: str | None          # the body's decoded text when the first record carried a verified body, else None
+    exact: bool               # `text` is the body's EXACT bytes (valid UTF-8, and nothing follows it): cacheable
+    survey: str               # the survey text the declared second record carried, "" when none
+    rep: dict | None = None   # the first record's typed reports (`resultpacket.REPORT_KEYS`), or None
+    observe: str = ""         # what the verified body is: `whole` (the file) or `range` (a numbered window of it)
+
+
+def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
+    """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
+    result after it) and whose STORED command declared a receipt in cria's sentinel.
+
+    AUTHORITY IS POSITION AND DECLARATION (`resultpacket`): the first record is the line at offset 0 of the stdout
+    (after the harness's own envelope); the second exists only if the sentinel declared a survey and is read only on the
+    very next line. Nothing is searched for — a file, a page or a native command that quotes records, receipts, markers or
+    a valid-looking survey is just the opaque tail and keeps every byte. A valid first record stands when the second is
+    missing or cut. No record at offset 0 (a legacy command, a cut, an unlowered shape) means UNKNOWN: untouched."""
+    paired = denial.paired_results(messages)
+    out: dict[str, _Proof] = {}
     for m in messages:
-        if m.get("role") != "tool":
+        if m.get("role") != "assistant":
             continue
-        body = _debinarized(str(m.get("content") or ""))
-        if any(ln.strip() == _WROTE for ln in body.splitlines()):
-            continue                                   # a success — its content IS on disk
-        # …or the HARNESS refused the call outright, which is a failure cria did not author.
-        if editrecovery.EDIT_MARK in body or denial.is_denied(body):
-            if m.get("tool_call_id"):
-                ids.add(m["tool_call_id"])
-    return ids
+        for tc in m.get("tool_calls") or []:
+            cid, fn = tc.get("id"), tc.get("function") or {}
+            if cid not in paired or not is_shell_tool_name(fn.get("name")):
+                continue
+            command = _command_of(fn.get("arguments"))
+            token = receipt_of(command, cid)
+            if not token:
+                continue
+            content = str(paired[cid].get("content") or "")
+            off = _payload_offset(content)
+            first = resultpacket.read_record(content, off, token)
+            if first is None:
+                continue
+            at, survey = first.end, ""
+            if survey_declared(command, cid) and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
+                at = second.end
+                if second.body is not None:
+                    try:
+                        survey = second.body.decode("utf-8")
+                    except UnicodeDecodeError:
+                        survey = ""
+            tail = content[at:]
+            if first.body is None:
+                if first.kind == denial.UNAPPLIED and first.rep and "ef" in first.rep:
+                    # the edit program's fact report is a TYPED field; the directive input is composed from it here, by cria,
+                    # so no payload byte can stand in for it
+                    tail = ((EDIT_ORDER_LATE + "\n" if first.rep.get("late") else "")
+                            + editrecovery.EDITFAIL + first.rep["ef"] + "\n" + tail)
+                out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, survey, first.rep)
+                continue
+            try:
+                text, exact = first.body.decode("utf-8"), True
+            except UnicodeDecodeError:
+                text, exact = first.body.decode("utf-8", "replace"), False
+            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", survey, first.rep, first.observe)
+    return out
 
 
 
@@ -1594,10 +1685,21 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # shows the Item struct with ID, Name, PricePerUnit … Perhaps the original code is missing; we
     # need to restore that structure" — and rebuilt a file that never existed. The asymmetry is the
     # bug: fabrications persisted verbatim while verified content was dropped by compaction.
-    failed_ids = _failed_edit_ids(messages)
+    # PAIRING GOVERNS EVERY RESULT-SPECIFIC FACT, not only the outcome: a result is attributed to a call (its path,
+    # its payload, its envelope handling, the file fact it would cache) only when the id names exactly one call and
+    # one result after it (`denial.paired_results`). An ambiguous result keeps its actual bytes and teaches nothing.
+    paired = set(denial.paired_results(messages))
+    proofs = _frame_proofs(messages)
+    outcomes = {tid: p.kind for tid, p in proofs.items() if p.kind in (denial.REFUSED, denial.UNAPPLIED)}
+    landed_ids = {tid for tid, p in proofs.items() if p.kind == denial.LANDED}   # cria's own program reported the mutation landed
+    uncertain_ids = {tid for tid, p in proofs.items() if p.kind == denial.UNCERTAIN}
+    called_ids = {tc.get("id") for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
+                  for tc in (m.get("tool_calls") or []) if isinstance(tc, dict) and tc.get("id")}
+    ambiguous = called_ids - paired    # a call exists but the id does not name exactly one call and one result after it
+    lowered_ids: set[str] = set()     # calls cria itself lowered (their result carries cria's frame, or is unknown)
+    failed_ids = set(outcomes)          # proven: cria's own refusal ran, or its edit program reported 'not applied'
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
     strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
-    storage_ids: set[str] = set()     # only our instrumented research producer's internal facts
     own_cmds: dict[str, str] = {}     # tool_call_id -> the model's OWN raw command, for the blind-pipe note
     # WHAT THIS PASS TEACHES THE WORKSPACE VIEW. cria lowered every one of these calls, so it knows
     # the path and (for a whole write) the exact bytes — the workspace's own contents, proved by the
@@ -1617,7 +1719,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 fn = tc.get("function") or {}
                 name = fn.get("name")
                 if is_shell_tool_name(name):
-                    orig = _read_sentinel(_command_of(fn.get("arguments")))
+                    orig = _read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
                     if orig is None:
                         own = _command_of(fn.get("arguments"))
                         own_cmds[tc.get("id")] = own
@@ -1629,9 +1731,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         if _shelltool.writes_something(name, own):
                             view.note_a_mutator_ran()
                     if orig is not None:
-                        if (orig['name'] in (_FETCH_NAMES | _SEARCH_NAMES)
-                                and _STORED_MARKER in _command_of(fn.get('arguments'))):
-                            storage_ids.add(tc.get('id'))
+                        lowered_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
@@ -1668,12 +1768,31 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             out.append({**m, "tool_calls": new_calls})
         elif role == "tool":
             tid = m.get("tool_call_id")
+            # THE PROVEN OUTCOME IS SET HERE, BEFORE any transform, preserve or recovery reads this message, and
+            # whatever the client sent under that key is overwritten: a native client cannot nominate its own result.
+            m = {k: v for k, v in m.items() if k not in (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT)}
+            survey_text = ""
+            proof = proofs.get(tid)
+            if proof is not None:
+                m["content"] = proof.content       # exactly cria's own records removed; the payload keeps its bytes
+                m[bodykeys.RESULT_OUTCOME] = proof.kind
+                if proof.rep:
+                    m[bodykeys.RESULT_REPORT] = proof.rep
+                survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation
+            elif tid in lowered_ids:
+                m[bodykeys.RESULT_OUTCOME] = denial.UNKNOWN   # cria lowered this call and cannot prove its branch
+            if tid in ambiguous:
+                # AMBIGUOUS: nothing call-attributed is cached, stripped or rendered, and no recovery or
+                # advice is composed from it — it keeps its actual bytes (no frame is trusted, so no survey is
+                # taken either).
+                out.append({**m, "content": _debinarized(str(m.get("content") or ""))})
+                continue
             content = _debinarized(str(m.get("content") or ""))
-            # cria's own instrumentation rode along on this command — take it back off before
-            # anything else looks at the result, so no downstream check ever sees a byte the model
-            # did not ask for, and fold what it says into the view.
-            content, survey = wsview.strip_survey(content)
-            if tid in write_paths and _strip_exec_envelope(content).lstrip().startswith(EDIT_MUTATION_UNKNOWN):
+            # THE SURVEY IS WHAT A DECLARED SECOND RECORD CARRIED, NOTHING ELSE: the sentinel said one follows the first
+            # record, it was read on the very next line and removed there. A file, a native command or a read-instead
+            # answer that quotes a perfectly valid-looking survey block keeps it — and teaches the view nothing.
+            _, survey = wsview.strip_survey(survey_text)    # decodes a packed block; the text is cria's own bytes
+            if tid in write_paths and tid in uncertain_ids:
                 # The in-place hardlink writer may have changed every alias. Their
                 # identities are not surveyed, so invalidate all held candidates
                 # BEFORE this result's fresh survey can attest current bodies.
@@ -1682,8 +1801,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             # result's own survey: that survey reports the post-edit size, which would otherwise drop
             # the pre-edit body as stale before the edit could be applied to it — and the survey is
             # then the ground-truth check on the reconstruction (a size that disagrees drops it).
-            edit_applied = (tid in edit_pairs and bool(write_paths.get(tid)) and tid not in failed_ids
-                            and any(ln.strip() == _WROTE for ln in content.splitlines())
+            edit_applied = (tid in edit_pairs and bool(write_paths.get(tid)) and tid in landed_ids
                             and view.note_edited(write_paths[tid], *edit_pairs[tid]))
             if survey:
                 # Same as the gate's copy: a rejected survey is the one failure `wsview` cannot show
@@ -1691,61 +1809,46 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 if not wsview.apply_survey(view, survey) and rlog is not None:
                     rlog.emit("wsview.survey_rejected", level="warn", bytes=len(survey),
                               closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
-            exit_code = _EXIT_CODE.search(content)
-            preserve_eof = (tid in read_whole and not denial.is_denied(content)
-                            and (exit_code is None or exit_code.group(1) == "0")
-                            and not note_harness_cuts([m]))
-            if tid in write_paths and (payload := denial.read_instead_payload(content)) is not None:
-                # A write_file answered with the file (see _read_in_place_of_write): what follows the
-                # marker is the file as the harness read it — a whole read, EOF byte included.
-                if not note_harness_cuts([m]) and (exit_code is None or exit_code.group(1) == "0"):
-                    view.note_read(write_paths[tid], _strip_exec_envelope(payload, preserve_eof=True))
-                stripped = _strip_exec_envelope(content, preserve_eof=True)
-                # THE REJECTED CANDIDATE STAYS. This answer is denied, so `_collapse_rejected_payload`
-                # took the coder's own large payload out of its call; the lossless copy rides here, between
-                # cria's facts and the marker, so what follows the marker is still only the file's bytes.
-                note = rejected_notes_by_id.get(tid, "")
-                if note:
-                    facts, marker, rest = stripped.partition(denial.READ_INSTEAD_MARKER + "\n")
-                    if marker:
-                        stripped = f"{facts}{note}\n\n{marker}{rest}"
-                out.append({**m, "content": stripped})
+            # A WHOLE READ BECOMES THE FILE'S BYTES ONLY ON A VERIFIED BODY: the producer's own read-once program put the
+            # bytes in the first record with their length and sha-256, and `_frame_proofs` verified both. There is no
+            # other source: the absence of a refusal proves nothing (a legacy own refusal, a lost record, a cut result),
+            # an envelope-stripped display is not the file (a pty rewrites its newlines), and unknown is not positive.
+            if proof is not None and proof.text is not None:
+                exact = proof.exact and content == proof.content       # `_debinarized` left the display alone
+                if exact:
+                    m[bodykeys.READ_OBSERVATION] = (len(proof.text), denial.text_digest(proof.text))
+                    if tid in write_paths and proof.kind == denial.REFUSED:
+                        view.note_read(write_paths[tid], proof.text)
+                    elif tid in read_whole and proof.kind == denial.RAN and proof.observe == resultpacket.WHOLE:
+                        view.note_read(read_whole[tid], proof.text)        # only a WHOLE read is the file; a window is not
+                shown = content
+                if tid in write_paths and proof.kind == denial.REFUSED:
+                    # THE REJECTED CANDIDATE STAYS. This answer is denied, so `_collapse_rejected_payload` took the
+                    # coder's own large payload out of its call; the lossless copy rides here, in the authored prefix
+                    # before the file's bytes, so what follows is still only the file's bytes. Placed by the record's
+                    # own prefix/body split, never by searching for a marker.
+                    note = rejected_notes_by_id.get(tid, "")
+                    marker = denial.READ_INSTEAD_MARKER + "\n"
+                    head = shown.removesuffix(proof.text)          # the authored prefix: the body is the tail by construction
+                    if note and head.endswith(marker):
+                        shown = f"{head.removesuffix(marker)}{note}\n\n{marker}{proof.text}"
+                out.append({**m, "content": shown})
                 continue
-            if tid in write_paths and write_paths[tid] and tid not in failed_ids \
-                    and any(ln.strip() == _WROTE for ln in content.splitlines()):
+            if tid in write_paths and write_paths[tid] and tid in landed_ids:
                 if tid in written:
                     view.note_written(write_paths[tid], written[tid])
                 elif tid in edited and not edit_applied:
                     view.note_changed(write_paths[tid])
-            elif preserve_eof:
-                # A REFUSAL, FAILED READ OR CUT RESULT IS NOT THE FILE. The write path requires proof the call
-                # landed (`_WROTE`); this one had no equivalent, so every whole read cria itself
-                # refused — oversize, spilled, missing, unreadable, a directory — was recorded as
-                # that file's BYTES. Found in the captures: 20260822T174652 call 0112, the
-                # satisfaction judge, under a header saying "read from disk just now … what is
-                # actually there, not a claim by anyone":
-                #
-                #     ----- src/main/java/pipeline/Importer.java -----
-                #     ⟦ctx:denied⟧ src/main/java/pipeline/Importer.java is larger than can be
-                #     returned in one read, so nothing is shown.
-                #
-                # It is worse than a bad body: `note_read` delegates to `note_written`, so a refused
-                # read of a file that does not exist ADDS it to the view — `isfile` then answers
-                # True and a completion diagnosis can treat those exact bytes as current evidence.
-                # It also re-opens the incident `loop.search_file_text` records as fixed
-                # (searching cria's own pointer instead of the file). The mark is on the text
-                # already, applied at the site that decided to refuse — this just reads it.
-                # Whole successful reads become authoritative file bytes, including EOF.
-                # Raw Codex ingress fixtures prove it does not append a payload newline.
-                view.note_read(read_whole[tid], _strip_exec_envelope(content, preserve_eof=preserve_eof))
+            # `preserve_eof` is only HOW THE BYTES ARE DISPLAYED (the harness's final newline kept); it claims nothing.
+            exit_code = _EXIT_CODE.search(content)
+            preserve_eof = (tid in read_whole and outcomes.get(tid) != denial.REFUSED
+                            and (exit_code is None or exit_code.group(1) == "0")
+                            and not note_harness_cuts([m]))
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
-                if tid in storage_ids:
-                    content = ''.join(line for line in content.splitlines(keepends=True)
-                                      if not line.startswith(_STORED_MARKER))
                 out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=preserve_eof)})
-            elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
-                rendered = render_edit_echo(content, write_paths[tid])
-                facts = removal_facts(content)
+            elif tid in write_paths and tid in landed_ids:  # write/edit SUCCESS
+                rendered = render_edit_echo(write_paths[tid], proof.rep if proof is not None else None)
+                facts = ((proof.rep or {}).get("rm") or "").strip() if proof is not None else ""
                 out.append({**m, "content": f"{rendered}\n{facts}" if facts else rendered})
             elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which

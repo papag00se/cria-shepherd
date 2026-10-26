@@ -14,6 +14,8 @@ from unittest.mock import patch
 import pytest
 
 from cria import groundedaction as ga, loop, probegate, selfcompact, upstream
+from tests.gatefixture import bounds_field_for
+from tests.gatefixture import gate_page
 from stalled_work_fixtures import engine, _Log
 
 
@@ -38,7 +40,7 @@ def test_steer_preserves_check_evidence_without_claiming_coder_progress(command,
         {'role': 'assistant', 'tool_calls': [call('refused', 'inspect dependency')]},
         result('refused', 'Not run: inspection was refused.'),
         {'role': 'assistant', 'tool_calls': calls},
-        result('automatic', section),
+        result('automatic', gate_page(probegate.GatePlan(''), section)),
     ]
     if mixed:
         messages.append(result('ordinary', 'The coder chosen check returned this exact output.'))
@@ -86,6 +88,7 @@ def test_paged_gate_keeps_complete_checker_lines_and_unknown_stays_unknown():
         'path\t' + base64.b64encode(f'/tmp/.cria-gate-{identity}.spool'.encode()).decode(),
         'offset\t0', f'total\t{len(data)}',
         'sha256\t' + hashlib.sha256(data).hexdigest(),
+        *bounds_field_for(raw),
         'data\t' + base64.b64encode(data).decode(),
         probegate._transport_marker(identity, end=True),
     ])

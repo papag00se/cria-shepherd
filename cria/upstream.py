@@ -708,7 +708,8 @@ class Upstream:
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
-                                             bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE)}
+                                             bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE,
+                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         # Historical arguments are a final-wire invariant: role merges/folds can
         # introduce calls after any earlier repair. Optional recovery is selected

@@ -8,6 +8,7 @@ inside the original fetched-page tool result. Steer/judge prompts doubled it aga
 stays present exactly once, in the block labeled as the authority; each removed copy becomes a
 one-line pointer. Nothing fuzzy, nothing paraphrased, identity when there is nothing to do."""
 
+from cria.fetchfacts import Shape
 import unittest
 from unittest import mock
 
@@ -137,7 +138,7 @@ class WiringTests(unittest.TestCase):
         sess = loop.PlanSession(plan=plan, **plan_kw)
         sess.fetched_pages = {
             "https://api.handle.me/openapi.json":
-                ("HTTP 200", "/handles, /handles/{handle}, /stats", _FIELD_LINE, ""),
+                ("HTTP 200", ("/handles", "/handles/{handle}", "/stats"), (Shape(_FIELD_LINE.strip()),), (), ""),
         }
         return sess, item
 

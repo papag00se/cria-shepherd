@@ -37,7 +37,7 @@ WRITE_EXPORTS = {
         _targets_cria_home _guarded_path READ_INLINE_MAX _ranged_read _read_failure_branches
         _read_command _read_in_place_of_write'''.split(),
     toolwire: '''REFUSED_EXIT_CODE _oversize_command _refusal_command _SENTINEL _SENTINEL_LINE
-        _WROTE _sentinel _shell_call _b64 REMOVAL_FACTS _RIDE_ALONG_HOST_RESERVE
+        _sentinel _shell_call _b64 _RIDE_ALONG_HOST_RESERVE
         _RIDE_ALONG_COMMAND_RESERVE _command_of is_crias_own original_call _read_sentinel GATE_SENTINEL'''.split(),
     resultnotes: '''_ENVELOPE_OUTPUT_LINE _ENVELOPE_ADVISORY _ENVELOPE_CUT_WARNING _EXIT_CODE
         _strip_exec_envelope _noted _digest append_note payload_of _workspace_ecosystem probegate_marker_in'''.split(),
@@ -144,15 +144,15 @@ def test_gate_producer_uses_canonical_wire_markers():
 
 def test_paired_write_confirmation_has_one_lower_owner_and_gate_keeps_pairing():
     from cria import selfcompact
-    assert selfcompact.write_landed is toolwire.write_landed
-    assert probegate.write_landed is toolwire.write_landed
+    from cria import denial
+    assert not hasattr(selfcompact, 'write_landed') and not hasattr(probegate, 'write_landed')    # ONE typed accessor
     messages = [
         {'role': 'assistant', 'tool_calls': [
             {'id': 'yes', 'function': {'name': 'write_file', 'arguments': '{"path":"src/landed.py"}'}},
             {'id': 'no', 'function': {'name': 'edit_file', 'arguments': '{"path":"src/refused.py"}'}}]},
-        {'role': 'tool', 'tool_call_id': 'yes', 'content': 'Wrote src/landed.py'},
-        {'role': 'tool', 'tool_call_id': 'no', 'content': 'Nothing was run'},
-        {'role': 'tool', 'tool_call_id': 'unknown', 'content': toolwire._WROTE},
+        {'role': 'tool', 'tool_call_id': 'yes', 'content': 'Wrote src/landed.py', 'cria_result_outcome': denial.LANDED},
+        {'role': 'tool', 'tool_call_id': 'no', 'content': 'Wrote src/refused.py'},     # wording alone lands nothing
+        {'role': 'tool', 'tool_call_id': 'unknown', 'content': 'Wrote x'},
     ]
     assert probegate._paths_written_after(messages, -1) == frozenset({'landed.py'})
     assert probegate._paths_written_after(messages, 0) == frozenset()

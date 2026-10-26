@@ -18,6 +18,7 @@ import json
 import unittest
 
 from cria import probediscovery, probegate
+from tests.gatefixture import bounds_field_for
 from cria.config import Role
 from cria.loop import GuardState, runner_reset_steer
 from pilot_support import module_result
@@ -52,6 +53,7 @@ def _transport_page(result: str) -> str:
         "offset\t0",
         f"total\t{len(data)}",
         "sha256\t" + hashlib.sha256(data).hexdigest(),
+        *bounds_field_for(result),                      # the worker's declared extents and header offsets
         "data\t" + base64.b64encode(data).decode(),
         probegate._transport_marker(_TRANSPORT_ID, end=True),
     ])

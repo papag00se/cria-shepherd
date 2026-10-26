@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import depsurface, dirguard, probeparse, proberun, prompts
+from . import denial, depsurface, dirguard, probeparse, proberun, prompts
 from .resultnotes import (append_note, probegate_marker_in, _strip_exec_envelope,
                           _workspace_ecosystem, _noted, _EXIT_CODE)
 from .toolargs import parse_args as _parse
@@ -383,8 +383,8 @@ def preserve_rejected_draft(call: dict, path: str, log=None) -> RejectedDraft:
 
 
 def edit_failure(source: ReturnedResult) -> dict | None:
-    if not source.mutation_failure:
-        return None
+    if not source.mutation_failure or denial.outcome(source.message) != denial.UNAPPLIED:
+        return None                  # unproven: the tool's own bytes stay (never an invented cut/mismatch)
     from . import editrecovery
     return {**source.message, 'content': editrecovery.recover(source.content, source.prior, source.log)}
 

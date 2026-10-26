@@ -41,6 +41,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from collections import Counter
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -49,7 +50,7 @@ from pathlib import Path
 
 from .upstream import UpstreamProtocolError
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
-from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
 from .admission import has_actionable_tools as _has_actionable_tools
@@ -340,16 +341,18 @@ class GuardState:
     gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
     gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
     # EDITS BETWEEN THE COUNTED ROUNDS (#5b). The thrash trigger used to say the coder "kept editing" —
-    # unmeasured: in run 01a12bca the last four RED rounds had no write between them. Every forwarded
-    # write call id is kept (never flushed, unlike recent_writes); the ones whose results show they did
-    # not run are taken back out; each round in the streak stores the landed count at that moment.
+    # unmeasured: in run 01a12bca the last four RED rounds had no write between them. Every OBSERVED
+    # write dispatch is kept (never flushed, unlike recent_writes; the same id may appear more than once);
+    # the ones PROVEN not to have run are filtered out at use; each round in the streak stores the landed
+    # count at that moment.
     write_call_ids: list = None
+    call_counts: Counter = None        # exact multiplicity of EVERY dispatch by call id (writeobservation owns it)
     refused_write_ids: set = None
     stall_edit_marks: list = None
-    # Is the write registry LIVE for this session — has the forwarded-completion tracker ever run? It is
-    # filled from cria's own outbound completions (never from the window, so compaction cannot take an
-    # entry back out), but only on an assists-on acting turn; where it never ran, "no write is on record"
-    # would be an absence of bookkeeping, not an absence of writes.
+    # Is the write registry LIVE for this session — has a forwarded reply ever been recorded? That is all it
+    # says: entries come from cria's own forwarded replies and from the canonical accepted history folded in
+    # (`writeobservation`), and compaction cannot take one back out; it does NOT mean the whole conversation is
+    # covered. Where it never ran, "no write is on record" would be an absence of bookkeeping, not of writes.
     write_tracking: bool = False
     # len(write_call_ids) when the last gate's verdict was read — the position "since that check" is
     # measured from (`gate_unedited`). None = cria cannot say.
@@ -725,14 +728,13 @@ STEP_THRASH_REPLAN = livingplan.STEP_THRASH_REPLAN
 
 
 def _note_write_results(gs: GuardState, messages) -> None:
-    """Remember which registered write calls have had a result come back (landed or failed)."""
+    """Remember which registered write calls have had a result come back (landed or failed). A result counts only
+    through the ONE call/result correlation owner (`denial.paired_results`): an orphan, a result that precedes its
+    call, a second result or a reused id answers nothing. The raw set is sticky; whether an id still counts is
+    decided at use (`writeobservation.answered_ids`)."""
     answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
     registered = set(getattr(gs, "write_call_ids", None) or [])
-    for m in messages or []:
-        if isinstance(m, dict) and m.get("role") == "tool":
-            cid = m.get("tool_call_id") or m.get("call_id")
-            if cid in registered:
-                answered.add(cid)
+    answered |= registered & set(denial.paired_results(messages or []))
 
 
 def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
@@ -758,21 +760,24 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     before this round are in it, so the edits-between-rounds fact is settled from them here (a
     running count taken before a refusal/failed edit was recorded read an edit that never landed as
     one that did)."""
+    # Reconcile and settle FIRST: the gate position and the pending set are snapshots of what the registry
+    # holds, so anything the history in hand reveals (a collision, a result) must already be in it.
+    mark = _register_writes_at_round(gs, messages)
     gs.last_gate_flag = finding or ""
     gs.last_gate_seq = gs.action_seq
     gs.gate_write_mark = len(gs.write_call_ids or []) if gs.write_tracking else None
-    # Completion-aware: only a write whose result was already in hand (landed OR failed) is "before the
-    # gate". One with no result yet may land after it, so it is remembered as outstanding.
-    _note_write_results(gs, messages)
+    # Completion-aware: only a write whose result was already in hand (landed OR failed) AND is attributable to a
+    # single dispatch is "before the gate". One with no result yet, or an ambiguous id, may land after it, so it
+    # is remembered as outstanding.
+    answered = writeobservation.answered_ids(gs, gs.write_result_ids)
     gs.gate_pending_write_ids = (
-        {c for c in (gs.write_call_ids or [])[:gs.gate_write_mark] if c not in gs.write_result_ids}
+        {c for c in (gs.write_call_ids or [])[:gs.gate_write_mark] if c not in answered}
         if gs.gate_write_mark is not None else None)
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
         gs.stall_edit_marks = []
         return
-    mark = _register_writes_at_round(gs, messages)
     if finding == gs.gate_sig:
         gs.gate_stall += 1
         gs.stall_edit_marks = list(gs.stall_edit_marks or []) + [mark]
@@ -782,22 +787,25 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
         gs.stall_edit_marks = [mark]
 
 
-def _register_writes_at_round(gs: GuardState, messages) -> int:
-    """Bring the write-call registry and the refused set up to date from ``messages`` and return the
-    registry length — this round's position. The edits that landed between two rounds are the
-    registry entries between their positions that are not refused/failed (:func:`thrash_edits_clause`)."""
-    if gs.write_call_ids is None:
-        gs.write_call_ids = []
-    seen = set(gs.write_call_ids)
-    for m in messages or []:
-        if isinstance(m, dict) and m.get("role") == "assistant":
-            for tc in m.get("tool_calls") or []:
-                cid = tc.get("id")
-                if cid and cid not in seen and _write_path(tc.get("function") or {}) is not None:
-                    gs.write_call_ids.append(cid)
-                    seen.add(cid)
-    gs.refused_write_ids = (gs.refused_write_ids or set()) | _unlanded_call_ids(messages or [])
+def _is_write_call(tc: dict) -> bool:
+    return _write_path(tc.get("function") or {}) is not None
+
+
+def _observe_history(gs, messages) -> int:
+    """Fold the accepted incoming history into the registry (`writeobservation.observe_history`) and return the
+    registry length. The one call every history-facing entry point makes: the accepted request before any assist or
+    recovery is selected, the gate registrar, and — inside `record` — the history that precedes a forwarded reply."""
+    messages = messages or []
+    writeobservation.observe_history(writeobservation.HistoryInput(
+        messages, frozenset(_unlanded_call_ids(messages)), gs, _note_write_results, _is_write_call))
     return len(gs.write_call_ids)
+
+
+def _register_writes_at_round(gs: GuardState, messages) -> int:
+    """Bring the write registry up to what the history in hand shows and return its length — this round's position.
+    The edits that landed between two rounds are the registry entries between their positions that are not
+    refused/failed (:func:`thrash_edits_clause`)."""
+    return _observe_history(gs, messages)
 
 
 def thrash_edits_clause(gs: GuardState) -> str:
@@ -809,7 +817,7 @@ def thrash_edits_clause(gs: GuardState) -> str:
     fills = prompts.load_map("thrash_edits")
     if len(marks) < 2:
         return fills["thrash_edits_unknown"]
-    refused = getattr(gs, "refused_write_ids", None) or set()
+    refused = writeobservation.unlanded_ids(gs)
     ids = getattr(gs, "write_call_ids", None) or []
     per = [sum(1 for cid in ids[a:b] if cid not in refused) for a, b in zip(marks, marks[1:])]
     n = sum(per)
@@ -3013,6 +3021,10 @@ class Loop:
                        if pending_paste.carried_reply else [])
             framed = {**framed, 'messages': list(framed.get('messages', [])) + carried
                       + [pending_paste.user_turn]}
+        # The accepted request's evidence, BEFORE any generation, recovery or assist of this request is selected: a
+        # refusal or answer that arrives with this history is settled now — an aborted reply forwards nothing, so
+        # nothing after it would ever observe it. Idempotent; the forwarded-reply record repeats it harmlessly.
+        _observe_history(sess, body.get('messages', []))
         replies = _CoderReplyReceipts(self._ctx.coder_chat, sess)
         coder = massage.apply(_parse_completion(replies.chat(framed, rlog)), framed.get("tools"), rlog)
         initial_receipt = dict(replies.latest)
@@ -3033,7 +3045,7 @@ class Loop:
         coder = _generation_recovery(coder, framed, replies.chat, rlog,
                                      step=step, phase=f"coder-s{step}",
                                      coder_role=self._ctx.coder_role, gs=sess,
-                                     on_completion=replies.record).completion
+                                     on_completion=replies.record, accepted=body.get('messages', [])).completion
         # Credit follows this retained coder reply, never the last shared log
         # receipt (which auxiliary calls and unsuccessful retries can overwrite).
         sess.restored_current = replies.receipt(coder)
@@ -3059,14 +3071,12 @@ class Loop:
             _track_own_checks(sess, body.get("messages", []))     # …and its own re-runs of the gate's checks
         observation = None
         if _has_tool_calls(coder):
-            calls = tuple(writeobservation.ForwardedCall(tc.get('id'), _write_path(tc.get('function') or {}))
-                          for ch in coder.get('choices', [])
-                          for tc in (ch.get('message') or {}).get('tool_calls') or [])
             messages = framed.get('messages', [])
-            observed = writeobservation.record(writeobservation.WriteInput(calls, messages,
-                frozenset(_unlanded_call_ids(messages)), sess, _note_write_results))
+            # The ONE registration of this forwarded reply, against the CANONICAL accepted history (the request
+            # body before focus/trim/compaction reshaped what the model saw), never the framed copy.
+            observed = _record_dispatch(sess, coder, body.get('messages', []))
             if self._ctx.assists:
-                observation = _stalled_observation(sess, coder, body.get('messages', []), rlog,
+                observation = _stalled_observation(sess, body.get('messages', []), rlog,
                                                   step=step, observed=observed, sequence_start=sess.action_seq,
                                                   write_messages=messages)
         definition = _stalled_selection(sess)
@@ -3169,8 +3179,8 @@ class Loop:
             if delivery is None:
                 continue
             text = str(message.get('content') or '')
-            denied = denial.is_denied(text) or denial.read_instead_payload(text) is not None
-            landed = selfcompact.write_landed(text) if not denied else False
+            denied = denial.refused(message)
+            landed = denial.landed(message)
             self._pasted_result(definition.settle(state, delivery, cid,
                 ran=False if denied else True if landed else None, changed=False if denied else None))
 
@@ -5565,7 +5575,9 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
         _reasoner_session(messages), gate_plan, linked_only=True))
     denied_ids = {tid for m in scrubbed
                   if m.get("role") == "tool" and (tid := m.get("tool_call_id"))
-                  and denial.is_denied(str(m.get("content") or ""))}
+                  and denial.refused(m)}
+    # TELEMETRY ONLY: a result with no call id cannot be attributed, so nothing is ever labelled for it and
+    # its outcome can never be proven. The count of those that LOOK marked is reported, never acted on.
     unpaired = sum(1 for m in scrubbed
                    if m.get("role") == "tool" and not m.get("tool_call_id")
                    and denial.is_denied(str(m.get("content") or "")))
@@ -5781,7 +5793,7 @@ def _collapse_editfails(messages: list[dict]) -> list[dict]:
     out: list[dict] = []
     for m in messages:
         c = m.get("content")
-        if isinstance(c, str) and editrecovery.EDITFAIL in c:
+        if isinstance(c, str) and denial.unlanded(m) and editrecovery.EDITFAIL in c:
             m = {**m, "content": editrecovery.summarize(c)}
         out.append(m)
     return out
@@ -6235,9 +6247,9 @@ def _injected_fence_texts(sess, messages: list[dict] | None = None) -> list[str]
     normalized containment with an 80-character floor — it was being handed an empty haystack."""
     out: list[str] = []
     for entry in (getattr(sess, "fetched_pages", None) or {}).values():
-        shapes = (tuple(entry) + ("", "", ""))[2]
-        if str(shapes).strip():
-            out.append(str(shapes))
+        shapes = fetchfacts.shapes_text(_fetch_facts(entry)[2])
+        if shapes.strip():
+            out.append(shapes)
     for m in messages or []:
         if m.get("role") == "tool":
             body = _content_text(m.get("content"))
@@ -6310,6 +6322,8 @@ def _shell_commands_with_results(messages: list[dict]):
 def _shell_runs(messages: list[dict]):
     """:func:`_shell_commands_with_results` with the tool-call id in front."""
     from . import denial
+    from . import denial as _den
+    paired = set(_den.paired_results(messages))   # canonical call/result pairing: ambiguous results attribute nothing
     calls: dict = {}
     for m in messages or []:
         if not isinstance(m, dict):
@@ -6323,9 +6337,9 @@ def _shell_runs(messages: list[dict]):
             if isinstance(cmd, str) and tc.get("id") and "___CRIA_" not in cmd:
                 calls[tc["id"]] = cmd
         tid = m.get("tool_call_id") or m.get("call_id")
-        if tid in calls:
+        if tid in calls and tid in paired:
             c = m.get("content") if m.get("content") is not None else m.get("output")
-            if isinstance(c, str) and c.strip() and not denial.is_denied(c):
+            if isinstance(c, str) and c.strip() and not denial.refused(m):
                 yield tid, calls[tid], c
 
 
@@ -7065,13 +7079,12 @@ def _refusals_in_window(messages: list[dict] | None) -> tuple[int, str]:
     the same place."""
     tail = [m for m in (messages or [])
             if m.get("role") == "assistant" and m.get("tool_calls")][-REPEAT_WINDOW:]
-    by_id = {m.get("tool_call_id"): _content_text(m.get("content"))
-             for m in (messages or []) if m.get("role") == "tool"}
+    refused_ids = denial.refused_call_ids(messages)
     n, last = 0, ""
     for m in tail:
         for tc in m.get("tool_calls") or []:
             cid = tc.get("id")
-            if cid is None or not denial.is_denied(by_id.get(cid) or ""):
+            if cid is None or cid not in refused_ids:
                 continue
             n += 1
             fn = tc.get("function") or {}
@@ -7169,14 +7182,20 @@ def _stalled_frame(gs, framed, notes):
         gs.stalled_reply = (None, definition, None, steer)
 
 
-def _stalled_observation(gs, coder, messages, rlog, *, step=None, observed=None, sequence_start=None,
-                         write_messages=None):
+def _record_dispatch(gs, coder, messages):
+    """Register ONE forwarded completion with the registry's owner and return its snapshot. Every dispatch whose
+    result can enter a settlement set — writes and every other tool — is counted here, exactly once; this is the
+    only place a dispatch is recorded. Observation and measurement are pure and read the snapshot."""
     calls = tuple(writeobservation.ForwardedCall(tc.get('id'), _write_path(tc.get('function') or {}))
                   for ch in coder.get('choices', [])
                   for tc in (ch.get('message') or {}).get('tool_calls') or [])
-    if observed is None:
-        observed = writeobservation.record(writeobservation.WriteInput(calls, messages or [],
-            frozenset(_unlanded_call_ids(messages or [])), gs, _note_write_results))
+    return writeobservation.record(writeobservation.WriteInput(
+        calls, messages or [], frozenset(_unlanded_call_ids(messages or [])), gs, _note_write_results,
+        _is_write_call))
+
+
+def _stalled_observation(gs, messages, rlog, *, observed, step=None, sequence_start=None, write_messages=None):
+    """A PURE observation of an already-recorded dispatch: it reads ``observed`` and never registers anything."""
     def measure():
         count, last = _refusals_in_window(messages)
         sanction_messages = messages if write_messages is None else write_messages
@@ -7210,9 +7229,11 @@ def _settle_stalled_reply(gs, pending):
 
 
 def guard_track_refusals(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
+    """The explicit entry point for "this reply was just forwarded": it registers the dispatch once, then observes."""
+    observed = _record_dispatch(gs, coder, messages)
     definition = _stalled_selection(gs)
     if definition is not None:
-        _stalled_result(definition.execute(_stalled_observation(gs, coder, messages, rlog, step=step),
+        _stalled_result(definition.execute(_stalled_observation(gs, messages, rlog, observed=observed, step=step),
                                           _StalledWorkView(gs)))
 
 
@@ -7239,33 +7260,18 @@ REPEAT_ACTION_CHARS = 200
 
 
 def _refused_call_ids(messages: list) -> set:
-    """Tool call ids whose result is cria's own refusal — the call never ran.
-
-    `denial.is_denied` is the authoritative record, applied at the site that decided to refuse, so
-    this reads the mark rather than matching any wording (#12)."""
-    out = set()
-    for m in messages or []:
-        if not isinstance(m, dict) or m.get("role") != "tool":
-            continue
-        cid = m.get("tool_call_id") or m.get("call_id")
-        if cid and denial.is_denied(str(m.get("content") or "")):
-            out.add(cid)
-    return out
+    """Tool call ids whose result cria PROVED came from its own refusal branch — the call never ran.
+    One owner (:func:`denial.refused_call_ids`): the proof is the receipt `represent_inbound` checked, never
+    what the result says."""
+    return denial.refused_call_ids(messages)
 
 
 def _unlanded_call_ids(messages: list) -> set:
-    """Tool call ids of writes/edits that did NOT change the file: cria's own refusals, and the edits that
-    did not apply (the edit-recovery directive, `editrecovery.EDIT_MARK`, or its raw report). A write that
-    never reached disk is not a rewrite, whoever refused it (phi4 A4 CALL 0039: nine refused edits read as
-    "rewritten at least 5 times" while the file was byte-identical)."""
-    out = _refused_call_ids(messages)
-    for m in messages or []:
-        if isinstance(m, dict) and m.get("role") == "tool":
-            body = str(m.get("content") or "")
-            cid = m.get("tool_call_id") or m.get("call_id")
-            if cid and (editrecovery.EDIT_MARK in body or editrecovery.EDITFAIL in body):
-                out.add(cid)
-    return out
+    """Tool call ids of writes/edits cria PROVED did not change the file: its own refusal branch ran, or its
+    edit program reported the edit not applied. A write that never reached disk is not a rewrite (phi4 A4 CALL
+    0039: nine refused edits read as "rewritten at least 5 times" while the file was byte-identical). A result
+    that merely QUOTES a marker, a reused call id, or a result with no hint is unknown, never unlanded."""
+    return denial.unlanded_call_ids(messages)
 
 
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
@@ -8170,7 +8176,7 @@ def gate_unedited(sess) -> bool:
     ids = getattr(sess, "write_call_ids", None)
     if mark is None or not getattr(sess, "write_tracking", False) or ids is None or len(ids) < mark:
         return False
-    refused = getattr(sess, "refused_write_ids", None) or set()
+    refused = writeobservation.unlanded_ids(sess)
     pending = getattr(sess, "gate_pending_write_ids", None)
     if pending is None:
         return False
@@ -8350,81 +8356,8 @@ _STEER_TRIGGER = {
 }
 
 
-# cria's own web_fetch render header — `HTTP 200 OK · https://…` — and the endpoints outline it adds
-# for a spec.
-#
-# THE SHAPE IS NOT WHAT SEPARATES THEM; THE ROLE IS. This comment used to claim the ` · <url>` form
-# "appears ONLY in a real rendered result, never in the coder's prose", and the reader below refutes
-# it in detail: the coder READS that header in its own context and can parrot it, and one did —
-# "I tried again and got HTTP 400 · <url>" overwrote a real HTTP 200 and filed the URL under "THESE
-# URLS DID NOT WORK". What makes the ledger trustworthy is that :func:`_extract_fetches` reads TOOL
-# RESULTS ONLY. The pattern is a renderer, not a provenance test.
-_FETCH_STATUS_RE = re.compile(r"HTTP (\d{3})[^\n·]*·\s*(https?://\S+)")
-# Greedy to the LAST `]` ON THE LINE, not the first: a GraphQL discovery entry names a list type
-# as `[Handle]`, and stopping at the first bracket cut every route after it out of the ledger.
-# `.` excludes newlines, so this still cannot run past the marker line.
-_FETCH_ROUTES_RE = re.compile(r"\[API endpoints \(\d+\): (.+)\]")
-# The RESPONSE-SHAPE block cria surfaces beside the routes (webfetch.SHAPE_MARKER). It is the half of
-# the surfaced facts that names the real FIELDS, and it was never captured into the durable ledger —
-# so after a compaction the coder kept the endpoints and lost `resolved_addresses{ada}` / `holder`,
-# which is precisely what it then guesses. Multi-line; ends at the block's closing bracket.
-def _catalog_block(text: str, start: int) -> str:
-    """The `[API descriptions — …]` block beginning at/after ``start``, read by LINE — same reasoning as
-    :func:`_shape_block` (a url can contain `]`, and entry lines are the ones carrying `→`)."""
-    return _marker_block(text, start, webfetch.CATALOG_MARKER)
-
-
-def _shape_block(text: str, start: int) -> str:
-    """The `[response shape — …]` block beginning at/after ``start``, read by LINE.
-
-    A regex terminated on `]` cannot work here: a field summary marks an array field as `k[]`, so the
-    first entry line ending in an array closes the match and every endpoint after it is silently lost
-    — measured, that dropped `/holders/{address} → total_handles`, the second call this task needs,
-    from the durable ledger the coder is told to "use these EXACT names ... do not guess" from.
-
-    Entry lines are the ones carrying `→`; a trailing note (webfetch's "…+more endpoints have shapes
-    not shown here") is kept too, because a cap the model cannot see reads as the complete set."""
-    return _marker_block(text, start, webfetch.SHAPE_MARKER)
-
-
-def _marker_block(text: str, start: int, marker: str) -> str:
-    """The cria-authored block introduced by ``marker`` at/after ``start``, read by LINE (see
-    :func:`_shape_block` for why a regex cannot do this). ONE reader for every such block, so a second
-    marker cannot drift into a second, subtly different parser."""
-    i = text.find(marker, start)
-    if i < 0:
-        return ""
-    lines = text[i:].splitlines()
-    out = [lines[0][len(marker):].strip()] if lines else []
-    # Two entry grammars, ONE reader. The old render is one `GET /x → f1, f2{a,b}` line per
-    # endpoint. The 2026-08-07 render (operator's format) is an endpoint head ending `returns:`
-    # followed by a ```ts fence of `name?: type;` lines. The day that format landed, this reader —
-    # keyed on `→` alone — kept the marker's header and dropped every field: the durable ledger
-    # carried routes and ZERO response shapes, the judges' sources block promised "response fields
-    # it defines:" and delivered nothing after the colon (walked, mellum2 1786196176 calls
-    # 0021/0028 — one judge hallucinated the fields), and the phantom-field steer guard went blind.
-    # Fence state makes the TS block self-delimiting; everything else keeps the old rule.
-    fence = False
-    for ln in lines[1:]:
-        t = ln.strip()
-        if fence:
-            out.append(ln.rstrip())
-            if t.rstrip("]") == "```":     # the render closes the whole block as ````]` — one line
-                fence = False
-            continue
-        if t.startswith("```") and t != "```":
-            fence = True
-            out.append(ln.rstrip())
-            continue
-        if "→" in ln or t.startswith("…") or t.endswith("returns:"):
-            out.append(ln.rstrip())
-            continue
-        break
-    block = "\n".join(x for x in out if x.strip()).strip()
-    # Drop the block's closing bracket — but never mistake an ARRAY field for it: `holders[]` ends in
-    # `]` too, and stripping that turns a real field name into `holders[`.
-    return block[:-1].rstrip() if block.endswith("]") and not block.endswith("[]") else block
-
+# THE DURABLE FETCH LEDGER IS TYPED, NEVER SCANNED: `_extract_fetches` reads the producer's own `rep.fx` and nothing else, so
+# there is no header, route or shape reader here — a fetched page, file or command output can quote any of them.
 
 # ONE reader for the ledger tuple, in groundtruth — planner cannot import loop, and both plan
 # judges need it. Kept as a module-level name here because a dozen call sites read it.
@@ -8432,34 +8365,31 @@ _fetch_facts = groundtruth.fetch_facts
 
 
 def _extract_fetches(messages: list[dict]) -> dict:
-    """url -> (status, routes, shapes) for every web_fetch result in ``messages`` (last occurrence
-    wins), read from the REAL rendered tool headers — TOOL RESULTS ONLY, which is what makes this a
-    ledger of what happened rather than of what the coder said happened. The ` · <url>` shape is
-    cria's render, but the coder reads it in its own context and can parrot it, so the shape alone
-    proves nothing; see the note at `_FETCH_STATUS_RE` and the one on the role filter below."""
-    latest: dict[str, tuple[str, str, str]] = {}
+    """url -> (status, routes, shapes, catalog) for every web_fetch the session really made (last occurrence wins).
+
+    PROVENANCE, NOT RENDERING. A fetched page, a file or a command's output can quote a perfectly valid-looking
+    `HTTP 200 · <url>` header and `[API endpoints …]` block, so no text is searched for them. The facts come from:
+
+    * a cria-LOWERED `web_fetch` whose own record proved it ran: the producer's typed `fx` fact (`denial.report`), computed from
+      its own parse of the document — and nothing else of that result is read;
+
+    Every other result — a NATIVE `web_fetch` (its bytes stay visible, but no producer declared facts for them), a read, a shell
+    command, an unproven or cut lowered fetch — is UNKNOWN here: no header or marker in text is ever read back as a fact."""
+    latest: dict[str, tuple[str, str, str, str, str]] = {}
+    paired = denial.paired_results(messages)
+    names = {tc.get("id"): (tc.get("function") or {}).get("name")
+             for m in messages if isinstance(m, dict) and m.get("role") == "assistant" for tc in (m.get("tool_calls") or [])}
     for m in messages:
-        # TOOL RESULTS ONLY. This used to read every role, and the docstring's premise — "the ` · <url>`
-        # shape is cria's render, absent from coder prose" — is false: the coder READS that header in its
-        # context and can parrot it. A sentence like "I tried again and got HTTP 400 · <url>" then
-        # overwrote the real HTTP 200, and the ok/failed split filed that URL under "THESE URLS DID NOT
-        # WORK — do not write code against them" with its real endpoints still attached. That is the
-        # hallucination-laundering this ledger exists to defeat (runG: the coder insisted on a 400 the
-        # server never sent, the steer parroted it, 40 turns lost).
-        if m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
+        if not isinstance(m, dict) or m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
             continue
-        c = m.get("content")
-        if c is None:
-            c = m.get("output") or ""
-        if isinstance(c, list):
-            c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
-        if not isinstance(c, str) or "·" not in c:
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if paired.get(tid) is not m or names.get(tid) not in writeproxy._FETCH_NAMES:
             continue
-        for sm in _FETCH_STATUS_RE.finditer(c):
-            url = sm.group(2).rstrip(".,);")
-            rm = _FETCH_ROUTES_RE.search(c, sm.end())
-            latest[url] = (f"HTTP {sm.group(1)}", rm.group(1).strip() if rm else "",
-                           _shape_block(c, sm.end()), _catalog_block(c, sm.end()))
+        proof = denial.proof(m)
+        if proof is not None:
+            fx = denial.report(m).get("fx") if proof == denial.RAN else None
+            if isinstance(fx, dict):
+                latest[fx["url"]] = fetchfacts.entry_of(fx)
     return latest
 
 
@@ -8470,13 +8400,15 @@ def _merge_fetches(dst: dict, src: dict) -> dict:
     fact: they name /handles/{handle} and resolved_addresses{ada})."""
     for url, entry in src.items():
         status, routes, shapes, catalog = _fetch_facts(entry)
+        observed = groundtruth.fetch_observed(entry)
         prev = dst.get(url)
         if prev:
             p_routes, p_shapes, p_catalog = _fetch_facts(prev)[1:]
             routes = routes or p_routes   # preserve the earlier outline when this occurrence had none
             shapes = shapes or p_shapes
             catalog = catalog or p_catalog
-        dst[url] = (status, routes, shapes, catalog)
+            observed = observed or groundtruth.fetch_observed(prev)
+        dst[url] = (status, routes, shapes, catalog, observed)
     return dst
 
 
@@ -8487,15 +8419,13 @@ _fetch_succeeded = research.fetch_succeeded
 
 # `{param}` in a route template stands for one path segment, never a slash.
 _ROUTE_PARAM = re.compile(r"\{[^{}/]*\}")
-# "(replace in the URL path: {address} = The stake/enterprise/script/other address of the Holder)"
-_PARAM_DESC = re.compile(r"\(replace in the URL path:\s*(\{[^}]+\}[^)]*)\)")
 
 
 def _route_templates(latest: dict) -> list[str]:
     """Every route the spec defined, across every fetch this session. cria parsed these itself."""
     seen: list[str] = []
     for entry in (latest or {}).values():
-        for r in (_fetch_facts(entry)[1] or "").split(","):
+        for r in _fetch_facts(entry)[1]:
             r = r.strip()
             if r.startswith("/") and r not in seen:
                 seen.append(r)
@@ -8506,13 +8436,9 @@ def _param_descriptions(latest: dict) -> dict[str, str]:
     """route template -> the spec's own description of its path parameter, where cria rendered one."""
     out: dict[str, str] = {}
     for entry in (latest or {}).values():
-        for line in str(_fetch_facts(entry)[2] or "").splitlines():
-            m = _PARAM_DESC.search(line)
-            if not m:
-                continue
-            route = line.strip().split()[1] if len(line.strip().split()) > 1 else ""
-            if route.startswith("/"):
-                out.setdefault(route, m.group(1).strip())
+        for shape in _fetch_facts(entry)[2]:             # the spec's own parameter notes, typed on the entry — not scanned out of its text
+            if shape.route.startswith("/") and shape.params:
+                out.setdefault(shape.route, "; ".join(shape.params).strip())
     return out
 
 
@@ -8629,7 +8555,7 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     any_absent = False  # did any entry actually use the "not in this conversation" note?
     for url, entry in latest.items():
         status, routes, shapes, catalog = _fetch_facts(entry)
-        line = f"- {url} \u2192 {status}" + (f"; endpoints: {routes}" if routes else "")
+        line = f"- {url} \u2192 {status}" + (f"; endpoints: {', '.join(routes)}" if routes else "")
         # THIRD case. The anchor explains an entry WITH facts and an entry that ERRORED; a 2xx whose
         # page had no readable structure looks identical to a successful spec read. Measured (run
         # 0727-142536): the planner fetched the swagger UI SHELL, the coder's entire fetch record was
@@ -8650,7 +8576,7 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         # this ledger, so it knows whether ANY fetch this session yielded routes. When one did, the
         # sentence is simply false and is dropped. All that survives is the true, narrow fact — this
         # URL yielded no endpoint definitions — which is what the swagger-shell case needed.
-        if (_fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip()
+        if (_fetch_succeeded(status) and not routes and not shapes and not catalog
                 and webfetch.cached_structure(url) is False):
             any_routes = any(_fetch_facts(e)[1] for e in latest.values())
             if any_routes:
@@ -8691,28 +8617,21 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.
-        entries, fence = [], False
-        for ln in shapes.splitlines():
-            t = ln.strip()
-            if fence:
-                entries.append(ln.rstrip())
-                fence = t != "```"
-            elif t.startswith("```") and t != "```":
-                entries.append(ln.rstrip()); fence = True
-            elif "→" in ln or t.startswith("…") or t.endswith("returns:"):   # old render + cap note
-                entries.append(t)
+        entries = [ln.strip() if k == 0 else ln.rstrip()                 # the typed entries' own display, never read back as facts
+                   for s in shapes for k, ln in enumerate(fetchfacts.text(s).splitlines())]
         if entries:
             line += f"\n  {labels['fields']}\n" + "\n".join(f"  {e}" for e in entries)
         # A catalogue names WHERE each API's spec lives. Without this the durable ledger recorded the
         # fetch as "HTTP 200, no readable structure" and the hrefs — the only thing a catalogue has —
         # were gone the moment the raw result scrolled out.
-        cat = [ln.strip() for ln in catalog.splitlines() if "→" in ln or ln.strip().startswith("…")]
+        cat = [c.strip() for c in catalog]
         if cat:
             line += f"\n  {labels['descriptions']}\n" + "\n".join(f"  {c}" for c in cat)
-        if not _fetch_succeeded(status):
+        answered = research.fetch_answered(entry)
+        if not answered:
             diagnosis = _failed_fetch_diagnosis(url, latest)
             line += f" {diagnosis}" if diagnosis else ""
-        (ok if _fetch_succeeded(status) else failed).append(line)
+        (ok if answered else failed).append(line)
     blocks = []
     if ok:
         blocks.append(prompts.fill(labels["ok"], header=header) + "\n" + "\n".join(ok))
@@ -8982,6 +8901,8 @@ def _read_results(messages: list[dict]):
 def _read_results_ordered(messages: list[dict]):
     """:func:`_read_results` with the result message's position and its tool-call id in front."""
     from . import denial
+    from . import denial as _den
+    paired = set(_den.paired_results(messages))   # canonical call/result pairing: ambiguous results attribute nothing
     calls: dict = {}
     answered_by_read: set = set()
     for idx, m in enumerate(messages or []):
@@ -8999,7 +8920,7 @@ def _read_results_ordered(messages: list[dict]):
                 calls.setdefault(tc["id"], (p, None, None))   # only a read-instead result counts (below)
                 answered_by_read.add(tc["id"])
         tid = m.get("tool_call_id") or m.get("call_id")
-        if tid in calls:
+        if tid in calls and tid in paired:
             c = m.get("content") if m.get("content") is not None else m.get("output")
             unverified = False
             if isinstance(c, str):
@@ -9012,18 +8933,19 @@ def _read_results_ordered(messages: list[dict]):
             if tid in answered_by_read:
                 # A write_file the coder sent for a file it never read, ANSWERED with that file (H1):
                 # the result is a whole read of the path. Any other result of a write is not a read.
-                if unverified:
-                    if denial.READ_INSTEAD_MARKER not in (m.get("content") or m.get("output") or ""):
-                        continue            # an ordinary write result: not a read, nothing to abstain from
-                    c = None
-                else:
-                    c = denial.read_instead_payload(c) if isinstance(c, str) else None
-                    if not c or not c.strip():
-                        continue
+                # ONE OWNER: only a verified body (`denial.read_payload`) is the file's bytes; a refusal that merely
+                # quotes a marker, a file body that does, and every unproven result are not.
+                c = denial.read_payload(m)
+                if c is None:
+                    continue
+            elif (proven := denial.read_payload(m)) is not None:
+                c = proven          # the producer's VERIFIED body (whole file or numbered window) — an EMPTY file included
+            elif denial.proof(m) is not None:
+                continue            # a cria-lowered read whose body did not verify (cut, rewritten, no record): unknown
             elif unverified:
                 pass
-            elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
-                continue
+            elif not isinstance(c, str) or not c.strip() or not denial.attributable_read(m):
+                continue            # cria's own refusal, or a lowered result whose branch is unproven: not file bytes
             yield (idx, tid, *calls[tid], c)
 
 
@@ -9063,6 +8985,7 @@ def _refused_line_counts_ordered(messages: list[dict]):
     lines, which is larger than can be returned in one read"), for a read — or a write answered with one.
     The regex is cut from that prompt's own words, so the two cannot drift."""
     from . import denial
+    paired = set(denial.paired_results(messages))   # canonical call/result pairing: ambiguous results attribute nothing
     tpl = prompts.load("large_read_steer")
     mid, _, rest = tpl.partition("{{PATH}}")[2].partition("{{LINES}}")
     pat = re.compile(re.escape(mid) + r"(\d+)" + re.escape(rest.split("{{")[0]))
@@ -9077,7 +9000,7 @@ def _refused_line_counts_ordered(messages: list[dict]):
                     calls[tc["id"]] = p
         tid = m.get("tool_call_id") or m.get("call_id")
         c = m.get("content") if m.get("content") is not None else m.get("output")
-        if tid in calls and isinstance(c, str) and denial.is_denied(c) and (hit := pat.search(c)):
+        if tid in calls and tid in paired and isinstance(c, str) and denial.refused(m) and (hit := pat.search(c)):
             yield idx, calls[tid], int(hit.group(1))
 
 
@@ -9190,6 +9113,8 @@ def _shell_mutations(messages: list[dict]):
 def _write_events(messages: list[dict]):
     """``(position, id, path, bytes, label)`` for every write that landed — see :func:`_extract_writes`."""
     from . import denial
+    from . import denial as _den
+    paired = set(_den.paired_results(messages))   # canonical call/result pairing: ambiguous results attribute nothing
     calls: dict = {}
     for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
@@ -9203,10 +9128,10 @@ def _write_events(messages: list[dict]):
                 if path and isinstance(body, str):
                     calls[tc["id"]] = (path, body)
         tid = m.get("tool_call_id") or m.get("call_id")
-        if tid in calls:
+        if tid in calls and tid in paired:
             res = m.get("content") if m.get("content") is not None else m.get("output")
-            if not (isinstance(res, str) and selfcompact.write_landed(res)):
-                continue                      # refused or failed — only the authoritative confirmation lands a write
+            if not (isinstance(res, str) and denial.landed(m)):
+                continue                      # refused or failed — only cria's own typed `landed` record lands a write
             path, body = calls[tid]
             raw = body.encode("utf-8", "replace")
             yield idx, tid, path, len(raw), f"{_count_lines(body)} lines"   # bytes owned by the ⟦ctx:files⟧ listing
@@ -9409,7 +9334,7 @@ def _completion_measurement_services(workspace_root: str) -> completionmeasure.M
     from . import shelltool
     return completionmeasure.MeasurementServices(
         frozenset(_WRITE_TOOLS), frozenset(writeproxy_names), frozenset(writeproxy._EDIT_NAMES),
-        writeproxy._failed_edit_ids, shelltool.writes_something, writeproxy._command_of,
+        denial.unlanded_call_ids, shelltool.writes_something, writeproxy._command_of,
         _args_of, _path_of_args, lambda a, b: _same_workspace_path(a, b, workspace_root),
         lambda: wsview.current(workspace_root) if workspace_root else None)
 
@@ -9428,6 +9353,8 @@ def _edit_events(messages: list[dict]):
 
 def _edit_results(messages: list[dict]):
     """``(position, id, path, result text)`` of every edit that LANDED in ``messages``."""
+    from . import denial as _den
+    paired = set(_den.paired_results(messages))   # canonical call/result pairing: ambiguous results attribute nothing
     calls: dict = {}
     for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
@@ -9438,9 +9365,9 @@ def _edit_results(messages: list[dict]):
                 if path := _path_of_args(fn.get("arguments") or ""):
                     calls[tc["id"]] = path
         tid = m.get("tool_call_id") or m.get("call_id")
-        if tid in calls:
+        if tid in calls and tid in paired:
             res = m.get("content") if m.get("content") is not None else m.get("output")
-            if isinstance(res, str) and selfcompact.write_landed(res) and not denial.is_denied(res):
+            if isinstance(res, str) and denial.landed(m):
                 yield idx, tid, calls[tid], res
 
 
@@ -9475,7 +9402,7 @@ def _capture_context_facts(sess, raw: list[dict]) -> _ContextFacts:
     fetches = _merge_fetches(dict(getattr(sess, "fetched_pages", None) or {}), _extract_fetches(raw))
     return _ContextFacts(
         tuple((path, tuple(value)) for path, value in ledger.items()),
-        tuple((url, tuple(_fetch_facts(value))) for url, value in fetches.items()),
+        tuple((url, (*_fetch_facts(value), groundtruth.fetch_observed(value))) for url, value in fetches.items()),
         _route_mismatch_fact(fetches, raw, getattr(sess, "workspace_root", "") or ""),
         tuple(getattr(sess, "written_files", None) or ()),
         tuple((getattr(sess, "file_touch", None) or {}).items()), key)
@@ -10394,7 +10321,7 @@ def _blames_a_service_that_answered(directive: str, sess, messages: list, rlog, 
 def _fetch_succeeded_anywhere(sess, messages: list) -> bool:
     """Did ANY fetch this session come back 2xx? The disproof this check stands on."""
     merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
-    return any(_fetch_succeeded(_fetch_facts(e)[0]) for e in merged.values())
+    return any(research.fetch_answered(e) for e in merged.values())
 
 
 # Absolute paths under SYSTEM roots — the shapes a steer can only be inventing when nothing at that
@@ -10547,29 +10474,13 @@ def _false_line_citation(directive: str, workspace_root: str | None, touched: li
 # invented, and column names. The access shape is what marks it as a claim ABOUT THE RESPONSE.
 _RESP_VAR = r"(?:data|response|resp|json|payload|body|result|res|r)"
 _FIELD_ACCESS = re.compile(rf"\b{_RESP_VAR}\s*(?:\.get\(\s*['\"]([A-Za-z_]\w*)['\"]|\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\])")
-# Field names inside a parsed shape entry. Old render: `name(string, …)`,
-# `resolved_addresses{ada(string, …)}`. TS render: `  name?: type;` and nested `parent?: {`.
-_SHAPE_FIELD = re.compile(r"([A-Za-z_]\w*)\s*[({]")
-_TS_FIELD = re.compile(r"^\s*([A-Za-z_]\w*)\??:\s")
-
-
 def _ledger_field_names(ledger: dict) -> set[str]:
     """Every field name cria actually PARSED out of a fetched response shape — "" when it parsed none.
 
     Nested names count (`resolved_addresses{ada(…)}` yields both), because a steer naming the inner
-    one is telling the truth. Only the shapes block is read; routes and catalogs are paths, not
-    fields."""
-    names: set[str] = set()
-    for entry in (ledger or {}).values():
-        shapes = (tuple(entry) + ("", "", ""))[2]
-        for line in str(shapes).splitlines():
-            if "→" in line:                   # old render: fields follow the arrow
-                names.update(m.group(1) for m in _SHAPE_FIELD.finditer(line.split("→", 1)[1]))
-                continue
-            m = _TS_FIELD.match(line)         # TS render: one `name?: type;` per line
-            if m:
-                names.add(m.group(1))
-    return names
+    one is telling the truth. They are the entries' own typed `fields` (read from the parsed schema / introspection
+    structure by the producer): no rendered shape text is scanned here. Routes and catalogs are paths, not fields."""
+    return {name for entry in (ledger or {}).values() for shape in _fetch_facts(entry)[2] for name in shape.fields}
 
 
 def _field_the_ledger_denies(directive: str, ledger: dict) -> str | None:
@@ -10823,12 +10734,17 @@ def _mutation_targets(fn: dict, workspace_root: str | None = None):
     return []
 
 
-def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | None = None):
+def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | None = None,
+                       skip: frozenset | set = frozenset()):
     """Paths of every write-class call (landed or not) after position ``idx`` — every target of a
-    multi-file patch — or ``_ANY_PATH`` for a write whose targets are not fully known."""
+    multi-file patch — or ``_ANY_PATH`` for a write whose targets are not fully known. ``skip`` names
+    call ids whose result says the call never changed anything (`_unlanded_call_ids`): they are not
+    mutations. A call with no result yet is never in it, so it still counts."""
     for m in (messages or [])[idx + 1:]:
         if isinstance(m, dict) and m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
+                if tc.get("id") in skip:
+                    continue
                 got = _mutation_targets(tc.get("function") or {}, workspace_root)
                 if got is _ANY_PATH:
                     yield _ANY_PATH
@@ -10889,7 +10805,10 @@ def _generation_cut_services():
     return generationguards.CutServices(frozenset(_WRITE_TOOLS), frozenset(writeproxy_names), _path_of_args)
 
 
-def _generation_grounding_services(gs, messages):
+def _generation_grounding_services(gs, messages, accepted=None):
+    """``messages`` is what the coder SEES (what a read is evidence of); ``accepted`` is the canonical accepted body
+    from before focus/trim reshaped it — the one a "did anything change since that read" scan must use, because a
+    reshaped copy can have dropped the very call that mutated the file."""
     from . import generationguards
     if gs is None:
         return None
@@ -10905,13 +10824,26 @@ def _generation_grounding_services(gs, messages):
                            for i, _tid, path, start, end, text in _read_results_ordered(msgs)],
         read_span=_read_span,
         same_file=lambda left, right: _same_workspace_file(left, right, root),
-        mutated_after=lambda msgs, position, path: any(
-            target is _ANY_PATH or _same_workspace_file(target, path, root)
-            for target in _write_paths_after(msgs, position, root)))
+        mutated_after=lambda msgs, position, path: _mutated_after_read(
+            msgs, position, path, root, msgs if accepted is None else accepted))
+
+
+def _mutated_after_read(seen, position, path, root, history) -> bool:
+    """Could ``path`` have changed since the read at ``seen[position]``? Scanned over ``history`` (the accepted body
+    when there is one), from where THAT read's call result sits in it. A read that cannot be located there is
+    unknown, which is "may have changed"."""
+    if history is not seen:
+        tid = (seen[position] or {}).get("tool_call_id") or (seen[position] or {}).get("call_id")
+        position = next((i for i, m in enumerate(history) if isinstance(m, dict) and m.get("role") == "tool"
+                         and (m.get("tool_call_id") or m.get("call_id")) == tid), None)
+        if tid is None or position is None:
+            return True
+    return any(target is _ANY_PATH or _same_workspace_file(target, path, root)
+               for target in _write_paths_after(history, position, root, _unlanded_call_ids(history)))
 
 
 def _generation_recovery(coder, body, coder_chat, rlog, *, step=None, phase="coder",
-                         coder_role=None, gs=None, selected=None, on_completion=None):
+                         coder_role=None, gs=None, selected=None, on_completion=None, accepted=None):
     from . import generationguards
     if selected is None:
         selected = generationguards.SelectedGuards.from_definitions(assistruntime.current().definitions)
@@ -10920,7 +10852,7 @@ def _generation_recovery(coder, body, coder_chat, rlog, *, step=None, phase="cod
         _ObservedCoderRetries(coder_chat, _parse_completion, _add_note, rlog, coder_role,
                               on_completion=on_completion),
         _generation_cut_services,
-        lambda: _generation_grounding_services(gs, body.get("messages") or []))
+        lambda: _generation_grounding_services(gs, body.get("messages") or [], accepted))
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder",
@@ -11167,7 +11099,7 @@ def known_routes(messages: list, sess=None) -> str:
     EMPTY when nothing spec-shaped has been fetched, and an empty route list is cria knowing NOTHING
     — not evidence that a route is invented. The caller must abstain, never delete, on empty."""
     merged = _merge_fetches(_extract_fetches(messages), (getattr(sess, "fetched_pages", None) or {}))
-    return " ".join(r for r in (_fetch_facts(e)[1] for e in merged.values()) if r)
+    return " ".join(", ".join(routes) for routes in (_fetch_facts(e)[1] for e in merged.values()) if routes)
 
 
 def session_research_facts(messages: list, sess=None) -> str:

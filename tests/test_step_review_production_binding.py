@@ -9,6 +9,7 @@ import pytest
 
 from cria import assistruntime, completionconfirmation, completiondiagnosis, completionreview, livingplan, loop, probegate, stepreview as sp, wsview
 from cria.config import Role
+from tests.gatefixture import bounds_field_for
 from cria.plan import Plan, PlanItem
 
 
@@ -283,7 +284,7 @@ def page(plan, raw, offset=0, size=None):
     return "\n".join([probegate._transport_marker(plan.transport_id),
         "path\t" + base64.b64encode(path.encode()).decode(), f"offset\t{offset}",
         f"total\t{len(data)}", "sha256\t" + hashlib.sha256(data).hexdigest(),
-        "enc\traw", "data\t" + base64.b64encode(chunk).decode(),
+        *bounds_field_for(raw), "enc\traw", "data\t" + base64.b64encode(chunk).decode(),
         probegate._transport_marker(plan.transport_id, end=True)])
 
 

@@ -4,6 +4,7 @@ import json
 import pytest
 
 from cria import assistruntime, bodykeys, probediscovery, probegate, upstream
+from tests.gatefixture import gate_page, completed
 from cria.assistprofiles import RANK4_ABLATION_DISABLED
 from test_gate_outlives_the_harness_yield import _page
 from test_upstream import _Rlog
@@ -23,7 +24,7 @@ def test_clean_checks_keep_exact_output_and_command_scope():
     plan = probegate.GatePlan(workspace='/remote/project', candidates=[candidate])
     raw = probegate._marker('probe-0') + '\n' + output + '\nEXIT:0\n'
     with assistruntime.bound(assistruntime.AssistRuntime.select(profile='rank4-ablation')):
-        shown = probegate.clean_gate_output(raw, plan)
+        shown = probegate.clean_gate_output(raw, completed(plan, raw))
     assert output in shown
     assert 'mvn test' in shown
     assert 'exit 0' in shown
@@ -32,7 +33,7 @@ def test_clean_checks_keep_exact_output_and_command_scope():
 
 def test_silent_clean_check_reports_exit_without_inventing_tool_words():
     raw = probegate._marker('probe-0') + '\n\nEXIT:0\n'
-    shown = probegate.clean_gate_output(raw)
+    shown = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
     assert 'exit 0' in shown
     assert 'no output' in shown
     assert 'no error-class problems' not in shown
@@ -41,7 +42,7 @@ def test_silent_clean_check_reports_exit_without_inventing_tool_words():
 def test_clean_output_is_not_capped_outside_wire_floor():
     output = ''.join(f'  record {i}: evidence  \n' for i in range(4000))
     raw = probegate._marker('probe-0') + '\n' + output + '\nEXIT:0\n'
-    assert output in probegate.clean_gate_output(raw)
+    assert output in probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
 
 
 @pytest.mark.parametrize('original_command_known', [True, False])
@@ -113,7 +114,7 @@ def test_unknown_transport_stays_unknown_at_final_wire():
 def test_large_clean_output_uses_existing_labelled_final_wire_floor():
     output = ''.join(f'record {i}: distinct checker detail {i * 17}\n' for i in range(4000))
     raw = probegate._marker('probe-0') + '\n' + output + '\nEXIT:0\n'
-    shown = probegate.clean_gate_output(raw)
+    shown = probegate.clean_gate_output(raw, completed(probegate.GatePlan(''), raw))
     messages = [
         {'role': 'user', 'content': 'Improve this project'},
         {'role': 'assistant', 'tool_calls': [{'id': 'check', 'type': 'function',

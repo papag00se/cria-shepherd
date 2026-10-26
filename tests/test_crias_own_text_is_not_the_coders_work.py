@@ -12,7 +12,13 @@ was still doing it at ef8ee77 on 2026-08-22."""
 import json
 import unittest
 
-from cria import loop, probegate, writeproxy
+import base64
+
+from cria import loop, probegate, toolwire, writeproxy
+
+# The headers are the ones cria really writes: the gate leads with its probe list, a lowering with its declared call.
+GATE_HEADER = probegate._gate_sentinel(["rake test"])
+TOOL_HEADER = toolwire._sentinel("read_file", "{}")
 
 SURVEY = ("python3 - <<'PY'\n"
           "files = sorted(os.listdir(d))\n"
@@ -27,17 +33,17 @@ def _exec(cmd):
 
 class OneOwnerForTheQuestionTests(unittest.TestCase):
     def test_the_gate_script_is_recognised_as_crias_own(self):
-        self.assertTrue(writeproxy.is_crias_own("# " + probegate.GATE_SENTINEL + "eyJhIjoxfQ==\n" + SURVEY))
+        self.assertTrue(writeproxy.is_crias_own(GATE_HEADER + "\n" + SURVEY))
 
     def test_a_writeproxy_lowering_is_too(self):
-        self.assertTrue(writeproxy.is_crias_own("# " + writeproxy._SENTINEL + "eyJhIjoxfQ==\ncat x\n"))
+        self.assertTrue(writeproxy.is_crias_own(TOOL_HEADER + "\ncat x\n"))
 
     def test_the_coders_own_command_is_not(self):
         self.assertFalse(writeproxy.is_crias_own("go build ./... > out.txt"))
 
     def test_the_survey_inside_a_gate_script_names_no_file(self):
         self.assertIsNone(loop._write_path(
-            _exec("# " + probegate.GATE_SENTINEL + "eyJhIjoxfQ==\nrake test\n" + SURVEY)))
+            _exec(GATE_HEADER + "\nrake test\n" + SURVEY)))
 
     def test_a_real_shell_redirect_by_the_coder_still_counts(self):
         self.assertEqual(loop._write_path(_exec("echo hi > out.txt")), "out.txt")
@@ -46,7 +52,7 @@ class OneOwnerForTheQuestionTests(unittest.TestCase):
         touched = loop._touched_paths([
             {"role": "assistant", "tool_calls": [
                 {"id": "a", "type": "function",
-                 "function": _exec("# " + probegate.GATE_SENTINEL + "eyJhIjoxfQ==\n" + SURVEY)}]}])
+                 "function": _exec(GATE_HEADER + "\n" + SURVEY)}]}])
         self.assertEqual(touched, [])
 
 

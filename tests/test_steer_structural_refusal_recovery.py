@@ -257,11 +257,14 @@ class StructuralAuthorRefusalRecoveryTests(unittest.TestCase):
             for _ in range(loop.WHEEL_SPIN_WRITES):
                 engine.drive(body, "scratch-key", Classification(), rlog)
             gate = engine.drive(body, "scratch-key", Classification(), rlog)
-            gate_id = gate["choices"][0]["message"]["tool_calls"][0]["id"]
+            from types import SimpleNamespace
+            from test_loop import _tc_id, _GATE_TRANSPORT_IDS     # the transport this gate call's result will arrive on
+            gate_id = _tc_id(gate)
             from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
-            from tests.gatefixture import completed_cleanup
+            from tests.gatefixture import completed_cleanup, gate_page
             result = (f"{P}probe-0{S}\nImporter.java:77: cannot find symbol\nEXIT:1\n"
                       + completed_cleanup(root) + f"{P}git{S}\nabc\n")
+            result = gate_page(SimpleNamespace(transport_id=_GATE_TRANSPORT_IDS[gate_id]), result)
             probe_body = {**body, "messages": body["messages"] + [
                 {"role": "tool", "tool_call_id": gate_id, "content": result},
             ]}

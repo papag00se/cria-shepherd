@@ -50,12 +50,23 @@ class TheNoteAdmitsItIsHistoryTests(unittest.TestCase):
             "id": "c1", "type": "function",
             "function": {"name": "write_file",
                          "arguments": json.dumps({"path": "lib/x.rb", "content": "puts 1\n"})}}]},
-                   {"role": "tool", "tool_call_id": "c1",
+                   # a landed write's result as `represent_inbound` hands it on: the program's own typed outcome, then the payload
+                   {"role": "tool", "tool_call_id": "c1", "cria_result_outcome": "landed",
                     "content": "<html><body>" + "<div class='x'>ok</div>" * 200 + "</body></html>"}]
         note = self._note(dropped)
         self.assertIn("Files modified in them", note)
         self.assertIn("lib/x.rb", note)
         self.assertIn("later copy of it in this conversation", note)
+
+    def test_a_write_cria_did_not_prove_landed_is_not_listed_as_modified(self):
+        import json
+        for label, result in (("worded", {"role": "tool", "tool_call_id": "c1", "content": "Wrote lib/x.rb"}),
+                              ("uncertain", {"role": "tool", "tool_call_id": "c1", "content": "?", "cria_result_outcome": "uncertain"}),
+                              ("refused", {"role": "tool", "tool_call_id": "c1", "content": "no", "cria_result_outcome": "refused"})):
+            with self.subTest(label):
+                dropped = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": "lib/x.rb", "content": "puts 1\n"})}}]}, result]
+                self.assertNotIn("Files modified in them", self._note(dropped))
 
     def test_a_note_with_nothing_summarised_makes_no_claim(self):
         """#3 — no digests, nothing to caveat."""

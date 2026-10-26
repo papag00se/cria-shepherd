@@ -21,6 +21,7 @@ import unittest
 from unittest import mock
 
 from cria import probediscovery, probegate, proberun
+from tests.gatefixture import gate_page, completed
 
 
 class TheCleanupLegIsStrippedTests(unittest.TestCase):
@@ -64,11 +65,11 @@ class TheCleanupLegIsStrippedTests(unittest.TestCase):
             plan = probegate.plan_gate(self.ws)
             result = subprocess.run(['sh', '-c', plan.script], cwd=self.ws,
                 env={**os.environ, 'TMPDIR': harness}, capture_output=True, text=True, check=True)
-            outcome = probegate.interpret_gate(plan, result.stdout)
+            outcome = probegate.interpret_gate(plan, gate_page(plan, result.stdout))
             self.assertTrue(plan.transport_complete)
             self.assertFalse(probegate.gate_is_partial(outcome))
             self.assertFalse((pathlib.Path(plan.transport_path).parent / 'aux').exists())
-            shown = probegate.clean_gate_output(plan.transport_data.decode(), plan)
+            shown = probegate.clean_gate_output(plan.transport_data.decode(), completed(plan, plan.transport_data.decode()))
             self.assertIn('NATIVE CHECKER OUTPUT', shown)
             self.assertNotIn('_gate_aux_cleanup', shown)
             self.assertNotIn('os.unlink', shown)

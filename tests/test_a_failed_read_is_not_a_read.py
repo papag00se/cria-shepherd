@@ -103,8 +103,18 @@ class TheLedgerIsCorrectedWithoutBeingTouchedTests(unittest.TestCase):
                          [("Importer.java", len(bash_error))])
 
     def test_what_cria_now_returns_is_not_counted(self):
-        _, out = _run(_read_command({"path": "Importer.java"}), self.ws)
-        self.assertEqual(research.files_read(_tool_result(out)), [],
+        # The REAL chain: lower the read, run it, and let the inbound pass prove which branch printed the result.
+        from cria.writeproxy import represent_inbound, translate_outbound
+        comp = {"choices": [{"message": {"tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "read_file", "arguments": '{"path": "Importer.java"}'}}]}}]}
+        translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
+                           injected={"read_file"}, workspace_root=self.ws)
+        tc = comp["choices"][0]["message"]["tool_calls"][0]
+        _, out = _run(__import__("json").loads(tc["function"]["arguments"])["cmd"], self.ws)
+        msgs = represent_inbound([{"role": "assistant", "tool_calls": [tc]},
+                                  {"role": "tool", "tool_call_id": "c1", "content": out}])
+        self.assertTrue(denial.refused(msgs[1]))
+        self.assertEqual(research.files_read(msgs), [],
                          "the ledger still counts a read that returned no bytes")
 
     def test_a_real_read_still_counts(self):

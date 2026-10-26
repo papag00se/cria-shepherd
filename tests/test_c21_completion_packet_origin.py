@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
+from cria import bodykeys
 from cria import assistruntime, completiondiagnosis, contextfloor as cf, denial, loop, modelview, prompts, selfcompact, server, upstream, wsview
 from cria.config import Role
 from cria.plan import Plan, PlanItem
@@ -55,11 +56,11 @@ def history():
     return [
         {'role': 'user', 'content': TASK},
         {'role': 'assistant', 'tool_calls': [call('w1', 'write_file', {'path': 'worker.rb', 'content': 'one\n'})]},
-        {'role': 'tool', 'tool_call_id': 'w1', 'content': 'Wrote worker.rb'},
+        {'role': 'tool', 'tool_call_id': 'w1', 'content': 'Wrote worker.rb', 'cria_result_outcome': 'landed'},
         {'role': 'assistant', 'tool_calls': [call('e1', 'edit_file', {'path': 'worker.rb', 'old_string': 'one', 'new_string': 'two'})]},
-        {'role': 'tool', 'tool_call_id': 'e1', 'content': denial.mark('not run')},
+        {'role': 'tool', 'tool_call_id': 'e1', 'content': denial.mark('not run'), bodykeys.RESULT_OUTCOME: denial.REFUSED},
         {'role': 'assistant', 'tool_calls': [call('e2', 'edit_file', {'path': 'worker.rb', 'old_string': 'one', 'new_string': 'three'})]},
-        {'role': 'tool', 'tool_call_id': 'e2', 'content': 'Wrote worker.rb'},
+        {'role': 'tool', 'tool_call_id': 'e2', 'content': 'Wrote worker.rb', 'cria_result_outcome': 'landed'},
         {'role': 'assistant', 'tool_calls': [call('s1', 'exec_command', {'cmd': 'ls src'})]},
         {'role': 'tool', 'tool_call_id': 's1', 'content': 'nested\n'},
     ]
@@ -360,7 +361,7 @@ def test_all_listed_pairs_withdrawn_by_real_floor_preserve_origin_and_next_actua
     assert server._carried_ledger(copied_wire['messages'], origin=copied_runtime.sess.handoff_origin) == ''
 
     new = [{'role': 'assistant', 'tool_calls': [call('next-write', 'write_file', {'path': 'next.rb', 'content': 'saved\n'})]},
-           {'role': 'tool', 'tool_call_id': 'next-write', 'content': 'Wrote next.rb'}]
+           {'role': 'tool', 'tool_call_id': 'next-write', 'content': 'Wrote next.rb', 'cria_result_outcome': 'landed'}]
     later = runtime.harden('Do another edit.', 'PLAN', [*wire['messages'], *new])
     expected = selfcompact.parse_ledger(original) + [('write_file next.rb: confirmed written', 1)]
     assert selfcompact.parse_ledger(later) == expected

@@ -17,6 +17,7 @@ import tempfile
 import unittest
 
 from cria import probegate
+from tests.gatefixture import gate_page, completed
 
 P, S = probegate.SECTION_PREFIX, probegate.SECTION_SUFFIX
 RAW = f"{P}probe-0{S}\nno tests ran in 0.00s\nEXIT:5\n{P}git{S}\nabc123\n"
@@ -37,13 +38,13 @@ class _Rlog:
 class TheStrandedSentenceNeedsThePlanTests(unittest.TestCase):
 
     def test_with_the_plan_the_uncollectable_file_is_named(self):
-        out = probegate.clean_gate_output(RAW, probegate.plan_gate(_ws())) or ""
+        out = probegate.clean_gate_output(RAW, completed(probegate.plan_gate(_ws()), RAW)) or ""
         self.assertIn("testFooBar.py", out)
         self.assertIn("will not run", out)
 
     def test_without_it_the_same_gate_lacks_the_stranded_file_fact(self):
         """Pinned so the regression is visible if a call site ever drops the plan again."""
-        out = probegate.clean_gate_output(RAW, None) or ""
+        out = probegate.clean_gate_output(RAW, completed(probegate.GatePlan(''), RAW)) or ""
         self.assertIn("exit 5", out)
         self.assertIn("no tests ran in 0.00s", out)
         self.assertNotIn("report these error-class problems", out)
@@ -88,8 +89,11 @@ class EveryReaderGetsThePlanTests(unittest.TestCase):
                 return json.dumps({"choices": [{"message": {"content": "some steer"}}]}).encode()
 
             gs = GuardState()
+            if gate_plan is not None:
+                completed(gate_plan, RAW)              # the session's gate transport has arrived
             gs.gate_plan = gate_plan
-            msgs = [{"role": "user", "content": "t"}, {"role": "tool", "content": RAW}]
+            page = gate_page(gate_plan if gate_plan is not None else probegate.GatePlan(''), RAW)   # delivered by the plan's own transport
+            msgs = [{"role": "user", "content": "t"}, {"role": "tool", "content": page}]
             author_steer(reasoner_chat, None, None, gs, {"messages": msgs, "tools": []},
                         _Rlog(), condition="wheel_spin")
             return json.dumps(calls[-1].get("messages", calls[-1]))

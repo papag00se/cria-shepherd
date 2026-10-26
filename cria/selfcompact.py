@@ -187,7 +187,7 @@ def msg_digest(m: dict) -> str:
     parts = []
     t = _text(m)
     if t.strip():
-        if t.lstrip().startswith(_EDIT_MARK):
+        if denial.unlanded(m) and t.lstrip().startswith(_EDIT_MARK):
             t = edit_note_headline(t)  # headline only, without the promise of a body — see _EDIT_MARK above
         parts.append(t)
     for tc in m.get("tool_calls") or []:
@@ -737,14 +737,8 @@ _REPLACED_ARG_KEYS = ("old_string",)
 _STUB_MIN_CHARS = 400
 
 
-# A write that landed confirms in one of two shapes: the raw heredoc token (toolwire._WROTE,
-# pre-render) or the model-facing render of prompts/write_confirm ("Wrote <path>") that transcripts
-# actually carry. Anything else — an ⟦ctx:editfail⟧ report, a denial, an error — did NOT reach
-# disk. Kept in sync with both owners by tests.
-_WROTE_HEAD = toolwire._WROTE
-
-
-write_landed = toolwire.write_landed
+# A write landed ONLY when its own program said so in its typed first record (`denial.landed`). Neither the raw heredoc
+# token nor the rendered confirmation is evidence: both are wording any file or command can quote.
 
 
 def _is_write_call(tc: dict) -> bool:
@@ -753,37 +747,92 @@ def _is_write_call(tc: dict) -> bool:
     return ((tc or {}).get("function") or {}).get("name") in _WRITE_TOOL_NAMES
 
 
-def _last_write_index_by_path(msgs: list[dict]) -> dict:
-    """path -> index of the LAST write-tool call that targeted it.
+def _later_write_fates(msgs: list[dict], outcomes: dict) -> dict:
+    """call id -> what OTHER calls to the same FILE provably did to an older write that LANDED. Only PROVEN outcomes count;
+    an attempt is not a change, and cria never invents an order it was not told.
 
-    `stub_old_write_args` kept ONE index for the whole span, so every older write was stamped with
-    the on-disk wording whatever path it touched. A coder that writes one file three times produced
-    three "this exact content is on disk at PATH" stamps for that path, two of them false — measured
-    at six stamps and four different byte counts for a single Ruby file in one real prompt (#5b)."""
-    out: dict = {}
+    * ``"superseded"`` — a call in a LATER message is a whole-file write proven landed: the older version was replaced outright.
+    * ``"edited"``     — no such replacement, but a call in a later message is a partial edit proven landed: the older version
+      was CHANGED in part (calling it "replaced by a later write" would claim a whole replacement nobody proved).
+    * ``"hold"``       — the file's present bytes cannot be told from the evidence, so cria claims NOTHING about this version and
+      keeps it: a later attempt's outcome is UNPROVEN (unknown / uncertain / unanswered / ambiguous / worded), OR another call
+      to the same file sits in the SAME message. Calls in one message are dispatched together and the harness may run them
+      concurrently — their completion order is not the order they are written in the message, so neither can be named "the
+      newer one" (a same-turn pair that both landed leaves the disk at one of them, cria cannot say which).
+    * absent           — every other call to the file was proven refused / not applied (or there is none): this write is still
+      what is on disk, and the plain on-disk pointer is true.
+
+    THE FILE IS ONE FILE UNDER EVERY SPELLING: calls are grouped by the shared path-identity owner
+    (`focustrim._path_identity`, a component-wise suffix fold — no filesystem access), not by the raw string, so a relative and
+    an absolute spelling of the same file are the same file. Where that owner REFUSES to fold (a relative spelling that is a
+    suffix of two different absolute paths) the file is unknown, not distinct: that call holds, and so does every write to a
+    file it could have touched (`identity.candidates`) that nothing later proved replaced. A call whose path cannot be read is
+    never grouped with another such call: it holds.
+
+    ORDER IS ONLY WHAT THE PAIRED RESULTS PROVE, IN BOTH DIRECTIONS: "after" means answered before the other call was dispatched
+    (`denial.paired_results` positions); an earlier-issued call still unanswered when this write was dispatched may complete after
+    it, so it can neither be called replaced by this write nor leave this write called current. No execution order is invented.
+
+    Outcomes are `_write_outcomes` (the shared, strictly-paired landed/unlanded accessors): True landed, False proven
+    unchanged, missing unproven. A later REFUSED write used to advance the path index just like a landed one, so a refused
+    attempt labelled the earlier real file "replaced" and deleted its payload."""
+    from . import focustrim
+    answered_at = focustrim._terminal_positions(msgs)          # TERMINAL results only: an arrived-but-unproven reply orders nothing
+    calls: list = []                                   # (message index, call id, raw path, whole-file?)
     for i, m in enumerate(msgs):
         if not isinstance(m, dict):
             continue
         for tc in (m.get("tool_calls") or []):
-            # EVERY write call, partial edits included. This index answers "is this the NEWEST call
-            # to this path", which is the question the stubber asks — an older `edit_file` is just as
-            # historical as an older `write_file` and its payload is folded for the same reason
-            # (see the module note on `old_string`). That is a different question from "does this
-            # call supersede a whole-file write", which only `toolargs.write_target`'s second value
-            # may answer; `focustrim` asks that one, because there it decides a DELETION.
             if not _is_write_call(tc):
                 continue
-            fn = tc.get("function") or {}
             try:
-                args = json.loads(fn.get("arguments") or "")
+                args = json.loads((tc.get("function") or {}).get("arguments") or "")
             except ValueError:
                 continue
             if isinstance(args, dict):
-                out[str(args.get("path") or args.get("file_path") or "?")] = i
-    return out
+                calls.append((i, tc.get("id"), str(args.get("path") or args.get("file_path") or ""), toolargs.write_target(tc)[1]))
+    identity = focustrim._path_identity([p for _i, _c, p, _w in calls if p])
+    by_file: dict = {}
+    for i, cid, path, whole in calls:
+        by_file.setdefault(identity(path) if path else None, []).append((i, cid, whole))
+    # AN AMBIGUOUS RELATIVE SPELLING IS AN UNKNOWN FILE, NOT A DIFFERENT ONE: it could name any of the absolute files it is a suffix
+    # of (the harness's cwd decides). It is never placed in a file's history, and no write it could have touched is claimed
+    # current — unless that spelling's own call was proven not to have changed anything.
+    rivals = [(i, cid, set(identity.candidates(p))) for i, cid, p, _w in calls if p and identity.candidates(p)]
+    fates: dict = {}
+    for key, group in by_file.items():
+        for i, cid, _whole in group:
+            if outcomes.get(cid) is not True:
+                continue                               # only a landed write has a version to describe
+            if key is None or identity.candidates(next(p for _i, c, p, _w in calls if c == cid)):
+                fates[cid] = "hold"                    # no readable path / an unresolved alias: cannot be placed in any file's history
+                continue
+            # A LATER call only counts as coming after this one if this write was ANSWERED before that call was dispatched: until then
+            # it may still be executing, and dispatch order is not execution order. An overlapping later call is unordered.
+            done = answered_at.get(cid)
+            later = [(outcomes.get(c), w) for j, c, w in group if j > i and done is not None and done < j]
+            overlapping = [outcomes.get(c) for j, c, _w in group if j > i and not (done is not None and done < j)]
+            same_turn = [outcomes.get(c) for j, c, _w in group if j == i and c != cid]
+            # THE SAME ORDERING FACT, THE OTHER DIRECTION. An EARLIER-issued call to this file whose result has not arrived by the time
+            # THIS write was dispatched (unanswered, or answered only afterwards) may still complete AFTER it: dispatch order is not
+            # execution order, so this write's bytes cannot be called "what is on disk" — the earlier call may hold that title. Only an
+            # earlier call proven to have changed nothing, or ANSWERED before this one was dispatched, is safely ordered before it.
+            def unsettled(at):
+                return at is None or at >= i
+            earlier_unsettled = [outcomes.get(c) for j, c, _w in group if j < i and c != cid and unsettled(answered_at.get(c))]
+            if any(o is True and w for o, w in later):
+                fates[cid] = "superseded"
+            elif any(o is True for o, _w in later):
+                fates[cid] = "edited"
+            elif (any(o is None for o, _w in later) or any(o is not False for o in overlapping)
+                  or any(o is not False for o in same_turn) or any(o is not False for o in earlier_unsettled)
+                  or any((j >= i or unsettled(answered_at.get(c))) and c != cid and key in cand and outcomes.get(c) is not False
+                         for j, c, cand in rivals)):
+                fates[cid] = "hold"
+    return fates
 
 
-def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | None = None) -> dict:
+def _stub_write_args(m: dict, landed=None, idx: int = -1, fates: dict | None = None) -> dict:
     """A COPY of message ``m`` with big write-tool argument bodies replaced by an elision stub.
 
     ``landed`` maps tool_call_id -> bool (the paired tool result confirmed the write). The on-disk
@@ -811,10 +860,15 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
         outcome = (landed or {}).get(tc.get("id"))
         if outcome is None:
             new_calls.append(tc); continue      # no paired result → no claim in either direction
+        fate = (fates or {}).get(tc.get("id"))
         if not outcome:
             stub_key = "write_stub_refused"
-        elif last_by_path is not None and last_by_path.get(path, idx) != idx:
-            stub_key = "write_stub_superseded"   # it landed, then a later write replaced it
+        elif fate == "hold":
+            new_calls.append(tc); continue       # a later attempt is UNPROVEN: no claim about these bytes either way, and they stay
+        elif fate == "superseded":
+            stub_key = "write_stub_superseded"   # it landed, then a later whole-file write (proven) replaced it
+        elif fate == "edited":
+            stub_key = "write_stub_edited"       # it landed, then a later partial edit (proven) changed part of it
         else:
             stub_key = "write_stub"
         notes, touched = [], False
@@ -880,7 +934,13 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
 
 
 def _write_outcomes(msgs: list[dict]) -> dict:
-    """tool_call_id -> did the paired tool result confirm the write reached disk."""
+    """tool_call_id -> True (the write's own program PROVED it landed) or False (cria PROVED it did not change anything:
+    its refusal branch ran, or its edit reported "not applied"). Every other id is ABSENT — unknown, cut, uncertain,
+    ambiguous (a reused id, a second result, an orphan), unframed or merely quoted wording — and an absent id makes NO claim in
+    either direction (`_stub_write_args` keeps its text). Both answers come from the shared, strictly-paired accessors
+    (`denial.landed_call_ids` / `denial.unlanded_call_ids`); no result text is read here."""
+    landed_ids = denial.landed_call_ids(msgs)
+    unlanded_ids = denial.unlanded_call_ids(msgs)
     landed: dict = {}
     for m in msgs:
         if not isinstance(m, dict):
@@ -889,7 +949,10 @@ def _write_outcomes(msgs: list[dict]) -> dict:
             tid = m.get("tool_call_id") or m.get("call_id")
             c = m.get("content") if m.get("content") is not None else m.get("output")
             if tid and isinstance(c, str):
-                landed[tid] = write_landed(c)
+                if tid in landed_ids:
+                    landed[tid] = True
+                elif tid in unlanded_ids:
+                    landed[tid] = False
     return landed
 
 
@@ -914,9 +977,9 @@ def stub_old_write_args(msgs: list[dict]) -> list[dict]:
     landed = _write_outcomes(msgs)
     last_write = max((i for i, m in enumerate(msgs)
                       if any(_is_write_call(tc) for tc in (m.get("tool_calls") or []))), default=None)
-    last_by_path = _last_write_index_by_path(msgs)
+    fates = _later_write_fates(msgs, landed)
     return [m if (i == last_write or not m.get("tool_calls"))
-            else _stub_write_args(m, landed, i, last_by_path)
+            else _stub_write_args(m, landed, i, fates)
             for i, m in enumerate(msgs)]
 
 
@@ -978,7 +1041,7 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
     (a forward plan, a narrowed scope), and the next window then had only a workspace listing. The
     briefing writer is the part that fabricates progress; this is the part cria owns. Each event is
     cria's own template over structured fields — tool name, target path, the command the coder
-    issued, and what the PAIRED RESULT establishes (``write_landed`` for a confirmed write; cria's
+    issued, and what the PAIRED RESULT establishes (``denial.landed`` for a confirmed write; cria's
     own denial/edit-refusal marks for a call that did not run) — never a sentence lifted from a
     tool's output, so it carries no instruction and claims no more than a tool confirmed. A tool
     result that is neither is "no confirmation recorded": absence of a confirmation is not a refusal.
@@ -1001,6 +1064,8 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
         return path[len(root) + 1:] if root and path.startswith(root.rstrip("/") + "/") else path
 
     results = _results_by_call(msgs)
+    unlanded = denial.unlanded_call_ids(msgs)
+    landed_ids = denial.landed_call_ids(msgs)
     labels = prompts.load_map("compaction_work_ledger")
     for m in msgs:
         if not isinstance(m, dict):
@@ -1008,12 +1073,12 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
         for tc in (m.get("tool_calls") or []):
             fn = (tc or {}).get("function") or {}
             result = results.get(tc.get("id"))
-            refused = result is not None and (denial.is_denied(result) or _EDIT_MARK in result)
+            refused = result is not None and tc.get("id") in unlanded
             path = toolargs.write_path(tc)
             if path:
                 if result is None:
                     state = "no result recorded"
-                elif write_landed(result):
+                elif tc.get("id") in landed_ids:
                     state = "confirmed written"
                 elif refused:
                     state = "refused, not written"

@@ -10,6 +10,7 @@ import json
 import os
 import unittest
 
+from cria import bodykeys, denial
 from cria import selfcompact, server
 from cria.config import Role
 from tests.handoff_runtime import attach_session
@@ -18,8 +19,19 @@ FIX = os.path.join(os.path.dirname(__file__), "fixtures", "c13a_a10_first_compac
 IMPORTER = "src/main/java/pipeline/Importer.java"
 
 
+# The two results in the captured history that cria's own refusal branch produced. The capture predates
+# result provenance, so the outcome `represent_inbound` would now attach is stated here by call id.
+_REFUSED_IN_CAPTURE = {"OMsuarLBNwOiuY56to1o4hltcBz7eVSS", "9gtsTT0sbXu6kB9CFuR7ZPVR8rc9We1z"}
+
+
 def _history():
-    return json.load(open(FIX))
+    def hinted(m):                 # the capture predates the typed records: attach what `represent_inbound` would
+        if m.get("tool_call_id") in _REFUSED_IN_CAPTURE:
+            return {**m, bodykeys.RESULT_OUTCOME: denial.REFUSED}
+        if m.get("role") == "tool" and str(m.get("content") or "").startswith("Wrote "):
+            return {**m, bodykeys.RESULT_OUTCOME: denial.LANDED}     # a confirmation cria composes only from a landed record
+        return m
+    return [hinted(m) for m in json.load(open(FIX))]
 
 
 class _Srv:
@@ -90,8 +102,10 @@ class RejectedHandoffTests(unittest.TestCase):
         lowered = comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
         self.assertNotIn(cmd, lowered.replace("\\", ""))             # the refusal replaced it on the wire
         from cria.denial import DENIED_MARKER
+        from cria.writeproxy import _command_of, receipt_of
+        rcpt = receipt_of(_command_of(lowered))          # what the lowered refusal branch prints after the marker
         hist = [{"role": "assistant", "tool_calls": comp["choices"][0]["message"]["tool_calls"]},
-                {"role": "tool", "tool_call_id": "r1", "content": f"{DENIED_MARKER} refused"}]
+                {"role": "tool", "tool_call_id": "r1", "content": f"{denial.frame(denial.REFUSED, rcpt)}{DENIED_MARKER} refused"}]
         restored = represent_inbound(hist)
         self.assertIn(cmd, json.dumps(restored))                      # history shows the original again
         ledger = selfcompact.work_ledger(restored)
@@ -124,7 +138,7 @@ class RejectedHandoffTests(unittest.TestCase):
                  {"role": "assistant", "content": "", "tool_calls": [
                      {"id": "c1", "type": "function", "function": {
                          "name": "write_file", "arguments": json.dumps({"path": "REVIEW.md", "content": "x"})}}]},
-                 {"role": "tool", "tool_call_id": "c1", "content": "Wrote REVIEW.md"},
+                 {"role": "tool", "tool_call_id": "c1", "content": "Wrote REVIEW.md", bodykeys.RESULT_OUTCOME: denial.LANDED},
                  {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize"}]
         for shape in (later, reframe_compaction(later, origin=sess.handoff_origin)[0]):
             carried = server._carried_ledger(shape, origin=sess.handoff_origin)
@@ -172,8 +186,9 @@ class RejectedHandoffTests(unittest.TestCase):
         def w(i, path):
             return {"role": "assistant", "tool_calls": [{"id": i, "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": path, "content": "x"})}}]}
-        msgs = [w("a", "/ws/pom.xml"), {"role": "tool", "tool_call_id": "a", "content": "Wrote /ws/pom.xml"},
-                w("b", "pom.xml"), {"role": "tool", "tool_call_id": "b", "content": "⟦ctx:denied⟧ nope"},
+        msgs = [w("a", "/ws/pom.xml"), {"role": "tool", "tool_call_id": "a", "content": "Wrote /ws/pom.xml", bodykeys.RESULT_OUTCOME: denial.LANDED},
+                w("b", "pom.xml"), {"role": "tool", "tool_call_id": "b", "content": "⟦ctx:denied⟧ nope",
+                 bodykeys.RESULT_OUTCOME: denial.REFUSED},
                 w("c", "pom.xml"), {"role": "tool", "tool_call_id": "c", "content": "permission denied"}]
         events = [e for e, _ in selfcompact.parse_ledger(selfcompact.work_ledger(msgs, root="/ws"))]
         self.assertEqual(events, ["write_file pom.xml: confirmed written",

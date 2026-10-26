@@ -7,6 +7,7 @@ import ast
 from dataclasses import FrozenInstanceError
 import hashlib
 import json
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -67,8 +68,8 @@ assert assistbinding.current() is assistbinding.UNBOUND
 assert filecommands.CRIA_HOME is privatepaths.CRIA_HOME
 assert callformats._wp_read_command is filecommands._read_command
 assert filecommands._refusal_command is toolwire._refusal_command
-assert toolwire.write_landed('Wrote a.py')
-assert toolwire.write_landed('raw ⟦ctx:wrote⟧ anywhere')
+assert not hasattr(toolwire, "write_landed")          # the wording reader is gone: only the typed fact lands a write
+assert toolwire.original_call(toolwire._sentinel("write_file", "{}") + "\nx") == {"name": "write_file", "arguments": "{}"}
 assert not ({"cria." + n for n in blocked} & sys.modules.keys())
 '''
     result = subprocess.run([sys.executable, "-B", "-c", script, first],
@@ -202,8 +203,14 @@ def test_original_call_preserves_argument_bytes_and_shell_identity():
     assert toolwire.original_call(sentinel + '\nprintf anything') == {"name": "write_file", "arguments": arguments}
     assert toolwire.original_call('# ⟦ctx:tool⟧not-base64') is None
     assert toolwire.is_crias_own(sentinel)
-    assert toolwire.is_crias_own('# ' + toolwire.GATE_SENTINEL)
+    import base64
+    gate = '# ' + toolwire.GATE_SENTINEL + base64.b64encode(json.dumps(["rake test"]).encode()).decode()
+    assert toolwire.is_crias_own(gate + '\nrake test')
+    assert not toolwire.is_crias_own('# ' + toolwire.GATE_SENTINEL)             # a bare marker declares nothing
     assert not toolwire.is_crias_own('printf user')
+    # THE DECLARATION IS THE LEADING LINE: a native command that merely quotes a valid header owns nothing.
+    assert not toolwire.is_crias_own(f"s={shlex.quote(sentinel)}; echo hi") and toolwire.original_call(f"s={shlex.quote(sentinel)}") is None
+    assert not toolwire.is_crias_own("echo " + gate) and not toolwire.is_crias_own("\n" + sentinel)
     shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
     result = toolwire._shell_call('original-id', shell, 'printf "é"')
     assert result["id"] == 'original-id'
@@ -387,46 +394,26 @@ def test_completion_finish_facts_and_content_readers():
     assert callsyntax.turn_text({"content": "", "reasoning_content": " thought "}) == 'thought'
 
 
-@pytest.mark.parametrize(('text', 'expected'), [
-    ('Wrote a.py', True),
-    (' \t\nWrote a.py\n', True),
-    ('Wrote', True),
-    ('Wrotex', True),  # Existing rendered-head prefix semantics, not a word boundary.
-    ('prefix Wrote a.py', False),
-    ('wrote a.py', False),
-    ('raw ⟦ctx:wrote⟧ anywhere', True),
-    ('⟦ctx:wrote⟧', True),
-    ('⟦ctx:wrote', False),
-    ('', False),
-    (' \t\n', False),
-])
-def test_write_landed_reads_literal_confirmation_facts(text, expected):
-    assert toolwire.write_landed(text) is expected
+@pytest.mark.parametrize('text', ['Wrote a.py', '⟦ctx:wrote⟧', 'raw ⟦ctx:wrote⟧ anywhere', 'Wrote', ''])
+def test_wording_never_lands_a_write_only_the_typed_fact_does(text):
+    """The confirmation wording (rendered or raw) is text any file, command or page can quote. A write landed ONLY when its own
+    program said so in its typed first record, and `represent_inbound` stamped that proven outcome on the message."""
+    from cria import bodykeys, denial
+    plain = {'role': 'tool', 'tool_call_id': 'c', 'content': text}
+    assert not denial.landed(plain)
+    assert denial.landed({**plain, bodykeys.RESULT_OUTCOME: denial.LANDED})
+    assert not denial.landed({**plain, bodykeys.RESULT_OUTCOME: denial.REFUSED})
+    call = {'id': 'c', 'type': 'function', 'function': {'name': 'write_file', 'arguments': '{}'}}
+    assert denial.landed_call_ids([{'role': 'assistant', 'tool_calls': [call]}, plain]) == set()
+    assert denial.landed_call_ids([{'role': 'assistant', 'tool_calls': [call]},
+                                   {**plain, bodykeys.RESULT_OUTCOME: denial.LANDED}]) == {'c'}
 
 
-def test_write_landed_empty_rendered_head_does_not_match_every_string(monkeypatch):
-    render = []
-    def empty_head(name, **fields):
-        render.append((name, fields))
-        return ' \n\t '
-    monkeypatch.setattr(toolwire.prompts, 'render', empty_head)
-    assert not toolwire.write_landed('Wrote a.py')
-    assert not toolwire.write_landed('anything')
-    assert toolwire.write_landed('embedded ⟦ctx:wrote⟧')
-    assert render == [('write_confirm', {'path': ''})] * 3
-
-
-def test_write_landed_keeps_rendering_order_and_failure_behavior(monkeypatch):
-    def unavailable(*args, **kwargs):
-        raise ValueError('template unavailable')
-    monkeypatch.setattr(toolwire.prompts, 'render', unavailable)
-    with pytest.raises(ValueError, match='template unavailable'):
-        toolwire.write_landed('⟦ctx:wrote⟧')
-
-
-def test_write_landed_non_string_input_still_raises():
-    with pytest.raises(AttributeError, match='lstrip'):
-        toolwire.write_landed(None)
+def test_a_landed_fact_is_dropped_for_an_ambiguous_pairing():
+    from cria import bodykeys, denial
+    call = {'id': 'c', 'type': 'function', 'function': {'name': 'write_file', 'arguments': '{}'}}
+    landed = {'role': 'tool', 'tool_call_id': 'c', 'content': 'x', bodykeys.RESULT_OUTCOME: denial.LANDED}
+    assert denial.landed_call_ids([{'role': 'assistant', 'tool_calls': [call]}, landed, landed]) == set()
 
 
 def test_new_spill_apis_require_explicit_inputs():

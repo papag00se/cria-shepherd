@@ -39,7 +39,7 @@ def _write(path, tid):
 class PathsWrittenAfterTests(unittest.TestCase):
     def test_a_landed_edit_after_the_gate_marks_the_file(self):
         msgs = [_gate_result("", ""), _write("test_x.py", "w1"),
-                {"role": "tool", "tool_call_id": "w1", "content": "Wrote test_x.py"}]
+                {"role": "tool", "tool_call_id": "w1", "content": "Wrote test_x.py", "cria_result_outcome": "landed"}]   # the edit program's typed fact
         self.assertEqual(probegate._paths_written_after(msgs, 0), frozenset({"test_x.py"}))
 
     def test_a_refused_edit_does_not(self):

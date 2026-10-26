@@ -117,7 +117,7 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
         l = loop.Loop(_ctx(rec, None))
         sess = loop.PlanSession(plan=_plan(2))
         sess.fetched_pages = {"https://api.handle.me/openapi.json":
-                              (200, "/handles/{handle}, /holders/{address}")}
+                              (200, ('/handles/{handle}', '/holders/{address}'), (), (), '')}
         item = sess.plan.items[0]
         l._work_item(sess, "k", {"messages": [{"role": "user", "content": "resolve a handle"}],
                                  "tools": [_SHELL]}, _Rlog(), item, 1)
@@ -129,7 +129,7 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
         l = _single_loop(rec)
         sess = _synth()
         sess.fetched_pages = {"https://api.handle.me/openapi.json":
-                              (200, "/handles/{handle}, /holders/{address}")}
+                              (200, ('/handles/{handle}', '/holders/{address}'), (), (), '')}
         body = {"messages": [{"role": "user", "content": "resolve a handle"}],
                 "tools": [_SHELL], "stream": True}
         l._drive_single_item(sess, body, "sid:x", _Rlog())
@@ -144,7 +144,7 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
         rec = _Recorder([_toolcall()])
         l = loop.Loop(_ctx(rec, None))
         sess = loop.PlanSession(plan=_plan(2))
-        sess.fetched_pages = {"u": (200, "/h")}
+        sess.fetched_pages = {"u": (200, ('/h',), (), (), '')}
         l._work_item(sess, "k", {"messages": [{"role": "user", "content": "resolve"}],
                                  "tools": [_SHELL]}, _Rlog(), sess.plan.items[0], 1)
         msgs = rec.bodies[-1]["messages"]
@@ -159,7 +159,7 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
         rec2 = _Recorder([_toolcall()])
         l2 = _single_loop(rec2)
         sess2 = _synth()
-        sess2.fetched_pages = {"u": (200, "/h")}
+        sess2.fetched_pages = {"u": (200, ('/h',), (), (), '')}
         body2 = {"messages": [{"role": "user", "content": "resolve"}],
                 "tools": [_SHELL], "stream": True}
         l2._drive_single_item(sess2, body2, "sid:x", _Rlog())

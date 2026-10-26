@@ -10,7 +10,9 @@ import json
 from pathlib import Path
 import unittest
 
+from tests.gatefixture import bounds_field_for
 from cria import loop, participation, probediscovery, probegate, wsview
+from tests.gatefixture import gate_page, completed
 from tests.wsfixture import survey
 
 
@@ -74,6 +76,7 @@ def _transport_page(transport_id, result):
             f"/tmp/.cria-gate-{transport_id}.wire".encode()).decode(),
         "offset\t0", f"total\t{len(data)}",
         "sha256\t" + hashlib.sha256(data).hexdigest(),
+        *bounds_field_for(result),                      # the worker's declared extents (checker | report | survey)
         "data\t" + base64.b64encode(data).decode(),
         probegate._transport_marker(transport_id, end=True),
     ])
@@ -253,7 +256,7 @@ run();
             f"F\t2\t{len(source)}\t{path}",
             blob="@" + base64.b64encode(path.encode()).decode() + "\n"
                  + base64.b64encode(source.encode()).decode(), root=root)
-        outcome = probegate.interpret_gate(plan, _gate_result(plan, returned_survey))
+        outcome = probegate.interpret_gate(plan, gate_page(plan, _gate_result(plan, returned_survey)))
         self.assertEqual(outcome.participation.executed_test_sources()[0].body, source)
 
     def test_e2e_gate_rejects_cached_test_bytes_absent_from_its_survey(self):
@@ -266,8 +269,8 @@ run();
         self.addCleanup(wsview.unbind, token)
         plan = probegate.plan_gate(root, "capture")  # declared runner requests fresh source bytes
         candidate = next(c for c in plan.candidates if c.kind is probediscovery.ProbeKind.Test)
-        outcome = probegate.interpret_gate(plan, _gate_result(plan, survey(
-            f"F\t2\t{len('new CLI source')}\t{path}", root=root)))
+        outcome = probegate.interpret_gate(plan, gate_page(plan, _gate_result(plan, survey(
+            f"F\t2\t{len('new CLI source')}\t{path}", root=root))))
         self.assertEqual(outcome.participation.executed_test_sources()[0].body, None)
         chat = _Chat([_satisfied(), "E2E_REQUIRED"])
 

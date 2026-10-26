@@ -1,0 +1,19 @@
+# The refusal for a read of a path the harness declared readable, when the command around it could not be shown to only read
+# (parsed by prompts.load_map). `header` carries the part the proof could not verify, in the coder's own source text; the
+# explanation is chosen by the proof's own reason. A shell-variable assignment is named only for an UNQUOTED `name=` in the
+# source. Each explanation says what the check did, not what the command does: it has not run anything, and nothing here
+# claims that removing the named part would make the rest provable.
+header = Not run: reading {{PATH}} is permitted here, but the read-only check could not verify this part of the command: {{SEGMENT}}.\n{{EXPLANATION}}
+assignment = A shell-variable assignment can change the environment used by later commands. This check cannot establish its effect on the reader. The listed archive inspectors accept literal paths; inspecting that path does not require assigning it to a shell variable.
+not_a_reader = {{WORD}} is not one of the read-only inspectors this check accepts (for example find, ls, cat, grep, head, tail, wc, stat, unzip -l, jar tf, javap), so this command could not be shown to only read.
+reader_option = {{WORD}} is an inspector this check accepts, but this use of it is outside the forms the check accepts as read-only. The check has not established what this use does, so the command could not be shown to only read.
+redirect = A redirect is accepted only to /dev/null, to a file descriptor or to a file inside the project; this one is none of those forms.
+redirect_strict = This check requires that nothing is written anywhere. A redirect is accepted only to /dev/null or to a file descriptor, so a redirect to a file, even inside the project, is not accepted.
+cd_target = A cd changes where later relative paths resolve; this check accepts a single literal directory inside the project.
+tee_target = tee writes a copy of its input to the files it names; this check accepts only literal files inside the project.
+tee_writes = tee writes files, and this check requires that nothing is written.
+operator = The characters {{WORD}} are read here as an operator this check does not accept. The check does not tell operator syntax from quoted text, so it could not show that this command only reads.
+substitution = This check does not analyze text containing a command-substitution opener or a backtick. It does not decide whether that text is active shell syntax or quoted data, so it could not show that this command only reads.
+heredoc = This check does not analyze text containing the here-document marker. It does not decide whether that text is a here-document, a here-string or quoted data, so it could not show that this command only reads.
+unparsed = This part could not be split into words by the reader this check uses (for example an unbalanced quote), so it could not show that this command only reads.
+empty = There is no command text to check.

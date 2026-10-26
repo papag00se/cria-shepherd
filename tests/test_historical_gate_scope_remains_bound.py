@@ -7,16 +7,18 @@ import subprocess
 
 import pytest
 from cria import assistruntime, loop, probegate, proberun, prompts, wsview
+from tests.gatefixture import gate_page, completed
 from test_gate_cleanup_finishes_before_coder_resumes import harness_env, run_gate
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
+from gatefixture import bounds_field_for
 
 
 def page(plan, raw):
     data = raw.encode()
     return '\n'.join([probegate._transport_marker(plan.transport_id),
         'path\t' + base64.b64encode(plan.transport_path.encode()).decode(), 'offset\t0',
-        f'total\t{len(data)}', 'sha256\t' + hashlib.sha256(data).hexdigest(),
+        f'total\t{len(data)}', 'sha256\t' + hashlib.sha256(data).hexdigest(), *bounds_field_for(raw),
         'data\t' + base64.b64encode(data).decode(), probegate._transport_marker(plan.transport_id, end=True)])
 
 
@@ -60,7 +62,7 @@ def test_real_bootstrap_without_candidates_retains_its_request_scope(tmp_path, m
     plan = probegate.plan_gate(str(tmp_path) if workspace_declared else '')
     result = subprocess.run(['sh', '-c', plan.script], cwd=tmp_path, env=harness_env(tmp_path),
                             capture_output=True, text=True, check=True)
-    probegate.interpret_gate(plan, result.stdout)
+    probegate.interpret_gate(plan, gate_page(plan, result.stdout))
     assert plan.transport_complete and not plan.candidates
     rendered = probegate.clean_gate_results(history(plan, plan.transport_data.decode()))
     text = '\n'.join(m.get('content') or '' for m in rendered)
@@ -89,7 +91,7 @@ def test_retry_cannot_overwrite_the_original_scope_with_another_workspace(tmp_pa
     other = probegate.GatePlan(workspace='/foreign/workspace', transport_id=plan.transport_id,
                               transport_required=True, candidates=plan.candidates)
     probegate.ingest_transport(other, messages[-1]['content'])
-    assert probegate.interpret_gate(other, messages[-1]['content']).scope_unknown
+    assert probegate.interpret_gate(other, gate_page(other, messages[-1]['content'])).scope_unknown
     text = '\n'.join(m.get('content') or '' for m in probegate.clean_gate_results(messages))
     assert prompts.load('checks_cleanup_unknown') not in text and 'aux/compiled' in text
 

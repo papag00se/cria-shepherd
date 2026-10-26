@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from cria import assistruntime, completedwork as cw, loop, planner, probegate, probediscovery, livingplan, stepreview
+from tests.gatefixture import gate_page
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 from test_completed_work_briefing import Log, completion
@@ -125,8 +126,8 @@ def test_public_alternate_release_runs_selected_generation_and_embedding(exit):
         body['messages'] += [
             {'role': 'assistant', 'tool_calls': [{'id': 'release-check', 'type': 'function',
                 'function': {'name': 'exec_command', 'arguments': '{"cmd":"pytest -q"}'}}]},
-            {'role': 'tool', 'tool_call_id': 'release-check', 'content':
-                f'{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n2 passed\nEXIT:0\n'}]
+            {'role': 'tool', 'tool_call_id': 'release-check', 'content': gate_page(session.gate_plan,
+                f'{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n2 passed\nEXIT:0\n')}]
     result = driver.drive(body, 'sid:completed-public', None, Log())
     assert [kind for kind, source in seen] == ['generate', 'embed']
     assert len(calls) == 1
@@ -167,8 +168,8 @@ def test_public_nonrelease_never_asks_a_briefing_to_authorize_completion(blocker
         body['messages'] += [
             {'role': 'assistant', 'tool_calls': [{'id': 'release-check', 'type': 'function',
                 'function': {'name': 'exec_command', 'arguments': '{"cmd":"pytest -q"}'}}]},
-            {'role': 'tool', 'tool_call_id': 'release-check', 'content':
-                f'{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\ncli.py:4: AssertionError\nEXIT:1\n'}]
+            {'role': 'tool', 'tool_call_id': 'release-check', 'content': gate_page(session.gate_plan,
+                f'{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\ncli.py:4: AssertionError\nEXIT:1\n')}]
     result = driver.drive(body, 'sid:completed-public', None, Log())
     assert result['choices'][0]['message']['tool_calls'][0]['id'] == 'keep-working'
     assert not calls and cw.BRIEFING_OPEN not in json.dumps(result, ensure_ascii=False)

@@ -192,7 +192,7 @@ def test_shell_answers_and_missing_answers_do_not_establish_execution(output):
 def test_authored_refusal_pairing_siblings_and_counts_remain_separate():
     msgs = [{'role': 'assistant', 'tool_calls': [_call('a', 'ls'), _call('b', 'ls'), _call('c', 'ls')]},
             {'role': 'tool', 'tool_call_id': 'b', 'content': 'a.txt'},
-            {'role': 'tool', 'tool_call_id': 'a', 'content': denial.mark('nope')},
+            {'role': 'tool', 'tool_call_id': 'a', 'content': denial.mark('nope'), bodykeys.RESULT_OUTCOME: denial.REFUSED},
             {'role': 'tool', 'tool_call_id': 'unrelated', 'content': 'ok'}]
     ledger = selfcompact.work_ledger(msgs)
     assert selfcompact.parse_ledger(ledger) == [('refused, did not run: ls', 1),
@@ -302,7 +302,7 @@ def test_older_handoff_events_are_not_discarded_when_header_wording_changes():
             {'role': 'tool', 'tool_call_id': 'legacy', 'content': 'legacy result'},
             {'role': 'assistant', 'tool_calls': [{'id': 'old-write', 'type': 'function',
              'function': {'name': 'write_file', 'arguments': json.dumps({'path': 'old.py', 'content': 'old'})}}]},
-            {'role': 'tool', 'tool_call_id': 'old-write', 'content': 'Wrote old.py'}]
+            {'role': 'tool', 'tool_call_id': 'old-write', 'content': 'Wrote old.py', 'cria_result_outcome': 'landed'}]
     runtime, key, sess = _producer_session(hist)
     load_map = selfcompact.prompts.load_map
     historical_labels = dict(load_map('compaction_work_ledger'))
@@ -332,7 +332,7 @@ def test_genuine_signature_carry_order_folding_and_wire(scoped):
     hist = [{'role': 'assistant', 'tool_calls': [_call('a', 'ls'), _call('b', 'ls'),
                                               _call('c', 'ls'), _call('d', 'ls')]},
             {'role': 'tool', 'tool_call_id': 'b', 'content': 'a.txt'},
-            {'role': 'tool', 'tool_call_id': 'a', 'content': denial.mark('nope')}]
+            {'role': 'tool', 'tool_call_id': 'a', 'content': denial.mark('nope'), bodykeys.RESULT_OUTCOME: denial.REFUSED}]
     if scoped:
         ledger = selfcompact.work_ledger(hist)
     else:
@@ -365,7 +365,8 @@ def test_genuine_signature_carry_order_folding_and_wire(scoped):
 
 def test_existing_edit_refusal_remains_did_not_run():
     msgs = [{'role': 'assistant', 'tool_calls': [_call('c', 'ls')]},
-            {'role': 'tool', 'tool_call_id': 'c', 'content': selfcompact._EDIT_MARK + 'not applied'}]
+            {'role': 'tool', 'tool_call_id': 'c', 'content': selfcompact._EDIT_MARK + 'not applied',
+             bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}]
     assert selfcompact.parse_ledger(selfcompact.work_ledger(msgs)) == [('refused, did not run: ls', 1)]
 
 

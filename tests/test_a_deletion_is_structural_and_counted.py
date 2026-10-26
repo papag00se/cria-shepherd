@@ -8,10 +8,11 @@ from a check that printed nothing."""
 import unittest
 
 from cria import probegate
+from tests.gatefixture import gate_page, completed
 
 
 def _raw(body):
-    return (probegate.SECTION_PREFIX + "0" + probegate.SECTION_SUFFIX + "\n"
+    return (probegate.SECTION_PREFIX + "probe-0" + probegate.SECTION_SUFFIX + "\n"      # the id cria's own script prints
             + body + "\nEXIT:1\n")
 
 
@@ -21,27 +22,32 @@ class OnlyTheCheckersOwnLinesTests(unittest.TestCase):
         out = probegate.clean_gate_output(_raw(
             "t.py:9: in test_totals\n"
             "    unused_variable = compute()  # unused variable\n"
-            "E   AssertionError: 3 != 4"))
+            "E   AssertionError: 3 != 4"), completed(probegate.GatePlan(''), _raw(
+            "t.py:9: in test_totals\n"
+            "    unused_variable = compute()  # unused variable\n"
+            "E   AssertionError: 3 != 4")))
         self.assertIn("unused_variable = compute()", out)
 
     def test_a_real_advisory_diagnostic_is_still_filtered(self):
-        out = probegate.clean_gate_output(_raw("x.py:1:1 'os' imported but unused"))
+        out = probegate.clean_gate_output(_raw("x.py:1:1 'os' imported but unused"), completed(probegate.GatePlan(''), _raw("x.py:1:1 'os' imported but unused")))
         self.assertNotIn("imported but unused", out)
         self.assertIn("1 advisory line(s)", out)
         self.assertNotIn("report these error-class problems", out)
 
     def test_the_drop_is_counted(self):
         out = probegate.clean_gate_output(_raw(
-            "x.py:1:1 'os' imported but unused\nx.py:2:1 'sys' imported but unused"))
+            "x.py:1:1 'os' imported but unused\nx.py:2:1 'sys' imported but unused"), completed(probegate.GatePlan(''), _raw(
+            "x.py:1:1 'os' imported but unused\nx.py:2:1 'sys' imported but unused")))
         self.assertIn("2 advisory line(s)", out)
 
     def test_nothing_dropped_says_nothing(self):
-        out = probegate.clean_gate_output(_raw("x.py:5:4 undefined name 'foo'"))
+        out = probegate.clean_gate_output(_raw("x.py:5:4 undefined name 'foo'"), completed(probegate.GatePlan(''), _raw("x.py:5:4 undefined name 'foo'")))
         self.assertNotIn("advisory line(s)", out)
 
     def test_the_count_rides_alongside_a_red_gate_too(self):
         out = probegate.clean_gate_output(_raw(
-            "x.py:1:1 'os' imported but unused\nx.py:5:4 undefined name 'foo'"))
+            "x.py:1:1 'os' imported but unused\nx.py:5:4 undefined name 'foo'"), completed(probegate.GatePlan(''), _raw(
+            "x.py:1:1 'os' imported but unused\nx.py:5:4 undefined name 'foo'")))
         self.assertIn("undefined name 'foo'", out)
         self.assertIn("1 advisory line(s)", out)
 

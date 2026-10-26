@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+from collections.abc import Sequence
 from typing import NamedTuple
 
 from . import bodykeys, prompts, shellinput, toolpath
@@ -504,6 +505,73 @@ def _after_unresolved_expansion(command: str, start: int) -> bool:
     return False
 
 
+# Bash's metacharacters: a `#` that follows one of these (or opens the text) begins a COMMENT; a `#`
+# anywhere else in a word (`a#c`, `$#`, `${#x}`, `\\#`, `""#x`) is data. `\r` is not one.
+_COMMENT_LEAD = " \t\n;&|()<>"
+
+
+def _join_continuations(command: str, *, drop_comments: bool = False) -> tuple[str, Sequence[int]]:
+    """The command as the shell READS it: every backslash-newline outside single quotes removed (bash
+    drops it everywhere else, inside double quotes too) — EXCEPT inside a comment, where the newline
+    ends the comment whatever precedes it (`# note \\<newline>rm -rf /` is a comment and a command).
+    Returns the projection and, for each of its characters, the index it came from in ``command`` —
+    the original text is never altered and callers that report positions map back through the second
+    value.
+
+    One owner for this fact. `shlex` keeps the newline as a literal character of the word, so
+    `cd \\<newline>..` read as a directory named "\\n.." inside the workspace while bash ran `cd ..`;
+    `c\\<newline>d`, `>\\<newline>>` and `2\\<newline>>` split the same way. Quote and backslash
+    ownership is the one `_unquoted_chars` uses: a backslash outside single quotes escapes the NEXT
+    character, so `\\\\<newline>` is an escaped backslash and a real newline, not a continuation. A
+    comment opens only at the start of a word of the text AS JOINED (so `x\\<newline># y` is the word
+    `x# y`) — the opening rule `shellinput.layout` masks comments by, but with bash's own
+    metacharacters (`<` and `>` open a comment, `\\r` does not), checked against real bash in the tests.
+    ``drop_comments`` omits each comment's text and keeps the newline that ends it, for a caller whose own
+    tokenizer would otherwise swallow that newline together with the comment."""
+    if "\\" not in command and "#" not in command:
+        return command, range(len(command))      # nothing to join and no comment can open: the identity
+    out: list[str] = []
+    origin: list[int] = []
+    quote = ""
+    word_start = True
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'":
+            if command[i + 1:i + 2] == "\n":
+                i += 2
+                continue
+            out.append(c)
+            origin.append(i)
+            if i + 1 < n:
+                out.append(command[i + 1])
+                origin.append(i + 1)
+            word_start = False
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = ""
+            word_start = False
+        elif c in "\"'":
+            quote = c
+            word_start = False
+        elif c == "#" and word_start:
+            end = command.find("\n", i)
+            end = n if end < 0 else end
+            if not drop_comments:
+                out.extend(command[i:end])
+                origin.extend(range(i, end))
+            i = end
+            continue
+        else:
+            word_start = c in _COMMENT_LEAD
+        out.append(c)
+        origin.append(i)
+        i += 1
+    return "".join(out), origin
+
+
 def _unquoted_chars(command: str):
     """Lexical shell syntax positions, sharing quote/backslash ownership."""
     quote, escaped = "", False
@@ -524,19 +592,23 @@ def _unquoted_chars(command: str):
 
 
 def _segment_spans(command: str) -> list[tuple[int, int]]:
-    """(start, end) of each shell segment — text between UNQUOTED ``; & | ( )`` and newlines."""
+    """(start, end) of each shell segment — text between UNQUOTED ``; & | ( )`` and newlines — in the
+    coordinates of ``command``. Judged on the text the shell reads (continuations joined), so a
+    separator or redirect operator split by a backslash-newline is one token here as it is to bash."""
+    text, origin = _join_continuations(command)
+    at = lambda k: origin[k] if k < len(origin) else len(command)  # noqa: E731
     spans, start = [], 0
-    for i, c in _unquoted_chars(command):
+    for i, c in _unquoted_chars(text):
         if c in ";&|()\n":
             # Redirect operators are not command boundaries: keep >& / <&,
             # &> / &>> and >| intact for the shared redirection reader.
-            if (c == '&' and (command[i - 1:i] in ('>', '<')
-                              or command[i + 1:i + 2] == '>')):
+            if (c == '&' and (text[i - 1:i] in ('>', '<')
+                              or text[i + 1:i + 2] == '>')):
                 continue
-            if c == '|' and command[i - 1:i] == '>':
+            if c == '|' and text[i - 1:i] == '>':
                 continue
-            spans.append((start, i)); start = i + 1
-    spans.append((start, len(command)))
+            spans.append((at(start), at(i))); start = i + 1
+    spans.append((at(start), len(command)))
     return spans
 
 
@@ -582,7 +654,7 @@ def _segment_is_text_search(command: str, segments, pos: int) -> bool:
     return False
 
 
-_PREFIX_WORDS = {"sudo", "env", "command", "nohup", "time", "exec", "nice", "xargs"}
+_PREFIX_WORDS = {"sudo", "env", "command", "builtin", "nohup", "time", "exec", "nice", "xargs"}
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _DEST_LAST = {"cp", "ln", "install", "rsync"}
 _ALL_OPERANDS = {"mv", "rm", "rmdir", "touch", "mkdir", "tee", "unlink", "shred"}
@@ -602,7 +674,10 @@ class _InputRefusal:
 
 
 def _shell_tokens(command: str) -> list[tuple[str, int, int]] | None:
-    """The existing shlex words with their exact source spans, before quote removal."""
+    """The existing shlex words with their exact source spans, before quote removal. The spans index
+    ``_join_continuations(command)[0]`` (the text the shell reads), which equals ``command`` unless it
+    holds a backslash-newline; a caller comparing a span with source text compares against that."""
+    command = _join_continuations(command)[0]
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.commenters = ""
@@ -643,8 +718,15 @@ def _command_words(words: list[str]) -> list[str]:
 
 
 def _follow_cd(words: list[str], cur: str | None) -> str | None:
+    """Where a directory-changing command leaves the cwd, or None when that is not knowable here.
+
+    An operand beginning `-` is never a literal directory: it is an option (`cd -P` with no operand
+    goes HOME, as does `cd --`), or `cd -` (the inherited OLDPWD). `pushd +N` rotates the inherited
+    directory stack and `popd` returns to an inherited entry; the stack is state this module cannot
+    see. A directory really named `-x` is spelled `./-x`, which resolves normally."""
     tgt = words[1] if len(words) == 2 else None
-    if tgt is None or tgt == "-" or any(c in tgt for c in "$`~"):
+    if (tgt is None or words[0] == "popd" or tgt.startswith("-") or (words[0] == "pushd" and tgt.startswith("+"))
+            or any(c in tgt for c in _NON_LITERAL_PATH_CHARS)):
         return None
     if os.path.isabs(tgt):
         return os.path.normpath(tgt)
@@ -661,7 +743,7 @@ def _input_commands(shell: str, *, unwrap: bool = True):
     """
     commands = []
     for start, end in _segment_spans(shell):
-        source = shell[start:end]
+        source = _join_continuations(shell[start:end])[0]
         spans = _shell_tokens(source)
         if spans is None:
             return None
@@ -1386,44 +1468,80 @@ def _short_flags(args) -> str:
     return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
 
 
-def _segment_reads(words: list[str], workspace: str | None = None, no_writes: bool = False) -> bool:
+def _segment_failure(words: list[str], workspace: str | None = None, no_writes: bool = False):
+    """``None`` when this one segment is a proven reader, else ``(reason, index)``: why it is not and which
+    word of the segment carries the reason (0 = the command word). The ONE place those decisions are made;
+    ``_segment_reads`` is its boolean."""
     cmd, args = words[0], words[1:]
     if no_writes and cmd == "tee":
-        return False
+        return "tee_writes", 0
     if cmd == "cd":  # moves the REAL cwd, which relative redirect targets resolve against
-        return len(args) == 1 and _plain_project_path(args[0], workspace)
+        if len(args) != 1:
+            return "cd_target", 0
+        return None if _plain_project_path(args[0], workspace) else ("cd_target", 1)
     if cmd == "tee":  # a copy of stdin: harmless exactly when every file it writes is in the project
-        return all(not a.startswith("-") and _plain_project_path(a, workspace, allow_devnull=True)
-                   for a in args)
+        for k, a in enumerate(args, 1):
+            if a.startswith("-") or not _plain_project_path(a, workspace, allow_devnull=True):
+                return "tee_target", k
+        return None
     if cmd not in _READERS:
-        return False
+        return "not_a_reader", 0
     if cmd == "find":
-        return not any(a in _FIND_ACTIONS for a in args)
+        for k, a in enumerate(args, 1):
+            if a in _FIND_ACTIONS:
+                return "reader_option", k
+        return None
     # GNU getopt accepts ANY unambiguous prefix of a long option (`sort --outp=f` is --output,
     # `--comp=prog` runs a program), so a denylist of spellings is unsound: sort and file take no
     # long option at all.
     if cmd in ("sort", "file"):
-        return (not any(a.startswith("--") for a in args)
-                and not set(_short_flags(args)) & set("oTCm" if cmd == "file" else "oT"))
+        for k, a in enumerate(args, 1):
+            if a.startswith("--"):
+                return "reader_option", k
+        forbidden = set("oTCm" if cmd == "file" else "oT")
+        if set(_short_flags(args)) & forbidden:
+            for k, a in enumerate(args, 1):
+                if a.startswith("-") and set(a.lstrip("-")) & forbidden:
+                    return "reader_option", k
+            return "reader_option", 0
+        return None
     if cmd == "rg":  # --pre / --hostname-bin run programs; refuse them and every prefix of them
-        longs = [a.split("=", 1)[0] for a in args if a.startswith("--") and a != "--"]
-        return not any(o.startswith(("--pre", "--hostname-bin")) or "--pre".startswith(o)
-                       or "--hostname-bin".startswith(o) for o in longs)
+        for k, a in enumerate(args, 1):
+            if a.startswith("--") and a != "--":
+                o = a.split("=", 1)[0]
+                if (o.startswith(("--pre", "--hostname-bin")) or "--pre".startswith(o)
+                        or "--hostname-bin".startswith(o)):
+                    return "reader_option", k
+        return None
     if cmd == "unzip":  # a LISTING flag is mandatory: bare `unzip x.zip` extracts
         flags = set(_short_flags(args))
-        return bool(flags & set("lpvtZ")) and flags <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
-    if cmd in ("jar", "javap") and any(a.startswith(("-J", "@")) for a in args):
-        return False  # -J hands the JVM an option (-Xlog:…:file=F writes); @file can hide one
+        if (bool(flags & set("lpvtZ")) and flags <= set("lpvqtZ1")
+                and not any(a.startswith("--") for a in args)):
+            return None
+        return "reader_option", next((k for k, a in enumerate(args, 1) if a.startswith("--")), 0)
+    if cmd in ("jar", "javap"):
+        for k, a in enumerate(args, 1):
+            if a.startswith(("-J", "@")):
+                return "reader_option", k  # -J hands the JVM an option (-Xlog:…:file=F writes); @file can hide one
     if cmd == "jar":  # `jar tf x.jar`: the table of contents, never create/extract/update
         first = args[0].lstrip("-") if args else ""
-        return bool(first) and "t" in first and set(first) <= set("tvf")
-    return True
+        return None if (bool(first) and "t" in first and set(first) <= set("tvf")) else ("reader_option", 1 if args else 0)
+    return None
+
+
+def _segment_reads(words: list[str], workspace: str | None = None, no_writes: bool = False) -> bool:
+    return _segment_failure(words, workspace, no_writes) is None
+
+
+# A path word containing any of these is not ONE literal path: the shell may expand it (variable,
+# substitution, glob, brace, tilde). Shared by every "is this a literal path" question here.
+_NON_LITERAL_PATH_CHARS = "${}*?[~`"
 
 
 def _plain_project_path(path: str, workspace: str | None, allow_devnull: bool = False) -> bool:
     """A literal path inside the project: no expansion (`$`, braces, globs, `~`) can make it name
     anything else, and it is not outside the workspace."""
-    if not path or any(c in path for c in "${}*?[~`") or path == "-":
+    if not path or any(c in path for c in _NON_LITERAL_PATH_CHARS) or path == "-":
         return False
     return (allow_devnull and _exempt(path)) or not is_external(path, workspace)
 
@@ -1444,18 +1562,47 @@ def _redirect_ok(op: str, target: str | None, workspace: str | None, no_writes: 
     return _plain_project_path(target, workspace, allow_devnull=True)
 
 
-def command_only_reads(command: str, workspace: str | None, *, no_writes: bool = False) -> bool:
-    """True only when EVERY segment of ``command`` is a known reader and every redirect stays inside
-    the project (or /dev/null). Unknown ⇒ False. ``no_writes`` is the stricter proof that the command
-    changes NO file anywhere: output redirects other than fd duplication and /dev/null, and ``tee``,
-    are refused too (a write into the project is harmless to the O1 guard, not to a caller asking
-    whether a file it read is still current)."""
-    if not command or "<<" in command or "`" in command or "$(" in command:
-        return False
-    words = _shell_words(command)
-    if words is None:
-        return False
+class _ProofFailure(NamedTuple):
+    """The first part of a command the read-only proof could not verify. ``start``/``end`` are offsets in
+    the text the proof was given — for ``command_refusal`` a same-length projection of the coder's command,
+    so they are offsets of the ORIGINAL text too; continuations are mapped back through the join owner."""
+    reason: str
+    start: int
+    end: int
+    word: str = ""
+
+
+_ASSIGNMENT_AT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+
+
+def _read_proof(command: str, workspace: str | None, *, no_writes: bool = False) -> _ProofFailure | None:
+    """``None`` when EVERY segment of ``command`` is a known reader and every redirect stays inside the
+    project (or /dev/null); else the SELECTED unverified part, with its exact source span and reason.
+    Unknown ⇒ a failure. Selection order: the raw text markers (`<<`, a backtick, `$(`) are checked
+    before the command is split — they reject quoted text too — then tokenizing, then segment by segment
+    in source order. So the selected part is the first one in THAT order, not necessarily the earliest
+    offset in the source: a marker late in the command is selected over an earlier unverified segment. ``no_writes`` is the stricter proof that the command changes NO file anywhere:
+    output redirects other than fd duplication and /dev/null, and ``tee``, are refused too (a write into
+    the project is harmless to the O1 guard, not to a caller asking whether a file it read is still
+    current). ``command_only_reads`` is this function's boolean: the decisions are one set."""
+    if not command:
+        return _ProofFailure("empty", 0, 0)
+    marks = [(command.find(m), m, r) for m, r in (("<<", "heredoc"), ("`", "substitution"), ("$(", "substitution"))
+             if m in command]
+    if marks:
+        at, marker, reason = min(marks)
+        return _ProofFailure(reason, at, at + len(marker))
+    tokens = _shell_tokens(command)
+    if tokens is None:
+        return _ProofFailure("unparsed", 0, len(command))
+    joined, origin = _join_continuations(command)
+
+    def span(first: int, last: int) -> tuple[int, int]:      # token indices -> offsets in ``command``
+        return origin[tokens[first][1]], origin[tokens[last][2] - 1] + 1
+
+    words = [w for w, _, _ in tokens]
     seg: list[str] = []
+    seg_tok: list[int] = []
     i = 0
     while i <= len(words):
         w = words[i] if i < len(words) else ";"
@@ -1464,24 +1611,40 @@ def command_only_reads(command: str, workspace: str | None, *, no_writes: bool =
             # would hide a separator inside what looks like a redirect. Only a token that is exactly
             # one known operator is understood; any other combination is unproven.
             if w not in _SEPARATORS and w not in _REDIRECTS and set(w) != {"\n"}:
-                return False
+                return _ProofFailure("operator", *span(i, i), w)
             if w in _REDIRECTS:
                 if seg and seg[-1].isdigit():
                     seg.pop()  # the fd number of `2>file`
+                    seg_tok.pop()
                 nxt = words[i + 1] if i + 1 < len(words) else None
                 if nxt is not None and set(nxt) <= _PUNCT:
                     nxt = None
                 if not _redirect_ok(w, nxt, workspace, no_writes):
-                    return False
+                    return _ProofFailure("redirect_strict" if no_writes else "redirect",
+                                         *span(i, i + 1 if nxt is not None else i), w)
                 i += 2 if nxt is not None else 1
                 continue
-            if seg and not _segment_reads(seg, workspace, no_writes):
-                return False
+            if seg:
+                failed = _segment_failure(seg, workspace, no_writes)
+                if failed:
+                    reason, k = failed
+                    lo, hi = span(seg_tok[0], seg_tok[-1])
+                    if reason == "not_a_reader" and _ASSIGNMENT_AT.match(joined[tokens[seg_tok[0]][1]:tokens[seg_tok[0]][2]]):
+                        reason = "assignment"             # an UNQUOTED `name=` in the source: quotes are not one
+                    return _ProofFailure(reason, lo, hi, seg[0])
             seg = []
+            seg_tok = []
         else:
             seg.append(w)
+            seg_tok.append(i)
         i += 1
-    return True
+    return None
+
+
+def command_only_reads(command: str, workspace: str | None, *, no_writes: bool = False) -> bool:
+    """True only when EVERY segment of ``command`` is a known reader and every redirect stays inside
+    the project (or /dev/null) — ``_read_proof`` found nothing it could not verify."""
+    return _read_proof(command, workspace, no_writes=no_writes) is None
 
 
 def _is_dependency_cache(path: str) -> bool:
@@ -1637,20 +1800,20 @@ def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, r
     return _refusal("Writing" if is_write else "Reading", path, workspace, roots, level)
 
 
-def root_recursive_delete_refusal(command: str) -> str | None:
-    """Narrow direct-shell root deletion backstop, independent of directory permission.
-
-    Tokenize rather than matching prose in echo/grep/comments. This is not a shell
-    interpreter: expansions, wrappers and heredoc bodies are outside its scope.
-    """
-    if not command or '<<' in command:
-        return None
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()\n')
+def _root_delete_in_flat(text: str, mark: str = "") -> bool:
+    """The flat tokenizer's verdict on ONE command text (comments already neutralised). ``mark`` is the
+    placeholder an executable substitution was replaced by: it may expand to nothing, so a word that
+    holds it is judged without it (`$(x)find / -delete` is `find / -delete` when x is empty) and a word
+    that was only the placeholder is no word — the conservative reading."""
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=';&|()\n')
+    lexer.commenters = ''
     lexer.whitespace = ' \t\r'
     try:
         words = list(lexer)
     except ValueError:
-        return None
+        return False
+    if mark:
+        words = [w for w in (w if (w and set(w) <= set(';&|()\n')) else w.replace(mark, '') for w in words) if w]
     segment = []
     for word in [*words, ';']:
         if word and set(word) <= set(';&|()\n'):
@@ -1662,11 +1825,151 @@ def root_recursive_delete_refusal(command: str) -> str | None:
                                                     and 'r' in w.lower()) for w in segment[1:])
             if ((segment[:1] == ['rm'] and recursive and any(w in ('/', '/*') for w in segment[1:]))
                     or (segment[:2] == ['find', '/'] and '-delete' in segment[2:])):
-                return prompts.load('root_recursive_delete_refusal')
+                return True
             segment = []
         else:
             segment.append(word)
+    return False
+
+
+def root_recursive_delete_refusal(command: str) -> str | None:
+    """Narrow direct-shell root deletion backstop, independent of directory permission.
+
+    Tokenize rather than matching prose in echo/grep/comments. This is not a shell
+    interpreter: wrappers, heredoc bodies and expansions the substitution owner cannot
+    delimit are outside its scope. A command substitution it CAN delimit (`$( … )`, a
+    backtick pair, quoted or not) is a command the shell runs, so its body is judged too.
+    """
+    if not command or '<<' in command:
+        return None
+    # A shell text is read in ITS OWN CONTEXT, and a command substitution is a context of its own: a
+    # fresh script (word start, no quote) whose comments end at ITS newlines and whose quote characters
+    # never open or close a quote of the text around it. So each work item is a RAW source text, and:
+    #   1. `shellinput.expansions` — the one owner of "what the shell expands" (single quotes and escapes are
+    #      literal there, a comment is skipped to its newline, a backtick pair ends at the next backtick
+    #      whatever quotes it holds) — reads the RAW text; its extents are the executable substitutions;
+    #   2. each is replaced by one placeholder word, so the text AROUND it is read for quotes, comments and
+    #      separators without the substitution's own characters in it;
+    #   3. the flat tokenizer judges that outer text; every substitution is queued as a new RAW item;
+    #   4. an opener hidden by a continuation (`$` backslash-newline `(`) is invisible to step 1, so the
+    #      continuation-joined text is read too and any substitution only it finds is queued as well
+    #      (not masked: reading it twice errs toward refusing, never toward admitting).
+    # A LIST, never recursion, so nesting depth is unbounded by the interpreter; each body is judged
+    # BEFORE any permission level is looked at (the write level returns this verdict alone). An expansion
+    # that owner cannot delimit abstains, as it always did.
+    pending = [command]
+    while pending:
+        raw = pending.pop()
+        bodies, _unknown = shellinput.expansions(raw, shell=True)
+        mark = next((chr(c) for c in range(0xE000, 0xF8FF) if chr(c) not in raw), "\ue000")
+        outer, last = [], 0
+        for body in bodies:
+            outer.append(raw[last:body.start])
+            outer.append(mark)
+            last = body.end
+        outer.append(raw[last:])
+        text = _join_continuations("".join(outer), drop_comments=True)[0]
+        if _root_delete_in_flat(text, mark):
+            return prompts.load('root_recursive_delete_refusal')
+        extents = {(body.start, body.end) for body in bodies}
+        found = [(body.body, raw) for body in bodies]
+        if "\\" in raw:                                   # a continuation can hide an opener from step 1
+            joined, joined_origin = _join_continuations(raw)
+            if joined != raw:
+                for body in shellinput.expansions(joined, shell=True)[0]:
+                    lo = joined_origin[body.start]
+                    hi = (joined_origin[body.end - 1] + 1) if body.end > body.start else lo
+                    if (lo, hi) not in extents:
+                        first, last_ = body.body
+                        found.append(((joined_origin[first] if first < len(joined_origin) else len(raw),
+                                       (joined_origin[last_ - 1] + 1) if last_ > first else len(raw)), joined))
+        for (lo, hi), source in found:
+            inner = raw[lo:hi]
+            if (raw[lo - 1:lo] == '`' and raw[hi:hi + 1] == '`'):
+                # Inside a backtick pair the shell removes a backslash that precedes `$`, a backtick or
+                # another backslash BEFORE it reads the body as a script, so `\$(…)` there is a live `$(…)`.
+                inner = re.sub(r'\\([\\`$])', r'\1', inner)
+            pending.append(inner)
     return None
+
+
+# A directory change is PERSISTED STATE, not a read. In a harness whose shell keeps its working
+# directory between calls (cria cannot know which harness it fronts, and no tool contract here says a
+# cwd resets — a persistent bash process reproduces it) the NEXT call starts where this one ended,
+# and its relative write target — judged here against the workspace — lands there instead. So `cd /m2/repository && ls`
+# followed by `echo x > y` wrote into the dependency cache while every guard call said "inside the
+# project". An external `cd` therefore gets no read exemption: not for a dependency cache (even with no
+# declared roots), not for a declared root, not at level `read`. A target cria cannot place (a
+# variable, `~`, `-`, a bare `cd`, extra options) is refused the same way: unknown scope fails closed.
+# Judged on the RECOGNISED command word of each top-level command (`_input_commands`, the same lexer
+# the input/heredoc owners use; `cd` as an argument, inside a quote or a heredoc body is not one) and
+# resolved against the cwd owner (`_follow_cd`, chained). A child shell (`bash -c`, `$( )`, a saved
+# script) does not export its cwd, so only the top level (_depth == 0) is judged. Walked: a persistent
+# bash, two guard decisions (tests/test_a_directory_change_is_not_a_read.py). BEST-EFFORT AND LEXICAL,
+# NOT CONTAINMENT. Residual, not claimed: a `source`d script, a called function, `eval` or `trap` can
+# change directory out of sight; a relative `cd name` can be redirected by an inherited CDPATH; and a
+# symlink inside the project is lexically internal (the same lexical rule as every write target here). `builtin` dispatches like `command`; `pushd +N`, `popd` and an operand
+# starting `-` (`cd -P`, `cd --`, `cd -`) use state this module cannot see, so they are unplaceable.
+_CWD_COMMANDS = ("cd", "pushd", "popd")
+_SHELL_RESERVED_LEAD = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
+
+
+def _command_argv(words: list[str]) -> list[str]:
+    """The command a segment really runs. Prefix words and assignments (`builtin`, `command`, `time`,
+    `env`, `VAR=`), leading shell reserved words (`then`, `do`, `{`, `!` …) and bash's `function NAME`
+    lead can follow one another in any order, so each is skipped repeatedly until the argv stops
+    changing. A finite grammar fact about where the command word sits — not a judgment about which
+    program is invoked: what a function, a sourced script or `eval` does later is out of scope."""
+    while True:
+        before = words
+        while words and words[0] in _SHELL_RESERVED_LEAD:
+            words = words[1:]
+        if words[:1] == ["function"] and len(words) > 1:
+            words = words[2:]
+        words = _command_words(words)
+        if words == before:
+            return words
+
+
+def _unparsed_names_a_cwd_command(shell: str) -> bool:
+    """For a command ``_input_commands`` could not segment (an operator it does not model, such as
+    `<(`): is a cwd command still the first word of some segment? Same lexer, same prefix unwrapping."""
+    for start, end in _segment_spans(shell):
+        spans = _shell_tokens(shell[start:end])
+        if spans is None:
+            continue
+        words = _command_argv([w for w, _, _ in spans if not (w and set(w) <= _PUNCT)])
+        if words[:1] and words[0] in _CWD_COMMANDS:
+            return True
+    return False
+
+
+def _persisted_cwd_refusal(shell: str, workspace: str | None) -> str | None:
+    commands = _input_commands(shell)
+    if commands is None:
+        # Grammar this module does not model, and a directory change in it: scope unknown, fail closed
+        # with the module's existing "cannot be established" text. Anything else is not judged here.
+        return prompts.load("external_write_unproven") if _unparsed_names_a_cwd_command(shell) else None
+    cur = os.path.normpath(os.path.expanduser(workspace)) if workspace else None
+    for _start, _end, words, _outputs, _inputs in commands:
+        words = _command_argv(words)
+        if words[:1] and words[0] in _CWD_COMMANDS:
+            cur = _follow_cd(words, cur)
+            # No known workspace means no known project to stay inside: a recognised directory change
+            # is then unplaceable (`is_external` answers True for a rooted path), never a made-up root.
+            if cur is None or is_external(cur, workspace):
+                return prompts.fill(prompts.load("external_cd_refusal"), cmd=repr(" ".join(words)),
+                                    root=f" ({workspace})" if workspace else "")
+    return None
+
+
+def _unproven_read_refusal(external: str, failure: "_ProofFailure", source: str) -> str:
+    """The refusal for a read of a harness-declared path inside a command the read proof could not clear:
+    it names the part the proof could not verify, in the coder's own source text (``source`` is the
+    original command; the proof ran on a same-length projection of it), and why."""
+    words = prompts.load_map("inspection_read_proof")
+    return prompts.fill(words["header"], path=repr(external), segment=repr(source[failure.start:failure.end]),
+                        explanation=prompts.fill(words[failure.reason], word=failure.word))
 
 
 def command_refusal(command: str, level: str, workspace: str | None, roots=(), *,
@@ -1705,6 +2008,10 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         if refusal:
             return refusal
     command = outer_shell
+    if _depth == 0:
+        moved = _persisted_cwd_refusal(command, workspace)
+        if moved:
+            return moved
     root_delete = root_recursive_delete_refusal(command)
     if root_delete:
         return root_delete
@@ -1720,7 +2027,8 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         return killing
     # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a
     # root the harness declared writable; one that might write there stays under the normal rule.
-    read_only = bool(roots) and command_only_reads(command, workspace)
+    proof = _read_proof(command, workspace) if roots else None          # run ONCE; its failure is the evidence below
+    read_only = bool(roots) and proof is None
     network = bool(_NETWORK_CMD.search(command))
     segments = _segment_spans(command)
     spans = _quoted_spans(command)
@@ -1792,5 +2100,8 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         # Say exactly what was refused: a write TARGET there, or a command not proven to only read.
         if ext_is_write:
             return _refusal("Writing", external, workspace, roots, level)
-        return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
+        # Reached only with declared roots, a path in one, and no write target: every such token is skipped
+        # above while the proof holds, so here the proof FAILED and ``proof`` is its failure.
+        assert proof is not None, "a declared-root read reached the unproven branch with a clean proof"
+        return _unproven_read_refusal(external, proof, layout.source)
     return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots, level)
