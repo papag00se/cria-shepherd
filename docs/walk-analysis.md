@@ -2,15 +2,11 @@
 
 Use an operator-selected model after [Walking](walk-prompt.md). Do not send this document to Luna.
 
+We're looking for subtleties (or obvious footgun) in the context that could steer a weak model wrongly. We should see evidence of it in the model's thinking (also walked line-by-line). We're also looking for evidence that the recent fixes are behaving as expected or causing more issues.
+
 Check original calls, competing passages, chronology and what actually reached the coder. Separate observations from inferred influence, and proposals from actions. Leave Luna's drafts unchanged.
 
 Summarize what occupied the coder's attention, how its thinking changed, what context explains that, and what remains unexplained. For unfound connections, say where you looked.
-
-## Original directives — f36e880a
-
-We're also looking for evidence that the recent fixes are behaving as expected or causing more issues.
-
-Suggestions from subagents are signals and evidence only. Never take them at their word. Double check yourself.
 
 `A` leads to `B` which causes `C` to break. Don't jump to fix `B`. `A` led to `B`, so you should look at `A` to see if you can get `B` in a better state so `C` doesn't break. That is a pattern that I'd like you to keep in mind whenever looking at fixes.
 
