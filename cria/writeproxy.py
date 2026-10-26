@@ -55,7 +55,7 @@ from .filecommands import (
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
     _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
-    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared,
+    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration,
     GATE_SENTINEL)
 
 from .resultnotes import (
@@ -1571,16 +1571,17 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             if cid not in paired or not is_shell_tool_name(fn.get("name")):
                 continue
             command = _command_of(fn.get("arguments"))
-            token = receipt_of(command, cid)
-            if not token:
+            declaration = _declaration(command, cid)
+            if declaration is None or not declaration.get("rcpt"):
                 continue
+            token = str(declaration["rcpt"])
             content = str(paired[cid].get("content") or "")
             off = _payload_offset(content)
             first = resultpacket.read_record(content, off, token)
             if first is None:
                 continue
             at, survey = first.end, ""
-            if survey_declared(command, cid) and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
+            if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
                 at = second.end
                 if second.body is not None:
                     try:
