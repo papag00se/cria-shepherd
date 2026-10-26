@@ -120,14 +120,14 @@ def test_maximum_active_budget_is_fifteen_minutes_per_interval(tmp_path):
     assert pacing.maximum_active_seconds == 45 * 60
 
 
-def test_waiting_for_the_judge_does_not_consume_active_time():
+def test_active_time_is_wall_time_because_the_coder_is_never_paused_for_a_judgment():
+    # Superseded 2026-10-26 (was: "waiting for the judge does not consume active time"): checkpoints are asynchronous
+    # and the coder keeps working, so every second since the harness started is active.
     pacing = suite_run.MilestonePacing(started_at=100.0, interval_minutes=15, budget_intervals=4)
     assert not pacing.due(999.9)
     assert pacing.due(1000.0)
-    pacing.record_pause(40.0)
-    assert not pacing.due(1039.9)
-    assert pacing.due(1040.0)
+    assert pacing.active_elapsed(1000.0) == 900.0
     pacing.advance()
     assert pacing.next_milestone == 30 * 60
-    assert not pacing.due(1939.9)
-    assert pacing.due(1940.0)
+    assert not pacing.due(1899.9)
+    assert pacing.due(1900.0)

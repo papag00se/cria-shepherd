@@ -1,4 +1,4 @@
-"""Read-only guard against overlapping suite runs, including paused runners awaiting judgment."""
+"""Read-only guard against overlapping suite runs, including runners whose checkpoint judgments are still pending."""
 from __future__ import annotations
 from pathlib import Path
 import os

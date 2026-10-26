@@ -38,11 +38,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 try:  # importable as suite.run and executable as suite/run.py
-    from . import sampling, run_guard
+    from . import sampling, run_guard, milestones
     from .capture_paths import request_identity, request_paths
 except ImportError:
     import sampling
     import run_guard
+    import milestones
     from capture_paths import request_identity, request_paths
 
 SUITE = Path(__file__).resolve().parent
@@ -679,12 +680,14 @@ def budget_intervals(task_dir: Path) -> int:
 
 @dataclass
 class MilestonePacing:
-    """One review every 15 active minutes; legacy budget metadata is not a stop rule."""
+    """One review every 15 active minutes; legacy budget metadata is not a stop rule.
+
+    Checkpoints no longer pause the coder, so active time IS wall time since the start of the harness
+    (``active_seconds`` and ``wall_seconds`` in a row now agree; earlier rows excluded judge waits)."""
 
     started_at: float
     interval_minutes: int
     budget_intervals: int
-    paused_seconds: float = 0.0
     next_milestone: int = field(init=False)
 
     def __post_init__(self) -> None:
@@ -707,13 +710,10 @@ class MilestonePacing:
         return self.next_milestone >= self.maximum_active_seconds
 
     def active_elapsed(self, now: float) -> float:
-        return now - self.started_at - self.paused_seconds
+        return now - self.started_at
 
     def due(self, now: float) -> bool:
         return self.active_elapsed(now) >= self.next_milestone
-
-    def record_pause(self, seconds: float) -> None:
-        self.paused_seconds += seconds
 
     def advance(self) -> None:
         self.next_milestone += self.interval_seconds
@@ -742,78 +742,89 @@ def milestone_terminal(verdict: dict, minute: int, at_limit: bool = False) -> st
 
 
 class HarnessControl:
-    """One process-group lifecycle for checkpointing and terminal cleanup."""
+    """Terminal lifecycle of one harness process group. Checkpoints never touch it: no SIGSTOP, no quiesce."""
     def __init__(self, proc, adapter):
         self.proc, self.adapter = proc, adapter
-
-    def pause(self) -> bool:
-        if self.adapter is None:
-            raise ValueError('checkpointing requires the per-cell admission adapter')
-        if not self.adapter.quiesce(lambda: self.proc.poll() is None):
-            return False
-        try:
-            os.killpg(self.proc.pid, signal.SIGSTOP)
-            return True
-        except BaseException:
-            self.adapter.resume()
-            if self.proc.poll() is not None:
-                return False
-            raise
-
-    def resume(self):
-        if self.adapter is not None:
-            self.adapter.resume()
-        try:
-            os.killpg(self.proc.pid, signal.SIGCONT)
-        except ProcessLookupError:
-            pass
 
     def stop(self):
         if self.adapter is not None:
             self.adapter.cancel()
-        self.resume()
         stop_process_group(self.proc)
 
 
-def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, pause, resume, stop):
-    """Observe one harness; only the campaign agent's accepted judgments control its lifetime."""
-    try:
-        from . import milestones
-    except ImportError:
-        import milestones
+def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop):
+    """Observe one harness; the harness is never paused and no judgment is waited for.
+
+    Every due interval copies the LIVE workspace (approximate, mutable) and records that checkpoint as
+    pending; the loop keeps observing the process (natural exit, the next interval) and collects each
+    judgment whenever the campaign agent has recorded a valid one. A pending checkpoint at exit stays
+    pending in the result, never completed or judged by the runner.
+
+    A recorded `complete`/`stalled` decision (minute >= 30) ends the run. No file state can veto it: the
+    operator accepts that files changed since the snapshot, and a newer checkpoint that is merely unanswered
+    does not erase it. The one ordering rule: the judgment of the NEWEST judged checkpoint decides, so an
+    older stop decision recorded after a newer checkpoint was already judged is retained but superseded."""
     judgments = []
+    waiting = []
+
+    def collect(*, may_end):
+        fresh = []
+        for record in list(waiting):
+            verdict = milestones.poll(Path(record["checkpoint"]))
+            if verdict is None:
+                continue
+            waiting.remove(record)
+            record.update(verdict, status="judged", judged_at_active_seconds=pacing.active_elapsed(time.time()))
+            fresh.append(record)
+            print(milestone_progress(verdict, record["at_active_minutes"], record["actual_active_seconds"]), flush=True)
+        if not fresh:
+            return None
+        deciding = max((r for r in judgments if r["status"] == "judged"), key=lambda r: r["at_active_minutes"])
+        outcome = None
+        for record in fresh:
+            minute = record["at_active_minutes"]
+            ended = milestone_terminal(record, minute)
+            if ended is None:
+                continue
+            if record is deciding and may_end:
+                outcome = ended
+                continue
+            record["terminal_not_applied"] = ("the process had already ended" if not may_end else
+                                              "a newer checkpoint was already judged")
+            print(f"[milestone] {minute}min decision '{record['decision']}' not applied: "
+                  f"{record['terminal_not_applied']}", flush=True)
+        return outcome
+
     while proc.poll() is None:
-        if pacing.due(time.time()):
+        now = time.time()
+        if pacing.due(now):
             minute = pacing.next_milestone // 60
-            pause_started = None
+            actual_active = pacing.active_elapsed(now)
             try:
-                if not pause():
-                    break
-                pause_started = time.time()
-                actual_active = pacing.active_elapsed(pause_started)
-                checkpoint = milestones.create(run_id, minute, ws, task_dir, judgments,
-                                               actual_active_seconds=actual_active)
-                print(f"[milestone] scheduled {minute}min; actual active elapsed {actual_active / 60:.3f}min -> {checkpoint}", flush=True)
-                print("[milestone] waiting for the campaign agent's inference judgment", flush=True)
-                verdict = milestones.wait(checkpoint)
+                checkpoint = milestones.create(
+                    run_id, minute, ws, task_dir, [r for r in judgments if r["status"] == "judged"],
+                    actual_active_seconds=actual_active, pending=list(waiting))
             except BaseException:
-                # Never strand the harness in SIGSTOP if packet creation or judgment is interrupted.
                 stop()
                 raise
-            finally:
-                if pause_started is not None:
-                    pacing.record_pause(time.time() - pause_started)
-            judgments.append({"at_active_minutes": minute, "actual_active_seconds": actual_active,
-                              "checkpoint": str(checkpoint), **verdict})
-            print(milestone_progress(verdict, minute, actual_active), flush=True)
-            outcome = milestone_terminal(verdict, minute)
-            if outcome is not None:
-                stop()
-                return outcome, judgments
+            record = {"at_active_minutes": minute, "actual_active_seconds": actual_active,
+                      "checkpoint": str(checkpoint), "status": "pending"}
+            judgments.append(record)
+            waiting.append(record)
             pacing.advance()
-            resume()
+            print(f"[milestone] scheduled {minute}min; actual active elapsed {actual_active / 60:.3f}min -> {checkpoint}"
+                  " (coder keeps running; judgment is collected asynchronously)", flush=True)
+        try:
+            outcome = collect(may_end=True)
+        except BaseException:
+            stop()
+            raise
+        if outcome is not None:
+            stop()
+            return outcome, judgments
         time.sleep(2)
     # A naturally completed L0 turn may be very short. Elapsed time cannot establish a crash.
+    collect(may_end=False)  # a judgment recorded in the last moments still belongs to its checkpoint
     return ("exited" if proc.poll() == 0 else "harness-error"), judgments
 
 
@@ -963,7 +974,7 @@ def _main(scope) -> None:
 
     other_runs = run_guard.other_suite_runners()
     if other_runs:
-        ap.error("another suite/run.py is active (possibly paused for a judgment); leaving it untouched: "
+        ap.error("another suite/run.py is active (its checkpoint judgments may still be pending); leaving it untouched: "
                  + "; ".join(f"pid {pid}" for pid, _ in other_runs))
 
     if args.harness == "codex":
@@ -1060,7 +1071,7 @@ def _main(scope) -> None:
         pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
                                  budget_intervals=budget_intervals(task_dir))
         terminal, milestone_judgments = monitor_milestones(
-            proc, pacing, run_id, ws, task_dir, pause=control.pause, resume=control.resume, stop=control.stop)
+            proc, pacing, run_id, ws, task_dir, stop=control.stop)
         # Stop first. A child may still finish a response or create a new session during the grace
         # period, so the wall cutoff and session inventory must be taken only after the group is gone.
         t1, new_sessions, capture_snapshot = shutdown_and_capture(
@@ -1109,7 +1120,8 @@ def _main(scope) -> None:
         "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,
         "pacing_policy": "inferred-progress-15m-protected-30m-v1",  # existing cadence/provenance identity
-        "judgment_policy": "requirement-pace-15m-protected-30m-v2",
+        "judgment_policy": milestones.JUDGMENT_POLICY,
+        "checkpoint_mode": "async-live-snapshot",  # coder never paused; active_seconds == wall_seconds
         **capture,
         **({"capture_snapshot": capture_snapshot} if args.fresh_l5 or args.campaign_id or args.restored_fleet else {}),
         **collect_event_census(t0, t1),

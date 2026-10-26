@@ -2,8 +2,13 @@
 
 Run1792338837 paused the client before 0031's completed native call arrived; on
 resume an equivalent request advanced the driver to a periodic check instead.
-Exercise the real HTTP producer, per-cell adapter, process signals and monitor.
+That incident is why checkpoints no longer pause the client at all (2026-10-26): the monitor copies the
+workspace while the client keeps running, so there is no frozen client, no parked request and no retry.
+Exercise the real HTTP producer, per-cell adapter, process and monitor.
 No Codex/model/network service is launched: the coder endpoint is a CPU fixture.
+
+The adapter-level tests below (`quiesce`/`resume`/`cancel`) cover transport behavior the runner no longer
+invokes at a checkpoint; `cancel` remains the terminal path, and `quiesce` is retained, unused by the runner.
 """
 import http.client
 import json
@@ -63,9 +68,8 @@ else: raise RuntimeError(errors)
 '''
 
 
-def test_real_stream_is_consumed_before_sigstop_and_retry_does_not_lose_action(tmp_path, monkeypatch):
+def test_a_checkpoint_during_an_in_flight_response_freezes_nothing_and_loses_no_action(tmp_path, monkeypatch):
     entered, release = threading.Event(), threading.Event()
-    judge_entered, judge_release = threading.Event(), threading.Event()
     coder, classifier = Mock(), Mock()
     classifier.chat.return_value = _CLASSIFY_JSON
     def reply(*_args, **_kwargs):
@@ -97,12 +101,10 @@ def test_real_stream_is_consumed_before_sigstop_and_retry_does_not_lose_action(t
     ws.mkdir(); task.mkdir(); (task/'prompt.txt').write_text('Implement the requested artifact.')
     monkeypatch.setattr(milestones, 'ROOT', tmp_path/'checkpoints')
     outcome, errors = [], []
-    def judge(_checkpoint):
-        judge_entered.set()
-        assert judge_release.wait(10)
-        return dict(usefulness_percent=0, decision='continue', reason='Inspected source.',
-                    material_changes='No implementation yet.', evidence=['snapshot'])
-    monkeypatch.setattr(milestones, 'wait', judge)
+    verdict = json.dumps(dict(usefulness_percent=0, decision='continue', reason='Inspected source.',
+                              material_changes='No implementation yet.', evidence=['snapshot'],
+                              requirements=[dict(requirement='artifact', status='not_started', evidence='snapshot')],
+                              pace_reason='Early.'))
     try:
         with SamplingAdapter({'temperature':0}, RateLimitGate(tmp_path/'rate'),
                              target=application.server_address) as adapter:
@@ -112,44 +114,45 @@ def test_real_stream_is_consumed_before_sigstop_and_retry_does_not_lose_action(t
             pacing = run.MilestonePacing(time.time()-900,15,2)
             def monitor():
                 try:
-                    outcome.append(run.monitor_milestones(proc,pacing,'fixture',ws,task,
-                        pause=control.pause,resume=control.resume,stop=control.stop))
+                    outcome.append(run.monitor_milestones(proc,pacing,'fixture',ws,task,stop=control.stop))
                 except BaseException as error: errors.append(error)
             monitoring = threading.Thread(target=monitor, daemon=True)
             try:
                 assert entered.wait(5)
                 monitoring.start()
-                # Genuine before failure: original SIGSTOP reaches the judge while
-                # the already-running production coder has not finished its reply.
-                assert not judge_entered.wait(.1), 'checkpoint froze an in-flight response'
+                packet = milestones.ROOT/'fixture.015min/packet.txt'
+                deadline = time.monotonic()+5
+                while not packet.exists() and time.monotonic()<deadline: time.sleep(.02)
+                # The checkpoint was cut while the client is mid-response; nothing was stopped or parked.
+                assert packet.exists() and not release.is_set()
+                assert open(f'/proc/{proc.pid}/stat').read().rpartition(') ')[2].split()[0] != 'T'
+                assert adapter._parked==0 and not adapter._paused
+                milestones.verdict_path(milestones.ROOT/'fixture.015min').write_text(verdict)  # recorded whenever the agent gets to it
                 release.set()
-                assert judge_entered.wait(5)
-                assert json.loads((ws/'received.json').read_text())['call_id']=='original-action'
-                time.sleep(.3)  # longer than the parked client's HTTP deadline
-                judge_release.set()
                 monitoring.join(10)
                 assert not monitoring.is_alive() and not errors, errors
+                assert json.loads((ws/'received.json').read_text())['call_id']=='original-action'
                 stdout, stderr = proc.communicate(timeout=5)
                 assert proc.returncode==0, (stdout,stderr)
                 finished=json.loads((ws/'finished.json').read_text())
-                assert finished['errors']  # the never-forwarded parked request was retried
-                assert coder.chat_watched.call_count==1  # then the real periodic gate, not a new coder action
+                assert finished['errors']==[]   # incident: no parked request, no 503, no retry of an equivalent request
+                assert coder.chat_watched.call_count==1  # the real periodic gate answers the next request, no new coder action
                 events = [json.loads(line) for line in log.path.read_text().splitlines()]
                 classifier.chat.assert_called_once()
                 assert not any(event['kind'].startswith(('route.classify_error', 'route.classify_unparsed'))
                                for event in events)
                 received = [event for event in events if event['kind']=='request.recv']
-                assert len(received)==2  # parked attempt never reaches the real producer
+                assert len(received)==2  # the original request and its follow-up; nothing else ever reached the producer
                 assert all(event['assist_profile']=='rank4-ablation' and
                            set(event['pilot_assists'])==set(application.pilot_runtime.selected) and
                            not set(event['pilot_assists']) & set(RANK4_ABLATION_DISABLED) for event in received)
                 assert cfg.planner.enabled is False
-                assert outcome[0][0]=='exited'
+                assert outcome[0][0]=='exited' and outcome[0][1][0]['status']=='judged'
                 policy=json.loads((milestones.ROOT/'fixture.015min/policy.json').read_text())
-                assert policy['actual_active_seconds']>=900.1
+                assert 900<=policy['actual_active_seconds']<905  # cut at the due time: nothing waited for a safe moment
                 assert 'actual active elapsed' in (milestones.ROOT/'fixture.015min/packet.txt').read_text()
             finally:
-                release.set(); judge_release.set(); control.stop()
+                release.set(); control.stop()
                 if monitoring.ident: monitoring.join(5)
     finally:
         application.shutdown(); application.server_close(); serving.join(); log.close()
@@ -295,11 +298,17 @@ while not (root/'child-ready').exists(): time.sleep(.005)
             except ProcessLookupError: pass
 
 
-def test_unsupported_checkpoint_control_never_sends_sigstop(monkeypatch):
+def test_a_checkpoint_never_signals_the_harness_with_or_without_an_admission_adapter(tmp_path, monkeypatch):
     signals=Mock()
     monkeypatch.setattr(run.os,'killpg',signals)
-    with pytest.raises(ValueError,match='admission adapter'):
-        run.HarnessControl(Mock(),None).pause()
+    ws,task=tmp_path/'ws',tmp_path/'task'
+    ws.mkdir(); task.mkdir(); (task/'prompt.txt').write_text('Implement.')
+    monkeypatch.setattr(milestones,'ROOT',tmp_path/'checkpoints')
+    calls=[]
+    proc=Mock(); proc.poll.side_effect=lambda: (calls.append(1), None if len(calls)<3 else 0)[1]
+    monkeypatch.setattr(run.time,'sleep',lambda _seconds:None)
+    terminal,judgments=run.monitor_milestones(proc,run.MilestonePacing(time.time()-900,15,2),'nosig',ws,task,stop=Mock())
+    assert terminal=='exited' and [j['status'] for j in judgments]==['pending']
     signals.assert_not_called()
 
 

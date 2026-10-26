@@ -116,7 +116,7 @@ def main() -> int:
 
     other_runs = run_guard.other_suite_runners()
     if other_runs:
-        print("another suite/run.py is active (possibly paused for a judgment); leaving it untouched: "
+        print("another suite/run.py is active (its checkpoint judgments may still be pending); leaving it untouched: "
               + "; ".join(f"pid {pid}" for pid, _ in other_runs), file=sys.stderr)
         return 3
     if args.restored_fleet:

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Create, inspect, and answer inference checkpoints for live suite runs.
 
-The runner freezes the workspace and waits at each interval. The campaign agent inspects that
-snapshot with read-only tools and records an inferred usefulness percentage together with
-`complete`, `continue`, or `stalled`:
+The runner copies the LIVE workspace at each interval and keeps running; it never pauses the
+coder, quiesces its transport, or waits for the judgment. The campaign agent inspects that copy
+with read-only tools, whenever it can, and records an inferred usefulness percentage together
+with `complete`, `continue`, or `stalled`:
 
     python3 suite/milestones.py pending
     python3 suite/milestones.py emit <checkpoint>
@@ -15,7 +16,6 @@ import argparse
 import json
 import shutil
 import sys
-import time
 from pathlib import Path
 
 try:
@@ -28,6 +28,10 @@ SUITE = Path(__file__).resolve().parent
 ROOT = Path.home() / ".cria" / "suite" / "_milestones"
 SYSTEM = SUITE / "prompts" / "milestone_judge.txt"
 DECISIONS = {"complete", "continue", "stalled"}
+# One identity for what a checkpoint IS: a copy of the live workspace, judged asynchronously while the
+# coder keeps running (supersedes "requirement-pace-15m-protected-30m-v2", where the coder was frozen
+# and judge waits were excluded from active time).
+JUDGMENT_POLICY = "requirement-pace-15m-protected-30m-v3-async-live-snapshot"
 
 
 def checkpoint_name(run_id: str, minute: int) -> str:
@@ -38,15 +42,33 @@ def _elapsed_text(seconds: float | None) -> str:
     return 'not recorded' if seconds is None else f'{seconds / 60:.3f}min'
 
 
+def _freeze(ws: Path, snapshot: Path) -> dict:
+    """Copy the live workspace without stopping anything. The copy is APPROXIMATE by design.
+
+    Files may change before, during and after the copy; the operator accepts that. Nothing is locked,
+    retried, fingerprinted or repaired — only copy failures (a file that vanished mid-copy) are disclosed."""
+    errors: list[str] = []
+    try:
+        shutil.copytree(ws, snapshot, symlinks=True)
+    except shutil.Error as exc:                       # per-file failures; everything else was still copied
+        errors = [f"{src}: {why}" for src, _dst, why in exc.args[0]]
+    except OSError as exc:                            # a directory vanished under the walk
+        errors = [f"{exc.filename or ws}: {exc.strerror or exc}"]
+    return {"mode": "live-unpaused", "errors": errors}
+
+
 def create(run_id: str, minute: int, ws: Path, task_dir: Path,
-           previous: list[dict] | None = None, *, actual_active_seconds: float | None = None) -> Path:
-    """Freeze one live workspace and return its checkpoint directory."""
+           previous: list[dict] | None = None, *, actual_active_seconds: float | None = None,
+           pending: list[dict] | None = None) -> Path:
+    """Copy one LIVE workspace (the coder keeps running) and return its checkpoint directory.
+
+    ``previous`` are the already-recorded judgments; ``pending`` are earlier checkpoints still awaiting one."""
     out = ROOT / checkpoint_name(run_id, minute)
     snapshot = out / "workspace"
     out.mkdir(parents=True, exist_ok=True)
     if snapshot.exists():
         shutil.rmtree(snapshot)
-    shutil.copytree(ws, snapshot, symlinks=True)
+    frozen = _freeze(ws, snapshot)
     prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
     seed = task_dir / "seed"
     baseline = workspace_evidence.tree(seed) if seed.is_dir() else "(empty baseline)"
@@ -56,21 +78,31 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
         f"{v['decision']}: {v['reason']}\nMaterial changes: {v.get('material_changes', 'not recorded')}\n"
         f"Prior frozen snapshot (inspect read-only): "
         f"{v['checkpoint']}/workspace" for v in (previous or [])) or "No earlier milestone judgment."
+    unjudged = "\n".join(
+        f"Scheduled {v['at_active_minutes']}min checkpoint, NOT YET JUDGED (snapshot to inspect read-only): "
+        f"{v['checkpoint']}/workspace" for v in (pending or []))
+    caveat = ("Copied from the LIVE workspace while the coder kept running (nothing was paused), so it is "
+              "approximate: files may have changed during or after the copy and the copy may mix states"
+              + (f"; it could not be fully copied ({len(frozen['errors'])} copy error(s): "
+                 + "; ".join(frozen["errors"][:5]) + ")" if frozen["errors"] else "") + ".")
     packet = "\n".join([
         SYSTEM.read_text().strip(),
         "", "=" * 78, "",
         f"CHECKPOINT: {run_id}; scheduled {minute}min slot; actual active elapsed {_elapsed_text(actual_active_seconds)}", "",
+        f"SNAPSHOT CONDITIONS: {caveat}", "",
         f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
         f"BASELINE SEED DIRECTORY (inspect read-only):\n{seed}", "",
         f"BASELINE SEED TREE (before coder started):\n{baseline}", "",
-        f"PRIOR MILESTONE JUDGMENTS (context, not score targets):\n{prior}", "",
+        f"PRIOR MILESTONE JUDGMENTS (context, not score targets):\n{prior}",
+        *([unjudged] if unjudged else []), "",
         f"FROZEN WORKSPACE SNAPSHOT (inspect with read-only tools):\n{snapshot}", "",
         "COMPLETE FROZEN WORKSPACE TREE (all entries; symlinks are not followed):\n"
         f"{workspace_evidence.tree(snapshot)}", "",
     ])
     (out / "policy.json").write_text(json.dumps({
-        "pacing_policy": "requirement-pace-15m-protected-30m-v2",
-        "scheduled_active_minutes": minute, "actual_active_seconds": actual_active_seconds}) + "\n")
+        "pacing_policy": JUDGMENT_POLICY,
+        "scheduled_active_minutes": minute, "actual_active_seconds": actual_active_seconds,
+        "snapshot": frozen}) + "\n")
     (out / "packet.txt").write_text(packet)
     return out
 
@@ -125,15 +157,15 @@ def verdict_path(checkpoint: Path) -> Path:
     return checkpoint / "verdict.json"
 
 
-def wait(checkpoint: Path, poll_seconds: float = 2.0) -> dict:
-    """Wait until the campaign agent records a valid inference judgment."""
+def poll(checkpoint: Path) -> dict | None:
+    """The recorded judgment if a valid one exists now, else None. Never blocks, never invents one."""
     path = verdict_path(checkpoint)
-    while True:
-        if path.is_file():
-            verdict = parse_for_checkpoint(checkpoint, path.read_text(errors="replace"))
-            if verdict is not None:
-                return verdict
-        time.sleep(poll_seconds)
+    if not path.is_file():
+        return None
+    try:
+        return parse_for_checkpoint(checkpoint, path.read_text(errors="replace"))
+    except OSError:
+        return None
 
 
 def pending() -> list[Path]:

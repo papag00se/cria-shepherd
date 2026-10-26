@@ -14,15 +14,14 @@ def test_one_report_per_fifteen_minute_milestone_not_two_independent_clocks():
     assert observed == [15, 30, 45, 60]
 
 
-def test_every_judge_wait_is_excluded_from_active_time():
+def test_judge_waits_are_active_time_because_nothing_pauses_the_coder():
+    # Superseded 2026-10-26 (was: every judge wait excluded from active time). One clock, no pause bookkeeping.
     clock = MilestonePacing(started_at=100, interval_minutes=15, budget_intervals=4)
-    clock.record_pause(900)
-    assert clock.active_elapsed(1000) == 0
+    assert clock.active_elapsed(1000) == 900
+    assert clock.due(1000) and not clock.due(999)
+    clock.advance()
     assert not clock.due(1899)
     assert clock.due(1900)
-    clock.advance()
-    assert not clock.due(2799)
-    assert clock.due(2800)
 
 
 def test_progress_packet_freezes_workspace_and_compares_baseline_and_prior_report(tmp_path, monkeypatch):
