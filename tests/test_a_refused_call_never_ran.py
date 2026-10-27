@@ -40,11 +40,20 @@ class OnlyWhatActuallyRanTests(unittest.TestCase):
         self.assertEqual(_visible_web_calls(msgs)[1], ["real one"])
 
     def test_the_same_holds_for_a_refused_fetch(self):
+        from cria.researchpolicies import FetchReceipt, VisibleFetch
         msgs = [_call("c1", "web_fetch", '{"url":"https://x/no"}'),
                 _result("c1", denial.mark("refused"), denial.REFUSED),
                 _call("c2", "web_fetch", '{"url":"https://x/ok"}'),
                 _result("c2", "HTTP 200 · https://x/ok")]
-        self.assertEqual(_visible_web_calls(msgs)[0], [("https://x/ok", "", "")])
+        fetches, queries = _visible_web_calls(msgs)
+        self.assertEqual([fetch.key for fetch in fetches], [("https://x/ok", "", "", False)])
+        self.assertEqual(queries, [])
+        self.assertIsInstance(fetches[0], VisibleFetch)
+        # The allowed legacy result has no authenticated producer receipt. Its HTTP-looking
+        # prose must not invent a response status or proof of document visibility.
+        self.assertIs(fetches[0].receipt, FetchReceipt.UNKNOWN)
+        self.assertIsNone(fetches[0].status)
+        self.assertIsNone(fetches[0].document_visible)
 
     def test_a_call_with_no_result_yet_is_left_alone(self):
         """Only a REFUSAL disqualifies. An in-flight call is not evidence of anything either way."""

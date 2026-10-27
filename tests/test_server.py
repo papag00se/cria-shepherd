@@ -760,10 +760,11 @@ class SessionCwdTests(unittest.TestCase):
 
 
 class VisibleWebCallsTests(unittest.TestCase):
-    """_visible_web_calls extracts the full (url, find, cursor) key + queries from the calls still
-    present, so the exact-repeat gate only refuses a repeat while its result is in context."""
+    """_visible_web_calls retains full (url, find, cursor, raw) identities and queries.
+    Unpaired legacy calls carry UNKNOWN receipts, not invented document evidence."""
 
     def test_extracts_url_find_cursor_and_queries(self):
+        from cria.researchpolicies import FetchReceipt, VisibleFetch
         from cria.server import _visible_web_calls
         msgs = [
             {"role": "assistant", "tool_calls": [
@@ -774,8 +775,15 @@ class VisibleWebCallsTests(unittest.TestCase):
             {"role": "user", "content": "not a tool call"},
         ]
         fk, sq = _visible_web_calls(msgs)
-        self.assertIn(("https://x/spec", "resolve", "c500"), fk)
-        self.assertIn(("https://y/", "", ""), fk)
+        self.assertEqual([fetch.key for fetch in fk], [
+            ("https://x/spec", "resolve", "c500", False),
+            ("https://y/", "", "", False),
+        ])
+        for fetch in fk:
+            self.assertIsInstance(fetch, VisibleFetch)
+            self.assertIs(fetch.receipt, FetchReceipt.UNKNOWN)
+            self.assertIsNone(fetch.status)
+            self.assertIsNone(fetch.document_visible)
         self.assertEqual(sq, ["ada handle api"])
 
 
