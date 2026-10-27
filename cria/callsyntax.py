@@ -549,8 +549,9 @@ def _reasoning_call_spans(text: str) -> list:
         # No `<parameter=…>` pair and no JSON body means the arguments never arrived — the nemotron
         # shape where a whole file was narrated as prose and then closed with tags that were never
         # opened. There is nothing to recover, and inventing the payload is the thing this function
-        # exists not to do.
-        if args:
+        # exists not to do. An explicit JSON {} is parsed evidence, not a missing body;
+        # the request's schema decides whether that empty argument object is admissible.
+        if args is not None:
             spans.append((m.start(), m.end(), "xml-function", [(m.group(1), args)]))
     return _outermost(sorted(spans, key=lambda s: (s[0], s[1])))
 
