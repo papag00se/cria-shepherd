@@ -169,6 +169,11 @@ def test_briefing_retry_reframes_with_distillation_too():
     assert seen, "the retry framing must also distill"
 
 
+def OVERFLOWS(view):
+    """Every view this test offers overflows the coder window (no summary is ever accepted)."""
+    return True
+
+
 def test_floor_pressure_summarizes_through_the_rejection_throttle():
     msgs = [{"role": "system", "content": "sys"}] + [
         {"role": "user" if i % 2 else "assistant", "content": f"m{i} " + "w " * 1200} for i in range(60)]
@@ -183,15 +188,15 @@ def test_floor_pressure_summarizes_through_the_rejection_throttle():
     grown = msgs + [{"role": "assistant", "content": f"g{i} " + "w " * 1200} for i in range(3)]
     later = selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize), again.state)
     assert len(asked) == 1                                       # under 4000 new tokens: throttled
-    selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, floor_pressure=True),
+    selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, floor_pressure=OVERFLOWS),
                                    later.state)
     assert len(asked) == 2                                       # floor pressure: fold, don't drop
     for n in range(5):                                           # still rejected, still pressured:
         grown = grown + [{"role": "assistant", "content": f"h{n} " + "w " * 1200}]
-        selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, floor_pressure=True),
+        selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, floor_pressure=OVERFLOWS),
                                        later.state if n == 0 else state_n)
         state_n = selfcompact.DEFINITION.execute(
-            selfcompact.RollingInput(grown, summarize, floor_pressure=True),
+            selfcompact.RollingInput(grown, summarize, floor_pressure=OVERFLOWS),
             later.state if n == 0 else state_n).state
     assert len(asked) <= 4      # one pressure retry per rejection run, not one per coder turn
 

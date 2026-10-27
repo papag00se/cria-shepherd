@@ -3855,7 +3855,9 @@ class Loop:
 
         result = selected.execute(selfcompact.RollingInput(
             msgs, make_summary, trigger_tokens=self._ctx.trigger_compaction, force=force,
-            floor_pressure=self._floor_would_drop(msgs, rlog, frame_tokens),
+            # Asked by the engine about the view it would SEND without a new summary, not about the
+            # raw history in ``msgs`` (which only grows, so it read as overflow on every later turn).
+            floor_pressure=lambda view: self._floor_would_drop(view, rlog, frame_tokens),
             # Common preparation holds required authority outside this historical scope.
             # Standalone compatibility callers still ask the source to publish its task frame.
             # The writer's task_fact above is grounding in either case, not output authority.
@@ -5310,6 +5312,9 @@ class Loop:
         """Will the coder request built from ``msgs`` exceed its window, so the floor must DROP
         turns? Rolling memory runs first and should fold them instead (run 1792480002: with every
         early briefing rejected, the floor dropped 45-85 coder turns per call for ~20 minutes).
+        ``msgs`` is the view rolling memory would send (its current summary, anchors, unfolded band
+        and tail; the raw history only while no summary exists), never the raw history once a
+        summary stands in for it.
 
         Sized as the floor sizes the coder request: the coder's OWN learned density (not another
         request kind's), its reply reserve, and ``frame_tokens`` for the parts the caller keeps

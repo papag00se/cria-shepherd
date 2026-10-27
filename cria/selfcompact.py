@@ -1103,9 +1103,12 @@ class RollingInput:
     refold_tokens: int = REFOLD_TOKENS
     rlog: object = None
     with_grounding: bool = False
-    # The coder view will not fit its window as is, so the floor would DROP turns. Summarize now
-    # rather than wait out the rejection throttle: folding loses less than dropping.
-    floor_pressure: bool = False
+    # ``floor_pressure(view) -> bool``: would the floor have to DROP turns from this view? It is
+    # asked about the view this call would SEND without a new summary (the current summary, the
+    # anchors, the unfolded band and the tail) — never about the raw history, which only grows.
+    # When that view overflows, summarize now rather than wait out the rejection throttle:
+    # folding loses less than dropping. None (no sized window) never bypasses the throttle.
+    floor_pressure: Callable[[list[dict]], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -1187,9 +1190,22 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
     band_tokens = (sum(_msg_tokens(m) for m in messages[base:tail_start])
                    if head_end <= base <= tail_start else None)
     never_attempted = state.attempted <= head_end
-    should_summarize = ((not state.summary and never_attempted) or band_tokens is None
-                        or (band_tokens is not None and band_tokens >= recompact_tokens)
-                        or (source.floor_pressure and not state.pressured and base < tail_start))
+    due = ((not state.summary and never_attempted) or band_tokens is None
+           or band_tokens >= recompact_tokens)
+    # FLOOR PRESSURE IS MEASURED ON WHAT WOULD BE SENT. It was measured on the raw history, which
+    # only grows: once that passed the window, pressure stayed true even while the compacted view
+    # fitted comfortably, and because an accepted briefing restores the bypass, almost every coder
+    # turn re-summarized a one-to-four-message band (run07 0059-0075: five writers, each followed by
+    # its validation judges, on middles of 152-3,745 chars, while the coder views were 14.6k-18.5k
+    # est. tokens of a 49,152 window). Without a summary the view IS the raw history, so the rejected-briefing case
+    # (run 1792480002: the floor dropping 45-85 turns per call) still folds through the throttle.
+    # Asked only when it can change the decision.
+    pressure = (not due and source.floor_pressure is not None and not state.pressured
+                and base < tail_start
+                and source.floor_pressure(
+                    _view(messages, state, head_end, tail_start, pinned_task, files_list)
+                    if state.summary.strip() else messages))
+    should_summarize = due or pressure
     if not should_summarize and not state.summary:
         return RollingResult(messages, state, Effect.NO_OP)
     refold_effect = Effect.NO_OP
@@ -1212,8 +1228,7 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
             # One bypass per run of rejections: an attempt that only happened because of floor
             # pressure (less than a new band since the last offer) spends the bypass; a normal band
             # attempt or an accepted briefing (below) restores it.
-            by_pressure = (bool(source.floor_pressure) and not never_attempted
-                           and band_tokens is not None and band_tokens < recompact_tokens)
+            by_pressure = pressure and not never_attempted
             state = CompactState(summary=state.summary, covered=state.covered,
                                  attempted=tail_start, pressured=by_pressure)
             fresh_text = (summarize(summarizable, newer_messages=messages[tail_start:])
@@ -1248,6 +1263,16 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
                     refold_effect = Effect.WITHHELD
             state = CompactState(summary=combined, covered=tail_start, attempted=tail_start)
 
+    out = _view(messages, state, head_end, tail_start, pinned_task, files_list, rlog)
+    return RollingResult(out, state, Effect.REDUCED, refold_effect=refold_effect)
+
+
+def _view(messages: list[dict], state: CompactState, head_end: int, tail_start: int,
+          pinned_task: str, files_list: str, rlog=None) -> list[dict]:
+    """The compacted view ``rolling`` sends for ``state``: head, pinned task, files list, anchors,
+    the rollup, then the unfolded band and the tail verbatim. One composer, so the floor-pressure
+    question is asked about exactly the view that would be sent. ``rlog`` is None for that
+    question (it is not a reshape, so it emits no event)."""
     covered = max(head_end, min(state.covered, tail_start))
     # Kept verbatim, never elided — but IDENTICAL copies collapse to the first. Each ⟦ctx:denied⟧
     # reply to a repeated whole-spill read re-embeds the spec digest, and the digest contains the
@@ -1278,8 +1303,7 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
     # to read the disk where the summary disagrees, followed by nothing. cria asserting a record exists
     # when it holds none, in the message that IS the record.
     rollup = [_summary_msg(state.summary)] if state.summary.strip() else []
-    out = messages[:head_end] + task + files + anchors + rollup + working
-    return RollingResult(out, state, Effect.REDUCED, refold_effect=refold_effect)
+    return messages[:head_end] + task + files + anchors + rollup + working
 
 
 DEFINITION = RollingDefinition(
