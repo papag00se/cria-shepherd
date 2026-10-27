@@ -1482,7 +1482,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/reorientation.py:reorient`](../../cria/reorientation.py#L160)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5202)
 - [`cria/loop.py:Loop._reasoned_reanchor`](../../cria/loop.py#L5184)
-- [`cria/selfcompact.py:work_ledger`](../../cria/selfcompact.py#L1023)
+- [`cria/selfcompact.py:work_ledger`](../../cria/selfcompact.py#L1067)
 - [`cria/memoryhandoff.py`](../../cria/memoryhandoff.py)
 
 **Historical families:** F49.
@@ -2227,9 +2227,9 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/test_context_memory_migration.py:test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical`](../../tests/test_context_memory_migration.py#L37), [`tests/test_context_memory_migration.py:test_disabled_rolling_does_not_detect_call_or_consume_force`](../../tests/test_context_memory_migration.py#L91), [`tests/test_context_memory_migration.py:test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage`](../../tests/test_context_memory_migration.py#L101), [`tests/test_context_memory_migration.py:test_refold_keeps_newer_grounding_separate_and_failed_refold_keeps_increment`](../../tests/test_context_memory_migration.py#L130).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/selfcompact.py:rolling`](../../cria/selfcompact.py#L1139)
+- [`cria/selfcompact.py:rolling`](../../cria/selfcompact.py#L1183)
 - [`cria/memoryeffects.py`](../../cria/memoryeffects.py)
-- [`cria/selfcompact.py:compaction_request_parts`](../../cria/selfcompact.py#L435)
+- [`cria/selfcompact.py:compaction_request_parts`](../../cria/selfcompact.py#L479)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5202)
 - [`cria/loop.py:Loop._self_compact`](../../cria/loop.py#L3762)
 - [`cria/server.py:_harden_compaction_reply`](../../cria/server.py#L664)
@@ -2265,7 +2265,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:_evidence_blocks`](../../cria/loop.py#L2076)
 - [`cria/loop.py:_judge_completion`](../../cria/loop.py#L1000)
 - [`cria/loop.py:summarize`](../../cria/loop.py#L7537)
-- [`cria/selfcompact.py:serialize`](../../cria/selfcompact.py#L247)
+- [`cria/selfcompact.py:serialize`](../../cria/selfcompact.py#L291)
 
 **Historical families:** F71.
 
@@ -2344,7 +2344,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/focustrim.py:_drop_superseded_writes`](../../cria/focustrim.py#L486)
 - [`cria/focustrim.py:_repeat_failed`](../../cria/focustrim.py#L351)
 - [`cria/focustrim.py:superseded_writes_truth`](../../cria/focustrim.py#L746)
-- [`cria/selfcompact.py:_later_write_fates`](../../cria/selfcompact.py#L736)
+- [`cria/selfcompact.py:_later_write_fates`](../../cria/selfcompact.py#L780)
 
 **Historical families:** F73.
 

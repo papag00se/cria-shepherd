@@ -68,7 +68,8 @@ FACTS_MARKER = "⟦ctx:facts⟧"        # tags the DURABLE fetch ledger (url→s
 # (resolved_addresses → a made-up "cardano_address"), which is a live failure mode.
 _SPEC_ROUTES_MARKER = "[API endpoints ("
 _SPEC_SHAPE_MARKER = "[response shape —"
-# Anchor markers whose messages are ALWAYS kept verbatim — AND, critically, excluded from the
+# Anchor markers whose messages are ALWAYS kept verbatim (the marker in the message's OWN text, not in a
+# note cria appended to a tool result — see _has_anchor) — AND, critically, excluded from the
 # summarizer input, so cria's OWN prior briefings never become a rollup-of-a-rollup (each round
 # summarizing the last round's summary is how a transient hallucination hardened into authoritative
 # "Treat this as done" misdirection that inverted the task). ⟦ctx:continuation⟧ (loop's harness-
@@ -119,8 +120,51 @@ def has_anchor(m: dict) -> bool:
 
 
 def _has_anchor(m: dict) -> bool:
-    t = _text(m)
-    return any(mk in t for mk in _ANCHOR_MARKERS)
+    """Is this message ITSELF one of cria's anchors? Decided on the message's own text, never on a note
+    cria appended to it afterwards.
+
+    A note appended to a tool result (``resultnotes.append_note``: the dependency-surface and
+    dependency-source ``⟦ctx:facts⟧`` notes) is not the tool's output. Matching the marker anywhere made
+    the whole HOST result an anchor: ornith1.5_9b / Java run07 0075 summarized ``edit_file(pom.xml)``
+    while its ``Wrote pom.xml`` result — carrying the opencsv surface note — was withheld from the writer
+    and the validators, so they read an edit with no result; once a fold was accepted (20261012T044734
+    0047 → 0051) the host rode on alone, its call folded, re-roled as a user turn. The tool's payload is
+    the producer-stamped boundary (``payloadboundary.payload_of``); the note itself stays an anchor via
+    :func:`_appended_anchor`. A boundary that no longer verifies keeps the old whole-text rule: the
+    message stays verbatim, which loses nothing."""
+    return any(mk in _own_text(m) for mk in _ANCHOR_MARKERS)
+
+
+def _own_text(m: dict) -> str:
+    """The message's text without the notes cria appended after a tool's own payload."""
+    c = m.get("content")
+    payload = resultnotes.payload_of(m, c) if isinstance(c, str) else None
+    return payload if payload is not None else _text(m)
+
+
+def _appended_notes(m: dict) -> str:
+    """The exact text cria appended after the tool's payload, when that text carries an anchor marker and
+    the message is not itself an anchor; otherwise ""."""
+    c = m.get("content")
+    if not isinstance(c, str) or _has_anchor(m):
+        return ""
+    payload = resultnotes.payload_of(m, c)
+    notes = c[len(payload):] if payload is not None else ""
+    return notes if any(mk in notes for mk in _ANCHOR_MARKERS) else ""
+
+
+def _appended_anchor(m: dict) -> dict | None:
+    """cria's anchored note, carried on its own once its host is folded: kept verbatim, as the whole host
+    was before. The separator ``append_note`` put before it is not part of the note."""
+    notes = _appended_notes(m)
+    return {"role": "user", "content": notes.lstrip("\n")} if notes else None
+
+
+def _summarizable(m: dict) -> dict:
+    """What the writer reads for a folded non-anchor message: the host without the anchored note that
+    rides on verbatim (:func:`_appended_anchor`), so the note is neither summarized nor duplicated."""
+    notes = _appended_notes(m)
+    return {**m, "content": m["content"][:-len(notes)]} if notes else m
 
 
 def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
@@ -1221,7 +1265,7 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
         # unusable (compaction state lost / indices shifted), fall back to the whole middle — the
         # old behavior, correct just slower.
         lo = state.covered if (state.summary and band_tokens is not None) else head_end
-        summarizable = [m for m in messages[lo:tail_start] if not _has_anchor(m)]
+        summarizable = [_summarizable(m) for m in messages[lo:tail_start] if not _has_anchor(m)]
         if summarizable:
             # Record the attempt BEFORE accepting its answer. Empty means fail closed, not "try the
             # identical span again one coder turn later".
@@ -1280,7 +1324,8 @@ def _view(messages: list[dict], state: CompactState, head_end: int, tail_start: 
     # same 7,216-char denial SIX times in one 61K step frame (the prompt the coder answered with
     # prose instead of a write). The anchor guarantee is ONE verbatim surviving copy; byte-identical
     # repeats add zero information and drown the frame for a small model.
-    anchors, dup_anchors = _dedup_identical([m for m in messages[head_end:covered] if _has_anchor(m)])
+    anchors, dup_anchors = _dedup_identical([a for m in messages[head_end:covered]
+                                             if (a := m if _has_anchor(m) else _appended_anchor(m))])
     if dup_anchors and rlog is not None:
         # Every sibling dedup in cria emits its count (context.ledger_dedup, context.focus_trim,
         # context.deorphaned); a silent drop makes a future misfire invisible in the run log.
