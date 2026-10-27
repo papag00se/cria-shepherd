@@ -641,7 +641,9 @@ def test_public_matched_reading_is_required_before_selected_settlement_and_autho
     if settlement == 'noop':
         assert views[0].pending_probe is tickets[0]
     else:
-        assert views[0].pending_probe is None
+        # Canonical settlement consumed this exact ticket. The scripted reasoner answers ON_TRACK,
+        # so nothing is pending afterwards and this fake admit may arm a NEW ticket on the next turn.
+        assert views[0].pending_probe is not tickets[0] and views[0].pending_steer is None
 
 
 @pytest.mark.parametrize('synthetic', [False, True])

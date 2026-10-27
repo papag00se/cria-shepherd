@@ -123,17 +123,45 @@ class CandidateResult:
     directive: str | None
     refused_by: str
 
+class Verdict(Enum):
+    """The steer author's typed non-directive answer, distinct from ``None`` (no answer at all).
+
+    ``author`` returns a directive string, ``Verdict.ON_TRACK``, or ``None``. ``None`` means the
+    author yielded nothing usable — truncated, ruminating, unreadable, structurally refused,
+    vetted away, or an ON_TRACK its own thinking contradicted and recovery could not settle — and
+    the caller keeps its existing floor for that. ``ON_TRACK`` means the trusted reasoner answered:
+    the coder needs no help. The two used to be the same ``None``, so a caller could not honor the
+    answer (#4): stalled-work settlement delivered "Choose a DIFFERENT next action" after an explicit
+    ON_TRACK, and the recovery prompt had told the reasoner that word "cancels its rescue outright".
+    Only the POSITIVE token counts (#21); a bare legacy NOT_STUCK is not a verdict.
+    """
+    ON_TRACK = "ON_TRACK"
+
+
 class _AuthoredActionState(Enum):
     """Why the steer author did, or did not, yield one action.
 
-    ``NO_ACTION`` deliberately keeps the established ON_TRACK / empty path together: either can
-    still have a separate reasoning channel worth asking about.  ``STRUCTURAL_REFUSAL`` is
+    ``ON_TRACK`` and ``NO_ACTION`` both still have a separate reasoning channel worth asking about;
+    only a positive ON_TRACK token can become :attr:`Verdict.ON_TRACK`.  ``STRUCTURAL_REFUSAL`` is
     different provenance.  The author supplied multiple actions, so treating the later absence as
     an ON_TRACK answer would manufacture the premise of the recovery prompt.
     """
     ACCEPTED = auto()
+    ON_TRACK = auto()
     NO_ACTION = auto()
     STRUCTURAL_REFUSAL = auto()
+
+
+@dataclass(frozen=True)
+class _Recovery:
+    """What the answer-versus-thinking recovery settled about an author answer.
+
+    ``on_track`` is True only when nothing in the thinking contradicts the answer, or the recovery
+    reply is itself the positive ON_TRACK token. A recovery that could not run or be read leaves it
+    False: an ON_TRACK its own thinking disputes is undecided, not a verdict.
+    """
+    directive: str | None
+    on_track: bool = False
 
 @dataclass(frozen=True)
 class _AuthoredAction:
@@ -180,12 +208,13 @@ class GroundedActions:
             return prompts.fill(fills[condition], rounds=facts.gate_stall, edits=edits)
         raise KeyError(condition)
 
-    def author(self, source: AuthorInput, *, definition: Definition | None = None) -> str | None:
+    def author(self, source: AuthorInput, *, definition: Definition | None = None) -> str | Verdict | None:
         """THE single reasoned steer author. A detector fired (``condition``); hand a no-tools reasoner the
         FULL grounded picture — the real session (scrubbed of cria's own plumbing AND the harness's own agent
         prompt), the churned files' real ON-DISK bytes and the repo's check output — and let it diagnose why the coder is stuck and give ONE
-        concrete, grounded next step. Returns the directive, or ``None`` when the reasoner judges the coder is
-        actually progressing (``ON_TRACK``) or yields nothing — the caller decides whether to fall back.
+        concrete, grounded next step. Returns the directive, :attr:`Verdict.ON_TRACK` when the reasoner judges
+        the coder is actually progressing (and its own thinking does not dispute that), or ``None`` when it
+        yields nothing usable — only ``None`` leaves the caller its existing floor.
 
         We hand it the real session rather than a curated slice: a curated view is exactly what made an
         earlier steer invent a path. The one thing dropped is the harness's agent system prompt
@@ -265,7 +294,10 @@ class GroundedActions:
             authored = self._authored_action(raw_answer, rlog)
             directive = authored.action
             if directive is None and authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL:
-                directive = self._authored_action(self._steer_from_reasoning(comp, raw_answer, _recover_ask, rlog) or '', rlog).action
+                recovery = self._recover_from_reasoning(comp, raw_answer, _recover_ask, rlog)
+                if authored.state is _AuthoredActionState.ON_TRACK and recovery.on_track:
+                    return self._on_track(rlog)
+                directive = self._authored_action(recovery.directive or '', rlog).action
             return self._grounded_steer_or_none(directive, evidence, rlog, ask=_steer_ask, sess=gs, messages=body.get('messages', []), workspace_root=workspace_root, vet=(definition or DEFINITION).vet)
         passes: list = []
         text = (self.providers.summarize(reasoner_chat, reasoner_role, prompts.load('steer_diagnose'), user, rlog, phase='reasoner', coder_tools=coder_tools, capture=passes, evidence_blocks=session_blocks) or '').strip()
@@ -290,7 +322,10 @@ class GroundedActions:
         authored = self._authored_action(candidate, rlog)
         directive = authored.action
         if directive is None and passes and (authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL):
-            directive = self._authored_action(self._steer_from_reasoning(passes[0], original_answer, _recover_ask, rlog) or '', rlog).action
+            recovery = self._recover_from_reasoning(passes[0], original_answer, _recover_ask, rlog)
+            if authored.state is _AuthoredActionState.ON_TRACK and recovery.on_track:
+                return self._on_track(rlog)
+            directive = self._authored_action(recovery.directive or '', rlog).action
         return self._grounded_steer_or_none(directive, session + '\n\n' + historical_request, rlog, ask=_steer_ask, sess=gs, messages=body.get('messages', []), workspace_root=workspace_root, vet=(definition or DEFINITION).vet)
 
     def _ruminating_reply(self, text: str) -> bool:
@@ -301,7 +336,17 @@ class GroundedActions:
         from . import rumination
         return rumination.degenerate_tail(text or '')
 
+    @staticmethod
+    def _on_track(rlog) -> Verdict:
+        """The settled ON_TRACK answer, recorded once so its honoring is countable (#12)."""
+        if rlog is not None:
+            rlog.emit('loop.steer_on_track', level='info')
+        return Verdict.ON_TRACK
+
     def _steer_or_none(self, text: str) -> str | None:
+        return self._read_reply(text)[0]
+
+    def _read_reply(self, text: str) -> tuple[str | None, bool]:
         """A steer_diagnose reply → the directive to inject, or None for a genuine "on track" verdict. The
         "fine, no help" sentinel is ON_TRACK — a POSITIVE token on purpose: the old NOT_STUCK was a negation
         trap a weak reasoner would emit for the WRONG reason ("the coder is NOT progressing → NOT_STUCK"),
@@ -310,29 +355,34 @@ class GroundedActions:
         write it"); a naive prefix check discarded the whole reply, silently dropping good steers. Strip the
         verdict token(s) + think/markdown scaffolding; deliver whatever substantive directive remains, and
         treat it as an on-track veto only when essentially nothing else is there. (Legacy NOT_STUCK still
-        stripped, in case a model reaches for the old word.)"""
+        stripped, in case a model reaches for the old word.)
+
+        Returns ``(directive, on_track)``. ``on_track`` is True only for a reply with no directive whose
+        un-negated sentences carry the POSITIVE token ON_TRACK (#21) — never for an empty or JSON reply,
+        a lone legacy NOT_STUCK, or "not ON_TRACK"."""
         if not text:
-            return None
+            return None, False
         body = strip_think(text)
         fenced = re.sub('^```[a-z]*\\s*|\\s*```$', '', body.strip())
         if fenced.startswith('{') and fenced.endswith('}'):
             try:
                 if isinstance(json.loads(fenced), dict):
-                    return None
+                    return None, False
             except ValueError:
                 pass
         if body.count('{') > body.count('}') and body.rsplit('{', 1)[1].lstrip()[:1] == '"':
-            return None
+            return None, False
         body = re.sub('```[a-z]*|`|</?think>|</?assistant>', ' ', body)
-        _lines = [ln for ln in body.strip().splitlines() if ln.strip()]
-        if _lines and re.fullmatch('(?i)\\W{0,4}(?:on[_ ]track|not_stuck)\\W{0,4}', _lines[-1].strip()):
-            return None
         _SENTINEL = 'on[_ ]track|not_stuck'
         negated = re.compile(f"(?i)\\b(?:not|never|isn't|aren't)\\s+(?:{_SENTINEL})\\b")
         kept = [s for s in re.split('(?<=[.!?])\\s+|\\n+', body) if not negated.search(s)]
+        positive = any(re.search('(?i)\\bon[_ ]track\\b', s) for s in kept)
+        _lines = [ln for ln in body.strip().splitlines() if ln.strip()]
+        if _lines and re.fullmatch('(?i)\\W{0,4}(?:on[_ ]track|not_stuck)\\W{0,4}', _lines[-1].strip()):
+            return None, positive
         directive = re.sub(f'(?i)\\b({_SENTINEL})\\b', ' ', ' '.join(kept))
         directive = re.sub('\\s+', ' ', directive).lstrip(' >-*:.,;').strip()
-        return directive if len(directive) >= 8 else None
+        return (directive, False) if len(directive) >= 8 else (None, positive)
 
     def _authored_action(self, text: str, rlog=None) -> _AuthoredAction:
         """A steer-author reply and the provenance of its one-action decision.
@@ -344,9 +394,10 @@ class GroundedActions:
         existing raw-ground-truth fallback.  The historical ``_steer_or_none`` cleanup remains the owner
         of verdict/scaffolding recovery before this shape check.
         """
-        action = self._steer_or_none(text)
+        action, on_track = self._read_reply(text)
         if not action:
-            return _AuthoredAction(None, _AuthoredActionState.NO_ACTION)
+            return _AuthoredAction(None, _AuthoredActionState.ON_TRACK if on_track
+                                   else _AuthoredActionState.NO_ACTION)
         listed = re.findall('(?m)^\\s*(?:[-*+]|\\d+[.)])\\s+', strip_think(text or ''))
         shape = self._steer_or_none(re.sub('`[^`\\n]+`', 'CODE', text or '')) or action
         units = [part for part in re.split('(?<=[.!?])\\s+', shape.strip()) if part.strip()]
@@ -363,22 +414,26 @@ class GroundedActions:
         the answer itself, a cut reply, or a trigger that does not fire → None, so the common path costs
         nothing. The recovered reply is read by `_steer_or_none` like any other, which is why the hedge
         and negation handling is not duplicated here."""
+        return self._recover_from_reasoning(comp, answer, ask, rlog).directive
+
+    def _recover_from_reasoning(self, comp: dict, answer: str, ask, rlog) -> _Recovery:
+        """:meth:`_steer_from_reasoning` plus whether the answer's ON_TRACK stands (see :class:`_Recovery`)."""
         if ask is None or callsyntax.is_truncated(comp):
-            return None
+            return _Recovery(None)
         if comp.get(bodykeys.RUMINATION) or (comp.get('choices') or [{}])[0].get('finish_reason') == 'rumination':
             rlog.emit('loop.steer_rescue_skipped', level='info', why='stream aborted by a guard')
-            return None
+            return _Recovery(None)
         reasoning = self.facts.reasoning_of(comp)
         if not reasoning or reasoning.strip() == (answer or '').strip():
-            return None
+            return _Recovery(None, True)
         if not _STEER_REASONING_STUCK.search(reasoning):
-            return None
+            return _Recovery(None, True)
         rlog.emit('loop.steer_answer_contradicted', level='info', answer=self.facts.clip(answer, 60))
         recovered = strip_think(ask(prompts.render('steer_reasoning_recover', reasoning=reasoning)) or '').strip()
-        directive = self._steer_or_none(recovered)
+        directive, on_track = self._read_reply(recovered)
         if directive:
             rlog.emit('loop.steer_from_reasoning', level='info', head=self.facts.clip(directive, 140))
-        return directive
+        return _Recovery(directive, on_track)
 
     def _is_argument_blob(self, directive: str) -> bool:
         """True when a 'directive' is really a tool call's ARGUMENTS — a bare JSON object or array.
@@ -962,7 +1017,7 @@ class GroundedActions:
 
 class Author(Protocol):
     def __call__(self, owner: GroundedActions, source: AuthorInput, *,
-                 definition: Definition | None = None) -> str | None: ...
+                 definition: Definition | None = None) -> str | Verdict | None: ...
 
 
 @dataclass(frozen=True)

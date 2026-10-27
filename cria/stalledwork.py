@@ -37,6 +37,8 @@ class Status(Enum):
     ARMED = "armed"
     PENDING = "pending"
     STEER = "steer"
+    # The author answered ON_TRACK (groundedaction.Verdict.ON_TRACK): an answer, not a failure.
+    ON_TRACK = "on-track"
     WITHHELD = "withheld"
     DELIVERED = "delivered"
     RESET = "reset"
@@ -224,7 +226,8 @@ class AdmissionInput:
 
 
 def _redirect(count: int, action: str, truth: str) -> str:
-    # Existing refusal floor, unchanged; not a new fallback or inferred refusal.
+    # Existing refusal floor for an author that gave NO answer (or no reasoner at all). Never
+    # after an ON_TRACK answer: that is the reasoner answering, and overriding it is #4's sin.
     if count > 1:
         observed = f"{count} of your recent calls were refused, so none of them ran"
     elif count:
@@ -321,6 +324,8 @@ def _author(source: AuthorServices, state: StateAccess, trigger: Trigger, truth:
                     write_threshold=WRITE_THRESHOLD)
     seat = replace(source.seat, facts=facts, condition=trigger.value, truth_text=truth)
     text = actions.author(source.engine, seat, definition=actions)
+    if text is groundedaction.Verdict.ON_TRACK:
+        return AuthorResult(None, Status.ON_TRACK)
     return AuthorResult(text, Status.STEER if text else Status.WITHHELD)
 
 
@@ -349,6 +354,18 @@ def settle(source: ReturnedProbeInput, state: StateAccess, *, enabled: bool = Tr
     author_result = (_author(source.author, state, trigger, actions=actions) if source.author is not None
                      else AuthorResult(None, Status.NO_OP))
     authored = author_result.text
+    if author_result.status is Status.ON_TRACK:
+        # THE AUTHOR ANSWERED, SO NOTHING IS DELIVERED. The floors below exist for an author that
+        # could not answer; after ON_TRACK they overrode the trusted reasoner with "Choose a DIFFERENT
+        # next action" / "Stop rewriting" (#4, #3). Nothing factual is lost by the silence: the probe's
+        # own result reaches the coder as its separate checks message, and each refused call keeps its
+        # own refusal result. Measured 2026-10-27 over ~/.cria/logs: 38 settled ON_TRACK answers (30
+        # refusal, 8 wheel-spin) each drew a canned floor. ornith1.5_9b session 01a168cb call 0077 was
+        # told "Continuing down this line will not change the outcome" on the first coder call after it
+        # had rerun the refused command, corrected, successfully; it ruminated 8,244 tokens and was aborted.
+        source.log.emit("loop.stalled_on_track", step=source.step, condition=trigger.value,
+                        grounded=bool(truth))
+        return Result(Status.ON_TRACK, trigger)
     if trigger is Trigger.REFUSAL:
         text = authored or _redirect(state.repeat_count, state.repeat_action, truth)
         steer = Steer(text, "refusal guard", trigger, bool(authored), bool(truth), True)

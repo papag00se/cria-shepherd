@@ -60,10 +60,15 @@ class TheAuthorOwnsOnlyTheActionTests(unittest.TestCase):
         accepted = loop._authored_action("Read Importer.java now.", rlog)
         on_track = loop._authored_action("ON_TRACK", rlog)
         empty = loop._authored_action("", rlog)
+        legacy = loop._authored_action("NOT_STUCK", rlog)
+        negated = loop._authored_action("The coder is not ON_TRACK.", rlog)
         refused = loop._authored_action("Read Importer.java. Run the compile check.", rlog)
         self.assertEqual(accepted.state, loop._AuthoredActionState.ACCEPTED)
-        self.assertEqual(on_track.state, loop._AuthoredActionState.NO_ACTION)
+        # ON_TRACK is an answer, not an absence: only the positive token earns it (#21).
+        self.assertEqual(on_track.state, loop._AuthoredActionState.ON_TRACK)
         self.assertEqual(empty.state, loop._AuthoredActionState.NO_ACTION)
+        self.assertEqual(legacy.state, loop._AuthoredActionState.NO_ACTION)
+        self.assertEqual(negated.state, loop._AuthoredActionState.NO_ACTION)
         self.assertEqual(refused.state, loop._AuthoredActionState.STRUCTURAL_REFUSAL)
 
 

@@ -343,11 +343,11 @@ def test_author_recovery_is_real_source_pipeline_with_exact_two_provider_calls()
     assert any(kind == "loop.steer_from_reasoning" for kind, _ in source.log.events)
 
 
-@pytest.mark.parametrize("text,reasoning", [
-    ("First inspect a.py. Then change b.py.", "The coder is stuck and needs help"),
-    ("ON_TRACK", "The coder is genuinely progressing"),
+@pytest.mark.parametrize("text,reasoning,expected", [
+    ("First inspect a.py. Then change b.py.", "The coder is stuck and needs help", None),
+    ("ON_TRACK", "The coder is genuinely progressing", ga.Verdict.ON_TRACK),
 ])
-def test_structural_refusal_and_genuine_on_track_do_not_buy_a_recovery_call(text, reasoning):
+def test_structural_refusal_and_genuine_on_track_do_not_buy_a_recovery_call(text, reasoning, expected):
     bodies = []
     def chat(body, log):
         bodies.append(body)
@@ -355,7 +355,7 @@ def test_structural_refusal_and_genuine_on_track_do_not_buy_a_recovery_call(text
             "content": text, "reasoning_content": reasoning}}]}).encode()
     source = ga.AuthorInput(chat, None, None, ga.ActionEvidence(),
                             {"messages": [{"role": "user", "content": "original"}]}, Log(), "refusal")
-    assert ga.DEFINITION.author(engine(), source) is None and len(bodies) == 1
+    assert ga.DEFINITION.author(engine(), source) is expected and len(bodies) == 1
 
 
 @pytest.mark.parametrize("finish,answer,expected", [("length", "Inspect actual.py", None),
@@ -415,7 +415,7 @@ def test_shared_write_results_and_ids_survive_pending_steer_independent_of_selec
 
 @pytest.mark.parametrize("answer,reasoning,finish,expected_calls,expected_action", [
     ("Inspect actual.py", None, "stop", 1, "Inspect actual.py"),
-    ("ON_TRACK", "The coder is making real progress", "stop", 1, None),
+    ("ON_TRACK", "The coder is making real progress", "stop", 1, ga.Verdict.ON_TRACK),
     ("ON_TRACK", "The coder is stuck and needs help", "stop", 2, "Inspect actual.py"),
     ("Inspect a.py. Then change b.py.", "The coder is stuck and needs help", "stop", 1, None),
     ("A cut authored sentence", None, "length", 2, "Inspect actual.py"),
@@ -456,13 +456,16 @@ def test_author_source_matches_original_provider_bodies_and_counts(answer, reaso
     elif answer == "Inspect a.py. Then change b.py.":
         events.append(("loop.steer_multiple_actions", {"level": "warn", "units": 2,
                                                        "head": "Inspect a.py. Then change b.py."}))
-    if expected_action:
+    if expected_action is ga.Verdict.ON_TRACK:
+        events.append(("loop.steer_on_track", {"level": "info"}))
+    elif expected_action:
         events.append(("loop.steer_outcome", {"delivered": True, "refused_by": "", "head": expected_action}))
     assert actual == expected_action
     assert new_seen == requests and new_phases == phases and len(new_seen) == expected_calls
     assert log.events == events
-    # Keep compatibility coverage, with its own independent body/effect oracle.
-    assert old == expected_action and old_seen == requests and old_phases == phases
+    # Keep compatibility coverage, with its own independent body/effect oracle. The legacy text
+    # projection has no verdict channel: an ON_TRACK answer is no text there.
+    assert old == (None if expected_action is ga.Verdict.ON_TRACK else expected_action) and old_seen == requests and old_phases == phases
     assert old_log.events == events
 
 

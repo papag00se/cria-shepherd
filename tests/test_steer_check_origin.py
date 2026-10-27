@@ -58,7 +58,7 @@ def test_steer_preserves_check_evidence_without_claiming_coder_progress(command,
     source = ga.AuthorInput(chat, None, None, ga.ActionEvidence(
         original_task='Repair the processor.', repeat_count=3, repeat_action='inspect dependency'),
         {'messages': messages}, _Log(), 'refusal')
-    assert engine().author(source) is None
+    assert engine().author(source) is ga.Verdict.ON_TRACK
     assert messages == original
     assert len(sent) == 1
     assert all(m['role'] in ('system', 'user', 'assistant', 'tool') for m in sent[0]['messages'])
@@ -157,7 +157,7 @@ def test_complete_observation_payload_survives_serializer_and_final_author_wire(
 
     source = ga.AuthorInput(chat, None, None, ga.ActionEvidence(original_task='Repair the processor.'),
         {'messages': messages}, _Log(), 'refusal')
-    assert engine().author(source) is None
+    assert engine().author(source) is ga.Verdict.ON_TRACK
     assert len(sent) == 1
     copies = [m['content'].encode() for m in sent[0]['messages'] if m.get('content') == payload]
     assert copies == [payload.encode()]

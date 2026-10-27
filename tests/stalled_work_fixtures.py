@@ -25,7 +25,8 @@ def seat(text="a vetted action", *, checks="exact failure", calls=None):
     def chat(body, log):
         if calls is not None:
             calls.append(body)
-        answer = "SUPPORTED" if body.get("messages", [{}])[0].get("content", "").find("SUPPORTED") >= 0 else (text or "ON_TRACK")
+        # text=None is an ON_TRACK answer; text="" is an author that returned nothing at all.
+        answer = "SUPPORTED" if body.get("messages", [{}])[0].get("content", "").find("SUPPORTED") >= 0 else ("ON_TRACK" if text is None else text)
         return json.dumps({"choices": [{"finish_reason": "stop", "message": {
             "role": "assistant", "content": answer}}]}).encode()
     return ga.AuthorInput(chat, None, None, ga.ActionEvidence(original_task="ORIGINAL TASK", last_gate_flag=checks),

@@ -171,10 +171,11 @@ def test_unknown_probe_is_recorded_but_never_becomes_clean_or_completion():
 
 
 def test_withheld_author_preserves_exact_ground_truth_not_a_new_diagnosis():
+    # An author that returned NOTHING (not one that answered ON_TRACK) keeps the factual floor.
     calls, state = [], sw.State(spin_due=True, spin_path="a")
     result = admit(state, call={"id": "p"}, truth="compiler: exact negative evidence",
-                   author=author_service(calls, text=None))
-    assert len(calls) == 1 and "ORIGINAL TASK" in str(calls[0])
+                   author=author_service(calls, text=""))
+    assert len(calls) == 2 and "ORIGINAL TASK" in str(calls[0])  # the shared summarizer retries an empty reply once
     assert result.steer.author_status is sw.Status.WITHHELD
     assert not result.steer.authored and "compiler: exact negative evidence" in result.steer.text
     expected = sw.Steer("you have rewritten `a` repeatedly; ground truth from the repo's own checks:\n"

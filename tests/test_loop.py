@@ -2282,7 +2282,9 @@ class WheelSpinTests(unittest.TestCase):
         # Round-6 lives on: a content-blind streak can't tell a spiral from honest edits (applying review
         # findings one by one). So there's no canned "the problem is elsewhere" steer — the reasoner is
         # handed the CLEAN ground truth + the real session and DECIDES. Here it judges the coder fine
-        # (ON_TRACK); we fall back to inserting the clean FACT, never an "elsewhere" editorialization.
+        # (ON_TRACK). That is the reasoner ANSWERING (#4), so no steer follows it -- not even the canned
+        # "you have rewritten X; make a small TARGETED edit" floor, which exists for an author that could
+        # not answer. The clean FACT still reaches the coder as the checker's own result message.
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
@@ -2305,11 +2307,14 @@ class WheelSpinTests(unittest.TestCase):
         # the reasoner SAW the clean ground truth, free of any "elsewhere" premise it could parrot
         self.assertIn("no error-class", captured["user"].lower())
         self.assertNotIn("elsewhere", captured["user"].lower())
-        # ON_TRACK → the canned FACT is inserted (states the clean result), never an editorializing steer
         msg = coder.last_user()
         self.assertNotIn("all pass", msg.lower())         # no overclaimed verified/done state
         self.assertNotIn("elsewhere", msg.lower())        # no false "look elsewhere" steer
-        self.assertIn("loop.spin_probe_result", rlog.kinds())
+        seen = [str(m.get("content") or "") for m in coder.bodies[-1]["messages"]]
+        self.assertTrue(any(c.startswith("⟦ctx:checks⟧ Recorded checker results") for c in seen))  # the fact
+        self.assertFalse(any("⟦ctx:steer⟧" in c for c in seen))                            # no steer
+        self.assertIn("loop.stalled_on_track", rlog.kinds())
+        self.assertNotIn("loop.spin_probe_result", rlog.kinds())
 
     def test_other_file_writes_do_not_shield_the_count(self):
         _ctx = _step_ctx
