@@ -101,6 +101,36 @@ def domain_advice(query: str, render: Callable[..., str]) -> str:
     return render("domain_steer", domain=domain) if domain else ""
 
 
+class FetchReceipt(Enum):
+    UNKNOWN = "unknown"
+    NO_RESPONSE = "no-response"
+    RESPONSE = "response"
+
+
+@dataclass(frozen=True)
+class VisibleFetch:
+    """One visible identity and its producer's receipt, independent of cache retention.
+
+    An inline lowered fetch's authenticated RAN record carries fx for every HTTP
+    response, including empty and non-2xx bodies. RAN without fx or a stored-body
+    receipt is an attempted fetch with no HTTP response, not a refusal. Stored
+    documents and native/unproven history must not become failed attempts.
+    """
+    key: tuple[str, str, str, bool]
+    receipt: FetchReceipt = FetchReceipt.UNKNOWN
+    status: str | None = None
+    document_visible: bool | None = None
+
+    @classmethod
+    def from_report(cls, key, *, ran: bool, facts: dict | None, stored: bool = False):
+        if not ran:
+            return cls(key)
+        if facts is not None:
+            return cls(key, FetchReceipt.RESPONSE, facts["status"], True)
+        return cls(key, FetchReceipt.RESPONSE if stored else FetchReceipt.NO_RESPONSE,
+                   document_visible=stored)
+
+
 @dataclass(frozen=True)
 class FetchInput:
     session: str | None
@@ -116,6 +146,7 @@ class FetchInput:
     spill_note: Callable[[], str]
     status_label: Callable[[int], str]
     render: Callable[..., str]
+    observation: Callable[[], VisibleFetch | None] = lambda: None
 
 
 def fetch_admission(source: FetchInput) -> Admission:
@@ -126,6 +157,9 @@ def fetch_admission(source: FetchInput) -> Admission:
     key = (source.url, source.find or "", source.cursor or "", bool(source.raw))
     if key not in source.visible():
         return Admission()
+    observed = source.observation()
+    if observed is not None and observed.receipt is FetchReceipt.NO_RESPONSE:
+        return Admission(Effect.REFUSED, source.render("fetch_repeat_no_response", url=source.url))
     cached = source.cached()
     if cached is not None:
         status, _ct, body, _parsed, _truncated = cached
@@ -134,6 +168,9 @@ def fetch_admission(source: FetchInput) -> Admission:
                 "fetch_repeat_failed", url=source.url, status=source.status_label(status)))
         if len(body) > source.spill_size and source.spilled():
             return Admission(Effect.REFUSED, source.spill_note())
+    elif observed is not None and observed.receipt is FetchReceipt.RESPONSE and observed.status is not None:
+        return Admission(Effect.REFUSED, source.render(
+            "fetch_repeat_response", url=source.url, status=observed.status))
     return Admission(Effect.REFUSED, source.render("fetch_repeat", url=source.url))
 
 

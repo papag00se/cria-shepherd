@@ -934,6 +934,9 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
         return _refusal_command(result)
     # THE FETCH'S OWN FACTS ride as a typed field of the `ran` record (`rep.fx`: url, status, routes, shapes, catalog), computed
     # from the producer's parse of the document — never re-read from the rendered page, whose body may quote any marker.
+    # This is also the visibility receipt's complete response contract: every HTTP response has fx,
+    # even a 404/empty body. RAN without fx means the attempt returned no HTTP response (status=None),
+    # not that it was refused or that a document has since been evicted from the cache.
     return f"printf %s {_qbash(denial.frame(denial.RAN, rep={'fx': facts} if facts else None) + result)}"
 
 

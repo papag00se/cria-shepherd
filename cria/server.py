@@ -80,7 +80,7 @@ def _visible_web_calls(messages: list) -> tuple[list, list]:
     (post-represent_inbound, so the calls are labeled web_fetch/web_search). Feeds the exact-repeat
     gate so it refuses a repeat only while the model can still read that result — not after
     compaction elided it."""
-    from . import denial
+    from . import denial, researchpolicies
     from .toolargs import parse_args
     # A CALL THAT WAS REFUSED NEVER RAN, so its result is not in the conversation and cannot be
     # "still present" in it. This scanned assistant tool_calls only, and a refused call is still an
@@ -91,6 +91,7 @@ def _visible_web_calls(messages: list) -> tuple[list, list]:
     # one that names a spill file — carries a comment describing this same failure costing 8 refusals
     # in an earlier run; the fix was applied there and not here (#5b).
     refused = denial.refused_call_ids(messages)
+    paired = denial.paired_results(messages)
     fetch_keys, queries = [], []
     for m in messages:
         if not isinstance(m, dict) or m.get("role") != "assistant":
@@ -105,7 +106,15 @@ def _visible_web_calls(messages: list) -> tuple[list, list]:
                 if a.get("url"):
                     find = str(a["find"]) if a.get("find") else ""
                     cursor = str(a["cursor"]) if a.get("cursor") not in (None, "") else ""
-                    fetch_keys.append((str(a["url"]), find, cursor))
+                    raw = bool(a.get("raw"))
+                    if raw:
+                        cursor = ""
+                    result = paired.get(str(tc.get("id") or ""))
+                    report = (result.get(bodykeys.RESULT_REPORT) or {}) if result else {}
+                    fetch_keys.append(researchpolicies.VisibleFetch.from_report(
+                        (str(a["url"]), find, cursor, raw),
+                        ran=denial.proof(result) == denial.RAN, facts=report.get("fx"),
+                        stored="st" in report))
             elif name in ("web_search", "local_web_search"):
                 a = parse_args(fn.get("arguments"))
                 if a.get("query"):

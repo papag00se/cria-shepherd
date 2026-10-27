@@ -35,7 +35,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.client import InvalidURL
 from typing import Any, Optional
 
@@ -242,7 +242,7 @@ def cached_structure(url: str) -> Optional[bool]:
 # session-permanent gate that refused a legitimate re-read of a compacted-away OpenAPI spec (a live
 # footgun). `_FETCH_STREAK` (the stop-guessing nudge) is genuinely consecutive, so it does persist.
 # Internal/localhost URLs are never gated. Spirit of web_fetch.rs::gate_fetch (turn-scoped there).
-_FETCH_SEEN: dict[str, set] = {}
+_FETCH_SEEN: dict[str, dict[tuple, researchpolicies.VisibleFetch]] = {}
 _FETCH_STREAK: dict[str, int] = {}
 _SEARCH_SEEN: dict[str, set] = {}
 # Queries whose results cria ITSELF spilled to a file, `{lowered: as the model typed it}`. Only the
@@ -1290,7 +1290,8 @@ def spilled_search_files(session: Optional[str]) -> dict:
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     """Record what's CURRENTLY visible in the conversation, so the gate refuses a repeat only while
     the model still has that result. Called per request from the fetch/search results still in
-    history. ``fetch_keys`` = iterable of (url, find, cursor[, raw]); ``search_queries`` = queries."""
+    history. ``fetch_keys`` carries producer-owned VisibleFetch receipts, or legacy
+    (url, find, cursor[, raw]) identities with unknown provenance; ``search_queries`` = queries."""
     if not session:
         return
     # BOUND BEFORE INSERTING, not after: `_bound` used to run once the current session's fresh entry
@@ -1304,20 +1305,38 @@ def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     # 4-tuple identity (…, raw): a raw-source fetch is distinct from the reduced view of the same URL,
     # so requesting the source after a reduced fetch (or vice versa) is never falsely refused as a repeat.
     # History web_fetch calls are the reduced view unless they carried raw=true.
-    _FETCH_SEEN[session] = {(u, f or "", c or "", bool(rw))
-                            for (u, f, c, rw) in (_pad4(k) for k in fetch_keys)}
+    visible = {}
+    for item in fetch_keys:
+        if isinstance(item, researchpolicies.VisibleFetch):
+            observation = item
+        else:
+            u, f, c, rw = _pad4(item)
+            observation = researchpolicies.VisibleFetch((u, f or "", c or "", bool(rw)))
+        prior = visible.get(observation.key)
+        if prior is not None:
+            # Admission follows the latest attempt; visibility also retains any earlier
+            # response still in this history, even if a later attempt got no response.
+            documents = (prior.document_visible, observation.document_visible)
+            observation = replace(observation, document_visible=(
+                True if True in documents else None if None in documents else False))
+        visible[observation.key] = observation
+    _FETCH_SEEN[session] = visible
     _SEARCH_SEEN[session] = {(q or "").strip().lower() for q in search_queries if (q or "").strip()}
 
 
 def visible_urls(session: Optional[str]) -> set[str]:
-    """URLs with AT LEAST ONE fetch variant (any find/cursor/raw) still visible in the conversation —
+    """URLs with AT LEAST ONE response-bearing fetch variant (any find/cursor/raw) still visible.
+    Proven no-response attempts do not claim document visibility; legacy unknowns retain their
+    existing behavior. Admission separately remembers the latest attempt for each identity.
+    These are
     the SAME identity :func:`set_visible` / the exact-repeat gate use, collapsed to the URL alone
     because that's the granularity the durable fetch LEDGER (:mod:`cria.loop`) renders at. Its whole
     point is to answer "is this URL's own result still readable in the messages I am about to send"
     with the one state cria already tracks for the repeat gate, rather than a second, independently
     written check that could drift from it — the gate refusing a re-fetch while the ledger denies the
     body is there would be cria contradicting itself to the model in the same turn."""
-    return {u for (u, _find, _cursor, _raw) in _FETCH_SEEN.get(session or "", ())}
+    return {item.key[0] for item in _FETCH_SEEN.get(session or "", {}).values()
+            if item.document_visible is not False}
 
 
 def _bound(store: dict) -> None:
@@ -1335,7 +1354,7 @@ def _bound(store: dict) -> None:
 # real result. Marking those would tell a judge a successful fetch never happened.
 _REFUSAL_KEYS = frozenset({
     "search_repeat", "search_repeat_inline",
-    "fetch_repeat", "fetch_repeat_failed", "fetch_repeat_spilled",
+    "fetch_repeat", "fetch_repeat_failed", "fetch_repeat_spilled", "fetch_repeat_no_response", "fetch_repeat_response",
 })
 
 
@@ -1434,7 +1453,9 @@ def fetch_nav_result(url: str, *, find: Optional[str] = None, cursor: Optional[s
 
     Returns ``(text, refused, status, facts)``. ``facts`` is the typed fetch fact (`resultpacket` ``rep.fx``: url, status, routes,
     shapes, catalog), built from the parsed / discovered STRUCTURE — never from the rendered text — or None. ``status`` is the HTTP status the fetch actually got (None when the call was refused
-    before fetching). ``refused`` is the typed fact the repeat gate decided (`Effect.REFUSED`) — the caller
+    before fetching OR when an attempted fetch got no HTTP response). Only the latter is a RAN
+    attempt without response facts; a cached/empty/non-2xx HTTP response always carries facts.
+    ``refused`` is the typed fact the repeat gate decided (`Effect.REFUSED`) — the caller
     lowers a refusal from THAT, never by looking for the denied marker in text that also holds a fetched page."""
     if raw:
         # `find` used to be nulled here alongside `cursor`, discarding the model's narrowing request
@@ -1453,7 +1474,8 @@ def fetch_nav_result(url: str, *, find: Optional[str] = None, cursor: Optional[s
             lambda: _DOC_CACHE.get(url), OVERSIZE_CHARS,
             lambda: _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
                                extent=spill_extent_of(url), outline=outline_for_url(url)),
-            status_label, _guard_msg)
+            status_label, _guard_msg,
+            lambda: _FETCH_SEEN.get(session, {}).get((url, find or "", cursor or "", bool(raw))))
         decision = definition.execute(source)
         if decision.effect is researchpolicies.Effect.REFUSED:
             return decision.note, True, None, None
