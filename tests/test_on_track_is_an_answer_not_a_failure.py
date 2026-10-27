@@ -24,7 +24,7 @@ import json
 
 import pytest
 
-from cria import assistruntime, loop, stalledwork
+from cria import assistruntime, bodykeys, denial, loop, stalledwork
 from cria.loop import GuardState
 from cria.probegate import GateOutcome
 
@@ -73,7 +73,15 @@ def _settle(trigger, replies, *, truth=TRUTH):
     gs.probe_call_id = "probe-1"
     gs.spin_path = "cart.go"
     gs.repeat_count, gs.repeat_action = 3, REFUSED
-    body = {"messages": [{"role": "user", "content": "Make the importer faster."},
+    # Three genuinely refused calls stay in the window, so the refusal trigger is still eligible at
+    # admission (which re-measures it); the wheel-spin cases are unaffected by them.
+    refused = []
+    for i in range(3):
+        refused += [{"role": "assistant", "tool_calls": [{"id": f"refused-{i}", "type": "function",
+                     "function": {"name": "exec_command", "arguments": json.dumps({"cmd": f"java -cp x {i} > /tmp/out.txt"})}}]},
+                    {"role": "tool", "tool_call_id": f"refused-{i}", "content": denial.mark("outside the workspace"),
+                     bodykeys.RESULT_OUTCOME: denial.REFUSED}]
+    body = {"messages": [{"role": "user", "content": "Make the importer faster."}, *refused,
                          {"role": "tool", "tool_call_id": gs.probe_call_id, "content": "gate output"}]}
     rlog, asked, queue = _Rlog(), [], list(replies)
 

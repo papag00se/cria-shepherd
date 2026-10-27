@@ -235,23 +235,62 @@ def test_trigger_defaults_and_thresholds_match_source_predecessor(condition):
     assert sw.STALL_ROUNDS == loop.THRASH_STALL_CYCLES == 2
 
 
-@pytest.mark.parametrize("count", [0, 1, 3])
-def test_no_shell_refusal_floor_preserves_original_exact_bytes(count, monkeypatch):
+def _no_shell_expected(observed, action):
+    return ("Continuing down this line will not change the outcome — " + observed +
+            ", and the most recent action of that kind was: " + action + ". "
+            "Choose a DIFFERENT next action and take it now via a tool call.")
+
+
+def _refused_history(n):
+    from cria import denial
+    messages = []
+    for i in range(n):
+        messages += [{"role": "assistant", "tool_calls": [{"id": f"refused-{i}", "type": "function",
+                      "function": {"name": "exec_command",
+                                   "arguments": json.dumps({"cmd": f"actual refused call {i}"})}}]},
+                     {"role": "tool", "tool_call_id": f"refused-{i}", "content": denial.mark("not run"),
+                      bodykeys.RESULT_OUTCOME: denial.REFUSED}]
+    return messages
+
+
+@pytest.mark.parametrize("count,observed", [
+    (0, "you are not getting a new outcome from these actions"),
+    (1, "your last call was refused, so it did not run"),
+    (3, "3 of your recent calls were refused, so none of them ran"),
+])
+def test_no_shell_refusal_floor_preserves_original_exact_bytes(count, observed):
+    # The directive owner's exact bytes for every count it can be handed.
+    assert sw._redirect(count, "actual refused call", "") == _no_shell_expected(observed, "actual refused call")
+
+
+def test_no_shell_eligible_refusal_admission_delivers_the_exact_floor(monkeypatch):
     # Admission has no returned outcome. Compare the actual predecessor seat,
     # not its returned-probe helper (which correctly requires a real reading).
     monkeypatch.setattr(loop, "guard_gate_op", lambda *args, **kwargs: None)
-    source = sw.AdmissionInput(lambda: None, Log())
-    result = sw.DEFINITION.admit(source, sw.State(redirect_due=True, repeat_count=count,
+    source = sw.AdmissionInput(lambda: None, Log(), lambda: (3, "actual refused call"))
+    result = sw.DEFINITION.admit(source, sw.State(redirect_due=True, repeat_count=3,
                                                  repeat_action="actual refused call"))
-    old = loop.GuardState(redirect_due=True, repeat_count=count, repeat_action="actual refused call")
-    assert loop.guard_intervene(old, {"messages": [], "tools": []}, Log()) is None
-    observed = {0: "you are not getting a new outcome from these actions", 1: "your last call was refused, so it did not run",
-                3: "3 of your recent calls were refused, so none of them ran"}[count]
-    expected = ("Continuing down this line will not change the outcome — " + observed +
-                ", and the most recent action of that kind was: actual refused call. "
-                "Choose a DIFFERENT next action and take it now via a tool call.")
-    assert result.steer.text == expected and old.nudge_reason == expected
-    assert not result.steer.redirect_envelope
+    expected = _no_shell_expected("3 of your recent calls were refused, so none of them ran", "actual refused call")
+    assert result.steer.text == expected and not result.steer.redirect_envelope
+    # The production seat quotes the refused call its OWN window measurement found.
+    old = loop.GuardState(redirect_due=True, repeat_count=3, repeat_action="stale latched quote")
+    assert loop.guard_intervene(old, {"messages": _refused_history(3), "tools": []}, Log()) is None
+    assert old.nudge_reason == _no_shell_expected("3 of your recent calls were refused, so none of them ran",
+                                                  'exec_command {"cmd": "actual refused call 2"}')
+
+
+@pytest.mark.parametrize("count", [0, 1, 2])
+def test_below_threshold_refusal_latch_is_withdrawn_not_nominated(count, monkeypatch):
+    def forbidden():
+        raise AssertionError("an ineligible refusal latch reached probe composition")
+    monkeypatch.setattr(loop, "guard_gate_op", lambda *args, **kwargs: forbidden())
+    state = sw.State(redirect_due=True, repeat_count=3, repeat_action="actual refused call")
+    result = sw.DEFINITION.admit(sw.AdmissionInput(forbidden, Log(), lambda: (count, "measured")), state)
+    assert result.status is sw.Status.NO_OP and result.steer is None and result.probe is None
+    assert not state.redirect_due and state.pending_steer is None and state.pending_probe is None
+    old = loop.GuardState(redirect_due=True, repeat_count=3, repeat_action="actual refused call")
+    assert loop.guard_intervene(old, {"messages": _refused_history(count), "tools": []}, Log()) is None
+    assert not old.redirect_due and old.nudge_reason == "" and old.stalled_probe is None
 
 
 def test_no_ask_stale_diagnostics_and_unknown_readers_keep_separate_failure_directions():

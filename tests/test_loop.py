@@ -1074,6 +1074,10 @@ def _admit_guard_probe(gs, body, rlog, *, redirect=False):
         "name": "shell", "arguments": json.dumps({"command": ["sh", "-c", "true"]})}}
     admission_body = {**body, "messages": [message for message in body.get("messages", [])
         if not (message.get("role") == "tool" and message.get("tool_call_id") == call["id"])]}
+    if redirect:
+        # Admission re-measures the refusal window on this inbound history; a latch it no longer
+        # supports is withdrawn. The fixture must hold the refusals that would have armed it.
+        assert owner._refusals_in_window(admission_body["messages"])[0] >= owner.REPEAT_FINGERPRINT_N
     with mock.patch.object(owner, "_requested_repository_probe", return_value=call):
         admitted = owner.guard_intervene(gs, admission_body, rlog)
     assert admitted["choices"][0]["message"]["tool_calls"][0] is call
@@ -1104,14 +1108,24 @@ def _body_with_refusals(n=3, cmd="gem install eu_countries"):
 _GATE_TRANSPORT_IDS: dict = {}
 
 
-def _body_with_probe(call_id, output):
+def _after(body, completion, result="Wrote h.py"):
+    """The harness's NEXT inbound history: everything it sent before, the reply cria forwarded, and that
+    reply's results. A history does not reset between turns, so a trigger armed on it is still measurable."""
+    message = completion["choices"][0]["message"]
+    results = [{"role": "tool", "tool_call_id": tc["id"], "content": result}
+               for tc in message.get("tool_calls") or []]
+    return {**body, "messages": list(body["messages"]) + [message] + results}
+
+
+def _body_with_probe(call_id, output, base=None):
     """Simulate the harness having run cria's ground-truth probe: its result is now in the stream — as the harness delivers
-    it, a verified transport page for THAT call's transport, with the worker's declared extents."""
+    it, a verified transport page for THAT call's transport, with the worker's declared extents. ``base`` is the
+    history the probe result is appended to (default: a fresh task body)."""
     from types import SimpleNamespace
     from tests.gatefixture import gate_page
     if call_id in _GATE_TRANSPORT_IDS and isinstance(output, str):
         output = gate_page(SimpleNamespace(transport_id=_GATE_TRANSPORT_IDS[call_id]), output)
-    b = _body()
+    b = _body() if base is None else {**base, "messages": list(base["messages"])}
     b["messages"] = b["messages"] + [{"role": "tool", "tool_call_id": call_id, "content": output}]
     return b
 
@@ -2271,7 +2285,8 @@ class WheelSpinTests(unittest.TestCase):
         self.assertEqual(gs.steer_source, "wheel-spin guard")
         # refusal redirect resolving (canned, no author) → labels "refusal guard"
         gs2 = GuardState(probe_call_id="p2", repeat_action="write_file(h.py)")
-        body2 = {"messages": [{"role": "tool", "tool_call_id": "p2", "content": "EXIT:0"}]}
+        body2 = {"messages": _body_with_refusals()["messages"]
+                 + [{"role": "tool", "tool_call_id": "p2", "content": "EXIT:0"}]}
         _admit_guard_probe(gs2, body2, rlog, redirect=True)
         steer = guard_probe_steer(gs2, body2, rlog, author=CANNED)
         self.assertIn("[REDIRECT]", steer)
@@ -2782,16 +2797,17 @@ class RefusalRedirectTests(unittest.TestCase):
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
         loop._ctx.reasoner_role = Role(name="reasoner", backend="local")
         rlog = _Rlog()
-        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)   # 3 refused calls behind it
+        armed = _body_with_refusals()
+        history = _after(armed, loop.drive(armed, "k", _Classification(), rlog))   # 3 refused calls behind it
         self.assertIn("loop.refusals", rlog.kinds())
-        # next turn: the gate fires for ground truth
-        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        # next turn (its history still holds the 3 refusals): the gate fires for ground truth
+        gate = loop.drive(history, "k", _Classification(), rlog)
         self.assertIn("loop.redirect_probe", rlog.kinds())
         args = json.loads(gate["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
         self.assertIn(P.rstrip("_"), " ".join(args["command"]))
         # gate result (failing floor) → reasoner authors the redirect → coder is re-driven with it
         result = f'{P}probe-0{S}\n  File "x.py", line 3\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
-        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        loop.drive(_body_with_probe(_tc_id(gate), result, base=history), "k", _Classification(), rlog)
         self.assertIn("loop.redirect", rlog.kinds())
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn("Patch handler.requests", coder.last_user())   # the reasoner's words
@@ -2831,10 +2847,11 @@ class RefusalRedirectTests(unittest.TestCase):
         loop = Loop(_ctx(coder, _Recorder2(), _plan(1), workspace_root=ws))
         loop._ctx.reasoner_role = Role(name="reasoner", backend="local")
         rlog = _Rlog()
-        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
-        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        armed = _body_with_refusals()
+        history = _after(armed, loop.drive(armed, "k", _Classification(), rlog))
+        gate = loop.drive(history, "k", _Classification(), rlog)
         result = _result_for(gate)
-        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        loop.drive(_body_with_probe(_tc_id(gate), result, base=history), "k", _Classification(), rlog)
         for blob in (seen["system"].lower(), seen["user"].lower()):
             self.assertNotIn("not in the file", blob)
             self.assertNotIn("look elsewhere", blob)
@@ -2848,10 +2865,11 @@ class RefusalRedirectTests(unittest.TestCase):
         reasoner = _Scripted([{"choices": [{"message": {"role": "assistant", "content": ""}}]}])  # empty forever
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
-        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        armed = _body_with_refusals()
+        history = _after(armed, loop.drive(armed, "k", _Classification(), rlog))
+        gate = loop.drive(history, "k", _Classification(), rlog)
         result = _result_for(gate)
-        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        loop.drive(_body_with_probe(_tc_id(gate), result, base=history), "k", _Classification(), rlog)
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn(_CANNED_TAIL, coder.last_user())            # canned fallback
         self.assertIn("no error-class", coder.last_user().lower())    # clean-checks truth included
@@ -2866,10 +2884,11 @@ class RefusalRedirectTests(unittest.TestCase):
         reasoner = _Scripted([{"choices": [{"message": {"role": "assistant", "content": ""}}]}])  # empty → canned
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
-        gate = loop.drive(_body(), "k", _Classification(), rlog)
+        armed = _body_with_refusals()
+        history = _after(armed, loop.drive(armed, "k", _Classification(), rlog))
+        gate = loop.drive(history, "k", _Classification(), rlog)
         result = f'{P}probe-0{S}\n  File "h.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
-        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
+        loop.drive(_body_with_probe(_tc_id(gate), result, base=history), "k", _Classification(), rlog)
         nudge = coder.last_user()
         self.assertIn("GROUND TRUTH", nudge)                              # the failing check is present
         self.assertIn(_CANNED_TAIL, nudge)                          # and so is the refusal framing
@@ -3006,10 +3025,11 @@ class RefusalRedirectTests(unittest.TestCase):
         coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
+        armed = _body_with_refusals()
+        history = _after(armed, loop.drive(armed, "k", _Classification(), rlog))  # still 3 refusals in it
         self.assertIn("loop.refusals", rlog.kinds())
         with mock.patch("cria.loop.probegate.plan_gate", side_effect=OSError("unreadable")):
-            loop.drive(_body(), "k", _Classification(), rlog)
+            loop.drive(history, "k", _Classification(), rlog)
         self.assertIn("loop.redirect", rlog.kinds())        # canned, not silent
         self.assertIn(_CANNED_TAIL, coder.last_user())
 

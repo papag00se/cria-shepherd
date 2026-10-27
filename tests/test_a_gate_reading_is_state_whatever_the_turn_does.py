@@ -118,9 +118,11 @@ class TheGuardProbeTurnRecordsItTests(unittest.TestCase):
         real_read, real_find = loop.read_gate, loop.gate_error_text
         loop.read_gate, loop.gate_error_text = fake_read_gate, fake_findings
         try:
-            from tests.test_loop import _admit_guard_probe
-            body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
-                                  "content": "gate output"}]}
+            from tests.test_loop import _admit_guard_probe, _body_with_refusals
+            # A refusal latch is re-measured at admission, so its history still holds the refusals.
+            history = _body_with_refusals()["messages"] if gs.redirect_due else []
+            body = {"messages": history + [{"role": "tool", "tool_call_id": gs.probe_call_id,
+                                            "content": "gate output"}]}
             rlog = _Rlog()
             _admit_guard_probe(gs, body, rlog, redirect=gs.redirect_due)
             steer = loop.guard_probe_steer(gs, body, rlog, author=loop.CANNED, step=1)

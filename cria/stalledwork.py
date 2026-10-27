@@ -222,6 +222,7 @@ class AdmissionInput:
     # gate plan, transport and survey. None retains the existing no-shell behavior.
     admit_probe: Callable[[], dict | None]
     log: Log
+    measure_refusals: Callable[[], tuple[int, str]]
     step: int | None = None
 
 
@@ -245,6 +246,15 @@ def admit(source: AdmissionInput, state: StateAccess, *, enabled: bool = True) -
         return Result(Status.PENDING, state.pending_probe.trigger, probe=state.pending_probe)
     if state.pending_steer is not None:
         return Result(Status.PENDING, state.pending_steer.trigger, steer=state.pending_steer)
+    if state.redirect_due:
+        # Observation used the history BEFORE the forwarded call returned. Keep its
+        # latch until admission, then withdraw only when the SAME window no longer
+        # meets its numeric threshold. A ran call is not evidence of recovery.
+        count, last = source.measure_refusals()
+        if count < REFUSAL_THRESHOLD:
+            state.redirect_due = False
+        else:
+            state.repeat_count, state.repeat_action = count, last
     trigger = Trigger.REFUSAL if state.redirect_due else Trigger.WHEEL_SPIN if state.spin_due else None
     if trigger is None:
         return Result(Status.NO_OP)

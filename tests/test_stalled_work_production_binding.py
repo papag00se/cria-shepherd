@@ -35,6 +35,26 @@ def refused_history():
     return history
 
 
+def carried(text, request):
+    """Is ``text`` inside a message the provider actually received? Compared on decoded contents: the
+    measured refusal quote holds JSON arguments, whose quotes a serialized-body search would see escaped."""
+    return any(text in (c if isinstance(c, str) else json.dumps(c, ensure_ascii=False))
+               for c in (m.get('content') for m in request.get('messages', [])) if c)
+
+
+def armed_refusal(state, body):
+    """The refusal latch exactly as observation leaves it, over a history that still supports it.
+
+    Admission re-measures the same window (``loop._refusals_in_window``) on the inbound history and
+    withdraws a latch it no longer meets, so the inbound history carries the refusals that armed it
+    and observation's cooldown is already consumed."""
+    body['messages'] += refused_history()
+    count, last = loop._refusals_in_window(body['messages'])
+    assert count >= sw.REFUSAL_THRESHOLD
+    state.redirect_due, state.repeat_count, state.repeat_action = True, count, last
+    state.blocked_fired_seq = state.action_seq
+
+
 def rig(monkeypatch, root, *, synthetic=True, replies=None):
     driver, state, body = setup_driver()
     state.synthetic = state.plan_off = synthetic
@@ -220,7 +240,7 @@ def test_actual_retained_public_reply_alone_acknowledges_its_exact_pending_steer
         return sw.DEFINITION.acknowledge(view, steer, enabled=enabled)
     chosen = replace(sw.DEFINITION, admit=admit, acknowledge=acknowledge)
     driver, state, body, posted = rig(monkeypatch, runtime(chosen), synthetic=synthetic)
-    state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
+    armed_refusal(state, body)
     method = '_drive_single_item' if synthetic else '_work'
     original = getattr(driver, method)
     candidates = []
@@ -253,7 +273,7 @@ def test_actual_retained_public_reply_alone_acknowledges_its_exact_pending_steer
             assert out is candidates[0]
     assert len(posted) == 1 and len(steers) == 1
     steer = steers[0]
-    assert steer.text in json.dumps(posted[0], ensure_ascii=False)
+    assert carried(steer.text, posted[0])
     assert views[0].recent_writes is state.recent_writes
     if late == 'retained':
         assert len(acknowledgements) == 1 and acknowledgements[0][1] is steer
@@ -278,7 +298,7 @@ def test_retained_reply_without_the_selected_steer_in_its_actual_body_earns_no_a
         return sw.DEFINITION.acknowledge(view, steer, enabled=enabled)
     driver, state, body, posted = rig(monkeypatch,
         runtime(replace(sw.DEFINITION, admit=admit, acknowledge=acknowledge)), synthetic=synthetic)
-    state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
+    armed_refusal(state, body)
     prepare = driver._prepare_coder_context
     def overwrite(*args, **kwargs):
         framed, reoriented = prepare(*args, **kwargs)
@@ -290,7 +310,7 @@ def test_retained_reply_without_the_selected_steer_in_its_actual_body_earns_no_a
     monkeypatch.setattr(driver, '_prepare_coder_context', overwrite)
     driver.drive(body, SESSION, None, _Rlog())
     assert len(posted) == 1 and 'OTHER_POLICY_NOTE' in json.dumps(posted[0])
-    assert steers[0].text not in json.dumps(posted[0], ensure_ascii=False)
+    assert not carried(steers[0].text, posted[0])
     assert acknowledgements == [] and views[0].pending_steer is steers[0]
 
 
@@ -309,7 +329,7 @@ def test_discarded_steer_survives_continuation_then_is_delivered_once(monkeypatc
     driver, state, body, posted = rig(monkeypatch,
         runtime(replace(sw.DEFINITION, admit=admit, acknowledge=acknowledge)), synthetic=synthetic,
         replies=[acting('discarded'), acting('retained')])
-    state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
+    armed_refusal(state, body)
     method = '_drive_single_item' if synthetic else '_work'
     original = getattr(driver, method)
     def replace_return(*args, **kwargs):
@@ -323,7 +343,7 @@ def test_discarded_steer_survives_continuation_then_is_delivered_once(monkeypatc
     monkeypatch.setattr(driver, method, original)
     out = driver.drive(body, SESSION, None, _Rlog())
     assert out['choices'][0]['message']['tool_calls'][0]['id'] == 'retained'
-    assert len(posted) == 2 and all(pending.text in json.dumps(p, ensure_ascii=False) for p in posted)
+    assert len(posted) == 2 and all(carried(pending.text, p) for p in posted)
     assert acknowledgements == [pending] and views[0].last_delivered is pending
     assert views[0].pending_steer is None
 
@@ -490,7 +510,7 @@ def test_pending_steer_does_not_suspend_required_forwarded_write_facts(monkeypat
         return sw.DEFINITION.admit(source, view, enabled=enabled)
     driver, state, body, _ = rig(monkeypatch, runtime(replace(sw.DEFINITION, admit=admit)), synthetic=synthetic,
         replies=[acting('new-write', 'write_file', {'path': 'a.py', 'content': 'new source\n'})])
-    state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
+    armed_refusal(state, body)
     state.write_call_ids = ['landed', 'failed']
     body['messages'] += [acting('landed', 'write_file', {'path': 'a.py', 'content': 'old\n'})['choices'][0]['message'],
         {'role': 'tool', 'tool_call_id': 'landed', 'content': 'Wrote a.py'},
@@ -690,12 +710,12 @@ def test_observation_failure_after_offered_steer_does_not_publish_delivery_or_lo
             'type': 'object', 'properties': {'query': {'type': 'string'}}, 'required': ['query']}}})
         driver._ctx.reasoner_role = config.Role(name='reasoner', backend='local')
         driver._ctx.reasoner_chat = lambda *a: (_ for _ in ()).throw(AssertionError('selected rehunt leaked inference'))
-    state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
+    armed_refusal(state, body)
     error, message = ((RejectedObservation, 'failed observation after real coder reply') if failure == 'raise'
                       else (TypeError, 'Stalled work replacement must return Result'))
     with pytest.raises(error, match=message):
         driver.drive(body, SESSION, None, _Rlog())
-    assert len(observations) == len(posted) == 1 and steers[0].text in json.dumps(posted[0], ensure_ascii=False)
+    assert len(observations) == len(posted) == 1 and carried(steers[0].text, posted[0])
     if semantic:
         assert semantic_deliveries == [], 'semantic credit published before F44 observation validated'
     assert acknowledgements == [] and views[0].pending_steer is steers[0]
@@ -703,7 +723,7 @@ def test_observation_failure_after_offered_steer_does_not_publish_delivery_or_lo
     out = driver.drive(body, SESSION, None, _Rlog())
     assert out['choices'][0]['message']['tool_calls'][0]['id'] == 'retry-compliance'
     assert len(observations) == len(posted) == 2
-    assert steers[-1] is steers[0] and all(steers[0].text in json.dumps(frame, ensure_ascii=False) for frame in posted)
+    assert steers[-1] is steers[0] and all(carried(steers[0].text, frame) for frame in posted)
     assert acknowledgements == [steers[0]] and views[0].last_delivered is steers[0]
     assert views[0].pending_steer is None and state.action_seq == 1
     assert views[0].recent_writes == [None] and views[0].recent_write_ids == ['retry-compliance']
@@ -755,7 +775,7 @@ def test_actual_provider_interruption_does_not_ack_pending_steer(monkeypatch, sy
     driver, state, body, posted = rig(monkeypatch,
         runtime(replace(sw.DEFINITION, admit=admit, acknowledge=acknowledge)), synthetic=synthetic,
         replies=[InterruptedProvider('no coder reply')])
-    state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
+    armed_refusal(state, body)
     with pytest.raises(InterruptedProvider, match='no coder reply'):
         driver.drive(body, SESSION, None, _Rlog())
     assert len(posted) == len(steers) == 1 and acknowledgements == []

@@ -7286,7 +7286,8 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
     result = _stalled_result(definition.admit(stalledwork.AdmissionInput(
         lambda: _requested_repository_probe(gs, body, rlog, workspace_root=workspace_root,
             driver=repositorychecks.Driver.STEP if step is not None else repositorychecks.Driver.TASK,
-            step=step), rlog, step), _StalledWorkView(gs)))
+            step=step), rlog,
+        lambda: _refusals_in_window(body.get("messages", [])), step), _StalledWorkView(gs)))
     if result.probe is not None:
         if gs.stalled_probe is not result.probe:
             raise ValueError('Stalled probe must retain its actual pending identity')

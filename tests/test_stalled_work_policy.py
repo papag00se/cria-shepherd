@@ -32,8 +32,22 @@ def fallback(count, action, truth):
     return f"Measured refusal count={count}; action={action}; exact checks={truth}"
 
 
-def admit(state, *, call=None, author=None, record=None, truth="exact check output", log=None):
-    source = sw.AdmissionInput(lambda: call, log or Log())
+def measured(count, action="a call that was actually refused"):
+    """The admission-time refusal window this test means. Production measures it with the same
+    owner the observation used (``loop._refusals_in_window`` over the inbound history)."""
+    return lambda: (count, action)
+
+
+def unmeasured():
+    """Admission must not measure refusals when no refusal latch is set."""
+    def forbidden():
+        raise AssertionError("admission measured refusals without a refusal latch")
+    return forbidden
+
+
+def admit(state, *, call=None, author=None, record=None, truth="exact check output", log=None,
+          refusals=None):
+    source = sw.AdmissionInput(lambda: call, log or Log(), refusals or unmeasured())
     result = sw.DEFINITION.admit(source, state)
     if result.probe is None:
         return result
@@ -123,7 +137,8 @@ def test_refusal_admission_supersedes_spin_and_settlement_records_before_author(
             order.append("author/vet")
         return actual(*args, **kwargs)
     author.engine.providers = replace(author.engine.providers, summarize=run)
-    source = sw.AdmissionInput(lambda: {"id": "probe"}, Log())
+    # The inbound window still holds the 4 refusals that armed it.
+    source = sw.AdmissionInput(lambda: {"id": "probe"}, Log(), measured(4))
     pending = sw.DEFINITION.admit(source, state)
     assert pending.status is sw.Status.PENDING and not state.redirect_due and not state.spin_due
     assert sw.DEFINITION.admit(source, state).probe is pending.probe
@@ -140,7 +155,7 @@ def test_refusal_admission_supersedes_spin_and_settlement_records_before_author(
 def test_no_shell_refusal_and_wheel_spin_keep_existing_distinct_floors():
     refusal = sw.State(redirect_due=True, repeat_count=3, repeat_action="refused action")
     log = Log()
-    out = admit(refusal, log=log)
+    out = admit(refusal, log=log, refusals=measured(3, "refused action"))
     text = ("Continuing down this line will not change the outcome — 3 of your recent calls were refused, "
             "so none of them ran, and the most recent action of that kind was: refused action. "
             "Choose a DIFFERENT next action and take it now via a tool call.")
@@ -228,7 +243,7 @@ def test_all_disabled_stages_leave_pending_effects_state_and_services_untouched(
     state = sw.State(pending_probe=ticket, pending_steer=steer, repeat_count=4)
     before = copy.deepcopy(state)
     outputs = [sw.DEFINITION.execute(sw.ObservationInput(forbidden, log), state, enabled=False),
-               sw.DEFINITION.admit(sw.AdmissionInput(forbidden, log), state, enabled=False),
+               sw.DEFINITION.admit(sw.AdmissionInput(forbidden, log, forbidden), state, enabled=False),
                sw.DEFINITION.settle(sw.ReturnedProbeInput(ticket, forbidden, forbidden, None, log), state, enabled=False),
                sw.DEFINITION.progress(sw.ProgressInput("truth", 2, None, log), state, enabled=False),
                sw.DEFINITION.acknowledge(state, steer, enabled=False),
@@ -240,7 +255,7 @@ def test_all_disabled_stages_leave_pending_effects_state_and_services_untouched(
 
 def test_pending_steer_suspends_new_detection_and_only_exact_delivery_acknowledges():
     state = sw.State(redirect_due=True, repeat_count=3)
-    result = admit(state)
+    result = admit(state, refusals=measured(3))
     def forbidden():
         raise AssertionError("pending intervention started new detection")
     assert sw.DEFINITION.execute(sw.ObservationInput(forbidden, Log()), state).status is sw.Status.PENDING
