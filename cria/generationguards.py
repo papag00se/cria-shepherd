@@ -176,8 +176,9 @@ class StreamGuard:
         elif self.chars == 0 and elapsed() >= DEAD_STREAM_SECONDS:
             verdict = {"dead_stream": True, "chunks": self.frames, "seconds": round(elapsed(), 1)}
             fields = dict(verdict)
-        if verdict is None and len(self.wide_tail) - self.wide_evaled >= WIDE_EVAL_STRIDE:
-            self.wide_evaled = len(self.wide_tail)
+        # Schedule from generated characters; the bounded evidence ring stops growing.
+        if verdict is None and self.chars - self.wide_evaled >= WIDE_EVAL_STRIDE:
+            self.wide_evaled = self.chars
             if degenerate_wide(self.wide_tail):
                 verdict = {"degenerate": True, "chars": len(self.wide_tail)}
                 fields = {**verdict, "wide": True}
