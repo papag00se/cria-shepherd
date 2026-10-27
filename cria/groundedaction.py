@@ -697,6 +697,11 @@ class GroundedActions:
                 if self.providers.system1 is None and restated is not None and self._invented_code_spans(restated, self.facts.observed_code(messages)):
                     rlog.emit('loop.steer_restate', level='info', kept=False, reason='still invented')
                     restated = None
+                if restated is not None:
+                    # The original admission cannot establish the rewrite's shape.
+                    # Refuse a malformed rewrite directly, without recovery or retry.
+                    if self._authored_action(restated, rlog).action is None:
+                        restated = None
                 if restated is None:
                     rlog.emit('loop.steer_dictated_code', level='warn', delivered=False, invented=invented, reason='prescription', head=self.facts.clip(directive, 120))
                     return (None, 'dictated_code')
