@@ -260,9 +260,20 @@ _SEARCH_SPILLED: dict[str, dict] = {}
 # Queries a reasoner has judged a genuinely NEW direction rather than a re-hunt (`allow_search`), so
 # the word-overlap trigger does not refuse them.
 _SEARCH_ALLOWED: dict[str, set] = {}
-# Urls whose document cria WROTE to a file in the workspace. That file outlives the conversation, so
-# a plain re-fetch of the url is answered with the file's name rather than the document again.
-_FETCH_SPILLED: dict[str, dict] = {}
+
+
+@dataclass(frozen=True)
+class FetchSpill:
+    """A settled storage event's actual target and known originating workspace.
+
+    Neither a missing origin nor the event itself promises future availability.
+    """
+    target: str
+    origin_root: str | None
+
+
+# A stored document may outlive the conversation; current presence is checked separately.
+_FETCH_SPILLED: dict[str, dict[str, FetchSpill]] = {}
 _GATE_CAP = 256
 
 
@@ -1208,18 +1219,19 @@ def _pad4(k):
     return tuple(k) + (False,) if len(k) == 3 else tuple(k)
 
 
-def note_fetch_spill(session: Optional[str], url: str, path: Optional[str] = None) -> None:
+def note_fetch_spill(session: Optional[str], url: str, path: Optional[str] = None,
+                     *, workspace_root: Optional[str] = None) -> None:
     """Record that cria WROTE this url's document to a file, and WHERE.
 
-    Recorded by the caller that actually issues the spill, so this is a fact about what cria did, not
-    an inference from the cache being large. The path matters because the refusal built on this
-    ledger names it to the model — and a session key is not always unique to a workspace: with no
+    Production records only after the retained original offer's matching storage receipt settles,
+    not at composition or by inference from the cache being large. The refusal names that target,
+    and a session key is not always unique to a workspace: with no
     session id from the harness, `session_key` falls back to a hash of the first user message, so two
     runs of the SAME prompt share one key. MEASURED (run 0727-131647): the second run's very first
     web_fetch was refused with "already fetched … saved to ./tmp/read-only/api.handle.me_openapi.json"
     — a path that existed only in the PREVIOUS run's workspace. It never saw the spec at all."""
     if session and (url or "").strip():
-        _FETCH_SPILLED.setdefault(session, {})[url.strip()] = path or ""
+        _FETCH_SPILLED.setdefault(session, {})[url.strip()] = FetchSpill(path or "", workspace_root or None)
 
 
 def already_spilled(session: Optional[str], url: str, workspace_root: Optional[str] = None) -> bool:
@@ -1227,30 +1239,26 @@ def already_spilled(session: Optional[str], url: str, workspace_root: Optional[s
     FILESYSTEM decides — so a spill from another workspace (or one the model deleted) is not claimed."""
     if not session:
         return False
-    path = _FETCH_SPILLED.get(session, {}).get((url or "").strip())
-    if path is None:
+    spill = _FETCH_SPILLED.get(session, {}).get((url or "").strip())
+    if spill is None or not spill.target:
         return False
-    if not path:            # recorded before the path was known — nothing to verify against
-        return True
-    if workspace_root and not os.path.abspath(path).startswith(os.path.abspath(workspace_root) + os.sep):
-        return False
-    # THE RECORD IS NOT EVIDENCE. It is written at COMPOSE time, one line before the command is even
-    # returned — so it says cria INTENDED to write the file, never that the harness wrote it. When the
-    # exec is refused (an oversized spill, a sandbox rejection) nothing lands, and a claim built on
-    # that record is a false fact cria then defends.
-    #
-    # Walked on handles-cli-node x nemotron-elastic 1787273429: the spill exec was refused, and for
-    # twenty-six turns cria told the model "that file is still there" in one paragraph while its own
-    # read guard answered "is not there — nothing was read" in the next. The model re-fetched the
-    # same 111 KB document seven times.
-    #
-    # So this needs the FILESYSTEM to say yes, not merely to fail to say no. Unknown re-allows a
-    # fetch, which costs a turn; the other direction cost twenty-six. (This line said `is not False`
-    # for a day — the reasoning was that withdrawing a claim on an unanswered question would send the
-    # model to re-fetch a doc it has. That is right for a claim cria VERIFIED and wrong for one it
-    # only intended.)
     from . import wsview
-    return wsview.current().exists(path) is True
+    view = wsview.current(workspace_root)
+    root = workspace_root or view.root
+    if spill.origin_root and (not root or
+                             os.path.normpath(spill.origin_root) != os.path.normpath(root)):
+        return False
+    target = spill.target
+    if root:
+        # Resolve lexically against the harness's announced root, never cria's cwd. The explicit
+        # bound also preserves absolute-target exclusion for callers without a recorded origin.
+        root = os.path.normpath(root)
+        target = os.path.normpath(target if os.path.isabs(target) else os.path.join(root, target))
+        if not target.startswith(root.rstrip(os.sep) + os.sep):
+            return False
+    # A checked receipt proves the write happened, not that its file remains available. Unknown
+    # cannot sustain "that file is still there"; only the current harness view can answer presence.
+    return view.exists(target) is True
 
 
 def note_search_spill(session: Optional[str], query: str, target: Optional[str] = None) -> None:

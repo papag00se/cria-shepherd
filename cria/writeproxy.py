@@ -128,9 +128,8 @@ def _externalize_coder(source: OutboundCall) -> str:
         offer = lambda spill: _spill_command(spill.target, spill.content, spill.pointer,
                                              operation=operation)
         def record(spill):
-            written = (os.path.join(request.workspace_root, spill.target.lstrip('./'))
-                       if request.workspace_root else '')
-            webfetch.note_fetch_spill(request.session, url, written)
+            webfetch.note_fetch_spill(request.session, url, spill.target,
+                                     workspace_root=request.workspace_root)
     value = e.Input(operation, inline, e.Services(detect, offer, record))
     delivery = e.selected_externalization(definition, value, state)
     if owner is not None and delivery.result.spill is not None:

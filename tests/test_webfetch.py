@@ -774,8 +774,14 @@ class GateTests(unittest.TestCase):
         url = "https://api.handle.me/swagger/swagger.yml"
         body = json.dumps(spec)
         wf._cache_put(url, 200, "application/json", *wf.reduce_for_cache(body, "application/json", url), False)
-        wf.note_fetch_spill("s-outline", url)
-        out = wf.fetch_nav(url, session="s-outline")
+        from cria import wsview
+        from wsfixture import survey
+        target = wf._spill_name(url)
+        view = wsview.View("/outline-workspace", "s-outline")
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        self.assertTrue(wsview.apply_survey(view, survey(f"F\t0\t17\t{target.lstrip('./')}")))
+        wf.note_fetch_spill("s-outline", url, target, workspace_root=view.root)
+        out = wf.fetch_nav(url, session="s-outline", workspace_root=view.root)
         self.assertIn(wf._spill_name(url), out)              # still refused — the file IS the answer
         self.assertIn("API endpoints (2)", out)              # ...and the refusal now ANSWERS
         self.assertIn("/holders/{address}", out)
@@ -790,8 +796,14 @@ class GateTests(unittest.TestCase):
         # still stand on their own.
         url = "https://example.com/never-parsed.bin"
         wf.clear_cache()
-        wf.note_fetch_spill("s-nocache", url)
-        out = wf.fetch_nav(url, session="s-nocache")
+        from cria import wsview
+        from wsfixture import survey
+        target = wf._spill_name(url)
+        view = wsview.View("/outline-workspace", "s-nocache")
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        self.assertTrue(wsview.apply_survey(view, survey(f"F\t0\t17\t{target.lstrip('./')}")))
+        wf.note_fetch_spill("s-nocache", url, target, workspace_root=view.root)
+        out = wf.fetch_nav(url, session="s-nocache", workspace_root=view.root)
         self.assertIn(wf._spill_name(url), out)
         self.assertNotIn("API endpoints", out)
         self.assertNotIn("top-level keys", out)
