@@ -1,13 +1,17 @@
 """cria's own readers must see the gate text it shows the coder.
 
 `clean_gate_output` derives the stranded-test sentence and the disk-quoted findings from the GATE
-PLAN — it needs the workspace and the `untested` list. Called without a plan it has neither, so the
-same gate result renders as a bare "no error-class problems".
+PLAN — it needs the workspace and the `untested` list. Without workspace discovery facts, native
+zero-collected evidence remains visible but the authored default-convention observation cannot name
+the file. Historically the same gate result instead rendered as a bare "no error-class problems".
 
 The coder path passed the plan. The reasoner path, the work log and the compactor did not. Measured
 on maple-preview 1786138747: 8 of 8 CODER-side gate blocks carried "Test code in
 testAdaHandleResolver.py will not run: pytest only runs tests named test_*.py or *_test.py"; 0 of 8
-reasoner-side ones did. cria then asked those reasoners what the coder should do next, and got
+reasoner-side ones did. That quoted historical wording overstated default discovery as universal
+inability to execute a file; the current observation preserves the file/convention fact without
+ruling out explicit-file or configured execution. cria then asked those reasoners what the coder
+should do next, and got
 "implement the API calls and fix the parsing logic" — the rename the coder had decided on one call
 earlier was dropped and never came back. Zero tests ran for the rest of the run.
 """
@@ -37,10 +41,20 @@ class _Rlog:
 
 class TheStrandedSentenceNeedsThePlanTests(unittest.TestCase):
 
-    def test_with_the_plan_the_uncollectable_file_is_named(self):
+    def test_with_the_plan_the_file_outside_default_discovery_is_named(self):
         out = probegate.clean_gate_output(RAW, completed(probegate.plan_gate(_ws()), RAW)) or ""
         self.assertIn("testFooBar.py", out)
-        self.assertIn("will not run", out)
+        native, separator, metadata = out.partition(
+            "Automatic discovery observations (authored metadata, not checker output):")
+        self.assertTrue(separator)
+        self.assertIn("exit 5\nno tests ran in 0.00s", native)
+        self.assertNotIn("testFooBar.py", native)
+        self.assertIn("testFooBar.py", metadata)
+        self.assertIn("outside default automatic discovery conventions for pytest", metadata)
+        self.assertIn("named test_*.py or *_test.py", metadata)
+        self.assertIn("does not establish whether an explicit-file invocation or a configured runner executes it", metadata)
+        self.assertNotIn("report these error-class problems", out)
+        self.assertNotIn("will not run", out)
 
     def test_without_it_the_same_gate_lacks_the_stranded_file_fact(self):
         """Pinned so the regression is visible if a call site ever drops the plan again."""
