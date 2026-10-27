@@ -2291,7 +2291,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: fetched_facts_sections. Dependencies: none.
-  Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5200), [`cria/loop.py:_restored_text_message`](../../cria/loop.py#L9270), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3478), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4908), [`cria/modelview.py:settle_restored_text`](../../cria/modelview.py#L379), [`cria/loop.py:Loop._coder_turn`](../../cria/loop.py#L2989).
+  Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5200), [`cria/loop.py:_restored_text_message`](../../cria/loop.py#L9270), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3478), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4908), [`cria/modelview.py:settle_restored_text`](../../cria/modelview.py#L391), [`cria/loop.py:Loop._coder_turn`](../../cria/loop.py#L2989).
   Regressions: [`tests/test_context_restoration_policy.py:test_render_source_parity`](../../tests/test_context_restoration_policy.py#L53), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274), [`tests/test_common_context_preparation.py:test_actual_driver_floor_delivery_earns_only_surviving_restoration_credit`](../../tests/test_common_context_preparation.py#L159).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
@@ -2299,8 +2299,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5200)
 - [`cria/loop.py:_restored_text_message`](../../cria/loop.py#L9270)
 - [`cria/groundtruth.py:workspace_inventory`](../../cria/groundtruth.py#L347)
-- [`cria/modelview.py:restored_hint`](../../cria/modelview.py#L373)
-- [`cria/modelview.py:settle_restored_text`](../../cria/modelview.py#L379)
+- [`cria/modelview.py:restored_hint`](../../cria/modelview.py#L385)
+- [`cria/modelview.py:settle_restored_text`](../../cria/modelview.py#L391)
 - [`cria/modelview.py:retained_results_truth`](../../cria/modelview.py#L278)
 - [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L487)
 
