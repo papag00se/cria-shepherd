@@ -30,11 +30,12 @@ _lock = threading.Lock()
 _seq: dict[str, int] = {}
 
 
-_SEQ_NAME = re.compile(r"^(\d{4})-")
+# ``:04d`` pads to a MINIMUM width; resume must recognize every emitted width.
+_SEQ_NAME = re.compile(r"^(\d{4,})-")
 
 
 def _resume_seq(d: Path) -> int:
-    """The highest ``NNNN`` already written in this session's folder, or 0.
+    """The highest sequence (at least four digits) already written in this folder, or 0.
 
     THE FOLDER IS RESTART-STABLE AND THE COUNTER WAS NOT. `session_dirname` is deliberately
     deterministic — "identical for every call of a session and across restarts, with no stored
