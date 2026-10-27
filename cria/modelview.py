@@ -279,8 +279,10 @@ def retained_results_truth(messages: list[dict]) -> list[dict]:
     """Move recognized legacy inventories losslessly behind the existing history.
 
     A fixed reference belongs in the old frame; the exact old wording, including
-    unmatched coordinates, remains quoted at the tail. Unknown handoff/quoted
-    passages are identity. Only the context floor can reduce the literal quote.
+    unmatched coordinates, remains quoted at the tail. The complete known old
+    ordinary frame also carried an outer authority paragraph: demote that exact
+    paragraph, never matching its words inside the unverified account. Unknown
+    handoff/quoted passages are identity. Only the floor can reduce the quote.
     """
     reference = prompts.load('continuation_results_reference').strip()
     out = None
@@ -288,6 +290,10 @@ def retained_results_truth(messages: list[dict]) -> list[dict]:
     leads = [CONTINUATION + ' ' + prompts.load(name).split('\n\n', 1)[0].partition('{{')[0]
              for name in ('compaction_reframe', 'compaction_reframe_empty',
                           'compaction_reframe_dropped', 'compaction_reframe_dropped_facts')]
+    ordinary = prompts.load('compaction_reframe').split('\n\n')
+    legacy_authority = prompts.load('continuation_legacy_authority').strip()
+    old_outer = leads[0] + '\n\n' + legacy_authority + '\n\n'
+    account_boundary = ordinary[2].partition('{{SUMMARY}}')[0]
     for i, message in enumerate(messages):
         text = message.get('content')
         if message.get('role') != 'user' or not isinstance(text, str):
@@ -298,10 +304,16 @@ def retained_results_truth(messages: list[dict]) -> list[dict]:
             continue
         if out is None:
             out = list(messages)
-        out[i] = {**message, 'content': text[:span[0]] + reference + text[span[1]:]}
+        prefix, inventory = text[:span[0]], text[span[0]:span[1]]
+        if prefix.startswith(old_outer + account_boundary):
+            # Both framing paragraphs come from prompt assets. Only the original
+            # outer position is owned here; an identical account quote stays literal.
+            prefix = leads[0] + '\n\n' + ordinary[1] + '\n\n' + prefix[len(old_outer):]
+            inventory = legacy_authority + '\n\n' + inventory
+        out[i] = {**message, 'content': prefix + reference + text[span[1]:]}
         quotes.append({'role': 'user', bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INVENTORY,
                        'content': prompts.render('continuation_inventory_quote',
-                                                 inventory=text[span[0]:span[1]]).strip()})
+                                                 inventory=inventory).strip()})
     return out + quotes if out is not None else messages
 
 
