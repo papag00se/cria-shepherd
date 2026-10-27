@@ -1485,7 +1485,7 @@ def _carries_test_code(path: str, conv: TestConvention) -> bool | None:
 # A filename that SAYS test, in any language's spelling — `test` or `spec` as a whole leading or
 # trailing word. This is a NAME rule, deliberately, and it is used for ONE thing: deciding that a file
 # which matches no convention glob is nevertheless stranded test code. The consequence of a hit is a
-# sentence telling the coder the file will not run; the consequence of a MISS is cria announcing "no
+# sentence identifying the default-convention mismatch; the consequence of a MISS is cria announcing "no
 # tests were found" over a file called `test_lookup.js`, which is what happened on cycle 4 cell 5.
 #
 # Tight on purpose — a separator must follow the leading word or precede the trailing one — so
@@ -1500,13 +1500,14 @@ def _name_says_test(stem: str) -> bool:
 
 
 def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bool | None, list[str]]:
-    """``(discoverable, stranded)`` — whether this language's runner will find ANY test, and the files
-    that hold test code it will NOT find.
+    """``(discoverable, stranded)`` — matches to this language's DEFAULT discovery conventions,
+    and apparent test files outside those conventions; not proof of inability to execute a file.
 
     A language identifies tests by filename, by decoration, or by both, and the two answer different
     questions. Filename alone cannot see the g20 failure (unittest classes inside resolve_handle.py —
     real tests, zero collected); decoration alone cannot see that `cargo test` needs no filename at
-    all. Reading both is what turns "no tests found" into "your tests are HERE and will not run"."""
+    all. Reading both locates apparent test code outside the default conventions; execution results
+    remain independent evidence."""
     discoverable, stranded = False, []
     for p in paths:
         rel = _rel_to(root, p)
@@ -1537,9 +1538,15 @@ def _has_discoverable_test(root: Path, paths: list[str], conv: TestConvention) -
     return _audit_tests(root, paths, conv)[0] is True
 
 
+def _stranded_test_sentence(stranded: list[str], conv: TestConvention) -> str:
+    """A naming observation, not a verdict on explicit-file or configured execution."""
+    return prompts.fill(prompts.load_map("discovery_observations")["stranded"],
+                        files=prompts.named_list(stranded), runner=conv.runner,
+                        convention=conv.label)
+
+
 def stranded_test_sentences(root: Path) -> list[str]:
-    """One complete sentence per language whose tree holds files that CONTAIN test code the
-    language's default runner will NEVER collect — the file names, the runner, and its naming rule.
+    """One observation per language with apparent test files outside default discovery conventions.
     Emitted whether or not OTHER test files are discoverable: a discoverable test_live_handle.py
     does not make a stranded 19KB pytest_da_resolvers.py run (measured on maple run 2, 1785973706 —
     the old discoverable→silence rule kept the gate quiet about it for the run's final 30 minutes).
@@ -1555,16 +1562,12 @@ def stranded_test_sentences(root: Path) -> list[str]:
             continue                                   # the project re-pointed its own runner
         stranded = _audit_tests(root, paths, conv)[1]
         if stranded:
-            # The strongest thing cria can say: the tests EXIST and will never run. Naming the file
-            # makes it checkable — g20 (unittest classes inside resolve_handle.py, gate clean 54×)
-            # and maple run 2 (pytest_da_resolvers.py, 19KB, zero collected) are both this class.
-            out.append(f"Test code in {prompts.named_list(stranded)} will not run: "
-                       f"{conv.runner} only runs tests {conv.label}.")
+            out.append(_stranded_test_sentence(stranded, conv))
     return out
 
 
 def undiscoverable_tests(root: Path) -> list[str]:
-    """Everything cria can factually say about tests its runners cannot see: the stranded-file
+    """Observations about default test discovery conventions: the stranded-file
     sentences (see :func:`stranded_test_sentences` — emitted even when other test files ARE
     discoverable), plus, for a floor language with NO discoverable tests at all, the convention
     cria searched by and found nothing for.
@@ -1572,7 +1575,7 @@ def undiscoverable_tests(root: Path) -> list[str]:
     The mirror image of :func:`test_floor_candidates`, from the same table so the two can never
     drift. Measured need, g20 (gemma4, ada-handles): the coder put its unittest classes INSIDE
     resolve_handle.py, so no file matched, no test probe was ever selected, and the gate reported
-    "no error-class problems" fifty-four times over a project whose tests could not run at all.
+    "no error-class problems" fifty-four times while default discovery selected none of those tests.
     Naming what cria searched by is a FACT about cria's own check — it says nothing about whether
     the task wants tests, which cria cannot know."""
     root = Path(root)
@@ -1584,17 +1587,15 @@ def undiscoverable_tests(root: Path) -> list[str]:
         if any(wsview.current().exists(root / cfg) is not False for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
         discoverable, stranded = _audit_tests(root, paths, conv)
-        # Each finding is a COMPLETE sentence. They are not interchangeable halves of one template:
-        # "your tests exist and will not run" and "you have no tests" are different facts and read as
-        # different instructions, and gluing either into a fixed "must be named {X}" frame produced a
-        # sentence that said neither.
+        # Each observation is scoped to the conventions inspected, not all possible executions.
+        # Apparent test code outside those conventions differs from finding no convention match.
         if stranded:
-            out.append(f"Test code in {prompts.named_list(stranded)} will not run: "
-                       f"{conv.runner} only runs tests {conv.label}.")
+            out.append(_stranded_test_sentence(stranded, conv))
         elif discoverable is False:
             # `is False`, NOT falsy. None means cria could not read the bodies that would settle it,
             # and "No cargo test tests were found" is a sentence about the world (#23c).
-            out.append(f"No {conv.runner} tests were found — to be run they must be {conv.label}.")
+            out.append(prompts.fill(prompts.load_map("discovery_observations")["missing"],
+                                    runner=conv.runner, convention=conv.label))
     return out
 
 

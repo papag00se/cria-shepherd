@@ -940,12 +940,26 @@ class NoTestsFoundNoteTests(unittest.TestCase):
         self.assertIn("#[test]", out)          # the DECORATION, not a filename
 
     def test_stranded_test_code_is_named_in_the_gate(self):
-        # g20 end to end: real tests, in a file pytest will never collect.
+        # g20 end to end: real tests outside pytest's default filename conventions.
+        # Historically the gate overstated this as "will not run"; explicit/configured execution
+        # remains possible and is not settled by this syntax-only fixture.
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._ws(tmp, **{"resolve_handle.py":
                                   "import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n"})
             out = probegate.clean_gate_output(self.CLEAN, completed(probegate.plan_gate(ws), self.CLEAN))
-        self.assertIn("Test code in resolve_handle.py will not run", out)
+        self.assertIn("Apparent test code in resolve_handle.py", out)
+        self.assertIn("outside default automatic discovery conventions for pytest", out)
+        self.assertIn("test_*.py or *_test.py", out)
+        self.assertIn("explicit-file invocation or a configured runner", out)
+        self.assertIn("exit 0", out)
+        self.assertIn("[no output recorded]", out)
+        native, separator, metadata = out.partition(
+            "Automatic discovery observations (authored metadata, not checker output):")
+        self.assertTrue(separator)
+        self.assertNotIn("resolve_handle.py", native)
+        self.assertIn("resolve_handle.py", metadata)
+        self.assertNotIn("report these error-class problems", out)
+        self.assertNotIn("will not run", out)
 
     def test_go_with_a_manifest_and_no_test_file_is_covered_too(self):
         # `go test ./...` IS selected here and exits 0 printing "no test files", so the gate reads

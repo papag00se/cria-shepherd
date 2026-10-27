@@ -305,9 +305,9 @@ class TomlFloorTests(DiscoveryCase):
 
 class TestConventionTableTests(unittest.TestCase):
     """One table entry owns what cria RUNS, what it SEARCHES by, and what it TELLS the coder, so the
-    three cannot disagree. Deriving the convention from the file extension (f"test_*.{ext}") reads true
-    for Python and is a FALSE FACT everywhere else: Go discovers only `*_test.go`, jest uses
-    `*.test.js` / `__tests__/`."""
+    three cannot disagree. These observations concern default automatic discovery, not every possible
+    execution. Deriving the convention from the file extension (f"test_*.{ext}") reads true for Python
+    but misstates other defaults: Go uses `*_test.go`, jest uses `*.test.js` / `__tests__/`."""
 
     def test_every_entry_states_its_own_convention(self):
         from cria.probediscovery import TEST_CONVENTIONS
@@ -336,10 +336,11 @@ class TestConventionTableTests(unittest.TestCase):
             Path(ws, "src").mkdir()
             Path(ws, "src/lib.rs").write_text("fn a(){}\n")
             self.assertEqual(undiscoverable_tests(ws),
-                             ["No cargo test tests were found — to be run they must be marked with #[test], normally inside a #[cfg(test)] mod."])
+                             ["No cargo test tests were found by default automatic discovery conventions — marked with #[test], normally inside a #[cfg(test)] mod. This does not establish that no other test invocation can run."])
 
-    def test_test_code_in_a_file_that_will_never_run_is_named(self):
-        # The strongest answer, and the g20 failure exactly: the tests EXIST and are not collected.
+    def test_test_code_outside_default_discovery_is_named(self):
+        # g20: real tests existed but default discovery did not select resolve_handle.py.
+        # The historical "will not run" assertion overstated what that naming fact proves.
         import tempfile
         from cria.probediscovery import undiscoverable_tests
         with tempfile.TemporaryDirectory() as ws:
@@ -348,15 +349,25 @@ class TestConventionTableTests(unittest.TestCase):
                 "    def test_it(self):\n        pass\n")
             out = undiscoverable_tests(ws)
         self.assertEqual(len(out), 1)
-        self.assertIn("Test code in resolve_handle.py will not run", out[0])
+        self.assertIn("Apparent test code in resolve_handle.py", out[0])
+        self.assertIn("outside default automatic discovery conventions for pytest", out[0])
         self.assertIn("test_*.py or *_test.py", out[0])
+        self.assertIn("explicit-file invocation or a configured runner", out[0])
+        self.assertNotIn("will not run", out[0])
 
-    def test_java_needs_both_the_annotation_and_the_filename(self):
+    def test_java_default_discovery_checks_annotation_and_filename(self):
         import tempfile
         from cria.probediscovery import undiscoverable_tests
-        with tempfile.TemporaryDirectory() as ws:   # @Test in a file surefire will not pick up
+        with tempfile.TemporaryDirectory() as ws:   # @Test outside surefire's default filename conventions
             Path(ws, "Helper.java").write_text("class Helper {\n  @Test\n  void a(){}\n}\n")
-            self.assertIn("will not run", undiscoverable_tests(ws)[0])
+            out = undiscoverable_tests(ws)
+            self.assertEqual(len(out), 1)
+            self.assertIn("Helper.java", out[0])
+            self.assertIn("outside default automatic discovery conventions for mvn test", out[0])
+            self.assertIn("annotated @Test", out[0])
+            self.assertIn("*Test.java or *Tests.java (surefire default)", out[0])
+            self.assertIn("explicit-file invocation or a configured runner", out[0])
+            self.assertNotIn("will not run", out[0])
         with tempfile.TemporaryDirectory() as ws:   # correctly named → silent
             Path(ws, "FooTest.java").write_text("class FooTest {\n  @Test\n  void a(){}\n}\n")
             self.assertEqual(undiscoverable_tests(ws), [])
@@ -397,17 +408,17 @@ class TestConventionTableTests(unittest.TestCase):
         from cria.probediscovery import undiscoverable_tests
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve.py").write_text("x = 1\n")
-            self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found — to be run they must be named test_*.py or *_test.py."])
+            self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found by default automatic discovery conventions — named test_*.py or *_test.py. This does not establish that no other test invocation can run."])
         with tempfile.TemporaryDirectory() as ws:   # Go: the vacuous green reached the other way
             Path(ws, "main.go").write_text("package main\n")
             Path(ws, "go.mod").write_text("module x\n")
             self.assertEqual(undiscoverable_tests(ws),
-                             ["No go test tests were found — to be run they must be named *_test.go, with functions named TestXxx."])
+                             ["No go test tests were found by default automatic discovery conventions — named *_test.go, with functions named TestXxx. This does not establish that no other test invocation can run."])
         with tempfile.TemporaryDirectory() as ws:   # Rust: named by its decoration, not a filename
             Path(ws, "src").mkdir()
             Path(ws, "src/main.rs").write_text("fn main(){}\n")
             self.assertEqual(undiscoverable_tests(ws),
-                             ["No cargo test tests were found — to be run they must be marked with #[test], normally inside a #[cfg(test)] mod."])
+                             ["No cargo test tests were found by default automatic discovery conventions — marked with #[test], normally inside a #[cfg(test)] mod. This does not establish that no other test invocation can run."])
 
     def test_a_runner_config_silences_the_claim(self):
         # phpunit.xml / jest.config / pytest.ini re-point discovery, so cria's default-convention
@@ -432,7 +443,7 @@ class TestConventionTableTests(unittest.TestCase):
             sp = Path(ws, ".venv/lib/python3.12/site-packages/_pytest")
             sp.mkdir(parents=True)
             (sp / "test_main.py").write_text("def test_x(): pass\n")
-            self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found — to be run they must be named test_*.py or *_test.py."])
+            self.assertEqual(undiscoverable_tests(ws), ["No pytest tests were found by default automatic discovery conventions — named test_*.py or *_test.py. This does not establish that no other test invocation can run."])
 
 
 class GoTestCacheTests(unittest.TestCase):

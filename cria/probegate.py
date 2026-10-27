@@ -392,7 +392,7 @@ class GatePlan:
     surveyed_before: bool = False
     script: str = ""
     candidates: list = field(default_factory=list)  # selected ProbeCandidates, in section order
-    # Test-naming conventions cria searched by and found nothing for (probediscovery.undiscoverable_tests).
+    # Authored default-discovery observations (probediscovery.undiscoverable_tests), not checker output.
     # Computed with the selection, so the clean-gate render reads a fact instead of re-walking the tree.
     untested: list = field(default_factory=list)
     # The subdirectory every real probe had to be run in, when NONE of them could run at the
@@ -843,7 +843,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         plan.candidates = proberun.select_completion_probes(workspace)
         plan.untested = probediscovery.undiscoverable_tests(workspace)
         # …and the other half of the same question. `undiscoverable_tests` reports test files a
-        # runner will NOT see; this reports test files a runner WOULD see in a project where no test
+        # default conventions do not select; this reports matching test files where no test
         # command was composed at all. Both end in the same clean-branch qualifier, because the coder
         # needs the same thing from either: to know that a green gate ran no tests.
         if not any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
@@ -1473,13 +1473,25 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     stranded_findings: list[str] | None = None   # scanned at most once, only on a zero-tests signal
     findings: list[str] = []
     dropped_advisories = 0
-    seen: set[str] = set()
     could_not_run = False
     failed_no_detail = False
     saw_probe = False
     timed_out_output: list[str] = []
     timeout_notes: list[str] = []   # one per genuinely-timed-out (EXIT 124) section, ALWAYS populated
     completed_output: list[str] = []
+    zero_collected_output: list[str] = []
+    discovery_observations: list[str] = []
+
+    def finish(message: str, *, include_completed: bool = True) -> str:
+        # Native zero-collected evidence is independent of the winning diagnostic/timeout branch.
+        # Discovery metadata must never replace it; other successful output keeps its clean-branch scope.
+        if include_completed and zero_collected_output:
+            message += "\n" + prompts.render("checks_completed", results="\n".join(zero_collected_output))
+        if discovery_observations:
+            message += "\n" + prompts.fill(prompts.load_map("discovery_observations")["section"],
+                observations="\n".join(dict.fromkeys(discovery_observations)))
+        return message + cleanup_note
+
     # The survey and cleanup report are the producer's own segments of the stream, declared by byte extent; nothing is
     # searched for in checker output (interpret_gate reads the same split).
     _sections, _survey = gate_sections(raw, plan)
@@ -1547,21 +1559,20 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # UNLESS the disk says otherwise. Measured on maple run 2 (1785973706): a 19KB pytest suite
         # named `pytest_da_resolvers.py` — a name pytest's pattern cannot collect — so "no tests ran"
         # for the run's final 30 minutes while real tests sat on disk, and the benign rule kept the
-        # gate silent. Same discriminator shape as F811: keep the benign default, read the disk to
-        # tell the testless project from the mis-named suite; a stranded test file is a stated,
-        # checkable, error-class fact (the files, the runner, its naming rule). The detector is the
+        # gate silent. Keep the native zero-collected output and separately report default naming
+        # observations. A naming mismatch is authored metadata, not a checker's error-class message
+        # or proof that an explicit invocation cannot execute the file. The detector is the
         # ONE existing owner (probediscovery's convention table — the g20 mechanism), not a second
         # scanner. Also applied to a PASSING test section whose runner said it collected nothing
         # (go's "[no test files]" exits 0) — a green built on zero tests plus a stranded suite is
         # the same false green.
         if proberun.is_no_tests_collected(code, output=text) or \
                 (code == 0 and _zero_tests_marker(text)):
+            zero_collected_output.append(completed_output[-1])
             if stranded_findings is None:
                 stranded_findings = probediscovery.stranded_test_sentences(workspace) \
                     if workspace else []
-            if stranded_findings:
-                findings.extend(f for f in stranded_findings if f not in seen)
-                seen.update(stranded_findings)
+            discovery_observations.extend(stranded_findings)
             continue
         # A check that PASSED (exit 0) has, by definition, no error-class problem — its stdout is NOT a
         # diagnosis. Linters/typecheckers print nothing on success, but pytest prints "…. [100%]\nN
@@ -1716,12 +1727,12 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # checker's verbatim output).
         if timeout_notes:
             msg += "\n" + "\n".join(timeout_notes)
-        return msg + cleanup_note
+        return finish(msg)
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         msg = CHECKS_MARKER + " " + prompts.load("checks_failed_no_detail")
         if timeout_notes:
             msg += "\n" + "\n".join(timeout_notes)
-        return msg + cleanup_note
+        return finish(msg)
     if could_not_run and (timeout_notes or timed_out_output):
         # C39b: named, with its command when the plan/facts know it — even when it printed nothing.
         # This supersedes the older uniform "could_not_run and timed_out_output" wording for every
@@ -1741,11 +1752,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             parts.append(prompts.render("checks_timeout", command="a check") + " "
                          + prompts.render("checks_timeout_printed",
                                           printed="\n".join(timed_out_output)))
-        return CHECKS_MARKER + " " + "\n".join(parts) + cleanup_note
+        return finish(CHECKS_MARKER + " " + "\n".join(parts))
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
-        return CHECKS_MARKER + " " + prompts.load("checks_no_usable_result") + cleanup_note
+        return finish(CHECKS_MARKER + " " + prompts.load("checks_no_usable_result"))
     # This is evidence, not an authored success verdict. Preserve all completed checker output;
     # only the final wire floor owns size pressure. Scope/zero-test lines must survive even when
     # later discovery metadata changes or a historical transport no longer has its live plan.
@@ -1785,7 +1796,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         ran = [w for k, w in kinds.items() if any(c.kind is k for c in cands)]
         covered = " and ".join([", ".join(ran[:-1]), ran[-1]] if len(ran) > 2 else ran) or "nothing"
         clean += " " + prompts.fill(words["ran_some" if ran_tests else "no_command"],
-                                    findings=" ".join(untested), covered=covered)
+                                    findings="", covered=covered)
+        discovery_observations.extend(untested)
     # WHERE the checks had to run, when none of them could run where the coder is working. A green
     # gate over a project the working directory does not contain is the most expensive green there
     # is — see _checks_ran_elsewhere for the cell it cost.
@@ -1801,7 +1813,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             plan.offline_fact = offline
     for note in _advisory_note(dropped_advisories):
         clean += " " + note
-    return clean + cleanup_note
+    return finish(clean, include_completed=False)
 
 
 def _advisory_note(count: int) -> list[str]:

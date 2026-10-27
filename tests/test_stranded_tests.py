@@ -1,4 +1,4 @@
-"""Stranded test files — test code the language's default runner will NEVER collect — have ONE
+"""Stranded test files — apparent test code outside default automatic discovery conventions — have ONE
 owner: probediscovery's convention table (the g20 mechanism). This file pins the two gaps the
 maple-run-2 walk exposed in it, and the walk-found duplicate it replaced (a second scanner,
 cria/orphantests.py, briefly existed on 2026-08-05 and was deleted the same day — one owner).
@@ -9,8 +9,10 @@ pytest_da_resolvers.py for the run's final 30 minutes. The stranded sentence is 
 regardless of what else is discoverable.
 
 Gap 2 (the benign zero-collected gate): pytest exit-5 / go's "[no test files]" read as benign
-even when stranded test code sat on disk. clean_gate_output now surfaces the stranded sentences
-as error-class findings exactly when the run's own test signal was "collected nothing"."""
+even when stranded test code sat on disk. Historically, these observations became "error-class
+findings" and displaced the native zero-collected evidence. clean_gate_output now preserves that
+native evidence and surfaces default-discovery observations as separately authored metadata; an
+explicit-file invocation or configured runner may still execute these files."""
 
 import os
 import tempfile
@@ -71,8 +73,8 @@ class StrandedSentenceTests(unittest.TestCase):
 
 
 class GateWiringTests(unittest.TestCase):
-    """The exit-5-benign rule stays for genuinely testless projects; with stranded test files on
-    disk the same signal becomes an error-class finding, sourced from the ONE owner."""
+    """Zero collection remains native evidence, alongside separately authored naming observations
+    from the ONE discovery owner, not a universal prohibition on executing the files."""
 
     def _raw(self, body):
         return "Chunk ID: 7f3\n" + tp._sec(0, "EXIT:0") + tp._sec(1, body) + tp._git() + "\n"
@@ -83,7 +85,17 @@ class GateWiringTests(unittest.TestCase):
         raw = self._raw("no tests ran in 0.01s\nEXIT:5")
         out = probegate.clean_gate_output(raw, completed(GatePlan(workspace=ws), raw))
         self.assertIn("pytest_da_resolvers.py", out)
-        self.assertIn("will not run", out)
+        self.assertIn("outside default automatic discovery conventions for pytest", out)
+        self.assertIn("test_*.py or *_test.py", out)
+        self.assertIn("explicit-file invocation or a configured runner", out)
+        self.assertIn("exit 5\nno tests ran in 0.01s", out)
+        native, separator, metadata = out.partition(
+            "Automatic discovery observations (authored metadata, not checker output):")
+        self.assertTrue(separator)
+        self.assertNotIn("pytest_da_resolvers.py", native)
+        self.assertIn("pytest_da_resolvers.py", metadata)
+        self.assertNotIn("report these error-class problems", out)
+        self.assertNotIn("will not run", out)
 
     def test_exit5_without_stranded_files_stays_benign(self):
         ws = _ws({"app.py": "def resolve():\n    return 1\n"})

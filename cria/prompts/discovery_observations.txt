@@ -1,0 +1,4 @@
+# Default-convention observations are authored metadata, never native checker diagnostics.
+stranded = Apparent test code in {{FILES}} is outside default automatic discovery conventions for {{RUNNER}} — {{CONVENTION}}. This naming observation does not establish whether an explicit-file invocation or a configured runner executes it.
+missing = No {{RUNNER}} tests were found by default automatic discovery conventions — {{CONVENTION}}. This does not establish that no other test invocation can run.
+section = Automatic discovery observations (authored metadata, not checker output):\n{{OBSERVATIONS}}

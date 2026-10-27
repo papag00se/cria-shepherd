@@ -6,19 +6,20 @@ hand-rolled runner driving the CLI through `execSync` — and cria's disclosure 
     No jest/vitest tests were found — to be run they must be named *.test.js / *.spec.ts, or
     placed under __tests__/.
 
-Every word of that is technically true and the whole of it is misleading: the project HAS test code,
-sitting in the workspace root with `test` in its name, and the sentence tells the coder there is
-none. What it needed was the sentence cria already owns for this exact state — *"Test code in
-test_lookup.js will not run: …"* — which is one rename away from fixed.
+That historical wording overstated a default naming convention as a universal execution requirement:
+the project HAS apparent test code, sitting in the workspace root with `test` in its name. The later
+historical wording, *"Test code in test_lookup.js will not run: …"*, located the file but repeated the
+universal execution error. The current observation names the default automatic discovery mismatch
+without prescribing a rename or ruling out explicit-file or configured execution.
 
 WHY THE STRANDED CHECK MISSED IT. `_audit_tests` calls a file stranded when it matches no convention
-glob AND `_carries_test_code` recognises it. The JS marker is `^\\s*describe\\s*\\(`, and this file has
+glob AND `_carries_test_code` recognises it. The JS marker then was `^\\s*describe\\s*\\(`, and this file has
 no `describe`, no `it`, no framework import at all — it is a plain script with an assert loop. A
 marker keyed to one framework's spelling cannot see test code written without a framework, and
 loosening it is how production code gets called a stranded test.
 
 The filename is the signal that survives that, and it is safe HERE specifically: a hit produces a
-sentence saying the file will not run, never a refusal and never a dropped probe. The rule is tight —
+default-convention observation, never an execution prohibition, a refusal or a dropped probe. The rule is tight —
 `test` or `spec` as a whole leading or trailing word — so `testing.js`, `tests.js`, `protest.rb` and
 `specification.py` stay out.
 """
@@ -41,12 +42,16 @@ class ATestyNameIsEvidenceTests(unittest.TestCase):
                 "function runTest(h) { execSync(`node lookup.js ${h}`); }\nrunTest('goose');\n")
             sent = " ".join(pd.stranded_test_sentences(root))
             self.assertIn("test_lookup.js", sent)
-            self.assertIn("will not run", sent)
+            self.assertIn("outside default automatic discovery conventions for jest/vitest", sent)
+            self.assertIn("*.test.js / *.spec.ts", sent)
+            self.assertIn("__tests__/", sent)
+            self.assertIn("explicit-file invocation or a configured runner", sent)
+            self.assertNotIn("will not run", sent)
             self.assertNotIn("No jest/vitest tests were found", " ".join(pd.undiscoverable_tests(root)))
 
     def test_the_two_sentences_are_different_facts(self):
-        """"your tests exist and will not run" and "you have no tests" are different instructions,
-        and the file's own name decides which is true."""
+        """No default-convention match differs from apparent test code outside that convention.
+        Neither observation establishes a universal inability to execute tests."""
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
             (root / "package.json").write_text('{"name":"x"}')
