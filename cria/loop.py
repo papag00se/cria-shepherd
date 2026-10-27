@@ -1211,10 +1211,14 @@ def _consistent_word(text: str) -> bool | None:
     that answers with the JSON object anyway is still understood. ternary-bonsai answers every shape
     6/6, so no model can be made worse by the change — the only movement is a model that answered
     NOTHING now answering."""
-    head = (text or "").strip().lstrip("*#`\"' ").upper()
-    if head.startswith("INCONSISTENT"):
+    # The declared protocol is one word on the first line, with an optional
+    # explanation on the next. Preserve Markdown/quote formatting, not prefixes
+    # such as CONSISTENTLY or CONSISTENT_UNKNOWN masquerading as that word.
+    lines = (text or "").strip().splitlines()
+    head = lines[0].strip("*#`\"' ").upper() if lines else ""
+    if head == "INCONSISTENT":
         return False
-    if head.startswith("CONSISTENT"):
+    if head == "CONSISTENT":
         return True
     return None
 
@@ -1733,7 +1737,9 @@ def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict |
     objects return ``None`` and take the caller's parse-miss/fail-closed path.
     """
     if flag in obj:
-        return obj
+        # A readable object is not necessarily a verdict. Validate the original
+        # public flag before either consumer can coerce it or infer a missing one.
+        return obj if type(obj[flag]) is bool else None
     provenance_fields = {
         "diagnosis_kind", "subject", "task_quote", "evidence_source", "evidence_quote",
     }
@@ -1824,7 +1830,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # ending the task, because approving requires the verification a reasoning-off judge can't do
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
-        satisfied = bool(obj.get("satisfied"))
+        satisfied = obj["satisfied"]
         if satisfied:
             questions = _ApprovalQuestions(reasoner_chat, reasoner_role, rlog, workspace_root)
             for definition in assistruntime.current().pre_release:
@@ -1890,7 +1896,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # bookkeeping: "unverified (no parseable verdict)" injected as a steer made one model
         # confabulate a meaning for it and leap ahead to another file (run 0729-gemma4 pon2 0243).
         return False, prompts.load("unverified_step") + _named_gap(gate_findings), ""
-    if retry.get("satisfied"):
+    if retry["satisfied"]:
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
     retry_ask = (_composed_closed_ask(reasoner_chat, reasoner_role, rlog,
