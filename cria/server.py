@@ -1312,7 +1312,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             retain_externalizations(owner, completion)
         return completion
 
-    def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
+    def _translate_out(self, completion: dict, sess_key: str, rlog, read_budget: int | None = None) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
@@ -1341,7 +1341,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                                # Edit echo is context work only an assist-rung coder gets (L5); L2-L4 results
                                # stay exactly the harness's own confirmation.
                                edit_echo=self.server.cfg.routing.assists_enabled,
-                               observe_lowering=observed, externalization_owner=owner)
+                               observe_lowering=observed, externalization_owner=owner,
+                               # The coder's remaining context sizes its whole reads; None on every other path.
+                               read_budget=read_budget)
             self._pasted_lowered = admitted
         else:
             self._pasted_lowered = None
@@ -1554,7 +1556,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                 completion = server.loop.drive(body, sk, classification, rlog,
                     pasted_delivery=self._defer_pasted_delivery)
                 if completion is not None:
-                    yield from completion_to_sse(self._finalize(self._translate_out(completion, sk, rlog), sk, rlog))
+                    yield from completion_to_sse(self._finalize(self._translate_out(
+                        completion, sk, rlog, server.loop.read_budget_bytes(completion, rlog)), sk, rlog))
                     return
             provider, indic = self._route(body, classification, rlog, compaction)
             rlog.phase = "proxy"
@@ -1603,7 +1606,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                 pasted_delivery=self._defer_pasted_delivery)
             if completion is not None:
                 reply_estimate = modelview.reply_tokens(completion)
-                out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
+                out = self._finalize(self._translate_out(
+                    completion, sess_key, rlog, server.loop.read_budget_bytes(completion, rlog)),
+                    sess_key, rlog)
                 _report_context_usage(out, visible, rlog, reply_estimate=reply_estimate)
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog, compaction)

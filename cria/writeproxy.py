@@ -1307,7 +1307,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        shrink_check=None, pack: bool = False, edit_echo: bool = False,
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
-                       observe_externalization=None) -> dict:
+                       observe_externalization=None, read_budget: int | None = None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1316,6 +1316,10 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     ``shrink_services`` supplies factual services to the selected F15 source.
     ``shrink_check`` is retained only for explicit unbound library callers; a
     bound request never consults that legacy whole-policy callback.
+
+    ``read_budget`` is the bytes of file text the coder's remaining context has room for this turn
+    (`Loop.read_budget_bytes`); the reply's whole reads share it (`filecommands.whole_read_rooms`). None (no
+    known window, no measured usage, or not the coder) keeps every whole read at the fixed floor, as before.
     """
     injected = injected or set()
     from . import assistruntime
@@ -1330,6 +1334,10 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             continue
         rebuilt: list[dict] = []
         edit_seq = _edit_sequence(tool_calls, injected)
+        rooms = (filecommands.whole_read_rooms(tool_calls, read_budget, wsview.current(workspace_root).size)
+                 if read_budget is not None and "read_file" in injected else {})
+        if rooms and rlog is not None:
+            rlog.emit("writeproxy.read_room", budget=read_budget, rooms=sorted(rooms.values()))
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
@@ -1341,7 +1349,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # the marker or the token anywhere in the text.
             receipt = denial.receipt_for(tc.get("id"), name, fn.get("arguments"))
             declaration = denial.Declaration()      # what this call's compiler declares for its sentinel (a survey record)
-            with denial.receipt_scope(receipt, declaration):
+            with denial.receipt_scope(receipt, declaration), filecommands.read_room_scope(rooms.get(ti)):
                 tc, args, effect = toolstages.current().outbound_call(
                     OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
                 fn = tc.get("function") or {}

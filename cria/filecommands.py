@@ -5,8 +5,11 @@ never looks up a web-fetch cache or selects an intervention.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import base64
+import json
 import os
 from pathlib import Path
 import re
@@ -93,6 +96,84 @@ def _guarded_path(name: str, args: dict) -> str | None:
 
 READ_INLINE_MAX = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 
+# HOW MUCH ONE WHOLE READ MAY BRING BACK, sized to the coder's REMAINING context (operator design, 2026-10-28).
+#
+# The fixed bound above refused ordinary source files with plenty of room left. ornith1.5_9b / Java overnight run 1: 54 of
+# its 135 refused coder calls were whole reads of its OWN 267-line, 9,729-byte Importer.java, and 30 of the 43 refusal
+# guards that fired would not have reached 3 without a size refusal in their window. Measured on that run's requests
+# (window 49,152, reply reserve 16,384, the request's own prompt tokens and reply): 40% of the remaining context held
+# the file whole in 50 of the 54. Across every captured large-read refusal with a known window, 110 of 136 source-file
+# refusals become whole reads; every output/data dump (55, 188 KB+) is still refused.
+#
+# Three bounds, all decided by the program that reads the file, on the bytes it actually read:
+# * FLOOR — at or under READ_INLINE_MAX a whole read returns exactly as it always has, whatever the room. A full
+#   context never makes an ordinary read refuse; this is today's behaviour, byte for byte.
+# * ROOM — above the floor, the file's bytes must fit the share of the remaining context the turn's lowering granted
+#   this read (`read_room_scope`). That share is computed where the facts are — the coder request's own measured prompt
+#   tokens, its reply, the window and reply reserve (`Loop.read_budget_bytes`) — and split between the reply's whole
+#   reads (`whole_read_rooms`). No known window, no granted room: the floor alone, i.e. the existing behaviour (#11b).
+# * HARNESS CEILING — above the floor, the RECORD the harness carries (encoded: zlib/base64/text, whichever is
+#   shortest, plus its fields) must fit INLINE_RESULT_MAX_BYTES, the one bound for anything cria hands back inline.
+#   Measured in the captures: with its default allowance the harness keeps ~10,000 bytes of a tool output (377 cut
+#   outputs retain 10,2xx bytes; none at or under 10,000 was cut). The ~20,707-token cut cited in older comments is
+#   one historical observation, not the operative threshold. A result above this would be cut in transit, so it is
+#   refused instead — never shortened.
+# Anything over a bound gets the existing exact-window steer (`large_read_steer`); nothing is ever truncated.
+READ_ROOM_SHARE = 0.4
+_READ_ROOM: ContextVar[int | None] = ContextVar("cria_read_room", default=None)
+
+
+def read_budget(window: int, reserve: int, prompt_tokens: int, reply_tokens: float, density: float) -> int:
+    """Bytes of file text worth READ_ROOM_SHARE of what is left of ``window`` once the reply ``reserve``, the request's
+    measured ``prompt_tokens`` and its ``reply_tokens`` (real tokens) are taken, at ``density`` real tokens per chars/4
+    estimated token (the floor's own currency). Never negative."""
+    remaining = window - reserve - prompt_tokens - reply_tokens
+    return max(0, int(READ_ROOM_SHARE * remaining * 4 / max(density, 1e-6)))
+
+
+def whole_read_rooms(tool_calls: list, budget: int | None, size_of=None) -> dict[int, int]:
+    """``tool index -> bytes`` granted to each WHOLE ``read_file`` in one reply, out of ``budget`` (`read_budget`).
+
+    The reply's reads share one budget: each read's room is the budget less what the OTHER whole reads will bring back —
+    a size the workspace view knows (``size_of(path)``) when that file fits the budget or the floor, nothing when it is
+    known to be larger (it will be refused, and its steer is a few hundred bytes), and the floor when it is unknown.
+    No budget (window or usage unknown): no rooms, so every read keeps the floor alone."""
+    if budget is None:
+        return {}
+    reads: dict[int, str] = {}
+    for i, tc in enumerate(tool_calls or []):
+        fn = (tc or {}).get("function") or {}
+        if fn.get("name") not in _READ_NAMES:
+            continue
+        try:
+            args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {})
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(args, dict) or args.get("start_line") is not None or args.get("end_line") is not None:
+            continue
+        path = _tool_path(args)
+        if path:
+            reads[i] = str(path)
+    top = max(READ_INLINE_MAX, budget)
+
+    def cost(path: str) -> int:
+        size = size_of(path) if size_of is not None else None
+        if not isinstance(size, int):
+            return READ_INLINE_MAX
+        return size if size <= top else 0
+    costs = {i: cost(p) for i, p in reads.items()}
+    return {i: max(0, budget - sum(c for j, c in costs.items() if j != i)) for i in reads}
+
+
+@contextmanager
+def read_room_scope(room: int | None):
+    """Grant the whole read composed inside this scope ``room`` bytes above the floor (None: the floor alone)."""
+    token = _READ_ROOM.set(room)
+    try:
+        yield
+    finally:
+        _READ_ROOM.reset(token)
+
 
 def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
     """A ranged read (``sed -n 'start,END p'``) with the SAME two guards a whole read needs:
@@ -177,22 +258,27 @@ _READ_HD = "__CRIA_RD_PY__"
 _READ_PY = resultpacket.ENCODER_PY + r'''
 import base64, json, os, stat, sys
 path, limit, receipt, kind, pre = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], base64.b64decode(sys.argv[5]).decode()
+room, wire = int(sys.argv[6]), int(sys.argv[7])
+most = max(limit, room)
 try:
     fd = os.open(path, os.O_RDONLY)
     with os.fdopen(fd, "rb") as f:
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             sys.exit(4)
-        raw = f.read(limit + 1)
+        raw = f.read(most + 1)
 except OSError:
     sys.exit(4)
-if len(raw) > limit:
+if len(raw) > most:
     sys.exit(3)
 rec = {"v": 1, "r": receipt, "k": kind}
 if pre:
     rec["pre"] = pre
 rec["b"] = encode_body(raw)
 rec["o"] = "whole"
-sys.stdout.write(json.dumps(rec, separators=(",", ":")) + "\n")
+line = json.dumps(rec, separators=(",", ":")) + "\n"
+if len(raw) > limit and len(line) > wire:
+    sys.exit(3)
+sys.stdout.write(line)
 sys.stdout.flush()
 '''
 
@@ -229,17 +315,21 @@ sys.stdout.flush()
 '''
 
 
-def _whole_read(q: str, over: str, *, kind: str = denial.RAN, pre: str = "", otherwise: str = "") -> str:
+def _whole_read(q: str, over: str, *, kind: str = denial.RAN, pre: str = "", otherwise: str = "",
+                room: int | None = None) -> str:
     """The command that returns the WHOLE of ``q`` when it fits one read, else runs ``over`` (the steer).
 
     Under a lowering it is the record-printing program above; outside one (no receipt: nothing to declare to) it is the
     plain size test and `cat`. ``otherwise`` runs when the record could not be produced for a reason other than size
-    (default: a plain `cat`)."""
+    (default: a plain `cat`). ``room`` (default: the scope's grant, `read_room_scope`) admits a file above the floor
+    when its bytes fit the room AND its record fits the harness ceiling; 0 keeps the floor alone."""
     receipt = denial.active_receipt()
     if not receipt:
         return f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; then {over}; else cat {q}; fi'
     pre_b64 = base64.b64encode(pre.encode("utf-8")).decode("ascii")
-    return (f"python3 - {q} {READ_INLINE_MAX} {receipt} {kind} '{pre_b64}' <<'{_READ_HD}'\n{_READ_PY}{_READ_HD}\n"
+    granted = _READ_ROOM.get() if room is None else room
+    return (f"python3 - {q} {READ_INLINE_MAX} {receipt} {kind} '{pre_b64}' {max(0, granted or 0)} "
+            f"{content_reduce_mod.INLINE_RESULT_MAX_BYTES} <<'{_READ_HD}'\n{_READ_PY}{_READ_HD}\n"
             f'__cria_rd=$?\n'
             f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {over}; '
             f'else {otherwise or "cat " + q}; fi')
@@ -443,5 +533,6 @@ def _spill_read_command(path: str, steer: str) -> str:
     # So does the not-there branch now: it used to printf bash's own phrasing, which exits non-zero
     # but carries NO denied mark — so the ledger counted the error text as the file's contents. Same
     # owner, same mark, one statement of what happened (see _read_failure_branches).
+    # A spilled document is a reference to GREP (see _under_spill_dir), not a file to hold: it keeps the floor alone.
     return (f"{_read_failure_branches(q, path)}"
-            f"{_whole_read(q, _oversize_command(steer))}")
+            f"{_whole_read(q, _oversize_command(steer), room=0)}")

@@ -49,7 +49,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
+from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive, filecommands
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
@@ -5323,15 +5323,38 @@ class Loop:
         Sized as the floor sizes the coder request: the coder's OWN learned density (not another
         request kind's), its reply reserve, and ``frame_tokens`` for the parts the caller keeps
         outside ``msgs`` (system frame, root task, tool list). Unknown window abstains (False)."""
+        sizing = self._coder_sizing(rlog)
+        if sizing is None:
+            return False
+        window, reserve, density = sizing
+        return (contextfloor.est_total(msgs, None) + frame_tokens) * density + reserve > window
+
+    def _coder_sizing(self, rlog) -> tuple[int, int, float] | None:
+        """The coder request's real window, reply reserve and learned density (real tokens per chars/4 estimated
+        token) — the floor's own currency. None when the window is unknown or only guessed."""
         owner = getattr(self._ctx.coder_chat, "upstream", None)
         window = handoffdistill.window_of(self._ctx.coder_chat, rlog)
         if not window or owner is None:
-            return False
+            return None
         reserve = (getattr(self._ctx.coder_role, "output_reserve", None)
                    or contextfloor.DEFAULT_GEN_RESERVE)
         loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
-        density = tokenratio.observed(loaded or "")
-        return (contextfloor.est_total(msgs, None) + frame_tokens) * density + reserve > window
+        return window, reserve, tokenratio.observed(loaded or "")
+
+    def read_budget_bytes(self, completion: dict, rlog) -> int | None:
+        """Bytes of file text the coder's whole reads in ``completion`` may bring back: `filecommands.READ_ROOM_SHARE`
+        of the context left once the window's reply reserve, the coder request's MEASURED prompt (the completion's
+        own ``usage.prompt_tokens``) and this reply are taken. The read's result arrives in the next request,
+        which is this prompt plus this reply plus the result. None — every read keeps the fixed floor — when the
+        window is unknown/guessed or the completion carries no measured prompt size (#11b)."""
+        sizing = self._coder_sizing(rlog)
+        usage = (completion or {}).get("usage") or {}
+        prompt = usage.get("prompt_tokens")
+        if sizing is None or not isinstance(prompt, int) or isinstance(prompt, bool) or prompt <= 0:
+            return None
+        window, reserve, density = sizing
+        reply = modelview.reply_tokens(completion) * density
+        return filecommands.read_budget(window, reserve, prompt, reply, density)
 
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
