@@ -19,7 +19,6 @@ boundary; this restricts a model the operator hasn't yet learned to trust.
 from __future__ import annotations
 
 import os
-import posixpath
 import re
 import shlex
 from collections.abc import Sequence
@@ -1786,36 +1785,12 @@ def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
     return False
 
 
-# The system temp root a coder reaches for as scratch. Lexical, like every other check here: the path is
-# the coder's own string, and the counterpart below is a string too.
-_SYSTEM_TMP = "/tmp"
-
-
-def _scratch_counterpart(path: str) -> str | None:
-    """The project-scratch spelling of a refused ``/tmp`` path (``/tmp/a/b`` -> ``./tmp/a/b``), else None.
-
-    The refusal already tells the coder to put scratch under ./tmp/. This applies that same rule to the
-    path it refused, so the remedy is a path the coder can type rather than a rule it has to apply.
-
-    Walked on ornith1.5_9b / Java (overnight run 3 call 0073, run 4 0054, 01a16695 0088): each refused
-    command saved a copy of ``Importer.java`` under ``/tmp`` — the original for a baseline, or a backup of
-    the coder's own rewrite — and the very next call wrote the original over the session's own rewrite in
-    the source tree instead. 3 of the 11 refused ``/tmp`` copies of a source file in the captures went that
-    way; the other 8 moved the copy under ./tmp/."""
-    p = posixpath.normpath(os.path.expanduser(path or ""))
-    if p != _SYSTEM_TMP and not p.startswith(_SYSTEM_TMP + "/"):
-        return None
-    rel = posixpath.relpath(p, _SYSTEM_TMP)
-    return "./tmp/" if rel == "." else "./tmp/" + rel
-
-
 def _refusal(verb: str, path: str, workspace: str | None = None, roots=(), level: str = "none") -> str:
     # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
     # {{ROOT}} names the ACTUAL project directory when known: the anonymous "the project directory"
     # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
     # the one place cria can state the real one.
     root = f" ({workspace})" if workspace else ""
-    counterpart = ""
     if _case_typo_of_workspace(path, workspace):
         note = prompts.load("external_path_case_note")
     elif _in_declared_root(path, roots):
@@ -1827,13 +1802,8 @@ def _refusal(verb: str, path: str, workspace: str | None = None, roots=(), level
         subtree = _dep_cache_root_hint(path)
         note = (prompts.fill(prompts.load("external_path_depcache_note"), subtree=subtree)
                 if subtree else "")
-        # Only where the refusal is about a write: a refused READ of /tmp/x says nothing about ./tmp/x.
-        target = _scratch_counterpart(path) if verb != "Reading" and not subtree else None
-        if target:
-            counterpart = prompts.fill(prompts.load("external_path_scratch_counterpart"),
-                                       path=repr(path), target=target)
     return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root,
-                        casenote=note, counterpart=counterpart,
+                        casenote=note,
                         reads=("" if level == "read" else prompts.fill(
                             prompts.load("external_path_reads_allowed"),
                             caches=", ".join(sub for _m, sub in _DEP_CACHE_ROOTS))))
