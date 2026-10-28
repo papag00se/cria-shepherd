@@ -153,7 +153,8 @@ def observe(source: ObservationInput, state: StateAccess, *, enabled: bool = Tru
     if state.pending_steer is not None and state.pending_steer is not source.offered_steer:
         return Result(Status.PENDING, state.pending_steer.trigger, steer=state.pending_steer)
     facts = source.measure()
-    # Refusals run first, so one fire flushes the same completion's write window.
+    # Refusals run first, so an armed refusal keeps this completion's writes out of the window;
+    # admit flushes the window only when it confirms the fire.
     for ordinal, _call in enumerate(facts.calls, 1):
         if state.redirect_due or state.spin_due or state.pending_probe is not None:
             break
@@ -166,7 +167,9 @@ def observe(source: ObservationInput, state: StateAccess, *, enabled: bool = Tru
                 and sequence - state.blocked_fired_seq >= REFUSAL_WINDOW):
             state.blocked_fired_seq = sequence
             state.redirect_due = True
-            state.recent_writes, state.recent_write_ids = [], []
+            # The write window is NOT cleared here: a nomination is not yet a fire. Accrual is frozen
+            # while the latch is pending (both loops break on redirect_due, 6f1ab0a8), and admit
+            # clears the window only when it confirms the fire; a withdrawn nomination keeps it.
             state.repeat_action, state.repeat_count = facts.last_refused, facts.refused_count
             source.log.emit("loop.refusals", steer="refusals", step=source.step,
                             count=facts.refused_count, action=facts.last_refused.strip()[:120]
@@ -252,9 +255,20 @@ def admit(source: AdmissionInput, state: StateAccess, *, enabled: bool = True) -
         # meets its numeric threshold. A ran call is not evidence of recovery.
         count, last = source.measure_refusals()
         if count < REFUSAL_THRESHOLD:
+            # NOTHING FIRED, so nothing the arm reserved for a fire is spent. The arm stamped the
+            # cooldown at its own sequence S, which it could only do because the previous stamp was
+            # <= S - REFUSAL_WINDOW; observe cannot re-arm while the latch is pending, so the stamp
+            # is still S here, and S - REFUSAL_WINDOW is equivalent to the previous stamp for every
+            # later sequence. Without this, run07's withdrawn nomination blocked a genuinely
+            # eligible 3-refusal window for the next 11 calls.
             state.redirect_due = False
+            state.blocked_fired_seq -= REFUSAL_WINDOW
+            source.log.emit("loop.refusals_withdrawn", step=source.step, count=count)
         else:
             state.repeat_count, state.repeat_action = count, last
+            # The fire is confirmed: it consumes the write window, so the coder's compliance
+            # writes cannot re-trip a spin probe with the writes that preceded the redirect.
+            state.recent_writes, state.recent_write_ids = [], []
     trigger = Trigger.REFUSAL if state.redirect_due else Trigger.WHEEL_SPIN if state.spin_due else None
     if trigger is None:
         return Result(Status.NO_OP)

@@ -81,12 +81,22 @@ def test_refusal_observation_flushes_whole_completion_and_does_not_double_arm_sp
                                               refused=5, records=records, log=log), state)
     assert result.status is sw.Status.ARMED and result.trigger is sw.Trigger.REFUSAL
     assert state.action_seq == 1 and state.repeat_count == 5
-    assert not state.recent_writes and not state.spin_due
+    # None of this completion's writes accrue and spin cannot arm beside the refusal. The window is
+    # NOT cleared yet: arming is a nomination, and only a fire admission confirms consumes the window
+    # (a withdrawn nomination keeps it; tests/test_review_adversarial_ontrack_admission.py).
+    assert state.recent_writes == ["a"] * 4 and not state.spin_due
     assert records == ["registered"]
     assert log.events == [("loop.refusals", {"steer": "refusals", "step": None, "count": 5,
                                            "action": "a call that was actually refused"})]
-    assert state == sw.State(action_seq=1, blocked_fired_seq=1, repeat_count=5,
+    assert state == sw.State(recent_writes=["a"] * 4, recent_write_ids=[str(i) for i in range(4)],
+                             action_seq=1, blocked_fired_seq=1, repeat_count=5,
                              repeat_action="a call that was actually refused", redirect_due=True)
+    admitted = sw.DEFINITION.admit(sw.AdmissionInput(lambda: {"id": "probe"}, log,
+                                   lambda: (5, "a call that was actually refused")), state)
+    assert admitted.status is sw.Status.PENDING and admitted.trigger is sw.Trigger.REFUSAL
+    # The confirmed fire consumes the whole window, so the writes before it cannot re-trip spin.
+    assert not state.recent_writes and not state.recent_write_ids and not state.spin_due
+    assert state.blocked_fired_seq == 1 and not state.redirect_due
 
 
 def test_unlanded_correction_and_batched_results_precede_wheel_spin_admission():

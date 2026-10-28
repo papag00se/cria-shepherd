@@ -379,7 +379,13 @@ class GroundedActions:
         positive = any(re.search('(?i)\\bon[_ ]track\\b', s) for s in kept)
         _lines = [ln for ln in body.strip().splitlines() if ln.strip()]
         if _lines and re.fullmatch('(?i)\\W{0,4}(?:on[_ ]track|not_stuck)\\W{0,4}', _lines[-1].strip()):
-            return None, positive
+            # A trailing token settles ON_TRACK only when essentially nothing else is there (#21), the
+            # same 8-character bar the directive branch below uses. "<a directive>\nON_TRACK" or "The
+            # coder is stuck ...\nON_TRACK" is not an answer that the coder is fine: with no separate
+            # reasoning channel, reasoning_of() IS this reply, so the dispute check never runs on it.
+            above = body.strip().rpartition('\n')[0]
+            above = re.sub('\\s+', ' ', above).strip(' >-*:.,;')
+            return None, positive and len(above) < 8
         directive = re.sub(f'(?i)\\b({_SENTINEL})\\b', ' ', ' '.join(kept))
         directive = re.sub('\\s+', ' ', directive).lstrip(' >-*:.,;').strip()
         return (directive, False) if len(directive) >= 8 else (None, positive)
@@ -430,6 +436,14 @@ class GroundedActions:
             return _Recovery(None, True)
         rlog.emit('loop.steer_answer_contradicted', level='info', answer=self.facts.clip(answer, 60))
         recovered = strip_think(ask(prompts.render('steer_reasoning_recover', reasoning=reasoning)) or '').strip()
+        if any(re.fullmatch('(?i)\\W{0,4}unsettled\\W{0,4}', ln.strip()) for ln in recovered.splitlines()):
+            # STUCK, BUT THE THINKING NAMED NO ACTION: undecided, never a settled ON_TRACK. The
+            # recovery prompt used to prescribe ON_TRACK for this case too, so the same word meant
+            # "progressing" and "stuck without an action" (20260823T225511 0089/0090: "That's stuck.
+            # But no action. So ON_TRACK."); honoring it silenced a rescue (#21). Its own positive
+            # word leaves the caller its existing floor.
+            rlog.emit('loop.steer_recover_unsettled', level='info')
+            return _Recovery(None)
         directive, on_track = self._read_reply(recovered)
         if directive:
             rlog.emit('loop.steer_from_reasoning', level='info', head=self.facts.clip(directive, 140))

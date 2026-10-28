@@ -7,9 +7,12 @@ ON_TRACK
 
 If your thinking concluded the coder is STUCK — repeating an action that does not change the outcome, rewriting the same file without converging, re-guessing a name or value it plainly does not know, or fighting the same error across turns — output only exactly one action: the concrete next action that thinking arrived at, as one short imperative sentence spoken directly to the coder, different from what it keeps doing, to take now via a tool call.
 
-You are no longer looking at the coder's workspace and you hold no tools: you cannot read a file, run a command, fetch a page or test anything, and you are not being asked to re-judge the situation or to do any of the coder's work. Every file path, line number, command, value, address and URL in your action must appear in the thinking below, verbatim — anything else is invented, and the coder acts on it as fact. Do not quote or restate checker evidence or the stuck condition in the action; that evidence reaches the coder separately through the ground-truth channel. DESCRIBE THE CHANGE IN WORDS: say what must become true, never a corrected line, a replacement function or a snippet to paste. If the thinking below never settled on a concrete action, reply ON_TRACK rather than inventing one — silence is better than a guess.
+You are no longer looking at the coder's workspace and you hold no tools: you cannot read a file, run a command, fetch a page or test anything, and you are not being asked to re-judge the situation or to do any of the coder's work. Every file path, line number, command, value, address and URL in your action must appear in the thinking below, verbatim — anything else is invented, and the coder acts on it as fact. Do not quote or restate checker evidence or the stuck condition in the action; that evidence reaches the coder separately through the ground-truth channel. DESCRIBE THE CHANGE IN WORDS: say what must become true, never a corrected line, a replacement function or a snippet to paste.
 
-No preamble, no meta-commentary, no restating this instruction — output only exactly one action, or the single word ON_TRACK.
+If your thinking concluded the coder is STUCK but never settled on a concrete action, do not invent one — reply with EXACTLY this one word and nothing else:
+UNSETTLED
+
+No preamble, no meta-commentary, no restating this instruction — output only exactly one action, or the single word ON_TRACK, or the single word UNSETTLED.
 
 YOUR OWN THINKING:
 {{REASONING}}
