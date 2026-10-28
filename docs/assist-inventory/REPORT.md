@@ -834,8 +834,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/test_tool_policy_stages.py:test_spill_correction_changes_execution_path_not_original_call_evidence`](../../tests/test_tool_policy_stages.py#L96).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:path_refusal`](../../cria/dirguard.py#L1806)
-- [`cria/dirguard.py:command_refusal`](../../cria/dirguard.py#L1992)
+- [`cria/dirguard.py:path_refusal`](../../cria/dirguard.py#L1812)
+- [`cria/dirguard.py:command_refusal`](../../cria/dirguard.py#L2000)
 - [`cria/outboundpolicies.py:_external_refusal`](../../cria/outboundpolicies.py#L179)
 - [`cria/filecommands.py:_targets_cria_home`](../../cria/filecommands.py#L71)
 - [`cria/privatepaths.py:CRIA_HOME`](../../cria/privatepaths.py#L5)
@@ -862,7 +862,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:root_recursive_delete_refusal`](../../cria/dirguard.py#L1852)
+- [`cria/dirguard.py:root_recursive_delete_refusal`](../../cria/dirguard.py#L1858)
 - [`cria/cleanupsafety.py:analyze`](../../cria/cleanupsafety.py#L12)
 
 **Historical families:** F23.

@@ -54,13 +54,52 @@ class Layout:
     documents: tuple[HereDoc, ...]
     syntax: tuple[tuple[int, int], ...]
     error: bool = False
+    # The backslash-escaped quote characters inside ANSI-C strings (`$'\''`): see ``ansi_c_end``.
+    literal: tuple[tuple[int, int], ...] = ()
 
     @property
     def shell(self) -> str:
-        ranges = list(self.syntax)
+        ranges = list(self.syntax) + list(self.literal)
         for doc in self.documents:
             ranges.extend(((doc.operator, doc.word_end), doc.body, doc.terminator))
         return _project(self.source, ranges)
+
+    @property
+    def literal_shell(self) -> str:
+        """The source with ONLY the escaped quotes inside ANSI-C strings blanked: every other byte,
+        comments and heredocs included, is unchanged. A reader that tracks single quotes the POSIX way
+        (shlex, the boundary owner's quote scanners) then ends each `$'…'` where bash ends it."""
+        return _project(self.source, self.literal)
+
+
+def ansi_c_end(source: str, start: int) -> int | None:
+    """The index of the quote that closes the ANSI-C string (`$'…'`) whose body begins at ``start``,
+    or None when it is unterminated. Bash finds that end before it decodes anything: a backslash takes
+    the next character with it, whatever it is (`\\'` and `\\\\` included), so only an unescaped `'`
+    closes. A POSIX single-quote reader instead ends `$'\\''` at its second character; for
+    `echo $'\\'' ; rm -rf DIR #'` it saw one quoted word where bash runs `rm -rf DIR`."""
+    j = start
+    while j < len(source):
+        if source[j] == '\\':
+            j += 2
+            continue
+        if source[j] == "'":
+            return j
+        j += 1
+    return None
+
+
+def _escaped_quotes(source: str, start: int, end: int) -> list[tuple[int, int]]:
+    """The escaped `'` characters of the ANSI-C body ``source[start:end]``, as projection ranges."""
+    out, j = [], start
+    while j < end:
+        if source[j] == '\\':
+            if source[j + 1:j + 2] == "'":
+                out.append((j + 1, j + 2))
+            j += 2
+            continue
+        j += 1
+    return out
 
 
 def _word(source: str, start: int) -> tuple[str, int, bool] | None:
@@ -97,7 +136,7 @@ def _word(source: str, start: int) -> tuple[str, int, bool] | None:
 
 
 def layout(source: str) -> Layout:
-    docs, syntax, pending = [], [], []
+    docs, syntax, pending, literal = [], [], [], []
     i, quote = 0, ''
     while i < len(source):
         c = source[i]
@@ -108,6 +147,16 @@ def layout(source: str) -> Layout:
             if c == quote:
                 quote = ''
             i += 1
+            continue
+        if c == '$' and source.startswith('$', i + 1):
+            i += 2              # `$$` is the shell's pid: a quote after it is an ordinary quote
+            continue
+        if c == '$' and source.startswith("'", i + 1):
+            end = ansi_c_end(source, i + 2)
+            if end is None:
+                return Layout(source, tuple(docs), tuple(syntax), True, tuple(literal))
+            literal.extend(_escaped_quotes(source, i + 2, end))
+            i = end + 1
             continue
         if c in "\"'":
             quote = c; i += 1
@@ -136,7 +185,7 @@ def layout(source: str) -> Layout:
             tabs = source.startswith('<<-', i)
             word = _word(source, i + (3 if tabs else 2))
             if word is None:
-                return Layout(source, tuple(docs), tuple(syntax), True)
+                return Layout(source, tuple(docs), tuple(syntax), True, tuple(literal))
             delimiter, i, quoted = word
             pending.append((start, i, delimiter, quoted, tabs))
             continue
@@ -163,11 +212,11 @@ def layout(source: str) -> Layout:
                                             (line_start, next_line), quoted, tabs))
                         break
                 else:
-                    return Layout(source, tuple(docs), tuple(syntax), True)
+                    return Layout(source, tuple(docs), tuple(syntax), True, tuple(literal))
             pending = []
             continue
         i += 1
-    return Layout(source, tuple(docs), tuple(syntax), bool(pending or quote))
+    return Layout(source, tuple(docs), tuple(syntax), bool(pending or quote), tuple(literal))
 
 
 @dataclass(frozen=True)
@@ -212,9 +261,22 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution],
     heredoc body and after a backslash it is literal text, so it is not one there. ornith1.5_9b / Java
     overnight run 1 (call 0259 and sixteen more): `diff <(grep -v x tmp/a.txt) tmp/b.txt` after
     `cd <workspace>` was refused as "cannot be established" because the outer reader met `<` then `(`.
+
+    An ANSI-C string (`$'…'`, see ``ansi_c_end``) is data ended where bash ends it: at the top level
+    of a script (``shell``) and in every substitution body, double-quoted or not. After `$$` a quote is
+    an ordinary quote.
     """
     commands, i, double_quote, at_start = [], 0, False, True
     while i < len(source):
+        if shell and source[i] == '$' and not double_quote and source.startswith('$', i + 1):
+            i, at_start = i + 2, False          # `$$`: the quote after it is an ordinary quote
+            continue
+        if shell and source[i] == '$' and not double_quote and source.startswith("'", i + 1):
+            end = ansi_c_end(source, i + 2)     # an ANSI-C string is data, ended where bash ends it
+            if end is None:
+                return commands, True
+            i, at_start = end + 1, False
+            continue
         if shell and source[i] == "'" and not double_quote:
             end = source.find("'", i + 1)
             if end < 0:
@@ -265,6 +327,17 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution],
                             k += 2 if source[k] == '\\' else 1
                         j = k
                     body_start = False
+                elif c == '$' and source.startswith('$', j + 1):
+                    j, body_start = j + 2, False
+                    continue
+                elif c == '$' and source.startswith("'", j + 1):
+                    # A substitution body is a script even inside double quotes: its ANSI-C strings
+                    # end where bash ends them, not at an escaped quote.
+                    end = ansi_c_end(source, j + 2)
+                    if end is None:
+                        return commands, True
+                    j, body_start = end + 1, False
+                    continue
                 elif c in "\"'":
                     quote, body_start = c, False
                 elif shell and c == '#' and body_start:
