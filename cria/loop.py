@@ -270,6 +270,10 @@ class GuardState:
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
     guidance_history: list[str] = field(default_factory=list)  # delivered observations, never pending orders
+    # {note: `action_seq` at its latest successful delivery}. A carried note keeps its exact words —
+    # "the CURRENT state of the repo" over a red check — so each one is rendered with its age in the
+    # coder's own calls (`_dated_guidance`). No entry = no age is claimed.
+    guidance_delivered_seq: dict = field(default_factory=dict)
     # The last gap the PERIODIC completion check named to the coder. Its only job is to stop the
     # same verdict being re-delivered: that check fires on a drive counter, so an unchanged workspace
     # produces an unchanged verdict, and one cycle-2 cell produced twelve consecutive identical ones.
@@ -5209,7 +5213,7 @@ class Loop:
         prior_guidance = getattr(sess, 'guidance_history', ())
         if prior_guidance:
             raw = list(raw) + [{'role': 'user', 'content': prompts.render(
-                'guidance_history', observations='\n\n'.join(prior_guidance)),
+                'guidance_history', observations='\n\n'.join(_dated_guidance(sess, prior_guidance))),
                 bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.GUIDANCE_HISTORY}]
         authority = _capture_context_facts(sess, raw)
         base = _required_coder_base(raw, tools=body.get("tools"), prior_work=sess.prior_work,
@@ -10762,6 +10766,20 @@ class _ObservedCoderRetries(generationguards.RetryServices):
         return completion
 
 
+def _dated_guidance(sess, notes) -> list[str]:
+    """Each carried note, prefixed with how many of the coder's own calls have run since its latest
+    delivery. The note's words are untouched; the age is what places "the CURRENT state of the repo"
+    against the coder's newer results (run04 0065/0097). Unknown or zero age: the note alone."""
+    delivered = getattr(sess, 'guidance_delivered_seq', None) or {}
+    now = getattr(sess, 'action_seq', 0)
+    aged = prompts.load_map('guidance_history_age')['aged']
+    out = []
+    for note in notes:
+        since = now - delivered[note] if note in delivered else 0
+        out.append(prompts.fill(aged, calls=since) + '\n' + note if since > 0 else note)
+    return out
+
+
 class _CoderReplyReceipts:
     """Call-local facts linking actual normalized coder replies to final wire reads."""
     def __init__(self, chat, session=None):
@@ -10782,6 +10800,8 @@ class _CoderReplyReceipts:
             for note in getattr(rlog, 'guidance_on_wire', ()):
                 if note not in self._session.guidance_history:
                     self._session.guidance_history.append(note)
+                # Dated at THIS delivery: the forwarded-call counter before this reply's calls.
+                self._session.guidance_delivered_seq[note] = getattr(self._session, 'action_seq', 0)
         self.latest = dict(getattr(rlog, "restored_on_wire", None) or {})
         self.latest_remediation = subject
         return raw

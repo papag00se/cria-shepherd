@@ -1,0 +1,13 @@
+# The age of ONE carried guidance note, prefixed to it inside the guidance-history block.
+# A delivered note keeps its exact words, and some of those words were only true when it was sent:
+# the periodic gate's "I am giving you the CURRENT state of the repo" over a red check block. Run04
+# (ornith1.5_9b / Java): two such notes rode on in all 38 coder requests from 0067 to 0106, after
+# the coder's own build returned exit 0 in 0066. With no age beside them, at 0065 the coder read the older getHeader() block
+# as the LATEST check and re-ran the build; at 0097 it re-read the whole file because "the steer
+# says the current Importer.java has a compile error". The block header already said these are not
+# current findings; the age is the fact that lets the coder place each note against its own newer
+# results. Counted in the coder's forwarded calls (the counter that dates a handoff's check block)
+# and rendered fresh on every request, so it stays true however long the note is carried. An
+# unknown or zero age prints nothing: saying less is allowed, inventing a number is not (#5b).
+# Parsed by prompts.load_map.
+aged = [last delivered {{CALLS}} of your calls ago — anything it calls current, failing or passing was observed then and does not establish the state now]
