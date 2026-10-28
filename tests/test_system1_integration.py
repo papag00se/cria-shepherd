@@ -312,21 +312,17 @@ def test_an_unjudged_directive_is_withheld_and_the_reasoner_is_never_asked(failu
     assert rlog.of("system1.declined")[0]["error"] == type(failure).__name__
 
 
-def test_a_dictating_directive_with_invented_code_is_restated_and_the_rewrite_is_judged_too():
+def test_a_dictating_directive_with_invented_code_is_withheld_and_no_rewrite_is_requested():
+    # The blind restater was removed on 2026-10-27 (run07 0038->0039: an inspection restated as
+    # "Design a parser ..."). A native DICTATES now withholds; nothing composed after it is judged.
     code = "Replace it with:\n    return parser.parse_all_rows(rows, strict=True)"
-    seen = []
-
-    def judged(text):
-        seen.append(text)
-        return "DICTATES" if "parse_all_rows" in text else "DESCRIBES"
-
-    def ask(system, user=""):
-        assert system == prompts.load("steer_restate")
-        return "The importer should parse every row strictly."
-
-    (steer, _), _ = _vet(FakeSystem1(dictation=judged), directive=code, ask=ask)
-    assert steer == "The importer should parse every row strictly."
-    assert seen == [code, steer]
+    asked = []
+    fake = FakeSystem1(dictation="DICTATES")
+    (steer, reason), rlog = _vet(fake, directive=code, ask=lambda s, u="": asked.append(s) or "unused")
+    assert (steer, reason) == (None, "dictated_code")
+    assert fake.texts("dictation") == [code]
+    assert asked == []
+    assert rlog.of("loop.steer_dictated_code")[-1]["delivered"] is False
 
 
 # Exact public rewrite from 0048-steer-code in the 20261025T134610 capture.
@@ -338,45 +334,31 @@ CAPTURED_REWRITE = (
 )
 
 
-def test_a_native_describes_restatement_is_not_vetoed_as_an_invented_prose_paragraph():
-    answers = iter(["DICTATES", "DESCRIBES"])
-    fake = FakeSystem1(dictation=lambda text: next(answers))
+def test_a_native_describes_prose_paragraph_is_not_vetoed_by_the_legacy_invented_span_proxy():
+    """Native DESCRIBES is the whole-text intent judgment. The legacy lexical count (one invented
+    span here: the paragraph is new text) never overrules it — on this seat it is never consulted."""
+    fake = FakeSystem1(dictation="DESCRIBES")
     # The real draft contained this line; retain that observation so only the prose
     # paragraph, not summarize(path), is counted as invented (the incident's exact shape).
     messages = [*OBSERVED[:-1], {**OBSERVED[-1], 'content': 'Summary result = summarize(path);'}]
     assert loop._invented_code_spans(CAPTURED_REWRITE, loop._observed_code(messages)) == 1
-    (steer, reason), rlog = _vet(fake, ask=lambda s, u: CAPTURED_REWRITE, messages=messages)
+    (steer, reason), rlog = _vet(fake, directive=CAPTURED_REWRITE, messages=messages)
     assert (steer, reason) == (CAPTURED_REWRITE, "")
-    assert fake.texts("dictation") == [PROSE, CAPTURED_REWRITE]
-    assert not any(e.get("reason") == "still invented" for e in rlog.of("loop.steer_restate"))
+    assert fake.texts("dictation") == [CAPTURED_REWRITE]
+    assert rlog.of("loop.steer_dictated_code") == []
 
 
-@pytest.mark.parametrize("rewrite", [
+@pytest.mark.parametrize("directive", [
     'Add conftest.configure_live_marker("live") to conftest.py and re-run.',
     "Run mvn -q test verbatim.",
     "Copy this exact line:\n    return row.split(',')",
 ])
-def test_a_native_dictates_restatement_is_withheld_even_when_its_code_was_observed(rewrite):
+def test_a_native_dictates_directive_is_withheld_even_when_its_code_was_observed(directive):
     fake = FakeSystem1(dictation="DICTATES")
-    (steer, reason), _ = _vet(fake, ask=lambda s, u: rewrite)
+    asked = []
+    (steer, reason), _ = _vet(fake, directive=directive, ask=lambda s, u="": asked.append(s) or "unused")
     assert (steer, reason) == (None, "dictated_code")
-    assert fake.texts("dictation") == [PROSE, rewrite]
-
-
-def test_a_restatement_the_classifier_cannot_judge_is_dropped_whole():
-    answers = iter(["DICTATES", system1.System1NoFit("x")])
-
-    def judged(text):
-        answer = next(answers)
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-
-    code = "Replace it with:\n    return parser.parse_all_rows(rows, strict=True)"
-    (steer, refused_by), rlog = _vet(FakeSystem1(dictation=judged), directive=code,
-                                     ask=lambda s, u="": "Parse every row strictly.")
-    assert steer is None
-    assert [e["reason"] for e in rlog.of("loop.steer_restate")] == ["unjudged"]
+    assert fake.texts("dictation") == [directive] and asked == []
 
 
 # ---------------------------------------------------------------- the author seats
@@ -476,7 +458,7 @@ def test_the_wrapper_authors_carry_the_runtime_to_the_same_guard():
                  lambda chat: loop.author_thrash_steer(chat, ROLE, None, gs, "TRUTH",
                                                        {"messages": OBSERVED}, Rlog(), system1=fake)):
         fake.calls.clear()
-        call(_scripted([PROSE, "NO_DIRECTIVE"]))
+        call(_scripted([PROSE]))
         assert fake.texts("dictation")[:1] == [PROSE]
 
 

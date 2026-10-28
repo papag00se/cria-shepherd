@@ -89,8 +89,9 @@ class AnUndottedCallIsStillCodeTests(unittest.TestCase):
         """`O(n)`, `sys.exit(0)`, `m.group(1)` — the empty-parens rule, stated by length.
 
         The floor is what a long English `word(s)` would trip; measured over the captures that
-        shape is 0.06% of what dropping the dot finds, and its whole cost is one restater call that
-        is handed the directive and nothing else, so it can only say the same thing in words."""
+        shape is 0.06% of what dropping the dot finds. On the legacy reasoner path a counted span
+        turns a DICTATES ruling into a withheld directive (the restater that once rewrote it was
+        removed 2026-10-27), so a false count costs one directive, never a wrong one."""
         d = "The loader is O(n) over each row; m.group(1) is the sku and it ends in sys.exit(0)."
         self.assertEqual(_invented_code_spans(d, self.JAVAC), 0)
 

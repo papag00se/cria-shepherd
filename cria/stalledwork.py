@@ -485,7 +485,7 @@ DEFINITION = Definition(
                     "steer_diagnostic_action", "steer_diagnostic_answer", "steer_diagnostic_grounding_above",
                     "steer_diagnostic_no_findings", "steer_diagnostic_no_grounding", "steer_diagnostic_no_refusals",
                     "steer_dictates_code", "steer_historical_author_request", "steer_reasoning_recover",
-                    "steer_restate", "steer_session_evidence", "steer_session_root", "seeded_test_rule"),
+                    "steer_session_evidence", "steer_session_root", "seeded_test_rule"),
            state="State per session/task; transient on reconstruction; stable selection until pending effects settle",
            services=("forwarded-call-and-unlanded-write-facts", "shared-write-registry",
                      "required-retained-call-sequence", "exact-current-frame-offered-steer-identity",

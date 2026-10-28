@@ -177,7 +177,6 @@ _QUOTABLE_MIN = 12
 _CODE_LINE = re.compile('^[ \\t]*(?:def |class |import |from [.\\w]+ import |return |with |@patch|assert )', re.M)
 _INLINE_CALL = re.compile('\\b\\w+(?:\\.\\w+)*\\(\\s*[^)\\n\\s][^)\\n]*\\)')
 _QUOTE_CHARS = {ord(c): None for c in '\'"`\\'}
-_NO_DIRECTIVE = 'NO_DIRECTIVE'
 _BLAME_WORDS = re.compile("(?i)\\b(?:not (?:a )?(?:working|available|live|real)|does ?n[o']?t (?:support|work|exist|serve)|is (?:down|offline|broken|unavailable|deprecated)|no longer (?:works|available|supported)|rate[- ]limit|requires? (?:an? )?(?:api[- ]?key|auth|credential)|documentation (?:landing )?page|returns? 404 for (?:every|all)|consistently returns? 404|impossible given the api)\\b")
 _ABS_SYSTEM_PATH = re.compile('(?<![\\w./-])(/(?:home|root|usr|etc|opt|srv|var)/[\\w./-]{3,})')
 _AUTH_MARKER = re.compile('\\b40[13]\\b|\\bunauthori[sz]ed\\b|\\bforbidden\\b', re.I)
@@ -485,42 +484,14 @@ class GroundedActions:
     def _is_code_line(self, line: str) -> bool:
         """A line the coder could paste: source in a language cria recognises, or a shell command.
 
-        ONE OWNER for the shell half (:mod:`cria.shellshape`), at the RESTATE bar rather than the refuse
-        bar — being wrong here costs one reasoner call to say the same thing in words, and the restater
-        can only say less than it was given, never something different."""
+        ONE OWNER for the shell half (:mod:`cria.shellshape`). On the legacy reasoner path a line
+        counted here, unread, is what makes a DICTATES verdict withhold the directive rather than
+        deliver it as a quote of the coder's own code."""
         return bool(_CODE_LINE.search(line)) or shellshape.looks_like_command(line)
 
     def _unquoted(self, s: str) -> str:
         """``s`` with quote characters and backslashes removed — the comparison that ignores escaping."""
         return s.translate(_QUOTE_CHARS)
-
-    def _restate_without_code(self, directive: str, ask, rlog) -> str | None:
-        """``directive`` said again without the code it prescribed — or None to refuse it whole.
-
-        THE REWRITER IS BLIND ON PURPOSE. It is handed the directive and nothing else: no session, no
-        evidence, no workspace, no tools. That is the safety property — a rewriter with context could
-        substitute one invention for another, and this one holds no facts to substitute. The most it can
-        do is say less than it was given.
-
-        Bounded to ONE attempt. If what comes back still dictates code, or is the refusal sentinel, or
-        is empty, the answer is None and the caller drops the steer — the same ending every other guard
-        in :func:`_grounded_steer_or_none` reaches, rather than the hollowed sentence the strip left."""
-        if ask is None or not (directive or '').strip():
-            return None
-        out = strip_think(ask(prompts.load('steer_restate'), directive) or '').strip()
-        if not out or _NO_DIRECTIVE in out.upper():
-            rlog.emit('loop.steer_restate', level='info', kept=False, reason='nothing left')
-            return None
-        try:
-            still_dictates = self._dictates_code(out, ask, presumed=True, rlog=rlog)
-        except system1wiring.Unjudged:
-            rlog.emit('loop.steer_restate', level='info', kept=False, reason='unjudged')
-            return None
-        if still_dictates:
-            rlog.emit('loop.steer_restate', level='info', kept=False, reason='still dictates')
-            return None
-        rlog.emit('loop.steer_restate', level='info', kept=True, chars=len(out))
-        return out
 
     def _invented_code_spans(self, directive: str, evidence: str) -> int:
         """How many code spans in ``directive`` the author did NOT read — 0 when it only quotes.
@@ -528,10 +499,11 @@ class GroundedActions:
         A COUNT, NOT A REWRITE. This used to return the directive with the invented spans replaced by a
         marker, and the caller shipped that. It no longer does: a hollowed sentence is worse than no
         sentence — "Change [code removed] to [code removed]" is an imperative with both operands deleted
-        (walked on rust-toml-cli x ternary-bonsai, call 0015) — so a directive with anything invented in
-        it now goes to :func:`_restate_without_code`, which is given the ORIGINAL and says it again in
-        words. Nothing this function produces reaches the coder, so it produces nothing but the number
-        that decides whether the rewriter runs.
+        (walked on rust-toml-cli x ternary-bonsai, call 0015) — so a dictated directive with anything
+        invented in it is now WITHHELD whole (see the DICTATES branch of :func:`_vet_steer`). Nothing
+        this function produces reaches the coder, so it produces nothing but the number that decides,
+        on the legacy reasoner path, whether a DICTATES directive is a quote (delivered) or a
+        prescription (withheld).
 
         Code counts as READ when it appears in what cria OBSERVED — see :func:`_observed_code` for why
         that is tool results and written bytes, and never the coder's own prose. That is the whole
@@ -563,7 +535,7 @@ class GroundedActions:
                     n += 1
         return n
 
-    def _dictates_code(self, directive: str, ask=None, presumed: bool=False, rlog=None) -> bool:
+    def _dictates_code(self, directive: str, ask=None, rlog=None) -> bool:
         """True when the directive hands the coder CODE TO COPY rather than a description of the change.
 
         Deterministic pre-filter, then ONE focused question — the pattern the operator's policy calls for:
@@ -572,16 +544,7 @@ class GroundedActions:
 
         ``ask(system, user) -> str`` is the caller's one-shot reasoner. With no reasoner (or an answer
         that is not one of the two words) the pre-filter's verdict stands — which is exactly today's
-        behaviour, so this can only move steers from dropped to delivered, never the other way.
-
-        ``presumed`` SKIPS THE PRE-FILTER. The filter's only job is to decide whether one call is worth
-        making; a caller that already has a DICTATES verdict on this text's parent has that answer, and
-        re-deriving it from the shape of the rewrite can only lose. It did: a rewrite asked to take the
-        code OUT comes back as prose, prose is not code-SHAPED, so the trigger declined and the judge —
-        the half that actually rules quote-versus-dictation — was never asked. Inline dictation in a
-        sentence is precisely the shape the trigger is documented as missing (`pytest.register_pytest_mark
-        ("live")`, a function that does not exist, sailed through for that reason). The verdict travels
-        forward instead of being guessed again (#12)."""
+        behaviour, so this can only move steers from dropped to delivered, never the other way."""
         if self.providers.system1 is not None:
             # The trained classifier reads the WHOLE directive. The code-shape prefilter exists only
             # to decide whether a reasoner call is worth making; it also misses the inline
@@ -590,7 +553,7 @@ class GroundedActions:
             # is asked and no lexical shape stands in for the verdict.
             return system1wiring.classify(self.providers.system1, 'dictation', directive, rlog,
                                           seat='dictation') == _DICTATES
-        if not presumed and (not _CODE_SHAPED.search(directive)):
+        if not _CODE_SHAPED.search(directive):
             return False
         if ask is None:
             return True
@@ -756,25 +719,23 @@ class GroundedActions:
             invented = self._invented_code_spans(directive, self.facts.observed_code(messages))
             # The trained question judges operative dictation versus quotation. A span's presence
             # in observed code cannot overrule that intent judgment; nor can an empty evidence set
-            # make 'zero invented spans' proof of safety. Keep the legacy reasoner path unchanged.
+            # make 'zero invented spans' proof of safety. Keep the legacy reasoner path unchanged:
+            # there a DICTATES verdict over code cria observed is a quote and is delivered as authored.
             if invented or self.providers.system1 is not None:
-                restated = self._restate_without_code(directive, ask, rlog)
-                # Native DESCRIBES is the whole-text intent judgment, just as on initial
-                # admission. Do not replace it with the legacy lexical proxy here: a prose
-                # paragraph naming a check is itself new text, not invented code to paste.
-                # DICTATES and unjudged rewrites were already withheld by the shared restater.
-                if self.providers.system1 is None and restated is not None and self._invented_code_spans(restated, self.facts.observed_code(messages)):
-                    rlog.emit('loop.steer_restate', level='info', kept=False, reason='still invented')
-                    restated = None
-                if restated is not None:
-                    # The original admission cannot establish the rewrite's shape.
-                    # Refuse a malformed rewrite directly, without recovery or retry.
-                    if self._authored_action(restated, rlog).action is None:
-                        restated = None
-                if restated is None:
-                    rlog.emit('loop.steer_dictated_code', level='warn', delivered=False, invented=invented, reason='prescription', head=self.facts.clip(directive, 120))
-                    return (None, 'dictated_code')
-                directive = restated
+                # A PRESCRIPTION IS WITHHELD WHOLE: never hollowed, never restated. Stripping the
+                # invented code shipped "Change [code removed] to [code removed]" (rust-toml-cli x
+                # ternary-bonsai 2026-08-19 0015); the blind rewriter that replaced the strip was
+                # then re-measured against removal (#1). It cannot check a claim, so a sentence it
+                # composes around what the code was FOR is a new instruction: 4 of the 5 delivered
+                # restatements in a 102-steer census invented a requirement or drifted the purpose
+                # (run07 2026-10-27 0038->0039 turned a `javap` signature inspection into "Design a
+                # parser that counts every skip reason separately"; run06 0030->0031 added "identical
+                # totals" across two different feeds), and in paired coder continuations withholding
+                # lost no inspection or first-action quality while the restated arm adopted the
+                # invented taxonomy. The caller keeps its own floor for an author that gave no usable
+                # answer: the refusal redirect, the wheel-spin note, or the periodic check truth.
+                rlog.emit('loop.steer_dictated_code', level='warn', delivered=False, invented=invented, reason='prescription', head=self.facts.clip(directive, 120))
+                return (None, 'dictated_code')
             else:
                 rlog.emit('loop.steer_dictated_code', level='info', delivered=True, invented=0, checked=messages is not None, head=self.facts.clip(directive, 120))
         if sess is not None and self._blames_a_service_that_answered(directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, '')) if ask else None):

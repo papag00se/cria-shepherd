@@ -727,7 +727,10 @@ class TestRealNativeParity:
             for got, want in zip(j.logits, r["int4_logits"]):
                 assert abs(got - want) <= 2e-4 + 2e-4 * abs(want), r["id"]
 
-    def test_native_restatement_delivery_and_prescription_controls(self, runtime):
+    def test_native_dictation_withholds_and_description_delivers(self, runtime):
+        """Real classifier verdicts at the vet seat. A DICTATES directive is withheld whatever a
+        rewrite would have said (the blind restater was removed 2026-10-27); the captured prose
+        paragraph, ruled DESCRIBES, is delivered as a directive in its own right."""
         from tests.test_system1_integration import CAPTURED_REWRITE, _vet
 
         original = (
@@ -740,15 +743,17 @@ class TestRealNativeParity:
         assert runtime.judge('dictation', {'public_directive': original}) == 'DICTATES'
         assert runtime.judge('dictation', {'public_directive': CAPTURED_REWRITE}) == 'DESCRIBES'
         (steer, reason), _ = _vet(runtime, directive=original, ask=lambda s, u: CAPTURED_REWRITE)
+        assert (steer, reason) == (None, 'dictated_code')
+        (steer, reason), _ = _vet(runtime, directive=CAPTURED_REWRITE)
         assert (steer, reason) == (CAPTURED_REWRITE, '')
-        for rewrite in (
+        for prescription in (
             'Add conftest.configure_live_marker("live") to conftest.py and re-run.',
             'Run mvn -q test verbatim.',
             "Copy this exact line:\n    return row.split(',')",
             'Replace the parser with new CSVParser(new StringReader(line), comma, quote, true, true, true, null, null).',
         ):
-            assert runtime.judge('dictation', {'public_directive': rewrite}) == 'DICTATES'
-            (steer, reason), _ = _vet(runtime, directive=original, ask=lambda s, u: rewrite)
+            assert runtime.judge('dictation', {'public_directive': prescription}) == 'DICTATES'
+            (steer, reason), _ = _vet(runtime, directive=prescription)
             assert (steer, reason) == (None, 'dictated_code')
 
     def test_all_frozen_training_inputs_render_and_tokenise_identically(self, runtime):

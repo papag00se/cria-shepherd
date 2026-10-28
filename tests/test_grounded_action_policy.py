@@ -27,27 +27,6 @@ DICTATES — it gives code, a call, a line, a file's contents, or a command for 
 --- end of the directive ---
 
 Answer with exactly one word: DICTATES or DESCRIBES.'''
-RESTATE_QUESTION = '''You are given ONE directive that was written for a coding model. It prescribes code — it tells the coder what to type — and it must not.
-
-Restate it so it says what must become TRUE, never what to write.
-
-Keep, exactly as they appear:
-- every file path and line number it names
-- every error message, checker output, or identifier it quotes
-
-Those are the coder's own ground truth and they are the reason the directive is worth sending.
-
-Remove:
-- replacement code, snippets, signatures, calls, or anything meant to be pasted
-- any explanation of WHY the code fails — a cause is a guess unless a check printed it, and it reaches the coder as an order that outranks its own eyes
-- anything the directive did not already say. You have no files, no session, and no tools. You cannot check a claim, so you may not add one.
-
-Keep it under 60 words, imperative, spoken to the coder.
-
-If removing the prescribed code leaves nothing that tells the coder what to do, output exactly:
-NO_DIRECTIVE
-
-Output only the restated directive, or NO_DIRECTIVE. No preamble.'''
 AUTHOR_SYSTEM = '''You supervise a small coding model that a detector has flagged as possibly stuck. You have the TASK, the full session transcript, changed-file metadata (names, sizes, line counts — not contents), the current repo-check output, and sometimes the coder's own recent reasoning. Your only tools are `read_file` and `list_dir`, both read-only. You cannot run commands, edit files, fetch anything, or test anything.
 
 FIRST DECIDE WHETHER IT IS ACTUALLY STUCK.
@@ -162,9 +141,9 @@ def ask_script(answers):
     ("Install package v9.8.7", "", [], "invented_version"),
     ("Install package v9.8.7", "usage: package v9.8.7", [], "invented_version"),
     ("Install package v9.8.7", "resolved package v9.8.7", [], ""),
-    ("pkg.call(invented_value)", "", ["DICTATES", "NO_DIRECTIVE"], "dictated_code"),
-    ("pkg.call(invented_value)", "", ["DICTATES", "Inspect the boundary in words", "DESCRIBES"], ""),
-    ("pkg.call(invented_value)", "", ["DICTATES", "pkg.call(other_invention)", "DICTATES"], "dictated_code"),
+    # A DICTATES ruling over invented code withholds: one question, no rewrite request (ask_script
+    # fails on any additional judgment). The blind restater was removed on 2026-10-27.
+    ("pkg.call(invented_value)", "", ["DICTATES"], "dictated_code"),
 ])
 def test_generic_vet_preserves_real_guard_order_and_question_transcript(directive, evidence, answers, expected):
     source_ask, source_seen = ask_script(list(answers))
@@ -174,21 +153,13 @@ def test_generic_vet_preserves_real_guard_order_and_question_transcript(directiv
     actual = ga.DEFINITION.vet(engine(), ga.CandidateInput(directive, evidence, source_log,
                                                          source_ask, messages=messages))
     old = loop._vet_steer(directive, evidence, old_log, old_ask, messages=messages)
-    expected_directive = None if expected else (
-        "Inspect the boundary in words" if answers and answers[-1] == "DESCRIBES" else directive)
+    expected_directive = None if expected else directive
     questions = []
     events = []
     if answers:
-        questions = [(DICTATION_QUESTION.format(directive="pkg.call(invented_value)"), "", None),
-                     (RESTATE_QUESTION, "pkg.call(invented_value)", None)]
-        if len(answers) == 3:
-            questions.append((DICTATION_QUESTION.format(directive=answers[1]), "", None))
-        kept = answers[-1] == "DESCRIBES"
-        events = [("loop.steer_restate", {"level": "info", "kept": True, "chars": 29})] if kept else [
-            ("loop.steer_restate", {"level": "info", "kept": False,
-                                    "reason": "nothing left" if len(answers) == 2 else "still dictates"}),
-            ("loop.steer_dictated_code", {"level": "warn", "delivered": False, "invented": 1,
-                                          "reason": "prescription", "head": "pkg.call(invented_value)"})]
+        questions = [(DICTATION_QUESTION.format(directive="pkg.call(invented_value)"), "", None)]
+        events = [("loop.steer_dictated_code", {"level": "warn", "delivered": False, "invented": 1,
+                                                "reason": "prescription", "head": "pkg.call(invented_value)"})]
     elif expected == "roleplay":
         events = [("loop.steer_roleplay_dropped", {"level": "warn", "head": "tool: fabricated result"})]
     elif expected == "argument_blob":

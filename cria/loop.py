@@ -10075,21 +10075,12 @@ def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
     return "\n".join(out), stripped
 
 
-# The restater's refusal. A POSITIVE sentinel, never the lexical negation of the trigger: a weak
-# model asked to answer "NOT_DICTATES" emits it for the wrong reason (#21).
-_NO_DIRECTIVE = "NO_DIRECTIVE"
-
-
-def _restate_without_code(directive: str, ask, rlog, system1=None) -> str | None:
-    return _grounded_actions(system1)._restate_without_code(directive, ask, rlog)
-
-
 def _invented_code_spans(directive: str, evidence: str) -> int:
     return _grounded_actions()._invented_code_spans(directive, evidence)
 
 
-def _dictates_code(directive: str, ask=None, presumed: bool=False, rlog=None, system1=None) -> bool:
-    return _grounded_actions(system1)._dictates_code(directive, ask, presumed, rlog)
+def _dictates_code(directive: str, ask=None, rlog=None, system1=None) -> bool:
+    return _grounded_actions(system1)._dictates_code(directive, ask, rlog)
 
 
 # A TRIGGER, deliberately over-firing: its only job is to decide whether one focused question is

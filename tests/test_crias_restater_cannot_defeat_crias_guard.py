@@ -17,6 +17,10 @@ cria's own restater defeating cria's own guard. It did no harm in that run — t
 own suggestion and correct — but the same hole passed `⟦ctx:steer⟧ edit src/main.rs "…" "…"`, which
 is cria's tool-call syntax handed to the model as a directive.
 
+The restater itself was removed on 2026-10-27 (a DICTATES ruling now withholds the directive), but
+the trigger gap it exposed is the pre-filter's own and stands on its own: the legacy reasoner path
+still decides by this shape whether the dictation question is asked at all.
+
 The gap is language-shaped, so the fix is (#20): the head-of-line shape has accepted `[.:]{1,2}`
 since it was written; the INLINE one accepted only `.`. Rust, C++ and PHP write calls with `::`.
 """

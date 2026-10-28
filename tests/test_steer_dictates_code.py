@@ -106,14 +106,12 @@ def wrote(path, content):
                                          "arguments": _json.dumps({"path": path, "content": content})}}]}
 
 
-def _reasoner(rewrite: str, on_rewrite: str = "DESCRIBES"):
-    """The two questions `_grounded_steer_or_none` asks on this path: rule the directive, rewrite it,
-    then rule the REWRITE. A fixture that answers DICTATES to all three refuses its own restatement —
-    which is what the real reasoner would do only if the rewrite really did prescribe code."""
-    def ask(system, user):
-        if "prescribes code" in system:
-            return rewrite
-        return on_rewrite if rewrite and rewrite in system else "DICTATES"
+def _dictates_once(asked: list):
+    """The one question `_grounded_steer_or_none` asks on this path: rule the directive. Records
+    every question so a test can prove nothing else (no rewrite request) was asked."""
+    def ask(system, user=""):
+        asked.append(system)
+        return "DICTATES"
     return ask
 
 
@@ -171,33 +169,20 @@ class WiringTests(unittest.TestCase):
         self.assertTrue(seen_tooled.get("dictates_check_ran"), "tooled path never asked")
         self.assertTrue(seen_tooled.get("marker_seen"))
 
-    def test_the_rewriter_is_actually_SENT_the_directive(self):
-        """The seam that broke. `_restate_without_code` passes the directive as the ask's SECOND
-        argument, and the ask `author_steer` supplies used to name that parameter `_user` and drop
-        it — against a template (`steer_restate`) that has no placeholder for it either. So the
-        rewriter was sent the bare instructions plus "Answer the question above." and nothing else.
-
-        Walked on feed-pipeline-java x nemotron-elastic 20260820T103857 call 0029: the model
-        reasoned "The original directive does not contain any file paths or line numbers" — about
-        the SYSTEM PROMPT ITSELF — and returned NO_DIRECTIVE. Every steer that reached the rewriter
-        was therefore dropped, always, for a reason that had nothing to do with the steer.
-
-        The unit test one file over could not see it: it calls `_restate_without_code` with a fake
-        ask that honours `user`. This one drives the ask cria really builds."""
+    def test_the_ask_author_steer_builds_withholds_an_invented_call_with_no_rewrite_request(self):
+        """Driven through the ask cria really builds. This seam once dropped the directive on the way
+        to the (since removed) blind rewriter — feed-pipeline-java x nemotron-elastic 20260820T103857
+        call 0029 — so every prescription was refused for a reason unrelated to the steer. Withholding
+        is now the contract, and it is reached by the dictation ruling alone: the steer-code phase
+        sees exactly one question, about the authored directive itself."""
         import json as _json
 
-        seen = {}
+        steer_code = []
 
         def chat(body, rlog):
-            msgs = body["messages"]
-            sysm = msgs[0].get("content", "")
-            sent = "\n".join(str(m.get("content") or "") for m in msgs)
-            if "prescribes code" in sysm:                      # the rewriter's own prompt
-                seen["restate_ran"] = True
-                seen["directive_sent"] = "UNIQUE_MARKER_RST" in sent
-                return _json.dumps({"choices": [{"message": {
-                    "content": "Register the marker the warning names, then re-run the tests."}}]}).encode()
-            if "DIRECTIVE:" in sysm:                           # the dictates-code question
+            sysm = body["messages"][0].get("content", "")
+            if rlog.phase == "steer-code":
+                steer_code.append(sysm)
                 return _json.dumps({"choices": [{"message": {"content": "DICTATES"}}]}).encode()
             return _json.dumps({"choices": [{"message": {"content": (
                 "UNSTUCK UNIQUE_MARKER_RST the fix is "
@@ -206,10 +191,14 @@ class WiringTests(unittest.TestCase):
         gs = loop.GuardState()
         body = {"messages": [{"role": "user", "content": "build it"},
                              tool_result("PytestUnknownMarkWarning: live")], "tools": []}
-        loop.author_steer(chat, None, "", gs, body, _Rlog(), condition="wheel_spin")
-        self.assertTrue(seen.get("restate_ran"), "the rewriter never ran")
-        self.assertTrue(seen.get("directive_sent"),
-                        "the rewriter was asked to restate a directive it was never given")
+        rlog = _Rlog()
+        out = loop.author_steer(chat, None, "", gs, body, rlog, condition="wheel_spin")
+        self.assertIsNone(out)
+        self.assertEqual(len(steer_code), 1)
+        self.assertIn("UNIQUE_MARKER_RST", steer_code[0])
+        self.assertTrue(steer_code[0].rstrip().endswith("DICTATES or DESCRIBES."))
+        self.assertIn(("loop.steer_outcome", "dictated_code"),
+                      [(k, f.get("refused_by")) for k, f in rlog.events])
 
     def test_a_DICTATES_steer_is_still_delivered_not_dropped(self):
         """The operator's 2026-08-04 ruling stands: the steer SHIPS. The drop's harm evidence came
@@ -221,7 +210,7 @@ class WiringTests(unittest.TestCase):
         self.assertTrue(out)                                   # delivered, never None
         self.assertIn("loop.steer_dictated_code", [k for k, _ in rlog.events])
 
-    def test_an_invented_call_is_RESTATED_not_hollowed(self):
+    def test_an_invented_call_is_WITHHELD_not_hollowed_or_restated(self):
         """The ruling's own reasoning, enforced. It turned on SIGHTED versus BLIND dictation, so the
         question is not "does this contain code" but "did the author read it or invent it" — and
         cria holds what it OBSERVED (tool results + bytes the coder wrote; see loop._observed_code).
@@ -229,41 +218,20 @@ class WiringTests(unittest.TestCase):
         REAL_DICTATION is the measured example: `pytest.register_pytest_mark("live")` is not a real
         function, and it reached a coder because it sat inline in prose with no fence.
 
-        WHAT CHANGED ON 2026-08-19: the invention used to be replaced in place with a marker and the
-        rest shipped. That leaves an imperative missing its operands — walked on rust-toml-cli x
-        ternary-bonsai call 0015, which came out as "Change [code removed] to [code removed]". The
-        directive is now RESTATED by a blind rewriter, or refused. See
-        tests/test_a_prescription_is_restated_not_hollowed.py."""
+        HISTORY: on 2026-08-19 an in-place strip ("Change [code removed] to [code removed]",
+        rust-toml-cli x ternary-bonsai 0015) was replaced by a blind rewriter; on 2026-10-27 the
+        rewriter was removed after its restatements were measured inventing requirements (run07
+        0038->0039). A prescription is now withheld whole, like every other refused steer. See
+        tests/test_a_prescription_is_withheld_not_hollowed.py and
+        tests/test_a_dictated_steer_is_withheld_not_restated.py."""
         rlog = _Rlog()
-        restated = "Register the `live` marker the warning names, then re-run the tests."
-        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog, ask=_reasoner(restated),
-                                           messages=[tool_result("PytestUnknownMarkWarning: live")])
-        self.assertEqual(out, restated)                        # a whole sentence, not a hole
-        self.assertNotIn("register_pytest_mark", out)          # the invention is gone
-        self.assertNotIn("code removed", out)                  # ...and so is the marker debris
-        self.assertTrue([e for e in rlog.events if e[0] == "loop.steer_restate"])
-
-    def test_a_rewrite_that_swaps_one_invention_for_another_is_refused(self):
-        """The rewriter is blind so it CANNOT introduce a fact — but "cannot" is an argument, and the
-        caller is holding both halves. A rewrite is measured against the same observed evidence the
-        original was, so a fresh unread span cannot ship on a fuzzy pass."""
-        rlog = _Rlog()
-        swapped = 'Add conftest.configure_live_marker("live") to conftest.py and re-run.'
-        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
-                                           ask=_reasoner(swapped),
+        asked = []
+        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog, ask=_dictates_once(asked),
                                            messages=[tool_result("PytestUnknownMarkWarning: live")])
         self.assertIsNone(out)
-        self.assertIn(("loop.steer_restate", {"level": "info", "kept": False,
-                                              "reason": "still invented"}), rlog.events)
-
-    def test_a_prescription_the_rewriter_cannot_save_is_refused(self):
-        """Every other guard in this function returns None. This one used to be the exception."""
-        rlog = _Rlog()
-        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
-                                           ask=lambda s, u: "NO_DIRECTIVE" if "prescribes code" in s
-                                           else "DICTATES",
-                                           messages=[tool_result("PytestUnknownMarkWarning: live")])
-        self.assertIsNone(out)
+        self.assertEqual(len(asked), 1, "one ruling; no rewrite is requested")
+        refused = [f for k, f in rlog.events if k == "loop.steer_dictated_code"]
+        self.assertEqual((refused[-1]["delivered"], refused[-1]["reason"]), (False, "prescription"))
 
     def test_a_quote_of_something_cria_showed_the_author_survives(self):
         """The case the ladder passes were built on: a steer quoting the coder's own failing line.
@@ -292,14 +260,12 @@ class WiringTests(unittest.TestCase):
         {...})? ... That seems odd" and cria's steer ordered exactly that. Prose is not observation."""
         rlog = _Rlog()
         directive = 'Replace the handler line with return self._send(201, {"error": "internal"})'
-        restated = "Make orders/app.py:54 stop returning 500 on that exception, then re-run the tests."
         out = loop._grounded_steer_or_none(
-            directive, "unused", rlog, ask=_reasoner(restated),
+            directive, "unused", rlog, ask=_dictates_once([]),
             messages=[tool_result("orders/app.py:54: 500 returned on exception"),
                       {"role": "assistant",
                        "content": 'return self._send(201, {"error": "internal"})? That seems odd.'}])
-        self.assertNotIn("_send(201", out)          # the coder's musing did not ground it
-        self.assertEqual(out, restated)             # ...and what ships is a whole sentence
+        self.assertIsNone(out)                      # the coder's musing did not ground it: withheld
 
     def test_with_nothing_observed_nothing_is_stripped(self):
         """cria cannot call code invented when it has nothing to check against."""
@@ -485,14 +451,14 @@ class ThePromptAndTheMatcherAgreeTests(unittest.TestCase):
     def test_the_matcher_accepts_the_prompts_descriptive_answer_only(self):
         """Exercise the live adapter: prompt/code drift must not reject a valid description,
         and a dictation or unreadable reply must still fail closed."""
-        directive = "Replace the incorrect return value"
+        directive = "Replace the incorrect return value with return total;"
         for answer, dictates in ((loop._DESCRIBES, False), ("DICTATES", True), ("", True)):
             with self.subTest(answer=answer):
                 questions = []
                 def ask(system, user):
                     questions.append(system)
                     return answer
-                self.assertEqual(loop._dictates_code(directive, ask=ask, presumed=True), dictates)
+                self.assertEqual(loop._dictates_code(directive, ask=ask), dictates)
                 self.assertEqual(len(questions), 1)
                 self.assertIn(loop._DESCRIBES, questions[0])
 
