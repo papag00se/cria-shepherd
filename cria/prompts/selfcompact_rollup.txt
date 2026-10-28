@@ -1,0 +1,8 @@
+# The coder-visible rolling summary (selfcompact._summary_msg). {{MARKER}} is the rollup anchor marker and
+# must stay first. Labels state only the order and count of the summary's increments, and how many earlier
+# increments a refold condensed into one; nothing here is a claim about the work itself.
+header = {{MARKER}} Summary of your earlier turns this session (older turns were elided to keep you focused). Use it as CONTEXT so you don't re-derive what you already worked out — but it is a summary, NOT a statement that the task is done: anything it describes as unfinished, failing, or blocked still needs doing. Where a real tool result or the files on disk disagree with it, those are the ground truth — read them rather than trusting this
+order = It was written in {{COUNT}} increments, oldest first, each after the one before it: where a later increment disagrees with an earlier one, the later one supersedes it, and a real tool result or the files on disk supersede both
+first = [increment 1 of {{COUNT}}]
+next = [increment {{N}} of {{COUNT}}, written after increment {{PREV}}]
+condensed = [increment 1 of {{COUNT}}, a condensation of {{FOLDED}} earlier increments]

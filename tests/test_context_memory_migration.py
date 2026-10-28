@@ -54,6 +54,8 @@ def test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical():
         "is a summary, NOT a statement that the task is done: anything it describes as unfinished, "
         "failing, or blocked still needs doing. Where a real tool result or the files on disk "
         "disagree with it, those are the ground truth — read them rather than trusting this:\n"
+        # Each accepted increment is a labelled, ordered entry (tests/test_rollup_increments_are_labelled_and_ordered.py).
+        "[increment 1 of 1]\n"
         "Earlier work was observed."}, before[16]]
     assert result.messages == expected
     assert requests == [before[1:16]]

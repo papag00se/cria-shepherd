@@ -1482,7 +1482,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/reorientation.py:reorient`](../../cria/reorientation.py#L160)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5206)
 - [`cria/loop.py:Loop._reasoned_reanchor`](../../cria/loop.py#L5188)
-- [`cria/selfcompact.py:work_ledger`](../../cria/selfcompact.py#L1117)
+- [`cria/selfcompact.py:work_ledger`](../../cria/selfcompact.py#L1139)
 - [`cria/memoryhandoff.py`](../../cria/memoryhandoff.py)
 
 **Historical families:** F49.
@@ -2161,7 +2161,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: trim_repeat_collapsed, trim_repeat_collapsed_failed. Dependencies: none.
   Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5206), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3482), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4914), [`cria/server.py:CriaHandler._focus_trim`](../../cria/server.py#L1350).
-  Regressions: [`tests/test_context_memory_migration.py:test_focus_order_selection_and_replacement_are_real_execution`](../../tests/test_context_memory_migration.py#L148), [`tests/test_context_memory_migration.py:test_disabled_focus_does_not_scan_history`](../../tests/test_context_memory_migration.py#L166), [`tests/test_context_memory_migration.py:test_real_focus_keeps_different_outputs_mutations_and_hard_failures`](../../tests/test_context_memory_migration.py#L197), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274).
+  Regressions: [`tests/test_context_memory_migration.py:test_focus_order_selection_and_replacement_are_real_execution`](../../tests/test_context_memory_migration.py#L150), [`tests/test_context_memory_migration.py:test_disabled_focus_does_not_scan_history`](../../tests/test_context_memory_migration.py#L168), [`tests/test_context_memory_migration.py:test_real_focus_keeps_different_outputs_mutations_and_hard_failures`](../../tests/test_context_memory_migration.py#L199), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274).
 - `wire-repeated-payloads` — [`cria/modelview.py:REPEATED_PAYLOADS`](../../cria/modelview.py); execute `fold_repeats`.
   Stage `wire-evidence-fold`; default level 3; scope `runtime`.
   State: none. Services: surviving-paired-tool-history.
@@ -2169,7 +2169,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: repeated_message_note. Dependencies: none.
   Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L487), [`cria/modelview.py:visible_tokens`](../../cria/modelview.py#L110).
-  Regressions: [`tests/test_context_memory_migration.py:test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass`](../../tests/test_context_memory_migration.py#L236), [`tests/test_a_repeat_pointer_never_outlives_its_target.py:test_the_old_order_dangles_somewhere_and_the_wire_never_does`](../../tests/test_a_repeat_pointer_never_outlives_its_target.py#L61), [`tests/test_context_wire_selection.py:test_wire_uses_exact_selected_fold_without_default_fallback`](../../tests/test_context_wire_selection.py#L22), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
+  Regressions: [`tests/test_context_memory_migration.py:test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass`](../../tests/test_context_memory_migration.py#L238), [`tests/test_a_repeat_pointer_never_outlives_its_target.py:test_the_old_order_dangles_somewhere_and_the_wire_never_does`](../../tests/test_a_repeat_pointer_never_outlives_its_target.py#L61), [`tests/test_context_wire_selection.py:test_wire_uses_exact_selected_fold_without_default_fallback`](../../tests/test_context_wire_selection.py#L22), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
 - `wire-repeated-check-evidence` — [`cria/modelview.py:REPEATED_CHECKS`](../../cria/modelview.py); execute `fold_check_runs`.
   Stage `wire-evidence-fold`; default level 3; scope `runtime`.
   State: none. Services: surviving-check-carriers.
@@ -2177,7 +2177,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: repeated_message_note. Dependencies: none.
   Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L487), [`cria/modelview.py:visible_tokens`](../../cria/modelview.py#L110).
-  Regressions: [`tests/test_context_memory_migration.py:test_wire_check_runs_fold_only_when_the_later_exact_source_survives`](../../tests/test_context_memory_migration.py#L259), [`tests/test_c13b_the_wire_claims_are_true.py:test_every_line_a_pointer_replaced_is_shown_in_the_body_sent`](../../tests/test_c13b_the_wire_claims_are_true.py#L220), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
+  Regressions: [`tests/test_context_memory_migration.py:test_wire_check_runs_fold_only_when_the_later_exact_source_survives`](../../tests/test_context_memory_migration.py#L261), [`tests/test_c13b_the_wire_claims_are_true.py:test_every_line_a_pointer_replaced_is_shown_in_the_body_sent`](../../tests/test_c13b_the_wire_claims_are_true.py#L220), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
 - `ledger-copy-pointers` — [`cria/ledgercopies.py:DEFINITION`](../../cria/ledgercopies.py); execute `elide`.
   Stage `coder-ledger-copy-elision`; default level 4; scope `runtime`.
   State: none. Services: authoritative-fetch-ledger, byte-exact-dedup.
@@ -2224,12 +2224,12 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: selfcompact_summary, selfcompact_refold. Dependencies: none.
   Hooks: [`cria/loop.py:Loop._self_compact`](../../cria/loop.py#L3766), [`cria/loop.py:Loop._self_compact_single`](../../cria/loop.py#L5336).
-  Regressions: [`tests/test_context_memory_migration.py:test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical`](../../tests/test_context_memory_migration.py#L37), [`tests/test_context_memory_migration.py:test_disabled_rolling_does_not_detect_call_or_consume_force`](../../tests/test_context_memory_migration.py#L91), [`tests/test_context_memory_migration.py:test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage`](../../tests/test_context_memory_migration.py#L101), [`tests/test_context_memory_migration.py:test_refold_keeps_newer_grounding_separate_and_failed_refold_keeps_increment`](../../tests/test_context_memory_migration.py#L130).
+  Regressions: [`tests/test_context_memory_migration.py:test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical`](../../tests/test_context_memory_migration.py#L37), [`tests/test_context_memory_migration.py:test_disabled_rolling_does_not_detect_call_or_consume_force`](../../tests/test_context_memory_migration.py#L93), [`tests/test_context_memory_migration.py:test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage`](../../tests/test_context_memory_migration.py#L103), [`tests/test_context_memory_migration.py:test_refold_keeps_newer_grounding_separate_and_failed_refold_keeps_increment`](../../tests/test_context_memory_migration.py#L132).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/selfcompact.py:rolling`](../../cria/selfcompact.py#L1233)
+- [`cria/selfcompact.py:rolling`](../../cria/selfcompact.py#L1255)
 - [`cria/memoryeffects.py`](../../cria/memoryeffects.py)
-- [`cria/selfcompact.py:compaction_request_parts`](../../cria/selfcompact.py#L529)
+- [`cria/selfcompact.py:compaction_request_parts`](../../cria/selfcompact.py#L536)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5206)
 - [`cria/loop.py:Loop._self_compact`](../../cria/loop.py#L3766)
 - [`cria/server.py:_harden_compaction_reply`](../../cria/server.py#L664)
@@ -2265,7 +2265,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:_evidence_blocks`](../../cria/loop.py#L2080)
 - [`cria/loop.py:_judge_completion`](../../cria/loop.py#L1004)
 - [`cria/loop.py:summarize`](../../cria/loop.py#L7541)
-- [`cria/selfcompact.py:serialize`](../../cria/selfcompact.py#L341)
+- [`cria/selfcompact.py:serialize`](../../cria/selfcompact.py#L348)
 
 **Historical families:** F71.
 
@@ -2329,7 +2329,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: work_log_denied. Dependencies: none.
   Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5206), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3482), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4914), [`cria/server.py:CriaHandler._focus_trim`](../../cria/server.py#L1350).
-  Regressions: [`tests/test_context_memory_migration.py:test_focus_order_selection_and_replacement_are_real_execution`](../../tests/test_context_memory_migration.py#L148), [`tests/test_context_memory_migration.py:test_disabled_focus_does_not_scan_history`](../../tests/test_context_memory_migration.py#L166), [`tests/test_focustrim.py:ErrorSquashTests.test_squashes_a_run_of_distinct_failures_keeping_recent`](../../tests/test_focustrim.py#L152), [`tests/test_focustrim.py:HardFailKeptTests.test_hard_failures_are_never_squashed`](../../tests/test_focustrim.py#L267), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274).
+  Regressions: [`tests/test_context_memory_migration.py:test_focus_order_selection_and_replacement_are_real_execution`](../../tests/test_context_memory_migration.py#L150), [`tests/test_context_memory_migration.py:test_disabled_focus_does_not_scan_history`](../../tests/test_context_memory_migration.py#L168), [`tests/test_focustrim.py:ErrorSquashTests.test_squashes_a_run_of_distinct_failures_keeping_recent`](../../tests/test_focustrim.py#L152), [`tests/test_focustrim.py:HardFailKeptTests.test_hard_failures_are_never_squashed`](../../tests/test_focustrim.py#L267), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274).
 - `superseded-write-history` — [`cria/focustrim.py:SUPERSESSION`](../../cria/focustrim.py); execute `_drop_superseded_writes`.
   Stage `coder-focus`; default level 3; scope `runtime`.
   State: producer notice in framed messages; settle exact pairs at final wire; no durable state. Services: paired-tool-history, final-surviving-messages.
@@ -2337,14 +2337,14 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: superseded_writes_dropped, superseded_writes_unavailable. Dependencies: none.
   Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5206), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3482), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4914), [`cria/server.py:CriaHandler._focus_trim`](../../cria/server.py#L1350), [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L487).
-  Regressions: [`tests/test_context_memory_migration.py:test_supersession_producer_and_final_settlement_have_one_definition`](../../tests/test_context_memory_migration.py#L216), [`tests/test_c21_superseded_preservation_wire.py:test_real_floor_pressure_qualifies_the_missing_write_not_the_later_source`](../../tests/test_c21_superseded_preservation_wire.py#L93), [`tests/test_c21_superseded_preservation_wire.py:test_refused_newest_never_displaces_landed_content_or_rejected_bytes`](../../tests/test_c21_superseded_preservation_wire.py#L139), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274).
+  Regressions: [`tests/test_context_memory_migration.py:test_supersession_producer_and_final_settlement_have_one_definition`](../../tests/test_context_memory_migration.py#L218), [`tests/test_c21_superseded_preservation_wire.py:test_real_floor_pressure_qualifies_the_missing_write_not_the_later_source`](../../tests/test_c21_superseded_preservation_wire.py#L93), [`tests/test_c21_superseded_preservation_wire.py:test_refused_newest_never_displaces_landed_content_or_rejected_bytes`](../../tests/test_c21_superseded_preservation_wire.py#L139), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L274).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5206)
 - [`cria/focustrim.py:_drop_superseded_writes`](../../cria/focustrim.py#L486)
 - [`cria/focustrim.py:_repeat_failed`](../../cria/focustrim.py#L351)
 - [`cria/focustrim.py:superseded_writes_truth`](../../cria/focustrim.py#L746)
-- [`cria/selfcompact.py:_later_write_fates`](../../cria/selfcompact.py#L830)
+- [`cria/selfcompact.py:_later_write_fates`](../../cria/selfcompact.py#L852)
 
 **Historical families:** F73.
 

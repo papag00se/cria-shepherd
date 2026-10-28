@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 from .assistcontract import Policy, Reference
@@ -97,6 +97,13 @@ class CompactState:
     covered: int = 0       # message INDEX the summary represents up to (throttle reference)
     attempted: int = 0     # message INDEX last offered to a summarizer, accepted or rejected
     pressured: bool = False  # floor pressure already bought one throttle-bypassing attempt
+    # THE SAME TEXT, IN THE ORDER IT WAS WRITTEN: one entry per accepted increment (a refold is one
+    # entry). ``summary`` stays the plain concatenation every writer, refold and size check reads; this
+    # segmentation only lets the coder-visible rollup say which increment came later, so an earlier
+    # false claim and its later correction are distinguishable (run07 0070: "parses to 5 fields" and
+    # "into a single field" sat in one unlabelled rollup). Empty = the summary is one entry.
+    parts: tuple[str, ...] = field(default=(), compare=False)
+    condensed: int = field(default=0, compare=False)   # entries a refold condensed into parts[0]
 
 
 def _text(m: dict) -> str:
@@ -707,7 +714,7 @@ def checks_input(flag: str, since: int = 0) -> str:
     return prompts.fill(lines["block"], flag=flag, precedence=clause)
 
 
-def _summary_msg(summary: str) -> dict:
+def _summary_msg(state: CompactState) -> dict:
     # This rolls up MID-work turns (the work is NOT necessarily finished) — unlike the loop's
     # completion compaction, which summarizes genuinely-done work. So it must NOT stamp "treat this as
     # done": that blanket done-assertion drove premature completion and suppressed re-doing needed work
@@ -719,12 +726,27 @@ def _summary_msg(summary: str) -> dict:
     # old wording sent the model to look for ground truth that was not there, and the one thing it
     # then had was the summary it had just been told not to trust. Defer to the live workspace, which
     # is always there, instead of to a position in the transcript.
-    return {"role": "user", "content": (
-        f"{SUMMARY_MARKER} Summary of your earlier turns this session (older turns were elided to keep "
-        f"you focused). Use it as CONTEXT so you don't re-derive what you already worked out — but it "
-        f"is a summary, NOT a statement that the task is done: anything it describes as unfinished, "
-        f"failing, or blocked still needs doing. Where a real tool result or the files on disk "
-        f"disagree with it, those are the ground truth — read them rather than trusting this:\n{summary}")}
+    # EACH INCREMENT IS ITS OWN ORDERED, LABELLED ENTRY. Rolling memory appends; a false increment is
+    # never retracted, only followed by a later one (run07: 0063's "parses to 5 fields" and 0067's
+    # "single field" both stood in the 0070 rollup with nothing saying which came later). The labels
+    # state only what cria knows for certain: the order and count of the entries, and how many earlier
+    # entries a refold condensed. The marker stays first: it is the anchor and floor-protection key.
+    parts = state.parts or (state.summary,)
+    lines = prompts.load_map("selfcompact_rollup")
+    count = len(parts)
+    entries = []
+    for n, text in enumerate(parts, start=1):
+        if n == 1 and state.condensed:
+            label = prompts.fill(lines["condensed"], count=count, folded=state.condensed)
+        elif n == 1:
+            label = prompts.fill(lines["first"], count=count)
+        else:
+            label = prompts.fill(lines["next"], n=n, count=count, prev=n - 1)
+        entries.append(label + "\n" + text.strip())
+    head = prompts.fill(lines["header"], marker=SUMMARY_MARKER)
+    if count > 1:
+        head += ". " + prompts.fill(lines["order"], count=count)
+    return {"role": "user", "content": head + ":\n" + "\n\n".join(entries)}
 
 
 def _task_msg(task: str) -> dict:
@@ -1326,7 +1348,8 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
             # attempt or an accepted briefing (below) restores it.
             by_pressure = pressure and not never_attempted
             state = CompactState(summary=state.summary, covered=state.covered,
-                                 attempted=tail_start, pressured=by_pressure)
+                                 attempted=tail_start, pressured=by_pressure,
+                                 parts=state.parts, condensed=state.condensed)
             fresh_text = (summarize(summarizable, newer_messages=messages[tail_start:])
                           if with_grounding else summarize(summarizable))
             fresh = strip_frame_echo(fresh_text, prompts.load("selfcompact_summary"))
@@ -1350,7 +1373,10 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
                 kept = (_view(messages, state, head_end, tail_start, pinned_task, files_list, rlog)
                         if state.summary.strip() and band_tokens is not None else messages)
                 return RollingResult(kept, state, Effect.WITHHELD)
-            combined = (state.summary + "\n\n" + fresh) if (state.summary and lo > head_end) else fresh
+            appended = bool(state.summary and lo > head_end)
+            combined = (state.summary + "\n\n" + fresh) if appended else fresh
+            parts = ((state.parts or (state.summary,)) + (fresh,)) if appended else (fresh,)
+            condensed = state.condensed if appended else 0
             # REFOLD TIER (operator: append-only just moves the unbounded growth into the summary —
             # over a long session the accumulated increments would themselves overtake the window,
             # and the rollup is anchor-protected so nothing else ever shrinks it). When the
@@ -1365,10 +1391,12 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
                 folded = strip_frame_echo(folded_text, prompts.load("selfcompact_refold"))
                 if folded.strip():
                     combined = folded
+                    condensed, parts = len(parts), (folded,)
                     refold_effect = Effect.REDUCED
                 else:
                     refold_effect = Effect.WITHHELD
-            state = CompactState(summary=combined, covered=tail_start, attempted=tail_start)
+            state = CompactState(summary=combined, covered=tail_start, attempted=tail_start,
+                                 parts=parts, condensed=condensed)
 
     out = _view(messages, state, head_end, tail_start, pinned_task, files_list, rlog)
     return RollingResult(out, state, Effect.REDUCED, refold_effect=refold_effect)
@@ -1413,7 +1441,7 @@ def _view(messages: list[dict], state: CompactState, head_end: int, tail_start: 
     # header was emitted anyway: a paragraph telling the coder this is its summary of earlier turns and
     # to read the disk where the summary disagrees, followed by nothing. cria asserting a record exists
     # when it holds none, in the message that IS the record.
-    rollup = [_summary_msg(state.summary)] if state.summary.strip() else []
+    rollup = [_summary_msg(state)] if state.summary.strip() else []
     return messages[:head_end] + task + files + anchors + rollup + working
 
 
