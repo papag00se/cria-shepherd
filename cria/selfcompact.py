@@ -205,6 +205,18 @@ def _summarizable(m: dict) -> dict:
     return {**m, "content": m["content"][:-len(notes)]} if notes else m
 
 
+def summarizable(m: dict) -> dict:
+    """Public alias of :func:`_summarizable` for the harness-compaction writer (``memoryhandoff``): every
+    compaction writer reads a non-anchor message the same way, without the anchored note cria appended."""
+    return _summarizable(m)
+
+
+def appended_anchor(m: dict) -> dict | None:
+    """Public alias of :func:`_appended_anchor`: the harness-compaction path carries the same note past a
+    boundary where the harness discards the host."""
+    return _appended_anchor(m)
+
+
 def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     """The lowest index i (> head_end) such that messages[i:] fits in ``budget_tokens`` — i.e. the
     recent verbatim working set. Keeps at least one message."""
@@ -1323,10 +1335,21 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
             # taking it would advance ``covered`` to tail_start: every folded turn replaced by a rollup
             # header with nothing under it. At a step BOUNDARY (keep NO tail) that is the whole session's
             # work history destroyed by one bad model call — the exact undetectable lie never-truncate
-            # exists to prevent. Fail SAFE: fold nothing, keep every turn verbatim, and let the context
-            # floor (the one lossless window-fit point) size the request.
+            # exists to prevent. Fail SAFE: fold nothing new, keep every unfolded turn verbatim, and let the
+            # context floor (the one lossless window-fit point) size the request.
+            #
+            # AN ACCEPTED SUMMARY STILL STANDS. With no summary (or one whose indices no longer describe
+            # this history: ``band_tokens is None``) nothing is folded, so the raw history IS the view.
+            # With a standing summary the rejected attempt sends the view a non-summarizing turn sends —
+            # the rollup for what it already covers, the rejected band and the tail verbatim — not the raw
+            # history behind the rollup: that flipped the coder's view for one turn (ornith1.5_9b / Java
+            # run07: 0074 and 0079 carried the rollup, 0077 after the rejected 0075 writer got 47 raw
+            # messages and none) and, under floor pressure, handed the floor turns to drop that an
+            # accepted, validated summary already stood in for.
             if not fresh.strip():
-                return RollingResult(messages, state, Effect.WITHHELD)
+                kept = (_view(messages, state, head_end, tail_start, pinned_task, files_list, rlog)
+                        if state.summary.strip() and band_tokens is not None else messages)
+                return RollingResult(kept, state, Effect.WITHHELD)
             combined = (state.summary + "\n\n" + fresh) if (state.summary and lo > head_end) else fresh
             # REFOLD TIER (operator: append-only just moves the unbounded growth into the summary —
             # over a long session the accumulated increments would themselves overtake the window,

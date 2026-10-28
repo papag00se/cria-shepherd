@@ -173,13 +173,35 @@ def recognize(body: dict, *, selected: bool, context_fixes: bool, chat_fn: Chat,
     return recognized
 
 
-def evidence_messages(messages: list, services: EvidenceServices) -> list[dict]:
-    # The summarize ask is excluded by POSITION, including the unmarked case.
+def _folded(messages: list) -> list[dict]:
+    """The non-anchor history this compaction folds. The summarize ask is excluded by POSITION,
+    including the unmarked case."""
     ask_index = next((i for i in range(len(messages) - 1, -1, -1)
                       if isinstance(messages[i], dict) and messages[i].get("role") == "user"), None)
-    return services.drop_harness_frame([
-        m for i, m in enumerate(messages) if i != ask_index
-        and m.get("role") not in ("system", "developer") and not selfcompact.has_anchor(m)])
+    return [m for i, m in enumerate(messages) if i != ask_index
+            and m.get("role") not in ("system", "developer") and not selfcompact.has_anchor(m)]
+
+
+def evidence_messages(messages: list, services: EvidenceServices) -> list[dict]:
+    # The writer reads each folded message as the rolling writer does: without the anchored note cria
+    # appended to a tool result (``selfcompact.summarizable``). That note is carried verbatim instead
+    # (:func:`carried_notes`), never summarized into the briefing as part of the tool's output.
+    return services.drop_harness_frame([selfcompact.summarizable(m) for m in _folded(messages)])
+
+
+def carried_notes(messages: list) -> str:
+    """cria's anchored notes appended to tool results this compaction folds, verbatim, identical copies
+    once (``selfcompact.appended_anchor``, the note rolling memory keeps when it folds the host).
+
+    The harness keeps only the reply: a host it discards takes its note with it, and nothing re-derives
+    the note afterwards (a dependency-source note answers one search, and that search result is gone).
+    So the note rides in the reply beside the other facts cria re-derives from the record."""
+    seen: list[str] = []
+    for m in _folded(messages):
+        note = selfcompact.appended_anchor(m)
+        if note is not None and note["content"] not in seen:
+            seen.append(note["content"])
+    return "\n\n".join(seen)
 
 
 def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, selected: bool) -> dict:
@@ -275,7 +297,8 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
     ledger = (selfcompact.work_ledger(evidence_messages(body.get("messages", []), services),
                                      carried=facts.carried_ledger, root=facts.workspace_root)
               if not text else "")
-    appendices = "\n\n".join(t for t in (ledger, fetch, inventory, facts.checks) if t)
+    notes = carried_notes(body.get("messages", []))
+    appendices = "\n\n".join(t for t in (ledger, fetch, notes, inventory, facts.checks) if t)
     if appendices or text != completion_text(comp).strip():
         merged = (text + "\n\n" + appendices).strip()
         if not text and merged:

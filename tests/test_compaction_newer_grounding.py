@@ -99,7 +99,17 @@ def test_newer_grounding_is_shared_without_advancing_coverage_or_replacing_tail(
     assert messages == untouched  # rendering cannot mutate the incoming history
     assert sess.compact_state.attempted == boundary
     if reject:
-        assert out == messages
+        # A rejection folds nothing new. Without a standing summary every turn is sent verbatim; with
+        # one, its view stands (rollup + the rejected band and tail verbatim), never the raw history it
+        # already covers (run07 0077; tests/test_a_rejected_increment_keeps_the_standing_summary.py).
+        # This branch used to assert the raw history in both cases, pinning the empty-summary guard's
+        # incidental output (9fd3f691 was about adopting an EMPTY summary, not about an accepted one).
+        if incremental:
+            assert out[-len(messages[3:]):] == messages[3:]
+            assert sum(selfcompact.SUMMARY_MARKER in str(m.get("content")) for m in out) == 1
+            assert not any(m in out for m in messages[1:3])
+        else:
+            assert out == messages
         assert sess.compact_state.summary == before_state.summary
         assert sess.compact_state.covered == before_state.covered
     else:
@@ -205,8 +215,14 @@ def test_engine_optional_grounding_preserves_boundary_tail_increment_and_throttl
     assert messages == before
     assert after.attempted == boundary
     if reject:
-        assert out is messages and not applied
+        assert not applied
         assert after.covered == state.covered and after.summary == state.summary
+        if incremental:   # the standing summary's view, not the raw history it covers (see above)
+            assert out[-len(messages[3:]):] == messages[3:]
+            assert sum(selfcompact.SUMMARY_MARKER in str(m.get("content")) for m in out) == 1
+            assert not any(m in out for m in messages[1:3])
+        else:
+            assert out is messages
     else:
         assert applied and after.covered == boundary
         assert after.summary == (("Prior increment.\n\n" if incremental else "") + "New increment.")

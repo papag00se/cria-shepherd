@@ -155,10 +155,54 @@ class AppendedNoteIsNotAHostAnchor(unittest.TestCase):
         evidence = memoryhandoff.evidence_messages(
             msgs[1:] + [rollup, {"role": "user", "content": "summarize"}],
             SimpleNamespace(drop_harness_frame=lambda mm: mm))
-        self.assertIn(host, evidence)
+        # The host's result is evidence WITHOUT the note, as the rolling writer reads it (the assertion
+        # here used to accept the host whole, note included: the harness writer then summarized cria's
+        # note as part of the tool's output). The note is carried verbatim in the reply instead; see
+        # tests/test_a_harness_compaction_carries_an_appended_note.py.
+        result = next(m for m in evidence if m.get("tool_call_id") == "c1")
+        self.assertEqual(result["content"], WROTE)
+        self.assertFalse(any(NOTE_HEAD in str(m.get("content") or "") for m in evidence))
+        self.assertIn(NOTE_HEAD, memoryhandoff.carried_notes(
+            msgs[1:] + [rollup, {"role": "user", "content": "summarize"}]))
         self.assertTrue(any(c.get("id") == "c1" for m in evidence for c in m.get("tool_calls") or []))
         self.assertNotIn(rollup, evidence)
         self.assertFalse(any(m.get("content") == LEDGER for m in evidence))
+
+    def test_the_producer_stamp_reaches_the_rolling_engine_through_the_driver(self):
+        """The payload boundary the producer stamps must survive every transform between
+        ``represent_inbound`` and the rolling engine (common preparation: scrub, build-location notes,
+        gate cleaning, root framing). A transform that dropped or broke it would silently restore the
+        old whole-message rule. Driven through ``Loop.drive``; the engine itself is a recorder here."""
+        from cria import assistruntime, loop as loopmod, wsview
+        from cria.memoryeffects import Effect
+        from tests.test_generation_driver_policy import setup_driver
+        from tests.test_loop import _Rlog
+        msgs, _host = self._represented()
+        driver, sess, body = setup_driver()
+        body["messages"], sess.workspace_root = msgs, self.ws
+        seen = []
+
+        def rolling(source, state, enabled=True):
+            seen.append(source.messages)
+            return selfcompact.RollingResult(source.messages, state, Effect.NO_OP)
+        runtime = assistruntime.AssistRuntime.select(level=5)
+        runtime = replace(runtime, ordered_stages=tuple(
+            replace(selfcompact.DEFINITION, execute=rolling) if d.policy.id == selfcompact.DEFINITION.policy.id
+            else d for d in runtime.ordered_stages))
+        driver._ctx.pilot_runtime, driver._ctx.self_compact = runtime, True
+        driver._coder_turn = lambda *a, **k: loopmod._completion_toolcalls([{"id": "n", "type": "function",
+            "function": {"name": "read_file", "arguments": '{"path":"go.mod"}'}}])
+        token = wsview.bind(wsview.DirectView(self.ws))
+        try:
+            with assistruntime.bound(runtime):
+                driver.drive(body, "driver-fixture", None, _Rlog())
+        finally:
+            wsview.unbind(token)
+        self.assertTrue(seen, "fixture: the driver reached the rolling engine")
+        got = next(m for m in seen[0] if m.get("tool_call_id") == "c1")
+        self.assertEqual(resultnotes.payload_of(got, got["content"]), WROTE)
+        self.assertFalse(selfcompact.has_anchor(got))
+        self.assertIn(NOTE_HEAD, selfcompact.appended_anchor(got)["content"])
 
 
 class AnchorIdentityControls(unittest.TestCase):
