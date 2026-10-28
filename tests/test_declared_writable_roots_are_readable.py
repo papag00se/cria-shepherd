@@ -126,7 +126,9 @@ def test_server_hands_the_declared_roots_to_translate_outbound(monkeypatch):
 
 def test_every_operator_token_shlex_can_build_is_a_known_operator_or_unproven():
     """Enumerate every 1-3 character run of operator characters; each must be refused unless it is
-    exactly one known separator/redirect (or a run of newlines) — no glued pair slips a command past."""
+    exactly one known separator/redirect (or a run of newlines) — no glued pair slips a command past.
+    `<()` and `>()` are not glued operators: they are empty process substitutions, one word to bash
+    (see the next test), delimited and judged by the substitution owner."""
     import itertools
     chars = ";&|()<>\n"
     known = dirguard._SEPARATORS | dirguard._REDIRECTS
@@ -137,4 +139,19 @@ def test_every_operator_token_shlex_can_build_is_a_known_operator_or_unproven():
                 continue
             cmd = f"ls {INSTALL}/m2 {op} rm {INSTALL}/m2/x"
             assert dirguard.command_only_reads(cmd, WS) is False, repr(op)
+            if op in ("<()", ">()"):
+                continue
             assert dirguard.command_refusal(cmd, "none", WS, ROOTS) is not None, repr(op)
+
+
+def test_an_empty_process_substitution_hides_no_command_from_bash(tmp_path):
+    """Ground truth for the exemption above: bash passes `rm -rf <dir>` after `<()`/`>()` to ls as
+    arguments; the directory survives, so admitting the read is true."""
+    import subprocess
+    victim = tmp_path / "keep"
+    victim.mkdir()
+    for op in ("<()", ">()"):
+        cmd = f"ls {victim} {op} rm -rf {victim}"
+        assert dirguard.command_refusal(cmd, "none", str(tmp_path / "ws"), (str(victim),)) is None, op
+        subprocess.run(["bash", "-c", cmd], capture_output=True, cwd=tmp_path, timeout=30)
+        assert victim.is_dir(), op

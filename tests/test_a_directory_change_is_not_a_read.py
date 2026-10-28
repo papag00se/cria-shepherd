@@ -231,10 +231,20 @@ def test_unparsed_grammar_without_a_directory_change_is_not_newly_refused(world)
 
 
 def test_grammar_the_segmenter_does_not_model_fails_closed_only_when_it_holds_a_directory_change(world):
-    cmd = "cd {cache}; diff <(ls) <(ls)".format(**world)
+    # A here-string is still grammar the segmenter does not model.
+    cmd = "cd {cache}; cat <<< hello".format(**world)
     assert _two_calls(world, cmd, "none") == []
     r = dirguard.command_refusal(cmd, "none", world["ws"], ())
     assert r and "cannot be established safely" in r  # the module's existing unproven text
+
+
+def test_a_process_substitution_beside_an_external_directory_change_is_refused_by_the_directory_owner(world):
+    # `<( )` was this test's unmodeled example; it is now delimited like `$( )` (ornith1.5_9b / Java
+    # overnight run 1), so the same `cd` is placed and refused for what it is.
+    cmd = "cd {cache}; diff <(ls) <(ls)".format(**world)
+    assert _two_calls(world, cmd, "none") == []
+    r = dirguard.command_refusal(cmd, "none", world["ws"], ())
+    assert r and "changes the working directory" in r and "cannot be established safely" not in r
 
 
 @pytest.mark.parametrize("cmd", ["cd *", "cd ..*", "cd .[.]", "cd .?", "cd {{..,x}}", "cd src/*", "cd ./-foo*", "pushd .?"])

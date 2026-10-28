@@ -703,6 +703,19 @@ def _shell_tokens(command: str) -> list[tuple[str, int, int]] | None:
         return None
 
 
+def _is_operator(word: str, text: str, start: int, end: int) -> bool:
+    """Is this ``_shell_tokens`` token (``text[start:end]`` is its source in the text the spans index)
+    shell OPERATOR syntax? shlex returns a backslash-escaped `\\(` — find's grouping, `-exec … \\;` —
+    as the bare word `(`, the same word a real subshell opener gives. Bash never reads a backslash-escaped
+    character as an operator, in any quote state (inside quotes it is data too), so a token whose every
+    character was escaped is a literal word. Quoted punctuation stays an operator to the callers that
+    ask: whether a quote is really open is a fact this lexer does not share with bash in every case.
+    ornith1.5_9b / Java overnight run 1 call 0014: `find <declared root> -type d \\( -iname … \\)` was
+    refused as "The characters ( are read here as an operator"."""
+    return (bool(word) and set(word) <= _PUNCT
+            and text[start:end] != "".join("\\" + c for c in word))
+
+
 def _shell_words(command: str) -> list[str] | None:
     tokens = _shell_tokens(command)
     return None if tokens is None else [word for word, _, _ in tokens]
@@ -1140,9 +1153,12 @@ def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=
     if layout.error:
         return _UNPROVEN_WRITE
     command = layout.shell
-    words = _shell_words(command)
-    if words is None:
+    tokens = _shell_tokens(command)
+    if tokens is None:
         return _UNPROVEN_WRITE
+    words = [w for w, _, _ in tokens]
+    joined = _join_continuations(command)[0]
+    operator = [_is_operator(w, joined, s, e) for w, s, e in tokens]
     cur: str | None = cwd
     seg: list[str] = []
 
@@ -1191,10 +1207,10 @@ def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=
     i = 0
     while i < len(words):
         w = words[i]
-        if w and set(w) <= _PUNCT:
+        if operator[i]:
             if ">" in w and "<" not in w:
                 nxt = words[i + 1] if i + 1 < len(words) else None
-                if nxt is not None and not set(nxt) <= _PUNCT and not (
+                if nxt is not None and not operator[i + 1] and not (
                         "&" in w and w.endswith("&") and nxt.lstrip("&").isdigit()):
                     hit = judge(nxt)
                     if hit:
@@ -1601,12 +1617,13 @@ def _read_proof(command: str, workspace: str | None, *, no_writes: bool = False)
         return origin[tokens[first][1]], origin[tokens[last][2] - 1] + 1
 
     words = [w for w, _, _ in tokens]
+    operator = [_is_operator(w, joined, s, e) for w, s, e in tokens] + [True]   # + the closing ";"
     seg: list[str] = []
     seg_tok: list[int] = []
     i = 0
     while i <= len(words):
         w = words[i] if i < len(words) else ";"
-        if w and set(w) <= _PUNCT:
+        if operator[i]:
             # shlex glues adjacent operator characters into ONE token (`;>`, `|<`, `&&>`, `\n>`), which
             # would hide a separator inside what looks like a redirect. Only a token that is exactly
             # one known operator is understood; any other combination is unproven.
@@ -1617,7 +1634,7 @@ def _read_proof(command: str, workspace: str | None, *, no_writes: bool = False)
                     seg.pop()  # the fd number of `2>file`
                     seg_tok.pop()
                 nxt = words[i + 1] if i + 1 < len(words) else None
-                if nxt is not None and set(nxt) <= _PUNCT:
+                if nxt is not None and operator[i + 1]:
                     nxt = None
                 if not _redirect_ok(w, nxt, workspace, no_writes):
                     return _ProofFailure("redirect_strict" if no_writes else "redirect",

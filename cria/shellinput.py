@@ -205,6 +205,13 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution],
     With ``shell`` a real comment (see ``_COMMENT_LEAD``) is skipped to its newline wherever a script is
     being read — the text itself and the body of every `$( … )` — so an apostrophe in a comment
     (`# it's`) opens no quote and a `)` in one closes nothing.
+
+    With ``shell`` an unquoted, unescaped process substitution (`<( … )`, `>( … )`) is a command the
+    shell runs too, exactly as `$( … )` is, and is delimited the same way: its body is returned for
+    judging and the outer text sees one expanded word (`/dev/fd/N` to bash). Inside double quotes, in a
+    heredoc body and after a backslash it is literal text, so it is not one there. ornith1.5_9b / Java
+    overnight run 1 (call 0259 and sixteen more): `diff <(grep -v x tmp/a.txt) tmp/b.txt` after
+    `cd <workspace>` was refused as "cannot be established" because the outer reader met `<` then `(`.
     """
     commands, i, double_quote, at_start = [], 0, False, True
     while i < len(source):
@@ -233,7 +240,9 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution],
                 return commands, True
             commands.append(Substitution(i, j + 1, (i + 1, j))); i, at_start = j + 1, False
             continue
-        if source.startswith('$(', i) and not source.startswith('$((', i):
+        process = (shell and not double_quote and source[i] in '<>'
+                   and source.startswith('(', i + 1))
+        if process or (source.startswith('$(', i) and not source.startswith('$((', i)):
             # The body is a script; a `$(` inside it (even inside double quotes) opens a script of its own
             # whose quotes are its own, so each level keeps its own quote and parenthesis depth.
             j, quote, body_start = i + 2, '', True
