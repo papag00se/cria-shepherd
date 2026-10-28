@@ -65,7 +65,8 @@ FACTS_MARKER = "⟦ctx:facts⟧"        # tags the DURABLE fetch ledger (url→s
 # endpoint paths + response field names — EXTERNAL ground truth the coder must code against, NOT its own
 # mutable identifiers. Anchored so compaction keeps them VERBATIM and the summarizer (which deliberately
 # drops identifier names) NEVER folds them — else the exact fields vanish and the coder guesses
-# (resolved_addresses → a made-up "cardano_address"), which is a live failure mode.
+# (resolved_addresses → a made-up "cardano_address"), which is a live failure mode. The web_fetch call
+# that produced the block is kept with it (the exchange is one anchor unit — see _anchor_units).
 _SPEC_ROUTES_MARKER = "[API endpoints ("
 _SPEC_SHAPE_MARKER = "[response shape —"
 # Anchor markers whose messages are ALWAYS kept verbatim (the marker in the message's OWN text, not in a
@@ -140,6 +141,43 @@ def _own_text(m: dict) -> str:
     c = m.get("content")
     payload = resultnotes.payload_of(m, c) if isinstance(c, str) else None
     return payload if payload is not None else _text(m)
+
+
+def _anchor_units(messages: list[dict]) -> dict[int, object]:
+    """Index of every message kept verbatim as an anchor → the anchor UNIT it belongs to.
+
+    An anchor is decided on its own text (:func:`_has_anchor`). A tool RESULT that is an anchor (the
+    spec routes/shape web_fetch renders into its payload, 4d7dcc7f) brings the whole exchange with it:
+    the assistant turn that issued the call and every result of that turn. Anchoring the result alone
+    split the pair in both readers: the writer read ``web_fetch(openapi.json)`` with no result
+    (20261008T202854 0038; 21 writer prompts in 20 sessions), and once a fold was accepted the result
+    rode on without its call and reached the coder re-roled as a user turn
+    (20260813T015529 0009-coder-s2 index 4: "HTTP 200 OK · https://api.handle.me/openapi.json …" in the
+    user's voice; 20 sessions). The spec still never reaches the summarizer; the call and the coder's
+    words beside it stay verbatim with it instead of being summarized, so nothing is lost. An anchor that
+    is not part of an exchange is a unit of one, exactly as before."""
+    issuer: dict[str, int] = {}
+    for i, m in enumerate(messages):
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    issuer[tc["id"]] = i
+    exchange: dict[int, int] = {}
+    for i, m in enumerate(messages):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            exchange[i] = i
+        elif m.get("role") == "tool" and m.get("tool_call_id") in issuer:
+            exchange[i] = issuer[m["tool_call_id"]]
+    members: dict[int, list[int]] = {}
+    for i, turn in exchange.items():
+        members.setdefault(turn, []).append(i)
+    units: dict[int, object] = {}
+    for i, m in enumerate(messages):
+        if _has_anchor(m):
+            turn = exchange.get(i)
+            for j in members[turn] if turn is not None else (i,):
+                units[j] = ("exchange", turn) if turn is not None else ("message", i)
+    return units
 
 
 def _appended_notes(m: dict) -> str:
@@ -1265,7 +1303,9 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
         # unusable (compaction state lost / indices shifted), fall back to the whole middle — the
         # old behavior, correct just slower.
         lo = state.covered if (state.summary and band_tokens is not None) else head_end
-        summarizable = [_summarizable(m) for m in messages[lo:tail_start] if not _has_anchor(m)]
+        anchored = _anchor_units(messages)
+        summarizable = [_summarizable(m) for i, m in enumerate(messages[lo:tail_start], start=lo)
+                        if i not in anchored]
         if summarizable:
             # Record the attempt BEFORE accepting its answer. Empty means fail closed, not "try the
             # identical span again one coder turn later".
@@ -1324,8 +1364,11 @@ def _view(messages: list[dict], state: CompactState, head_end: int, tail_start: 
     # same 7,216-char denial SIX times in one 61K step frame (the prompt the coder answered with
     # prose instead of a write). The anchor guarantee is ONE verbatim surviving copy; byte-identical
     # repeats add zero information and drown the frame for a small model.
-    anchors, dup_anchors = _dedup_identical([a for m in messages[head_end:covered]
-                                             if (a := m if _has_anchor(m) else _appended_anchor(m))])
+    units = _anchor_units(messages)
+    anchors, dup_anchors = _dedup_identical([
+        (units[i], m) if i in units else (("note", i), a)
+        for i, m in enumerate(messages[head_end:covered], start=head_end)
+        if i in units or (a := _appended_anchor(m))])
     if dup_anchors and rlog is not None:
         # Every sibling dedup in cria emits its count (context.ledger_dedup, context.focus_trim,
         # context.deorphaned); a silent drop makes a future misfire invisible in the run log.
@@ -1385,29 +1428,32 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     return result.messages, result.state, result.applied
 
 
-def _dedup_identical(msgs: list[dict]) -> tuple[list[dict], int]:
-    """Identical anchor messages collapse to the first occurrence → ``(kept, dropped_count)``.
-    Order and bytes of every distinct message are untouched.
+def _dedup_identical(items: list[tuple[object, dict]]) -> tuple[list[dict], int]:
+    """Identical anchor UNITS collapse to the first occurrence → ``(kept messages, dropped count)``.
+    ``items`` are ``(unit, message)`` in conversation order (:func:`_anchor_units`); a standalone anchor
+    is a unit of one. Order and bytes of every kept message are untouched.
 
-    The key is :func:`msg_digest`, which covers the tool CALL as well as the text. Keying on text
-    alone would fold two anchors that differ only in their tool_calls, and the survivor's sibling
-    call would vanish from the view entirely — anchors are excluded from the summarizer input, so
-    nothing downstream would carry it. (Prevalence of that shape today: zero across 17,912 captured
-    coder bodies — no anchor message carries tool_calls at all. Keyed correctly anyway, because the
-    cost is one function call and the failure is silent.)
+    A unit is compared whole: a tool call and its results are kept or dropped together, so a dedup
+    can never leave a call without its result or a result without its call. (The older per-message key
+    could: a repeated result whose issuing call differed lost its only copy beside that call. Byte-
+    identical tool payloads in units that DIFFER are folded at the wire by `modelview.fold_repeats`,
+    one full copy plus pointers, with the pairing intact.)
 
+    The key is :func:`msg_digest` of every member, which covers the tool CALL as well as the text.
     Exact match only: two renderings of the same fact are NOT the same message, and deciding they
     mean the same thing would be a judgment this function must not make."""
-    seen: set[str] = set()
-    out, dropped = [], 0
-    for m in msgs:
-        key = msg_digest(m)
+    members: dict[object, list[dict]] = {}
+    for unit, m in items:
+        members.setdefault(unit, []).append(m)
+    seen: set[tuple[str, ...]] = set()
+    dropped_units: set[object] = set()
+    for unit, ms in members.items():
+        key = tuple(msg_digest(m) for m in ms)
         if key in seen:
-            dropped += 1
-            continue
+            dropped_units.add(unit)
         seen.add(key)
-        out.append(m)
-    return out, dropped
+    out = [m for unit, m in items if unit not in dropped_units]
+    return out, len(items) - len(out)
 
 
 def _is_files_msg(m: dict) -> bool:
