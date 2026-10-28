@@ -22,6 +22,7 @@ import pytest
 
 from cria import bodykeys, denial, editrecovery, loop, resultpacket, toolwire, wsview, writeproxy
 from cria.writeproxy import represent_inbound, translate_outbound
+from tests.harnessenv import harness_env
 
 SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
 MARKER = denial.READ_INSTEAD_MARKER
@@ -43,7 +44,7 @@ def _rcpt(tc):
 
 
 def _env(cwd):
-    return {"PATH": os.environ["PATH"], "TMPDIR": str(cwd), "HOME": str(cwd), "LC_ALL": "C"}
+    return harness_env(cwd)
 
 
 def _envelope(code, out):

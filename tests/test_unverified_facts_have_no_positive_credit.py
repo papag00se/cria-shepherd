@@ -19,6 +19,7 @@ import pytest
 from cria import denial, loop, probegate, research, resultpacket, toolwire, webfetch, wsview, writeproxy
 from cria.writeproxy import represent_inbound, translate_outbound
 from tests.gatefixture import completed, gate_page
+from tests.harnessenv import harness_env
 from tests.resultshape import fetch_pair, native_fetch_pair
 
 SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
@@ -36,7 +37,7 @@ def _cmd(tc):
 
 
 def _run(tc, cwd):
-    env = {"PATH": os.environ["PATH"], "HOME": str(cwd), "TMPDIR": str(cwd), "LC_ALL": "C"}
+    env = harness_env(cwd)
     p = subprocess.run(["bash", "-c", _cmd(tc)], cwd=cwd, env=env, capture_output=True, text=True)
     return (f"Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code {p.returncode}\n"
             f"Original token count: 9\nOutput:\n{p.stdout}{p.stderr}")

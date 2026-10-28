@@ -31,6 +31,7 @@ from cria import content_reduce, denial, filecommands, loop, prompts, resultpack
 from cria.config import Role
 from cria.loop import Loop, LoopContext
 from cria.writeproxy import represent_inbound, translate_outbound
+from tests.harnessenv import harness_env
 from tests.wsfixture import survey
 
 FIX = Path(__file__).parent / "fixtures" / "ornith_java_run1"
@@ -90,7 +91,7 @@ def ws(tmp_path):
 
 
 def _env(cwd):
-    return {"PATH": os.environ["PATH"], "TMPDIR": str(cwd), "HOME": str(cwd), "LC_ALL": "C"}
+    return harness_env(cwd)       # this interpreter as `python3`, never a PATH shim (tests/harnessenv.py)
 
 
 def _cmd(tc):

@@ -4,6 +4,7 @@ The write and edit programs print a typed `landed` record first (carrying their 
 Use these with a call lowered by `translate_outbound` so the receipt in the call's own sentinel is the one the record
 carries."""
 from cria import denial, resultpacket, toolwire, writeproxy
+from tests.harnessenv import harness_env
 
 LANDED_SHORTHAND = "\u27e6ctx:wrote\u27e7"     # old fixtures wrote this flat line to mean "the write landed"; it is no longer printed
 
@@ -90,7 +91,7 @@ def _lower_run_represent(url, patches):
         writeproxy.translate_outbound(comp, shell, injected={"web_fetch"}, workspace_root="/w")
     tc = comp["choices"][0]["message"]["tool_calls"][0]
     with tempfile.TemporaryDirectory() as cwd:
-        env = {"PATH": os.environ["PATH"], "HOME": cwd, "TMPDIR": cwd, "LC_ALL": "C"}
+        env = harness_env(cwd)
         p = subprocess.run(["bash", "-c", _json.loads(tc["function"]["arguments"])["cmd"]], cwd=cwd, env=env,
                            capture_output=True, text=True)
         raw = ("Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n"
@@ -122,7 +123,7 @@ def genuine_call(name, arguments, cid, cwd, cut_stdout=None, running=False):
     shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
     writeproxy.translate_outbound(comp, shell, injected={name}, workspace_root=str(cwd))
     tc = comp["choices"][0]["message"]["tool_calls"][0]
-    env = {"PATH": os.environ["PATH"], "HOME": str(cwd), "TMPDIR": str(cwd), "LC_ALL": "C"}
+    env = harness_env(cwd)
     p = subprocess.run(["bash", "-c", _json.loads(tc["function"]["arguments"])["cmd"]], cwd=str(cwd), env=env,
                        capture_output=True, text=True)
     stdout = p.stdout if cut_stdout is None else p.stdout[:cut_stdout]
@@ -205,7 +206,7 @@ def fetch_pair(content, url=None, *, status=200, routes=(), shapes=(), catalog=(
         writeproxy.translate_outbound(comp, shell, injected={"web_fetch"}, workspace_root="/w")
     tc = comp["choices"][0]["message"]["tool_calls"][0]
     with tempfile.TemporaryDirectory() as cwd:
-        env = {"PATH": os.environ["PATH"], "HOME": cwd, "TMPDIR": cwd, "LC_ALL": "C"}
+        env = harness_env(cwd)
         p = subprocess.run(["bash", "-c", _json.loads(tc["function"]["arguments"])["cmd"]], cwd=cwd, env=env,
                            capture_output=True, text=True)
         raw = ("Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n"
