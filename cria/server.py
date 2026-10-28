@@ -13,6 +13,7 @@ a localhost/LAN single-user service; the client reads SSE until EOF.
 
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import os
@@ -724,8 +725,14 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         raise ValueError("Harness handoff settlement must match its returned result")
     origin = _HandoffOrigin(*expected)
     def commit(retained):
+        # Compared WITHOUT cria's own `⟦cria⟧` lines, which every inbound reader strips before it reads
+        # the stored reply: `_finalize` appends the turn-stats footer to this text answer, and comparing
+        # the decorated copy recorded no producer for any decorated drop (ornith1.5_9b / Java run 4,
+        # 0042: the coder then read cria's own ledger framed as an ungrounded handoff).
+        shown = copy.deepcopy(retained)
+        strip_note_lines(shown)
         if (owner is not None and _handoff_session(server, sk) is owner
-                and _completion_text(retained) == origin.reply):
+                and _completion_text(shown) == origin.reply):
             owner.handoff_origin = origin
     if _defer_commit is None:
         commit(result.completion)  # compatibility caller receives this exact returned result
