@@ -1,2 +1,2 @@
-⟦ctx:checks-cleanup⟧ The harness reclaimed these exclusively owned private temporary check resources before returning the results (not project build outputs):
+⟦ctx:checks-cleanup⟧ The harness reclaimed these exclusively owned private temporary check resources before returning the results (not project build outputs). Each path below is inside the private scratch directory the harness created for this check run and is relative to that directory, not to the workspace; a workspace file or directory with the same name is a different one, and this cleanup did not touch it:
 {{PATHS}}

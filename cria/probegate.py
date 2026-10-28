@@ -2431,12 +2431,21 @@ def cleanup_fact(sections: dict, plan: GatePlan | None = None) -> str:
         return "\n" + prompts.load("checks_cleanup_unknown")
     removed, failed = record
     notes = [prompts.load('checks_original_scope')]
+    # THE REPORT'S RELATIVE PATHS ARE RELATIVE TO THE PRIVATE SCRATCH DIRECTORY, and every line says so.
+    # They were rendered bare (`"aux/"`), which reads as the workspace's own aux/: run 20261027T035849
+    # kept its scratch in a workspace aux/, the coder concluded the checker had deleted it (0064, 0097)
+    # and a FAITHFUL briefing told it so (0067, carried into the 0084 refold) while the same evidence
+    # showed those files still being read. An absolute path (a checked scope directory) is unambiguous
+    # and is stated as it is. The exact path text stays JSON-quoted.
+    line = prompts.load_map("checks_cleanup_paths")
     if removed:
-        notes.append(prompts.render("checks_artifacts_removed",
-                                   paths="\n".join(json.dumps(path) for path in removed)))
+        notes.append(prompts.render("checks_artifacts_removed", paths="\n".join(
+            prompts.fill(line["removed"], path=json.dumps(path)) for path in removed)))
     if failed:
-        notes.append(prompts.render("checks_cleanup_failed",
-                                   failures="\n".join(json.dumps(item) for item in failed)))
+        notes.append(prompts.render("checks_cleanup_failed", failures="\n".join(
+            prompts.fill(line["failed_absolute" if os.path.isabs(item["path"]) else "failed_private"],
+                         path=json.dumps(item["path"]), error=json.dumps(item["error"]))
+            for item in failed)))
     return "\n" + "\n".join(notes) if notes else ""
 
 

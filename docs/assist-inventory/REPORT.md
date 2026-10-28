@@ -1272,8 +1272,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/test_repository_check_policy.py:test_admission_matches_current_periodic_owner`](../../tests/test_repository_check_policy.py#L100), [`tests/test_repository_check_policy.py:test_periodic_result_matches_current_owner`](../../tests/test_repository_check_policy.py#L208), [`tests/test_repository_check_policy.py:test_shared_settlement_matches_current_owner`](../../tests/test_repository_check_policy.py#L183), [`tests/test_repository_check_policy.py:test_task_and_step_rewrite_order`](../../tests/test_repository_check_policy.py#L316), [`tests/test_repository_check_policy.py:test_disabled_and_replacement_do_not_touch_unselected_state`](../../tests/test_repository_check_policy.py#L412), [`tests/test_historical_gate_scope_remains_bound.py:test_real_rank4_ablation_driver_final_post_keeps_historical_cleanup_facts`](../../tests/test_historical_gate_scope_remains_bound.py#L99).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/probegate.py:sweep_litter`](../../cria/probegate.py#L2481)
-- [`cria/probegate.py:_queue_spool_cleanup`](../../cria/probegate.py#L2453)
+- [`cria/probegate.py:sweep_litter`](../../cria/probegate.py#L2490)
+- [`cria/probegate.py:_queue_spool_cleanup`](../../cria/probegate.py#L2462)
 - [`cria/gatecleanup.py:PROGRAM`](../../cria/gatecleanup.py#L129)
 - [`cria/probediscovery.py:discover`](../../cria/probediscovery.py#L405)
 - [`cria/probeclassify.py`](../../cria/probeclassify.py)
@@ -1283,7 +1283,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/probegate.py:ingest_transport`](../../cria/probegate.py#L540)
 - [`cria/probegate.py:fail_transport`](../../cria/probegate.py#L489)
 - [`cria/loop.py:guard_gate_transport`](../../cria/loop.py#L7068)
-- [`cria/probegate.py:interpret_gate`](../../cria/probegate.py#L2498)
+- [`cria/probegate.py:interpret_gate`](../../cria/probegate.py#L2507)
 - [`cria/probeparse.py`](../../cria/probeparse.py)
 - [`cria/proberun.py:completion_probe_digest`](../../cria/proberun.py#L684)
 - [`cria/loop.py:record_gate_state`](../../cria/loop.py#L7722)

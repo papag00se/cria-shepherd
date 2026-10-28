@@ -1,0 +1,5 @@
+# One line per path in the gate's cleanup report. The report's paths are relative to the harness's
+# private scratch directory for the check run; a bare relative path reads as a workspace path.
+removed = - {{PATH}} (relative to the private check scratch directory)
+failed_private = - {{PATH}} (relative to the private check scratch directory): {{ERROR}}
+failed_absolute = - {{PATH}}: {{ERROR}}
