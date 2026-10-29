@@ -40,7 +40,7 @@ class ShrinkView(Protocol):
     surveyed: bool
     def rel(self, path: str) -> str | None: ...
     def isfile(self, path: str) -> bool | None: ...
-    def read_bytes(self, path: str) -> bytes | None: ...
+    def read_observed_bytes(self, path: str) -> bytes | None: ...
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,10 @@ def check_write(services: ShrinkServices, path: str, content: str, edit_tool: st
     rel = view.rel(path)
     if not rel or view.isfile(rel) is not True:
         return None
-    raw = view.read_bytes(rel)
+    # This policy prepares a conditional command, not a current-file fact.
+    # The harness must compare these retained bytes before refusing or emitting
+    # removal facts. General current readers must never use this history API.
+    raw = view.read_observed_bytes(rel)
     if raw is None:
         return None
     current = raw.decode('utf-8', 'replace')
@@ -128,13 +131,17 @@ def check_write(services: ShrinkServices, path: str, content: str, edit_tool: st
     key = (rel, hashlib.sha1(content.encode('utf-8', 'replace')).hexdigest())
     if session.state.approved.get(key) == 'WHOLE_FILE':
         return None
-    fact = prompts.fill(labels['measured'], path=rel, bytes=len(current.encode('utf-8', 'replace')),
+    fact = prompts.fill(labels['measured'], path=rel, bytes=len(raw),
                         lines=measure['current_lines'], distinct=measure['distinct'],
                         cand_bytes=len(content.encode('utf-8', 'replace')),
                         cand_lines=measure['cand_lines'], kept=measure['kept'])
+    conditional_fact = prompts.fill(labels['conditional_measured'], path=rel,
+                        bytes=len(raw), lines=measure['current_lines'],
+                        distinct=measure['distinct'], cand_bytes=len(content.encode('utf-8', 'replace')),
+                        cand_lines=measure['cand_lines'], kept=measure['kept'])
     verdict = judge_whole_file(services.ask,
         prompts.load('write_call_judge') + '\n\n' + prompts.render(
-            'write_call_judge_user', path=rel, fact=fact, content=content), phase='write-shrink')
+            'write_call_judge_user', path=rel, fact=conditional_fact, content=content), phase='write-shrink')
     log.emit('loop.write_shrink_judged', path=rel, verdict=verdict[:40], current_lines=measure['current_lines'],
              cand_lines=measure['cand_lines'], distinct=measure['distinct'], kept=measure['kept'],
              removed_at_least=measure['removed_at_least'])

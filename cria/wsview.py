@@ -48,7 +48,7 @@ import posixpath
 import re
 import time
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from . import denial, resultpacket
 
@@ -147,19 +147,74 @@ def _posix(p) -> str:
     return str(p).replace(os.sep, "/").replace("\\", "/")
 
 
+@dataclass
+class _BodyFreshness:
+    """Shared invalidation of held bytes, independent of survey/tree generations."""
+    revision: int = 0
+    all_paths: int = 0
+    paths: dict[str, int] = field(default_factory=dict)
+    effects: int = 0
+    invocations: int = 0
+    bodies: dict[str, int] = field(default_factory=dict)
+    surveys: dict[str, int] = field(default_factory=dict)
+    pending: bool = False
+
+    def invalidate(self, path: str | None = None, *, effect: bool = False) -> None:
+        self.revision += 1
+        if effect:
+            self.effects += 1
+        if path is None:
+            self.all_paths = self.revision
+        else:
+            self.paths[path] = self.revision
+
+    def current(self, path: str, revision: int) -> bool:
+        return revision >= max(self.all_paths, self.paths.get(path, 0))
+
+
+@dataclass(frozen=True, eq=False)
+class Observation:
+    """Internal invocation bound, not acquisition time, authentication or receipt."""
+    owner: _BodyFreshness = field(repr=False, compare=False)
+    invocation: int
+    effect: int
+    revision: int
+    uncertain: bool = False
+
+
+_OBSERVATION = contextvars.ContextVar('workspace_observation', default=None)
+
+
+def from_observation(observation, function, *args, **kwargs):
+    """Bind one producer's invocation while observing its result; restore on every exit."""
+    token = _OBSERVATION.set(observation)
+    try:
+        return function(*args, **kwargs)
+    finally:
+        _OBSERVATION.reset(token)
+
+
 class View:
     """The coder's workspace as cria currently knows it. Every answer is a fact somebody
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_body_generation", "_stale",
                  "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
-                 "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed")
+                 "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed",
+                 "_body_freshness", "_body_revisions", "_observed_bodies", "_cache_revision",
+                 "_freshness", "_snapshot_revision")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
         self._files: dict[str, tuple[int, float]] = {}   # rel -> (size, mtime)
         self._dirs: set[str] = set()                     # rel dirs, "" for the root
         self._folded: set[str] = set()                   # rel dirs listed only as a count
+        self._body_freshness = _BodyFreshness()
+        self._body_revisions: dict[str, int] = {}
+        self._observed_bodies: dict[str, bytes] = {}
+        self._cache_revision = 0
+        self._freshness = [0]
+        self._snapshot_revision = 0
         self._bodies: dict[str, bytes] = {}              # rel -> the file's BYTES
         self._body_generation: dict[str, int] = {}       # rel -> survey that supplied those bytes
         # THE (size, mtime) A TREE ACTUALLY CONFIRMED for a `_bodies` entry, PLUS the survey
@@ -265,7 +320,7 @@ class View:
         has been overtaken by a possible mutator, so callers cannot turn an old absence into a
         fresh fact.  The ordered encoding includes every fact that makes an absence meaningful.
         """
-        if not self._surveyed or not self._complete or self._folded or self._ran_a_mutator:
+        if not self._surveyed or not self._complete or self._folded or self.may_have_changed:
             return None
         rows = [f"F\t{path}\t{size}\t{mtime!r}" for path, (size, mtime) in sorted(self._files.items())]
         rows.extend(f"D\t{path}" for path in sorted(self._dirs))
@@ -372,7 +427,7 @@ class View:
     def read_current_survey(self, path) -> str | None:
         """Text only when this view's latest survey carried these exact bytes."""
         rel = self.rel(path)
-        if rel is None or self._body_generation.get(rel) != self._survey_generation:
+        if rel is None or self._body_generation.get(rel) != self._survey_generation or not self._body_current(rel):
             return None
         raw = self._bodies.get(rel)
         return None if raw is None else raw.decode("utf-8", "replace")
@@ -387,7 +442,7 @@ class View:
         rel = self.rel(path)
         if rel is None:
             return None
-        if rel in self._bodies and rel not in self._stale:
+        if self._body_current(rel):
             return self._bodies[rel]
         # ASKED AND REFUSED, AT THIS SIZE. Re-asking would spend a survey a turn on a question with
         # a known answer. The moment the file changes size it is a different question and is asked
@@ -398,6 +453,114 @@ class View:
         if self.isfile(path) is not False:
             want_body(self._sess, rel)
         return None
+
+    def _body_current(self, rel: str) -> bool:
+        revision = self._body_revisions.get(rel)
+        return (revision is not None and not self._body_freshness.pending
+                and rel in self._bodies and rel not in self._stale
+                and self._body_freshness.current(self.abs(rel), revision))
+
+    def read_observed_bytes(self, path) -> bytes | None:
+        """Latest retained body by declared invocation, including stale history; never current authority.
+
+        Original tool messages remain the authoritative execution evidence.
+        This value is an observation cache, not a transcript or receipt ledger.
+        """
+        rel = self.rel(path)
+        return self._observed_bodies.get(rel) if rel is not None else None
+
+    def read_observed(self, path) -> str | None:
+        raw = self.read_observed_bytes(path)
+        return None if raw is None else raw.decode("utf-8", "replace")
+
+    @property
+    def body_revision(self) -> int:
+        """Observation/invalidation ordering only, never a delivery or execution counter."""
+        return self._body_freshness.revision
+
+    def capture_edit_preimage(self, path) -> tuple[bytes, int] | None:
+        """Current bytes at invocation; the producer must bind their uninterrupted ordering."""
+        rel = self.rel(path)
+        return (self._bodies[rel], self.body_revision) if rel is not None and self._body_current(rel) else None
+
+    def body_unchanged_since(self, path, revision: int | None) -> bool:
+        """No known invalidation of this exact path since a producer-bound revision."""
+        rel = self.rel(path)
+        return revision is not None and rel is not None and self._body_freshness.current(self.abs(rel), revision)
+
+    def begin_observation(self, *, uncertain: bool = False) -> Observation:
+        """Capture declared invocation order and known effects in this view lineage only."""
+        owner = self._body_freshness
+        owner.invocations += 1
+        return Observation(owner, owner.invocations, owner.effects, owner.revision, uncertain)
+
+    def observation_pending(self, pending: bool) -> None:
+        """Known open effects in the supplied snapshot, never an inferred execution result."""
+        self._body_freshness.pending = pending
+
+    def observation_current(self, observation: Observation) -> bool:
+        return (isinstance(observation, Observation) and observation.owner is self._body_freshness
+                and not observation.uncertain and not self._body_freshness.pending
+                and observation.effect == self._body_freshness.effects)
+
+    def settle_observation(self, observation: Observation, *, current: bool) -> Observation:
+        """Bind the operation's own result invalidation without clearing earlier uncertainty."""
+        return replace(observation, effect=self._body_freshness.effects,
+                       uncertain=observation.uncertain or not current)
+
+    def _superseded(self, observation: Observation, path: str | None = None) -> bool:
+        if not isinstance(observation, Observation) or observation.owner is not self._body_freshness:
+            return True
+        owner = self._body_freshness
+        inside = lambda child, root: child == root or child.startswith(root + '/')
+        if path is not None:
+            return (owner.bodies.get(path, 0) > observation.invocation
+                    or any(order > observation.invocation and inside(path, root)
+                           for root, order in owner.surveys.items()))
+        return (any(order > observation.invocation and inside(p, self.root) for p, order in owner.bodies.items())
+                or any(order > observation.invocation and (inside(root, self.root) or inside(self.root, root))
+                       for root, order in owner.surveys.items()))
+
+    def _record_body(self, rel: str, raw: bytes, *, current: bool = True) -> None:
+        observation = _OBSERVATION.get()
+        if observation is not None and self._superseded(observation, self.abs(rel)):
+            self._retain_earlier_body(rel, raw, observation)
+            return
+        if observation is None:
+            observation = self.begin_observation()
+        current = current and self.observation_current(observation)
+        self._body_freshness.bodies[self.abs(rel)] = observation.invocation
+        self._body_freshness.invalidate(self.abs(rel))
+        self._bodies[rel] = raw
+        self._observed_bodies[rel] = raw
+        if current:
+            self._body_revisions[rel] = self.body_revision
+        else:
+            self._body_revisions.pop(rel, None)
+
+    def _retain_earlier_body(self, rel: str, raw: bytes, observation: Observation) -> None:
+        """Keep earlier tool evidence without replacing a later invocation's bytes.
+
+        Conflicting overlapping reads with no known effect boundary have no
+        proved acquisition order. Retain the later-requested bytes as history,
+        but withhold current authority. An already-overtaken pre-effect read
+        does not invalidate a genuinely later post-effect observation.
+        """
+        if not isinstance(observation, Observation) or observation.owner is not self._body_freshness:
+            return
+        newer_body = self._body_freshness.bodies.get(self.abs(rel), 0) > observation.invocation
+        if not newer_body:
+            self._observed_bodies[rel] = raw
+        contradiction = ((self._body_current(rel) and self._bodies[rel] != raw)
+                         or self.isfile(self.abs(rel)) is False)
+        if contradiction and self.observation_current(observation):
+            self._uncertain_body(rel)
+
+    def _uncertain_body(self, rel: str) -> None:
+        self._body_freshness.invalidate(self.abs(rel), effect=True)
+        self._freshness[0] += 1
+        self._complete = False
+        _forget_body(self._sess, self.root, rel)
 
     # -- listing -----------------------------------------------------------
 
@@ -603,6 +766,7 @@ class View:
                 except ValueError:
                     self._files[rel] = (0, 0.0)
         self._surveyed = True
+        self._snapshot_revision = self._freshness[0]
         self._ran_a_mutator = False
         self._drop_stale_bodies()
 
@@ -686,9 +850,9 @@ class View:
             return
         for rel, (raw, confirmed) in list(self._cache_candidates.items()):
             entry = self._files.get(rel)
-            if entry is not None and entry[0] == len(raw) and rel not in self._bodies \
+            if self._body_freshness.current(self.abs(rel), self._cache_revision) and entry is not None and entry[0] == len(raw) and rel not in self._bodies \
                     and _mtimes_agree(entry[1], confirmed[1] if confirmed else None):
-                self._bodies[rel] = raw
+                self._record_body(rel, raw)
                 self._body_generation.pop(rel, None)  # a prior request's delivery, not this survey's
                 # SURVEY-CONFIRMED, GOING FORWARD (C38b). Promotion is not the end of the check —
                 # `_drop_stale_bodies` re-verifies this pair against every tree that lands AFTER this
@@ -738,7 +902,7 @@ class View:
             self._stale.add(rel)
             _forget_body(self._sess, self.root, rel)
             return
-        self._bodies[rel] = raw
+        self._record_body(rel, raw)
         self._body_generation[rel] = self._survey_generation
         # CONFIRMED BY THIS SURVEY'S OWN LISTING (C38b). `_ingest_tree` ran before this blob was
         # ingested, so `self._files[rel]` already holds the (size, mtime) THIS survey's tree just
@@ -773,14 +937,30 @@ class View:
             if name:
                 self._progs[name] = resolved
 
-    def note_written(self, path, content: str) -> None:
+    def note_written(self, path, content: str, *, current: bool = True) -> None:
         """cria lowered a whole-content write for this path and the harness reported it landed:
         the bytes ARE the file until something else changes it."""
         rel = self.rel(path)
         if rel is None:
             return
         raw = content if isinstance(content, bytes) else content.encode("utf-8", "replace")
-        self._bodies[rel] = raw
+        observation = _OBSERVATION.get()
+        if observation is not None:
+            if self._superseded(observation, self.abs(rel)):
+                self._retain_earlier_body(rel, raw, observation)
+                return
+            current = current and self.observation_current(observation)
+            if (current and self._body_current(rel) and self._bodies[rel] != raw
+                    and self._body_freshness.bodies.get(self.abs(rel)) != observation.invocation
+                    and not self._body_freshness.current(self.abs(rel), observation.revision)):
+                self._uncertain_body(rel)
+                current = False
+        elif self._body_freshness.pending:
+            current = False
+        self._record_body(rel, raw, current=current)
+        if not current:
+            _forget_body(self._sess, self.root, rel)
+            return
         self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
@@ -823,9 +1003,9 @@ class View:
         for d in _parents(rel):
             self._dirs.add(d)
 
-    def note_read(self, path, content: str) -> None:
+    def note_read(self, path, content: str, *, current: bool = True) -> None:
         """A whole-file read result — the same proof as a write, from the other direction."""
-        self.note_written(path, content)
+        self.note_written(path, content, current=current)
 
     @property
     def may_have_changed(self) -> bool:
@@ -837,11 +1017,32 @@ class View:
         is "not installed anywhere — this project has no Gemfile.lock, no vendor/ and no .bundle/"
         (shipping-rates-rb x ternary-bonsai 1787442206, six times, while the coder's own `ls` had
         just listed the gems)."""
-        return self._ran_a_mutator
+        return self._ran_a_mutator or self._snapshot_revision != self._freshness[0]
 
     def note_a_mutator_ran(self) -> None:
         """A command that could have changed the workspace ran; the survey is now behind the disk."""
         self._ran_a_mutator = True
+        self._freshness[0] += 1
+        self._invalidate_body_observations()
+
+    def note_possible_effect(self) -> None:
+        """Order an unknown effect even before any facts exist; do not invent a tree change."""
+        if self.usable:
+            self.note_a_mutator_ran()
+        else:
+            self._invalidate_body_observations()
+
+
+    def _invalidate_body_observations(self) -> None:
+        self._body_freshness.invalidate(effect=True)
+        self._cache_candidates.clear()
+        # Derived roots share invalidation, while future requests must not
+        # reload a current-cache entry from an overlapping lineage root.
+        for session, root in list(_BODY_CACHE):
+            if session == self._sess and (root == self.root or root.startswith(self.root + "/")
+                                          or self.root.startswith(root + "/")):
+                _BODY_CACHE.pop((session, root), None)
+
 
     def note_unknown_mutation(self) -> None:
         """An in-place write failed; unsurveyed aliases make held bytes uncertain.
@@ -854,7 +1055,7 @@ class View:
         for rel in set(self._files) | set(self._bodies) | set(self._cache_candidates):
             self.note_changed(rel)
 
-    def note_edited(self, path, old: str, new: str) -> bool:
+    def note_edited(self, path, old: str, new: str, *, previous: bytes | None = None) -> bool:
         """An edit landed whose replacement cria knows exactly: keep the held body CURRENT.
 
         Applied only when cria holds a trusted body and ``old`` occurs in it exactly once — the same
@@ -863,9 +1064,15 @@ class View:
         ``note_changed``: never a guess. The size is recorded like a write's; the next survey that
         carries the file's real size is the check on the reconstruction."""
         rel = self.rel(path)
-        if rel is None or not old or rel not in self._bodies or rel in self._stale:
+        if rel is None or not old:
             return False
-        body = self._bodies[rel]
+        observation = _OBSERVATION.get()
+        if observation is not None and (self._superseded(observation, self.abs(rel))
+                                        or not self.observation_current(observation)):
+            return False
+        body = previous if previous is not None else self.read_bytes(path)
+        if body is None:
+            return False
         o = old.encode("utf-8", "replace")
         if body.count(o) != 1:
             return False
@@ -874,7 +1081,7 @@ class View:
             # edit; a byte-level replace would keep the CRs and hold a body that is not the disk.
             return False
         raw = body.replace(o, new.encode("utf-8", "replace"), 1)
-        self._bodies[rel] = raw
+        self._record_body(rel, raw)
         self._body_generation.pop(rel, None)
         self._body_confirmed.pop(rel, None)
         self._cache_candidates.pop(rel, None)
@@ -889,6 +1096,10 @@ class View:
         rel = self.rel(path)
         if rel is None:
             return
+        observation = _OBSERVATION.get()
+        if observation is not None and self._superseded(observation, self.abs(rel)):
+            return
+        self._body_freshness.invalidate(self.abs(rel), effect=True)
         self._stale.add(rel)
         self._body_confirmed.pop(rel, None)
         self._cache_candidates.pop(rel, None)  # not yet trusted this request — an edit ends it now
@@ -971,6 +1182,9 @@ class DirectView(View):
         except OSError:
             return None
 
+
+    def read_observed_bytes(self, path) -> bytes | None:
+        return self.read_bytes(path)
     def listdir(self, path=".") -> list[str] | None:
         try:
             return sorted(os.listdir(str(path)))
@@ -1085,6 +1299,13 @@ def _subview(v: View, sub: str) -> View:
     out._dirs = {d[n:] for d in v._dirs if d.startswith(pre)}
     out._folded = {d[n:] for d in v._folded if d.startswith(pre)}
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
+    out._observed_bodies = {p[n:]: b for p, b in v._observed_bodies.items() if p.startswith(pre)}
+    out._body_revisions = {p[n:]: r for p, r in v._body_revisions.items() if p.startswith(pre)}
+    out._body_freshness = v._body_freshness
+    out._cache_revision = v._cache_revision
+    out._freshness = v._freshness
+    out._snapshot_revision = v._snapshot_revision
+    out._ran_a_mutator = v._ran_a_mutator
     out._body_generation = {p[n:]: g for p, g in v._body_generation.items() if p.startswith(pre)}
     out._body_confirmed = {p[n:]: c for p, c in v._body_confirmed.items() if p.startswith(pre)}
     out._stale = {p[n:] for p in v._stale if p.startswith(pre)}
@@ -1671,6 +1892,19 @@ def apply_survey(view: View, survey_text: str) -> bool:
     if ran_in and view.root and ran_in.rstrip("/") != view.root:
         _note_reject("different-tree", ran_in=ran_in.rstrip("/"), view_root=view.root)
         return False
+    observation = _OBSERVATION.get()
+    if observation is None and view._body_freshness.pending:
+        _note_reject("unresolved-observation")
+        return False
+    if observation is not None and (view._superseded(observation) or not view.observation_current(observation)):
+        _note_reject("overtaken-observation")
+        return False
+    if observation is None:
+        observation = view.begin_observation()
+    return from_observation(observation, _ingest_validated_survey, view, secs, done, ran_in)
+
+
+def _ingest_validated_survey(view, secs, done, ran_in):
     if ran_in and not view.root:
         view.root = ran_in.rstrip("/")
     view._survey_generation += 1
@@ -1695,4 +1929,5 @@ def apply_survey(view: View, survey_text: str) -> bool:
         view._ingest_outside(secs["outside"])
     if secs.get("progs"):
         view._ingest_progs(secs["progs"])
+    view._body_freshness.surveys[view.root] = _OBSERVATION.get().invocation
     return True

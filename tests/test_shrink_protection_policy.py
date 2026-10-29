@@ -36,6 +36,8 @@ class View:
         return self.exists
     def read_bytes(self, path):
         return self.raw
+    def read_observed_bytes(self, path):
+        return self.raw
 
 
 def services(answer='OTHER', *, raw=CURRENT.encode(), baseline=('file.txt',)):

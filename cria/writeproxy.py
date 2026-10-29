@@ -1674,6 +1674,21 @@ def note_harness_cuts(messages: list, rlog=None) -> int:
     return n
 
 
+def _native_effect_unknown_or_mutating(function, workspace_root):
+    """No successful execution is inferred. Only supported read contracts exempt facts.
+
+    Names merely resembling readers have no read-only contract here. Shell
+    commands use the existing no-writes proof, rather than a mutation-keyword scan.
+    """
+    name = function.get('name')
+    if is_shell_tool_name(name):
+        return not dirguard.command_only_reads(_command_of(function.get('arguments')), workspace_root, no_writes=True)
+    if name in (_READ_NAMES | _LIST_NAMES):
+        return False
+    return True
+
+
+
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
@@ -1722,13 +1737,29 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # EDIT proves the opposite direction and is just as useful: the file changed, and cria no longer
     # knows what it holds (see View.note_changed).
     view = wsview.current()
+    mutation_ids = set()
     written: dict[str, str] = {}      # tool_call_id -> whole content the write carried
     edited: set[str] = set()          # tool_call_id of an edit (content becomes unknown on success)
     edit_pairs: dict[str, tuple[str, str]] = {}  # tool_call_id -> the exact (old_string, new_string)
+    edit_preimages: dict[str, bytes] = {}       # current bytes captured before this invocation
+    observation_revisions: dict[str, int] = {}  # identity/order, never receipt or execution credit
+    observations = {}                          # invocation bounds, not result-arrival order
+    pending_mutations = set()
     read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
+    def may_mutate(tc):
+        fn = tc.get("function") or {}
+        original = (_read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
+                    if is_shell_tool_name(fn.get("name")) else None)
+        if original is not None:
+            return original["name"] in (_WRITE_NAMES | _EDIT_NAMES) and tc.get("id") not in failed_ids
+        return _native_effect_unknown_or_mutating(fn, workspace_root)
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
+            # All calls in a batch may overlap; a pending writer is not closed
+            # merely because another result arrived first. Ambiguous IDs never close.
+            pending_mutations.update(tc.get("id") if tc.get("id") in paired else object()
+                                     for tc in m["tool_calls"] if may_mutate(tc))
             new_calls = []
             for tc in m["tool_calls"]:
                 fn = tc.get("function") or {}
@@ -1742,15 +1773,22 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         # cria-composed write/edit/list, so a run of the coder's own shell commands
                         # changes the workspace while the view stands still. Recording that here is
                         # what lets a caller tell "cria saw no vendor/" from "there is no vendor/".
-                        from . import shelltool as _shelltool
-                        if _shelltool.writes_something(name, own):
-                            view.note_a_mutator_ran()
+                        if _native_effect_unknown_or_mutating(fn, workspace_root):
+                            mutation_ids.add(tc.get("id"))
+                            view.note_possible_effect()
                     if orig is not None:
                         lowered_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
                             p = _parse(orig["arguments"])
+                            if orig["name"] in _EDIT_NAMES and tc.get("id") in paired:
+                                preimage = view.capture_edit_preimage(_tool_path(p))
+                                if preimage is not None:
+                                    edit_preimages[tc.get("id")] = preimage[0]
+                            if tc.get("id") not in failed_ids:
+                                mutation_ids.add(tc.get("id"))
+                                view.note_a_mutator_ran()
                             write_paths[tc.get("id")] = _tool_path(p) or ""
                             if orig["name"] in _EDIT_NAMES:
                                 edited.add(tc.get("id"))
@@ -1775,11 +1813,24 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 # false fact of exactly the shape this module exists to stop (#5b).
                                 if not rp.get("start_line") and not rp.get("end_line") and _tool_path(rp):
                                     read_whole[tc.get("id")] = str(_tool_path(rp))
-                elif name == "local_web_search":  # always present the Brave tool as web_search
-                    tc = {**tc, "function": {**fn, "name": "web_search"}}
-                    swapped += 1
-                    strip_ids.add(tc.get("id"))
+                else:
+                    if _native_effect_unknown_or_mutating(fn, workspace_root):
+                        # Unsupported native effects are uncertainty, never proof
+                        # of execution. A namespace spelling grants no exemption.
+                        mutation_ids.add(tc.get("id"))
+                        view.note_possible_effect()
+                    if name == "local_web_search":
+                        tc = {**tc, "function": {**fn, "name": "web_search"}}
+                        swapped += 1
+                        strip_ids.add(tc.get("id"))
+                if tc.get("id") in lowered_ids:
+                    observation_revisions[tc.get("id")] = view.body_revision
                 new_calls.append(tc)
+            view.observation_pending(bool(pending_mutations))
+            for tc in new_calls:
+                if tc.get("id") in lowered_ids:
+                    observations[tc.get("id")] = view.begin_observation(
+                        uncertain=bool(pending_mutations - {tc.get("id")}))
             out.append({**m, "tool_calls": new_calls})
         elif role == "tool":
             tid = m.get("tool_call_id")
@@ -1787,6 +1838,17 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             # whatever the client sent under that key is overwritten: a native client cannot nominate its own result.
             m = {k: v for k, v in m.items() if k not in (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT)}
             survey_text = ""
+            pending_mutations.discard(tid)
+            view.observation_pending(bool(pending_mutations))
+            observation = observations.get(tid)
+            interval_current = bool(observation is not None and not pending_mutations
+                                    and view.observation_current(observation))
+            observed_path = write_paths.get(tid) or read_whole.get(tid)
+            uninterrupted = bool(interval_current and observed_path
+                                 and view.body_unchanged_since(observed_path, observation_revisions.get(tid)))
+            observation_options = {} if interval_current else {"current": False}
+            if tid in mutation_ids:
+                view.note_possible_effect()
             proof = proofs.get(tid)
             if proof is not None:
                 m["content"] = proof.content       # exactly cria's own records removed; the payload keeps its bytes
@@ -1812,16 +1874,19 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # identities are not surveyed, so invalidate all held candidates
                 # BEFORE this result's fresh survey can attest current bodies.
                 view.note_unknown_mutation()
+            if observation is not None:
+                observation = view.settle_observation(observation, current=interval_current)
             # A LANDED EDIT CRIA KNOWS EXACTLY KEEPS THE HELD BODY CURRENT. Applied BEFORE this
             # result's own survey: that survey reports the post-edit size, which would otherwise drop
             # the pre-edit body as stale before the edit could be applied to it — and the survey is
             # then the ground-truth check on the reconstruction (a size that disagrees drops it).
-            edit_applied = (tid in edit_pairs and bool(write_paths.get(tid)) and tid in landed_ids
-                            and view.note_edited(write_paths[tid], *edit_pairs[tid]))
+            edit_applied = (uninterrupted and tid in edit_pairs and bool(write_paths.get(tid)) and tid in landed_ids
+                            and wsview.from_observation(observation, view.note_edited, write_paths[tid],
+                                                       *edit_pairs[tid], previous=edit_preimages.get(tid)))
             if survey:
                 # Same as the gate's copy: a rejected survey is the one failure `wsview` cannot show
                 # from the outside, and both readers used to drop the answer on the floor (#12).
-                if not wsview.apply_survey(view, survey) and rlog is not None:
+                if not wsview.from_observation(observation, wsview.apply_survey, view, survey) and rlog is not None:
                     rlog.emit("wsview.survey_rejected", level="warn", bytes=len(survey),
                               closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
             # A WHOLE READ BECOMES THE FILE'S BYTES ONLY ON A VERIFIED BODY: the producer's own read-once program put the
@@ -1833,9 +1898,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 if exact:
                     m[bodykeys.READ_OBSERVATION] = (len(proof.text), denial.text_digest(proof.text))
                     if tid in write_paths and proof.kind == denial.REFUSED:
-                        view.note_read(write_paths[tid], proof.text)
+                        wsview.from_observation(observation, view.note_read, write_paths[tid], proof.text, **observation_options)
                     elif tid in read_whole and proof.kind == denial.RAN and proof.observe == resultpacket.WHOLE:
-                        view.note_read(read_whole[tid], proof.text)        # only a WHOLE read is the file; a window is not
+                        wsview.from_observation(observation, view.note_read, read_whole[tid], proof.text, **observation_options)
                 shown = content
                 if tid in write_paths and proof.kind == denial.REFUSED:
                     # THE REJECTED CANDIDATE STAYS. This answer is denied, so `_collapse_rejected_payload` took the
@@ -1851,9 +1916,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 continue
             if tid in write_paths and write_paths[tid] and tid in landed_ids:
                 if tid in written:
-                    view.note_written(write_paths[tid], written[tid])
+                    wsview.from_observation(observation, view.note_written, write_paths[tid], written[tid], **observation_options)
                 elif tid in edited and not edit_applied:
-                    view.note_changed(write_paths[tid])
+                    wsview.from_observation(observation, view.note_changed, write_paths[tid])
             if tid in strip_ids:                          # read/nav result → drop only proven framing, never EOF
                 out.append({**m, "content": _strip_exec_envelope(content)})
             elif tid in write_paths and tid in landed_ids:  # write/edit SUCCESS
@@ -1881,6 +1946,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 out.append(m)
         else:
             out.append(m)
+    if mutation_ids - paired:
+        # Later surveys do not settle an unresolved/ambiguous native invocation.
+        view.note_possible_effect()
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
     toolstages.current().returned_history(
