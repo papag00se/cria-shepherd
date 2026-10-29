@@ -67,6 +67,7 @@ class ImageSession:
         self._generation=uuid.uuid4().hex;self._close_seal=None;self._cleanup_sealed=False;self._confirmed_wall=None;self._recovered_observations=set()
         self._key=session_key;self._records={};self._occurrences={};self._route=None;self._leases=set();self._attempts={}
         self._clock=clock;self.last_used=clock()
+        self._hold=imagepersist.Hold(self._root)
         self._save()
         imagepersist.create_marker(self._root,self._generation)
 
@@ -91,11 +92,12 @@ class ImageSession:
     @classmethod
     def restore(cls,root,handle,*,close_authority,clock,recovered_leases):
         imagepersist.check_marker(root,handle['generation'])
+        hold=imagepersist.Hold(root)
         state=imagepersist.read_state(root)
         if state.get('generation')!=handle['generation']:
             raise ImageUnavailable('Image session generation does not match recovery handle')
         session=object.__new__(cls)
-        session._lock=threading.RLock();session._token=object();session._closed=False
+        session._lock=threading.RLock();session._token=object();session._closed=False;session._hold=hold
         session._retired=state.get('retired') is True;session._cleanup_complete=False
         session._root=Path(root);session._key=state['key'];session._generation=state['generation']
         session._authority=close_authority;session._close_seal=state.get('close_seal')
@@ -368,6 +370,7 @@ class ImageSession:
             except FileNotFoundError:pass
             # If deletion raises, retain state for the explicit retry queue.
             imagepersist.remove_marker(self._root,self._generation,self._close_seal)
+            self._hold.close()
             self._cleanup_complete=True;self._records.clear();self._occurrences.clear()
 
 

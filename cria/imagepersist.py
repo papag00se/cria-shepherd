@@ -1,4 +1,5 @@
 """Owned private image state; no workspace access or lifecycle authority."""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -80,3 +81,34 @@ def remove_marker(directory,generation,closed):
         return
     check_marker(directory,generation,closed)
     _marker(directory).unlink();_sync(Path(directory).parent)
+
+
+class Hold:
+    """Shared flock on a live session directory, held for the session's lifetime.
+
+    It is a liveness fact for the explicit retention command only: it is never a
+    lease, never a close signal, and the kernel drops it if the process dies.
+    """
+    def __init__(self,directory):
+        fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        try:fcntl.flock(fd,fcntl.LOCK_SH|fcntl.LOCK_NB)
+        except OSError as exc:
+            os.close(fd);raise ImageUnavailable('Image session directory is being removed by an operator') from exc
+        self._fd=fd
+    def close(self):
+        fd,self._fd=self._fd,None
+        if fd is not None:os.close(fd)
+    def __del__(self):
+        try:self.close()
+        except Exception:pass
+
+
+def held_by_live_process(directory):
+    """True when a live holder exists (or the answer is unknown): fail closed."""
+    try:fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    except OSError:return True
+    try:
+        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError:return True
+        return False
+    finally:os.close(fd)

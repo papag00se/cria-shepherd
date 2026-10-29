@@ -452,6 +452,15 @@ class Bridge:
         with self._transaction(session):
             entries = self.sessions.get(session)
             if not entries:
+                # Continuation calls we issued, with no durable record behind them
+                # (state removed by the operator's retention command or lost):
+                # never pass the raw page carriers through as if they were whole reads.
+                if any(isinstance(m, dict) and (
+                        str(m.get('tool_call_id', '')).startswith('ctxread_')
+                        or any(isinstance(c, dict) and str(c.get('id', '')).startswith('ctxread_')
+                               for c in (m.get('tool_calls') or []) if isinstance(c, dict)))
+                       for m in messages):
+                    raise BridgeError('multipart state for issued continuation calls is unavailable')
                 return messages, [], ()
             call_positions, result_positions = {}, {}
             for i, m in enumerate(messages):
