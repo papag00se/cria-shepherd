@@ -135,6 +135,7 @@ class StreamInput:
     # None for seats such as the reasoner: backstops remain active, phrase/length
     # detection does not. A disabled F48 never constructs or feeds a stream guard.
     watch: Callable[[str, int], dict | None] | None = None
+    completed_action: Callable[[], bool] = lambda: False
 
 
 class StreamGuard:
@@ -147,6 +148,7 @@ class StreamGuard:
     def __init__(self, source: StreamInput):
         self.room = max(0, (source.window or 0) - source.prompt_tokens) if source.window and not source.window_guessed else 0
         self.watch = source.watch
+        self.completed_action = source.completed_action
         self.frames = self.chars = self.watched_len = self.wide_evaled = 0
         self.tail = self.wide_tail = ""
         self.aborted = None
@@ -187,7 +189,8 @@ class StreamGuard:
             fields = dict(verdict)
         if self.watch is not None and verdict is None:
             text = reasoning_text() or content_text()
-            if len(text) - self.watched_len >= WATCH_STRIDE:
+            # Keep the old watch position so later contradictory frames can still trigger it.
+            if not self.completed_action() and len(text) - self.watched_len >= WATCH_STRIDE:
                 self.watched_len = len(text)
                 verdict = self.watch(text, len(text) // 4)
                 if verdict:

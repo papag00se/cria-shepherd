@@ -1209,6 +1209,9 @@ class Upstream:
         reasoning: list[str] = []
         _rsink: dict = {}
         tool_acc: dict[int, dict] = {}
+        choice_indices: set = set()
+        finished_choices: set = set()
+        unsafe_stream = False
         finish: str | None = None
         usage: dict | None = None
         aborted: dict | None = None
@@ -1219,6 +1222,7 @@ class Upstream:
         streamed_chars = 0  # of those, how many characters cria could actually read
         from . import assistruntime, generationguards
         stream_guard = None
+        terminal = False
         saved = False  # the reasoning has been written by an early-exit path; do not write it twice
         # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
         # in-between lines): the beat thread reads these while this call streams. Benign racy reads
@@ -1232,7 +1236,7 @@ class Upstream:
             if self._engagement_level < config.DONE_REFUSALS_ENABLED:
                 selected = generationguards.SelectedGuards(None, None)
             stream_guard = selected.stream(lambda: generationguards.StreamInput(
-                self._resolve_window(rlog), sent_estimate, self._window_guessed, watch))
+                self._resolve_window(rlog), sent_estimate, self._window_guessed, watch, lambda: terminal))
             for raw in resp:
                 wire_raw.extend(raw)
                 if not raw.startswith(b"data:"):
@@ -1254,9 +1258,14 @@ class Upstream:
                     err = obj["error"]
                     stream_error = dict(err) if generation.is_protocol_error(err) else str(err.get("message") or err) if isinstance(err, dict) else str(err)
                     break
-                generation_evidence.update(obj.get(generation.EVIDENCE) or {})
+                incoming_evidence = obj.get(generation.EVIDENCE) or {}
+                generation_evidence.update(incoming_evidence)
+                unsafe_stream = unsafe_stream or incoming_evidence.get("incomplete") is True
                 chunks_seen += 1
                 for choice in obj.get("choices", []):
+                    choice_index = choice.get("index", 0)
+                    unsafe_stream = unsafe_stream or choice_index in finished_choices
+                    choice_indices.add(choice_index)
                     delta = choice.get("delta") or {}
                     if delta.get("content"):
                         if t_first is None:
@@ -1271,6 +1280,13 @@ class Upstream:
                         reasoning.append(rc)
                         self._stream_reasoning_to_disk(_rsink, capture_path, rc)
                     tcs = delta.get("tool_calls")
+                    for tc in tcs or []:
+                        prior = tool_acc.get(tc.get("index", 0), {})
+                        fn = tc.get("function") or {}
+                        unsafe_stream = unsafe_stream or bool(
+                            (prior.get("id") and tc.get("id") and prior["id"] != tc["id"])
+                            or (prior.get("name") and fn.get("name") and prior["name"] != fn["name"])
+                            or (tc.get("type") and tc["type"] != "function"))
                     _accumulate_tool_deltas(tool_acc, tcs)
                     # Feed the degenerate-run backstop from EVERY generated stream — content,
                     # reasoning, AND tool-call arguments (which the rumination watcher below skips) —
@@ -1282,9 +1298,16 @@ class Upstream:
                             rlog.live_chars += len(frag)  # the ticker's live tok/s numerator
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
+                        finished_choices.add(choice_index)
+                        unsafe_stream = unsafe_stream or finish not in ("stop", "tool_calls")
                 if obj.get("usage"):
                     usage = obj["usage"]
                 if stream_guard is not None:
+                    choices = obj.get("choices", [])
+                    terminal = (len(choice_indices) == 1 and not unsafe_stream
+                                and (not choices or (len(choices) == 1
+                                     and choices[0].get("finish_reason") == "tool_calls"))
+                                and finish == "tool_calls" and _complete_native_calls(tool_acc))
                     decision = stream_guard.feed(obj, lambda: time.monotonic() - t0,
                                                  lambda: "".join(reasoning), lambda: "".join(content), rlog)
                     if decision.status is generationguards.StreamStatus.ABORT:
@@ -1493,6 +1516,25 @@ class Upstream:
                       incomplete=bool(ending), ending=ending or None)
         except OSError as e:
             rlog.emit("coder.reasoning_error", level="info", error=str(e))
+
+
+def _complete_native_calls(acc: dict[int, dict]) -> bool:
+    """Only an unambiguous, fully parsed native call set can settle the reasoning watch."""
+    if not acc:
+        return False
+    ids = set()
+    for slot in acc.values():
+        cid, name = slot.get('id'), slot.get('name')
+        if not isinstance(cid, str) or not cid or cid in ids or not isinstance(name, str) or not name:
+            return False
+        ids.add(cid)
+        try:
+            args = json.loads(''.join(slot.get('args', [])))
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(args, dict):
+            return False
+    return True
 
 
 def _accumulate_tool_deltas(acc: dict[int, dict], deltas) -> None:
