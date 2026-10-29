@@ -183,6 +183,8 @@ class EditEchoTests(unittest.TestCase):
             h.server = SimpleNamespace(cfg=SimpleNamespace(
                 routing=routing, safety=SimpleNamespace(external_dir_permission="write")),
                 loop_store=loop.LoopStore())
+            from cria.multipart_bridge import Bridge
+            h.server.multipart_bridge = Bridge()
             h._shell_tool, h._synthetic, h._workspace_root = _CMD_SHELL, {"edit_file"}, None
             comp = {"choices": [{"message": {"tool_calls": [{"id": "e1", "type": "function", "function": {
                 "name": "edit_file", "arguments": json.dumps({"path": "a.py", "old_string": "x", "new_string": "y"})}}]}}]}

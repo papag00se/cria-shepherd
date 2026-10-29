@@ -1,4 +1,4 @@
-"""A whole read is sized to the coder's REMAINING context, not to a fixed 9,000 bytes.
+"""Regression coverage for whole reads after removal of the read-size guard.
 
 Incident: ornith1.5_9b / Java overnight run 1 (capture 20261027T231856-01a18129-…, 1,342 calls, graded 35%). 54 of its
 135 refused coder calls were whole reads of its OWN `src/main/java/pipeline/Importer.java` — 267 lines, 9,729 bytes —
@@ -7,11 +7,7 @@ answered "larger than can be returned in one read … start_line=1 end_line=217 
 coder had 10–20k tokens of context left. The refusals also fed the 3-refusal guard: 31 of its 43 firings had a size
 refusal in their window and 30 would not have reached 3 without one.
 
-The operator's 40% context allowance replaces both the fixed floor and encoded-record ceiling.
-Whole reads and ranges share it; unknown usage leaves reads unbounded.
-
-Executed end to end: the real run-1 reply is lowered by `translate_outbound` with the budget `Loop.read_budget_bytes`
-computes from it, the commands run under bash against the real file, and `represent_inbound` reads the result.
+The former context allowance and read-size guard have since been removed. The captured reply is lowered by `translate_outbound`, executed against the real file, and read back through `represent_inbound`.
 """
 import json
 import os
@@ -130,11 +126,8 @@ def _importer_result(out):
 # ── the incident: the real 267-line Importer.java, with the room run 1 actually had ───────────────────────────────────
 
 def test_the_run1_importer_read_comes_back_whole_with_the_room_that_request_had(ws):
-    """Call 0093's reply (data/feed.csv lines 1-25, data/feed_messy.csv, Importer.java) at 21,773 measured prompt tokens:
-    ~15.6 KB of room for its whole reads. Before: Importer.java was refused (call 0094)."""
-    budget = _coder_loop(WINDOW).read_budget_bytes(REPLY_0093, _Log())
-    assert budget is not None and budget > len(IMPORTER_BYTES)
-    calls = _lower(REPLY_0093, ws, read_budget=budget)
+    """Call 0093's multi-read reply includes Importer.java, refused in call 0094 under the former fixed cap."""
+    calls = _lower(REPLY_0093, ws)
     out, raw = _represented(calls, ws)
     result = _importer_result(out)
     assert result["content"] == IMPORTER_BYTES.decode()                     # the whole file, byte for byte
@@ -151,104 +144,102 @@ def test_three_whole_reads_of_it_no_longer_trip_the_refusal_guard(ws):
     out = []
     for n in range(3):
         comp = _read(IMPORTER, cid=f"r{n}")
-        budget = _coder_loop(WINDOW).read_budget_bytes(comp, _Log())
-        o, _ = _represented(_lower(comp, ws, read_budget=budget), ws)
+        o, _ = _represented(_lower(comp, ws), ws)
         out += o
     assert loop._refusals_in_window(out)[0] == 0
 
 
-# ── no room: the exact-window steer, never a cut ──────────────────────────────────────────────────────────────────────
+# ── formerly size-refused reads now return their complete requested content ───────────────────────────────────────────
 
-def test_a_read_that_does_not_fit_the_remaining_context_gets_the_exact_window_steer(ws):
-    """At 31,000 measured prompt tokens the 40% allowance refuses the file.
-    The offered numbered prefix fits that allowance; one more line does not.
-    """
+def test_high_prompt_usage_does_not_refuse_whole_or_ranged_read(ws):
+    """The former allowance refused this incident file at 31,000 prompt tokens and offered a prefix."""
     comp = _read(IMPORTER)
     comp["usage"]["prompt_tokens"] = 31_000
-    budget = _coder_loop(WINDOW).read_budget_bytes(comp, _Log())
-    assert budget < filecommands.READ_INLINE_MAX
-    out, _ = _represented(_lower(comp, ws, read_budget=budget), ws)
-    text = out[1]["content"]
-    assert denial.refused(out[1]) and "is 267 lines, which is larger than can be returned in one read" in text
-    fits = int(re.search(r"start_line=1 end_line=(\d+)", text).group(1))
-    assert 0 < fits < 217
-    ok, _ = _represented(_lower(_read(IMPORTER, start_line=1, end_line=fits), ws, read_budget=budget), ws)
-    over, _ = _represented(_lower(_read(IMPORTER, start_line=1, end_line=fits + 1), ws, read_budget=budget), ws)
-    assert not denial.refused(ok[1]) and ok[1]["content"].startswith("1: package pipeline;")
-    assert denial.refused(over[1]) and "larger than can be returned" in over[1]["content"]
+    out, _ = _represented(_lower(comp, ws), ws)
+    assert not denial.refused(out[1]) and out[1]["content"] == IMPORTER_BYTES.decode()
+    ranged, _ = _represented(_lower(_read(IMPORTER, start_line=1, end_line=217), ws), ws)
+    expected = ''.join(f'{i}: {line}\n' for i, line in enumerate(IMPORTER_BYTES.decode().split('\n')[:217], 1))
+    assert not denial.refused(ranged[1]) and ranged[1]["content"] == expected
 
 
-def test_a_huge_output_file_is_still_steered_with_room_to_spare(ws):
-    """Run 1's other refusals: 188 KB output dumps and the 1.2 MB feed. The room never stretches to them."""
-    comp = _read("data/feed.csv")
-    out, raw = _represented(_lower(comp, ws, read_budget=30_000), ws)
-    assert denial.refused(out[1]) and "is 40000 lines, which is larger than can be returned in one read" in out[1]["content"]
-    assert "SKU-00500" not in raw["r1"]
+def test_a_huge_output_file_offers_a_working_transport_window(ws):
+    """Run 1 also saw size refusals for 188 KB output dumps and the 1.2 MB feed."""
+    out, raw = _represented(_lower(_read("data/feed.csv"), ws), ws)
+    assert denial.refused(out[1]) and denial.read_payload(out[1]) is None
+    assert len(raw['r1'].encode()) <= filecommands.READ_TRANSPORT_STDOUT_BYTES
+    args = json.loads(out[1]['content'].split('Next read_file arguments: ', 1)[1])
+    assert args['path'] == 'data/feed.csv' and args['start_line'] == 1 and args['end_line'] < 40_000
+    retry, _ = _represented(_lower(_read(**args), ws), ws)
+    lines = (ws / 'data/feed.csv').read_text().splitlines()
+    expected = ''.join(f'{i}: {line}\n' for i, line in enumerate(lines[:args['end_line']], 1))
+    assert not denial.refused(retry[1]) and denial.read_payload(retry[1]) == expected
 
 
-def test_record_size_is_not_an_invented_harness_ceiling(ws):
+def test_incompressible_single_line_refusal_names_a_usable_byte_route(ws):
     import random
     rng = random.Random(123)
     text = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(20_000))
     (ws / "source.txt").write_text(text)
-    out, raw = _represented(_lower(_read("source.txt"), ws, read_budget=30_000), ws)
-    assert out[1]["content"] == text
-    assert len(raw["r1"].encode()) > content_reduce.INLINE_RESULT_MAX_BYTES
+    out, raw = _represented(_lower(_read("source.txt"), ws), ws)
+    assert denial.refused(out[1]) and denial.read_payload(out[1]) is None
+    assert 'byte-oriented shell command' in out[1]['content']
+    assert 'Next read_file arguments:' not in out[1]['content']
+    assert len(raw['r1'].encode()) <= filecommands.READ_TRANSPORT_STDOUT_BYTES
+    p = subprocess.run(['bash', '-c', 'head -c 1000 source.txt'], cwd=ws, capture_output=True, text=True, check=True)
+    assert p.stdout == text[:1000]
 
 
-def test_a_file_bigger_than_the_room_is_refused_even_when_its_record_would_fit(ws):
-    """The room is a bound on what the MODEL reads, not only on what the harness carries."""
-    (ws / "repeat.txt").write_text("ok\n" * 20_000)                          # 60 KB, compresses to almost nothing
-    out, _ = _represented(_lower(_read("repeat.txt"), ws, read_budget=30_000), ws)
-    assert denial.refused(out[1]) and "larger than can be returned" in out[1]["content"]
+def test_compressible_file_is_returned_whole(ws):
+    """Previously the model-text allowance refused this even when the encoded record fit."""
+    (ws / "repeat.txt").write_text("ok\n" * 20_000)
+    out, _ = _represented(_lower(_read("repeat.txt"), ws), ws)
+    assert not denial.refused(out[1]) and out[1]["content"] == "ok\n" * 20_000
 
 
-# Unknown usage abstains; zero allowance has no fixed floor.
+# Usage does not impose a read guard.
 
 def test_unknown_or_guessed_window_and_unmeasured_prompt_keep_todays_behaviour(ws):
-    assert _coder_loop(None).read_budget_bytes(REPLY_0093, _Log()) is None
-    assert _coder_loop(WINDOW, guessed=True).read_budget_bytes(REPLY_0093, _Log()) is None
     unmeasured = {k: v for k, v in REPLY_0093.items() if k != "usage"}
-    assert _coder_loop(WINDOW).read_budget_bytes(unmeasured, _Log()) is None
-    before = [_cmd(tc) for tc in _lower(REPLY_0093, ws)]
-    assert [_cmd(tc) for tc in _lower(REPLY_0093, ws, read_budget=None)] == before
+    assert [_cmd(tc) for tc in _lower(unmeasured, ws)] == [_cmd(tc) for tc in _lower(REPLY_0093, ws)]
     out, _ = _represented(_lower(REPLY_0093, ws), ws)
     assert _importer_result(out)["content"] == IMPORTER_BYTES.decode()
 
 
-def test_a_full_context_has_no_fixed_floor(ws):
-    """With no allowance even a file below the retired bound is refused."""
-    body = ("x" * 99 + "\n") * (filecommands.READ_INLINE_MAX // 100)
+def test_zero_legacy_allowance_does_not_refuse_a_read(ws):
+    """The former guard refused even a small file when its computed allowance was zero."""
+    body = ("x" * 99 + "\n") * 90
     (ws / "small.txt").write_text(body)
-    out, _ = _represented(_lower(_read("small.txt"), ws, read_budget=0), ws)
-    assert denial.refused(out[1]) and body not in out[1]["content"]
+    comp = _read("small.txt")
+    comp["usage"]["prompt_tokens"] = WINDOW
+    out, _ = _represented(_lower(comp, ws), ws)
+    assert not denial.refused(out[1]) and out[1]["content"] == body
 
 
-def test_the_reply_shares_its_room_between_its_whole_reads():
-    """Whole and ranged reads share one allowance; writes without a read hold do not."""
-    sizes = {"a.java": 1_000, "b.csv": 2_000_000}
-    calls = [{"function": {"name": "read_file", "arguments": json.dumps({"path": p})}} for p in ("big.java", "a.java", "b.csv", "c.txt")]
-    calls += [{"function": {"name": "read_file", "arguments": json.dumps({"path": "a.java", "start_line": 1, "end_line": 5})}},
-              {"function": {"name": "write_file", "arguments": json.dumps({"path": "w.txt", "content": "x"})}}]
-    rooms = filecommands.whole_read_rooms(calls, 20_000, sizes.get)
-    assert sum(rooms.values()) <= 20_000
-    assert set(rooms) == {0, 1, 2, 3, 4}
-    assert filecommands.whole_read_rooms(calls, None, sizes.get) == {}
+def test_multiple_whole_and_ranged_reads_return_independently(ws):
+    """Whole and ranged reads once shared a computed allowance; neither should suppress another."""
+    calls = _read(IMPORTER)['choices'][0]['message']['tool_calls']
+    calls += _read('data/feed_messy.csv', cid='r2')['choices'][0]['message']['tool_calls']
+    calls += _read(IMPORTER, cid='r3', start_line=1, end_line=1)['choices'][0]['message']['tool_calls']
+    out, _ = _represented(_lower({'choices': [{'message': {'tool_calls': calls}}]}, ws), ws)
+    assert out[1]['content'] == IMPORTER_BYTES.decode()
+    assert out[2]['content'] == FEED_MESSY
+    assert out[3]['content'] == '1: package pipeline;\n'
+    assert not denial.refused_call_ids(out)
 
 
 # ── unchanged neighbours ─────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_ranged_reads_use_the_context_allowance(ws):
-    out, _ = _represented(_lower(_read(IMPORTER, start_line=1, end_line=267), ws, read_budget=10 ** 6), ws)
+def test_ranged_reads_return_the_requested_lines(ws):
+    out, _ = _represented(_lower(_read(IMPORTER, start_line=1, end_line=267), ws), ws)
     assert out[1]["content"].startswith("1: package pipeline;") and not denial.refused(out[1])
 
 
-def test_a_spilled_document_uses_the_context_allowance(ws):
+def test_a_spilled_document_returns_whole(ws):
     spill = ws / webfetch.SPILL_DIR.lstrip("./")
     spill.mkdir(parents=True)
     (spill / "openapi.json").write_text('{"a": 1}\n' * 2_000)                # 18 KB, compressible
     rel = f"{webfetch.SPILL_DIR}/openapi.json"
-    out, raw = _represented(_lower(_read(rel), ws, read_budget=10 ** 6), ws)
+    out, raw = _represented(_lower(_read(rel), ws), ws)
     assert out[1]["content"] == '{"a": 1}\n' * 2_000
 
 
@@ -258,9 +249,9 @@ def test_a_write_to_the_unread_importer_is_still_not_run(ws):
     write = {"choices": [{"message": {"tool_calls": [{"id": "w1", "type": "function", "function": {
         "name": "write_file", "arguments": json.dumps({"path": IMPORTER, "content": "class Importer {}\n"})}}]}}]}
     comp = json.loads(json.dumps(write))
-    translate_outbound(comp, SHELL, injected={"write_file"}, workspace_root=str(ws), read_budget=10 ** 6,
+    translate_outbound(comp, SHELL, injected={"write_file"}, workspace_root=str(ws),
                        unread_target=lambda p: f"{p} already exists on disk.")
     _represented(comp["choices"][0]["message"]["tool_calls"], ws)
     assert (ws / IMPORTER).read_bytes() == IMPORTER_BYTES                     # not written
-    out, _ = _represented(_lower(_read(IMPORTER), ws, read_budget=_coder_loop(WINDOW).read_budget_bytes(_read(IMPORTER), _Log())), ws)
+    out, _ = _represented(_lower(_read(IMPORTER), ws), ws)
     assert IMPORTER in loop._extract_whole_reads(out)

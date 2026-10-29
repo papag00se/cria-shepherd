@@ -1,0 +1,1 @@
+Workspace source: {{PATH}}. Request reinspection through the harness; it requires a fresh read and a new observation, since the file may have changed. This historical account does not establish current file contents.

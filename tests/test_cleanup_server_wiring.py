@@ -13,6 +13,8 @@ def test_server_uses_static_analysis_not_configured_reasoner():
         chat=Mock(side_effect=AssertionError('no inference allowed'))),
         cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission='none'),
                             routing=SimpleNamespace(done_refusals=False, assists_enabled=False)))
+    from cria.multipart_bridge import Bridge
+    handler.server.multipart_bridge = Bridge()
     handler._shell_tool = {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}}
     handler._synthetic = {'write_file'}
     handler._workspace_root = '/remote/workspace'

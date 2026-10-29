@@ -31,7 +31,7 @@ MARKER = denial.READ_INSTEAD_MARKER
 def _lower(name, args, cid="c1", root="/w", **kw):
     comp = {"choices": [{"message": {"tool_calls": [
         {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
-    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, read_budget=9000, **kw)
+    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, **kw)
     return comp["choices"][0]["message"]["tool_calls"][0]
 
 
@@ -121,7 +121,7 @@ def _read_instead(tmp_path, name, content):
     comp = {"choices": [{"message": {"tool_calls": [{"id": "w1", "type": "function", "function": {
         "name": "write_file", "arguments": json.dumps({"path": name, "content": "B"})}}]}}]}
     translate_outbound(comp, SHELL, injected={"write_file"}, workspace_root=str(tmp_path),
-                       unread_target=lambda path: f"{path} already exists on disk.", read_budget=9000)
+                       unread_target=lambda path: f"{path} already exists on disk.")
     return comp["choices"][0]["message"]["tool_calls"][0]
 
 
@@ -428,9 +428,8 @@ def test_an_oversize_file_whose_name_quotes_the_marker_caches_no_refusal_prose_a
     raw = _run(tc, tmp_path)
     assert "Process exited with code 0" in raw and (tmp_path / name).stat().st_size == 1_000_000   # really ran, file unchanged
     out, view = _represent(_history(tc, raw), tmp_path)
-    assert denial.refused(out[1]) and denial.read_payload(out[1]) is None
-    assert view.read_bytes(name) is None and loop._extract_reads(out) == {}
-    assert "larger" in out[1]["content"]                                          # the real tool bytes are kept
+    assert denial.refused(out[1]) and denial.read_payload(out[1]) == "X" * 1_000_000
+    assert view.read_bytes(name) == b"X" * 1_000_000 and name in loop._extract_reads(out)
 
 
 @pytest.mark.parametrize("name", ["quoted.txt", MARKER + "\nquoted.txt", "x\n" + MARKER + "\ny"])
@@ -463,7 +462,7 @@ def test_an_ordinary_oversize_read_gets_no_credit_and_a_marker_quoting_file_is_e
     (tmp_path / "big.txt").write_text("y" * 200_000)
     big = _lower("read_file", {"path": "big.txt"})
     out, _ = _represent(_history(big, _run(big, tmp_path)), tmp_path)
-    assert loop._extract_reads(out) == {} and denial.read_payload(out[1]) is None
+    assert "big.txt" in loop._extract_reads(out) and denial.read_payload(out[1]) == "y" * 200_000
     body = f"{MARKER}\n" + resultpacket.line("0" * 16, denial.REFUSED, body=b"zz", observe="whole") + "xyz\n"
     (tmp_path / "q.txt").write_text(body)
     tc = _lower("read_file", {"path": "q.txt"})
@@ -558,20 +557,108 @@ def test_a_native_command_that_prints_a_valid_survey_teaches_the_view_nothing(tm
 
 # ---- THE WIRE BUDGET: the record is accounted, not the raw file ---------------------------------------------------
 
-def test_a_whole_read_record_costs_at_most_base64_of_the_file_and_text_stays_text(tmp_path):
+def _recover_multipart(tmp_path, args, semantics):
+    """Exercise real PTY pages and the checker; incomplete streams grant no result."""
+    from cria import filecommands, multipart
+    request = filecommands.make_multipart_read_spec('recovery', 'read_file', json.dumps(args), 'recovery-token')
+    state = multipart.MultipartRead(request.token, 'read', semantics)
+    pages = 0
+    while True:
+        command = filecommands.build_multipart_page(request, state.offset)
+        envelope = _pty_execute(command, tmp_path)
+        assert 'Process exited with code 0\n' in envelope
+        wire = envelope.split('Output:\n', 1)[1].encode()
+        assert len(wire) <= filecommands.READ_TRANSPORT_STDOUT_BYTES
+        pages += 1
+        if state.accept(wire):
+            break
+        with pytest.raises(multipart.InvalidPage):
+            state.finish()
+    rec = resultpacket.read_record(state.finish().decode('ascii'), 0, request.receipt)
+    assert rec and rec.kind == denial.RAN and rec.observe == semantics
+    return rec.body, pages
+
+
+def test_a_whole_read_record_fits_or_recovers_incompressible_bytes(tmp_path):
     from cria import filecommands
-    text = ("def f(x):\n    return x + 1\n" * 300).encode()                       # compressible source
-    noise = os.urandom(filecommands.READ_INLINE_MAX)                               # incompressible, the worst case
-    sizes = {}
-    for name, data in (("src.py", text[:filecommands.READ_INLINE_MAX]), ("noise.bin", noise)):
+    import random
+    text = ("def f(x):\n    return x + 1\n" * 300).encode()[:filecommands.READ_INLINE_MAX]
+    noise = random.Random(124).randbytes(filecommands.READ_INLINE_MAX)
+    for name, data in (("src.py", text), ("noise.bin", noise)):
         (tmp_path / name).write_bytes(data)
         tc = _lower("read_file", {"path": name})
-        raw = _run(tc, tmp_path).split("Output:\n", 1)[1]
-        sizes[name] = len(raw)
+        raw_result = _run(tc, tmp_path)
+        raw = raw_result.split("Output:\n", 1)[1]
+        assert len(raw.encode()) + raw.count('\n') <= filecommands.READ_TRANSPORT_STDOUT_BYTES
         rec = resultpacket.read_record(raw, 0, _rcpt(tc))
-        assert rec is not None and rec.body == data
-    assert sizes["src.py"] < filecommands.READ_INLINE_MAX                          # compressible: far under the file's size
-    assert sizes["noise.bin"] <= (filecommands.READ_INLINE_MAX * 4 // 3 + 1500)                 # incompressible: bounded by base64 + fields
+        assert rec is not None
+        if name == 'src.py':
+            assert rec.kind == denial.RAN and rec.body == data
+            assert len(raw.encode()) < filecommands.READ_INLINE_MAX
+        else:
+            assert rec.kind == denial.REFUSED and rec.body is None
+            shown, view = _represent(_history(tc, raw_result), tmp_path)
+            assert denial.read_payload(shown[1]) is None and view.read_bytes(name) is None
+            body, pages = _recover_multipart(tmp_path, {'path': name}, 'whole')
+            assert pages > 1 and body == data
+
+
+def test_incompressible_read_is_reassembled_by_the_actual_chat_handler(tmp_path, monkeypatch):
+    # The server persists session state under HOME; never reuse the operator's
+    # live registry or let repeated runs inherit an unrelated pending call.
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HOME', str(home))
+    import random
+    import threading
+    import urllib.request
+    from cria.config import Config, RoutingConfig, ServerConfig, LoggingConfig, IndicatorsConfig
+    from cria.events import EventLog
+    from cria.server import CriaServer
+    from tests.multipart.test_server_integration import Backend, shell
+
+    text = random.Random(812).randbytes(18000).hex() + '\r\n'
+    path = tmp_path / 'incompressible.txt'
+    path.write_bytes(text.encode())
+    backend = Backend(str(path))
+    config = Config(server=ServerConfig(host='127.0.0.1', port=0),
+                    logging=LoggingConfig(dir=str(tmp_path / 'logs'), console=False),
+                    indicators=IndicatorsConfig(enabled=False), routing=RoutingConfig(engagement_level=2))
+    log = EventLog(dir=config.logging.dir, console=False)
+    server = CriaServer(config, log, backend)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f'http://127.0.0.1:{server.server_address[1]}/v1/chat/completions'
+    tools = [{'type': 'function', 'function': {'name': 'exec_command', 'parameters': {
+        'type': 'object', 'properties': {'cmd': {'type': 'string'}}}}}]
+    messages = [{'role': 'user', 'content': f'<environment_context><cwd>{tmp_path}</cwd></environment_context> read file'}]
+    try:
+        page_count = 0
+        while True:
+            request = urllib.request.Request(url, data=json.dumps({'model': 'test-model', 'tools': tools, 'messages': messages}).encode(),
+                headers={'Content-Type': 'application/json', 'X-Cria-Session-Id': 'incompressible'})
+            with urllib.request.urlopen(request, timeout=10) as response:
+                message = json.load(response)['choices'][0]['message']
+            calls = message.get('tool_calls') or []
+            if not calls:
+                assert message['content'] == 'seen'
+                break
+            messages.append(message)
+            for call in calls:
+                output = shell(json.loads(call['function']['arguments'])['cmd'])
+                messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
+                page_count += 1
+                assert page_count < 20
+        assert page_count > 1 and len(backend.bodies) == 2
+        model_messages = backend.bodies[-1]['messages']
+        results = [m['content'] for m in model_messages if m.get('role') == 'tool']
+        assert results == [text]
+        assert '__CRIA_MULTIPART_PAGE__' not in json.dumps(model_messages)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+        log.close()
 
 
 def test_the_output_allowance_is_raised_only_through_a_schema_field_whose_name_carries_the_unit():
@@ -579,9 +666,9 @@ def test_the_output_allowance_is_raised_only_through_a_schema_field_whose_name_c
     declared = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}, "max_output_tokens": {"type": "number"}}}}
     comp = {"choices": [{"message": {"tool_calls": [{"id": "r", "type": "function", "function": {
         "name": "read_file", "arguments": json.dumps({"path": "a"})}}]}}]}
-    translate_outbound(comp, declared, injected={"read_file"}, workspace_root="/w", read_budget=9000)
+    translate_outbound(comp, declared, injected={"read_file"}, workspace_root="/w")
     args = json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-    assert args["max_output_tokens"] >= (filecommands.READ_INLINE_MAX * 4 // 3 + 1500)
+    assert "max_output_tokens" not in args  # no invented capacity or implicit fixed cap
     plain = _lower("read_file", {"path": "a"})
     assert set(json.loads(plain["function"]["arguments"])) == {"cmd"}                # no field invented
 
@@ -654,7 +741,7 @@ def test_a_write_that_rides_a_survey_under_a_real_pty_is_still_landed_and_survey
 def _lower_with_dict_arguments(name, args, cid="d1", root="/w", **kw):
     comp = {"choices": [{"message": {"tool_calls": [
         {"id": cid, "type": "function", "function": {"name": name, "arguments": args}}]}}]}      # arguments is a DICT here
-    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, read_budget=9000, **kw)
+    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, **kw)
     return comp["choices"][0]["message"]["tool_calls"][0]
 
 

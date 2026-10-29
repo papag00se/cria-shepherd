@@ -193,13 +193,23 @@ def test_the_a3_unread_writes_are_answered_with_the_files_and_nothing_is_written
         assert write_did_run(_cmd(again))
 
 
-def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed(view):
+def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed(view, tmp_path):
     """The once-per-path pass (84c81ced) destroyed the seed files in A3: the hold lifts only on a read."""
+    from cria.writeproxy import represent_inbound
     check = _check(view)
+    (tmp_path / "pom.xml").write_text(SEED_POM)
     for _ in range(3):
         comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-        assert not write_did_run(_cmd(comp)) and "sys.stdout.buffer.write(raw)" in _cmd(comp)
+        assert not write_did_run(_cmd(comp))
+        out = _run(_cmd(comp), tmp_path)
+        assert out.returncode == 0
+        assert (tmp_path / "pom.xml").read_text() == SEED_POM
+        tc = comp["choices"][0]["message"]["tool_calls"][0]
+        shown = represent_inbound([{"role": "assistant", "tool_calls": [tc]},
+                                   {"role": "tool", "tool_call_id": tc["id"], "content": out.stdout}],
+                                  workspace_root=str(tmp_path))[1]
+        assert denial.refused(shown) and denial.read_payload(shown) == SEED_POM
 
 
 def test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read(view, tmp_path):

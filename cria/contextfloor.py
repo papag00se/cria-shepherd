@@ -54,7 +54,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from . import bodykeys
+from . import bodykeys, imageprotocol
 from . import denial, editrecovery, prompts, selfcompact, toolargs
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
@@ -105,6 +105,34 @@ _WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 _PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK,
                     "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:facts⟧", "⟦ctx:continuation⟧",
                     "⟦ctx:extracted⟧")
+
+
+def _protected_pair_indices(messages, protected_call_ids=()):
+    """Consume IDs validated by the producer; never infer protection from text."""
+    if (not isinstance(protected_call_ids, tuple) or
+            any(not isinstance(cid, str) or not cid for cid in protected_call_ids) or
+            len(set(protected_call_ids)) != len(protected_call_ids)):
+        raise ValueError("protected_call_ids must contain unique nonempty call IDs")
+    keep = set()
+    for cid in protected_call_ids:
+        calls = [i for i, m in enumerate(messages) if m.get('role') == 'assistant'
+                 for call in m.get('tool_calls') or [] if call.get('id') == cid]
+        results = [i for i, m in enumerate(messages)
+                   if m.get('role') == 'tool' and m.get('tool_call_id') == cid]
+        if len(calls) != 1 or len(results) != 1 or calls[0] >= results[0]:
+            raise ValueError("protected current result must have one earlier paired call")
+        keep.update((calls[0], results[0]))
+    return keep
+
+
+def _preserved_indices(messages, protected_call_ids=()):
+    keep = _protected_pair_indices(messages, protected_call_ids)
+    keep.update(i for i, m in enumerate(messages) if imageprotocol.has_images(m))
+    # A retained image result must keep the actual call which produced it.
+    ids = {messages[i].get('tool_call_id') for i in keep if messages[i].get('role') == 'tool'}
+    keep.update(i for i, m in enumerate(messages)
+                if any(call.get('id') in ids for call in m.get('tool_calls') or []))
+    return keep
 
 
 def _has_protect_marker(m: dict) -> bool:
@@ -177,6 +205,7 @@ class FloorReport:
     orphans_removed: int = 0
     restored_reduced: int = 0   # lever 2c: the restored file-text block swapped for a labelled stand-in
     caller_reduced: int = 0     # lever 2b: harness-instruction spans swapped for a labelled stand-in
+    image_tokens_unknown: bool = False  # text fitting cannot measure vision embeddings
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
     wire_overhead: int = 0     # measured estimate-space growth from subsequent wire transforms
     fields: dict = field(default_factory=dict)
@@ -284,7 +313,7 @@ def _is_restored_text(m: dict) -> bool:
     return isinstance(m, dict) and bool(m.get(_RESTORED_HINT))
 
 
-def _reduce_restored_text(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
+def _reduce_restored_text(messages: list[dict], msg_budget: int, *, protected_call_ids=()) -> tuple[list[dict], int]:
     """Swap the restored-file-text block for a LABELLED stand-in that names the files, when the
     conversation is over budget — before any tool output is shortened or any turn is dropped. The block is
     derived from the workspace and re-derivable by one read, so it is the cheapest evidence to shed; the
@@ -293,8 +322,9 @@ def _reduce_restored_text(messages: list[dict], msg_budget: int) -> tuple[list[d
     if _msgs_tokens(messages) <= msg_budget:
         return messages, 0
     out, n = [], 0
-    for m in messages:
-        if _is_restored_text(m):
+    preserved = _preserved_indices(messages, protected_call_ids)
+    for i, m in enumerate(messages):
+        if _is_restored_text(m) and i not in preserved:
             hint = m.get(_RESTORED_HINT) or {}
             offered = sorted(hint.get("offered") or {})
             uncarried = sorted(set(hint.get("named") or ()) - set(offered))
@@ -408,7 +438,8 @@ def _sniff_content_type(s: str) -> str | None:
 
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
         safety: float = SAFETY_FACTOR, pinned_task: str = "",
-        headroom: bool = False, wire_overhead: int = 0) -> tuple[list[dict], object, FloorReport]:
+        headroom: bool = False, wire_overhead: int = 0,
+        protected_call_ids: tuple[str, ...] = ()) -> tuple[list[dict], object, FloorReport]:
     """Return ``(messages, tools, report)`` reshaped to fit ``window`` (accounting for the
     ``tools`` schema and a generation ``reserve``). Pure — does not mutate the inputs;
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
@@ -423,10 +454,13 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     """
     rep = FloorReport(window=window, reserve=reserve, reserve_requested=reserve,
                       wire_overhead=max(0, wire_overhead))
+    rep.image_tokens_unknown = any(imageprotocol.has_images(m) for m in messages or [] if isinstance(m, dict))
     if not isinstance(messages, list) or not messages or window <= 0:
         rep.tool_tokens = rep.tool_tokens_before = est_tokens(json.dumps(tools)) if tools else 0
         return messages, tools, rep
 
+    protected = {"protected_call_ids": protected_call_ids} if protected_call_ids else {}
+    _protected_pair_indices(messages, protected_call_ids)
     safety = max(1.0, safety)
     # A reserve at/above the window zeroes (or negates) the prompt budget → the whole conversation
     # gets trimmed to the floor and STILL reports over budget. Bound it so at least MIN_MSG_BUDGET of
@@ -435,7 +469,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     # Output room is a reservation, not permission to destroy the callable menu or
     # the initial task/environment. Size its ceiling from the irreducible live input,
     # not a fixed 512-token allowance (a 16K reserve on a 16K window deleted 8 tools).
-    core = _input_core(messages, pinned_task)
+    core = _input_core(messages, pinned_task, **protected)
     minimum_input = math.ceil((_msgs_tokens(core) + est_tokens(json.dumps(tools or []))) * safety)
     # When the live input itself exceeds the window, it needs the ordinary floor
     # reduction. Reserving zero cannot save that input and would suppress compaction.
@@ -468,20 +502,20 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
         work, rep.caller_reduced = _reduce_caller_spans(work)
         # --- Lever 2c: cria's own restored file text, derived and re-derivable, before any evidence.
-        work, rep.restored_reduced = _reduce_restored_text(work, msg_budget)
+        work, rep.restored_reduced = _reduce_restored_text(work, msg_budget, **protected)
         # --- Lever 3: reduce the bulkiest tool OUTPUTS before deleting any turn. ---
-        work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget)
+        work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget, **protected)
         hard_budget = msg_budget
         if headroom and _msgs_tokens(work) > hard_budget:
             # Headroom never initiates reduction on a fitting request and never
             # expands the set of content eligible for removal. The live core wins.
-            core_tokens = _msgs_tokens(_input_core(work, pinned_task))
+            core_tokens = _msgs_tokens(_input_core(work, pinned_task, **protected))
             msg_budget = max(int(hard_budget * (1 - HISTORY_HEADROOM)),
                              min(core_tokens, hard_budget), MIN_MSG_BUDGET)
         # --- Lever 4: drop oldest droppable turns until it fits. ---
         if _msgs_tokens(work) > msg_budget:
             work, rep.turns_dropped = _drop_oldest(work, msg_budget, pinned_task,
-                                                      sacrifice_budget=hard_budget)
+                                                      sacrifice_budget=hard_budget, **protected)
         # --- Integrity: never leave a tool result orphaned from its assistant call. ---
         work, rep.orphans_removed = _strip_orphan_tools(work)
 
@@ -498,7 +532,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # recent tail — then re-strip orphans.
         hard_budget = max(target_est - tool_budget, MIN_MSG_BUDGET)
         work, rep.protected_dropped = _drop_protected_overflow(
-            work, msg_budget, sacrifice_budget=hard_budget)
+            work, msg_budget, sacrifice_budget=hard_budget, **protected)
         work, more_orphans = _strip_orphan_tools(work)
         rep.orphans_removed += more_orphans
         rep.msg_tokens_after = _msgs_tokens(work)
@@ -658,7 +692,7 @@ def ensure_tool_integrity(messages: list[dict]) -> tuple[list[dict], int]:
     return final, n
 
 
-def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
+def _reduce_tool_outputs(messages: list[dict], msg_budget: int, *, protected_call_ids=()) -> tuple[list[dict], int]:
     """Shrink bulky ``tool`` outputs via content_reduce until the transcript fits or nothing
     bulky remains. Only touches role==tool messages. OLDEST-first: the tool result the model is
     acting on THIS turn is the highest-indexed tool message — reducing it truncates the very
@@ -668,7 +702,9 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
     if total <= msg_budget:
         return messages, 0
     # (index, est size), tool outputs only, in conversation order → oldest reduced first.
-    sized = [(i, est_tokens(_msg_text(m))) for i, m in enumerate(messages) if m.get("role") == "tool"]
+    preserved = _preserved_indices(messages, protected_call_ids)
+    sized = [(i, est_tokens(_msg_text(m))) for i, m in enumerate(messages)
+             if m.get("role") == "tool" and i not in preserved]
     out = list(messages)
     reduced = 0
     for i, sz in sized:
@@ -716,7 +752,7 @@ def _live_tail(messages: list[dict]) -> set[int]:
     return set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-OVERFLOW_KEEP_TAIL:])
 
 
-def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
+def _input_core(messages: list[dict], pinned_task: str, *, protected_call_ids=()) -> list[dict]:
     """Input that must win over output room: caller instructions and live tail.
 
     A pinned task does not revoke other received user constraints or amendments.
@@ -732,6 +768,7 @@ def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
     # restored file text here shrank the reply reserve by the block's size (reviewed on phi4 post-compaction
     # bodies: 1.7-2.3K tokens of room fell to 167-759).
     keep -= {i for i, m in enumerate(messages) if _is_restored_text(m) or _historical_annotation(m)}
+    keep |= _preserved_indices(messages, protected_call_ids)
     ids = {messages[i].get("tool_call_id") for i in keep if messages[i].get("role") == "tool"}
     keep.update(i for i, m in enumerate(messages)
                 if any(tc.get("id") in ids for tc in m.get("tool_calls") or []))
@@ -784,7 +821,7 @@ def _live_obligations(messages: list[dict]) -> tuple[int, ...]:
     return tuple(live)
 
 
-def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
+def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_call_ids=()) -> list[bool]:
     """True where a message must NOT be dropped: every system message, the active turn — the last
     user message through the end of the list — and all received caller instructions.
 
@@ -809,7 +846,8 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     last_user = _last_user(messages)
     roots = {i for i, message in enumerate(messages) if _request_user(message)}
     active = _active_start(messages, last_user) if last_user >= 0 else -1
-    prot = [i in roots for i in range(n)]
+    preserved = _preserved_indices(messages, protected_call_ids)
+    prot = [i in roots or i in preserved for i in range(n)]
     for i, m in enumerate(messages):
         if _historical_annotation(m):
             continue  # relocation cannot promote historical wording into an active request/anchor
@@ -847,7 +885,8 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
 
 
 def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
-                             sacrifice_budget: int | None = None) -> tuple[list[dict], int]:
+                             sacrifice_budget: int | None = None,
+                             protected_call_ids=()) -> tuple[list[dict], int]:
     """Last resort when the PROTECTED span alone is over budget: drop its oldest turns,
     never touching (a) system/developer messages, (b) the last user message — the request
     being answered, (c) the trailing OVERFLOW_KEEP_TAIL messages — the active work. Drops
@@ -866,9 +905,10 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
     while _msgs_tokens(work + ([note] if note else [])) > msg_budget:
         last_user = _last_user(work)
         tail = _live_tail(work)
+        preserved = _preserved_indices(work, protected_call_ids)
         def _droppable(i, m):
-            return ((_historical_annotation(m) or (i > last_user and i not in tail))
-                    and m.get("role") not in ("system", "developer"))
+            return (i not in preserved and ((_historical_annotation(m) or (i > last_user and i not in tail))
+                    and m.get("role") not in ("system", "developer")))
         # Prefer an unmarked victim; fall back to a protect-marked one only if nothing else is left.
         victim = next((i for i, m in enumerate(work)
                        if _droppable(i, m) and not _has_protect_marker(m)), None)
@@ -916,7 +956,8 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
 
 
 def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "", *,
-                 sacrifice_budget: int | None = None) -> tuple[list[dict], int]:
+                 sacrifice_budget: int | None = None,
+                             protected_call_ids=()) -> tuple[list[dict], int]:
     """Drop oldest droppable messages (not system, not the active turn) until the transcript fits
     the budget or nothing droppable remains — but SYNTHESIZE their durable state (the files they
     modified) into a protected note in their place, so a long overflowing session doesn't lose track
@@ -924,7 +965,7 @@ def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "", *
 
     The note is part of the result, so it is part of the arithmetic: stop when the survivors PLUS the
     complete note fit, not when the survivors or a digest allowance alone do."""
-    prot = _protected_mask(messages, pinned_task)
+    prot = _protected_mask(messages, pinned_task, protected_call_ids=protected_call_ids)
     live = _live_obligations(messages)
     keep = [True] * len(messages)
     dropped = 0

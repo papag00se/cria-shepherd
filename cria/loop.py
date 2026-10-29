@@ -49,7 +49,9 @@ from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive, filecommands
+from .imageworkflow import current as _image_current
+
+from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
@@ -2983,17 +2985,13 @@ class Loop:
                                                delivery_receipts=delivery_receipts)
             if generation.incomplete(completion):
                 raise _IncompleteCoderTurn(completion)
-            # Call-local: auxiliary calls must not substitute another request's
-            # reserve when this retained coder reply is lowered.
-            request = getattr(rlog, "read_budget_request", None)
-            if request is None or request[0] is not completion:
-                rlog.read_budget_request = (completion, contextfloor.reserve_for(framed))
             return completion
         except UpstreamProtocolError as error:
             if delivery_receipts is not None:
                 delivery_receipts.clear()
             error.coder_turn = True
             raise
+
     def _coder_turn_impl(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog,
                          delivery_receipts=None) -> dict:
         """ONE guarded coder call — the shared core of BOTH driver halves (``_work`` multi-item and
@@ -3025,7 +3023,23 @@ class Loop:
         # refusal or answer that arrives with this history is settled now — an aborted reply forwards nothing, so
         # nothing after it would ever observe it. Idempotent; the forwarded-reply record repeats it harmlessly.
         _observe_history(sess, body.get('messages', []))
-        replies = _CoderReplyReceipts(self._ctx.coder_chat, sess)
+        source_chat = self._ctx.coder_chat
+        image_context = _image_current.get()
+        if image_context is not None:
+            selected_provider = getattr(source_chat, 'upstream', None)
+            selected_role = self._ctx.coder_role
+            def image_chat(prepared, log):
+                if not prepared.get('model'):
+                    discover = getattr(selected_provider, 'loaded_model', None)
+                    selected_model = discover(log) if callable(discover) else None
+                    if selected_model:
+                        prepared = {**prepared, 'model': selected_model}
+                return image_context.workflow.chat(selected_provider, selected_role, prepared, image_context, log, call=source_chat)
+            # Request-local wrapper: never mutate the shared LoopContext callable.
+            selected_chat = image_chat
+        else:
+            selected_chat = source_chat
+        replies = _CoderReplyReceipts(selected_chat, sess)
         coder = massage.apply(_parse_completion(replies.chat(framed, rlog)), framed.get("tools"), rlog)
         initial_receipt = dict(replies.latest)
         initial_remediation = replies.latest_remediation
@@ -3088,10 +3102,8 @@ class Loop:
             sess.pasted_consumed = (coder, offered_paste, self._pasted_selection(sess))
         if delivery_receipts is not None:
             delivery_receipts.append((coder, replies.remediation_receipt(coder)))
-        reserve = replies.reserve_receipt(coder)
-        if reserve is not None:
-            rlog.read_budget_request = (coder, reserve)
         return coder
+
     # -------------------------------------------------- a call cria did not run must be SAID
 
     def _refused_call_text(self, sess: PlanSession, body: dict, refused: dict) -> str:
@@ -5202,6 +5214,12 @@ class Loop:
         """One preparation order; driver scheduling never chooses pipeline placement."""
         runtime = assistruntime.current()
         raw = body.get("messages") or []
+        from .upstream import protected_reads, _read_positions
+        reads = protected_reads(body)
+        read_tail = []
+        if reads:
+            cut = min(_read_positions(raw, reads))
+            read_tail, raw = raw[cut:], raw[:cut]
         # Historical observations enter before every reducer, never as live notes.
         # They make no assertion about current correctness or uncompleted work.
         prior_guidance = getattr(sess, 'guidance_history', ())
@@ -5306,9 +5324,40 @@ class Loop:
         # cleaner/reducer must implement. Rewrites may erase private work, but
         # cannot promote a later user turn into the original root partition.
         framed["messages"] = current.render(framed["messages"])
+        if read_tail:
+            framed["messages"] = framed["messages"] + read_tail
+            _read_positions(framed["messages"], reads)
+            framed[bodykeys.READ_FIT_CALLBACKS] = self._protected_read_callbacks(
+                sess, rlog, root_task, index=index)
         if self._ctx.coder_role is not None:
             self._ctx.coder_role.apply(framed, rlog=rlog)
         return framed, reoriented
+
+    def _protected_read_callbacks(self, sess, rlog, root_task, *, index=None, guidance=None):
+        from .upstream import ReadFitCallbacks, _read_positions, ReadFitUnknown
+        def compact(request, reads):
+            messages = request.get('messages') or []
+            cut = min(_read_positions(messages, reads))
+            tail = messages[cut:]
+            head, history = [], []
+            for message in messages[:cut]:
+                if message.get('role') in ('system', 'developer') or contextfloor._request_user(message):
+                    head.append(message)
+                else:
+                    history.append(message)
+            if not history:
+                return request  # all remaining input is irreducible live authority/result
+            if not self._ctx.self_compact:
+                return None
+            compacted = self._self_compact(history, sess, index, rlog, force=True,
+                pinned_task=root_task, protected_prefix=True,
+                frame_tokens=contextfloor.est_total(head + tail, request.get('tools')))
+            if compacted == history:
+                return None  # a declined/unavailable writer is not proof of irreducibility
+            replacement = {**request, 'messages': head + compacted + tail}
+            _read_positions(replacement['messages'], reads)
+            return replacement
+        return ReadFitCallbacks(compact, guidance)
 
     def _floor_would_drop(self, msgs: list[dict], rlog, frame_tokens: int = 0) -> bool:
         """Will the coder request built from ``msgs`` exceed its window, so the floor must DROP
@@ -5340,23 +5389,7 @@ class Loop:
         })
         loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
         return window, reserve, tokenratio.observed(loaded or "")
-    def read_budget_bytes(self, completion: dict, rlog) -> int | None:
-        """Scaled estimator allowance the coder's reads in ``completion`` may bring back: `filecommands.READ_ROOM_SHARE`
-        of the context left once the window's reply reserve, the coder request's MEASURED prompt (the completion's
-        own ``usage.prompt_tokens``) and this reply are taken. The read's result arrives in the next request,
-        which is this prompt plus this reply plus the result. None — no read allowance is invented — when the
-        window is unknown/guessed or the completion carries no measured prompt size (#11b)."""
-        sizing = self._coder_sizing(rlog)
-        usage = (completion or {}).get("usage") or {}
-        prompt = usage.get("prompt_tokens")
-        if sizing is None or not isinstance(prompt, int) or isinstance(prompt, bool) or prompt <= 0:
-            return None
-        window, reserve, density = sizing
-        request = getattr(rlog, "read_budget_request", None)
-        if request is not None and request[0] is completion:
-            reserve = request[1]
-        reply = modelview.reply_tokens(completion) * density
-        return filecommands.read_budget(window, reserve, prompt, reply, density)
+
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
         copy of the whole compaction and its own summarizer; both are gone. ``root_task`` is pinned
@@ -9014,7 +9047,10 @@ def _refused_line_counts_ordered(messages: list[dict]):
     paired = set(denial.paired_results(messages))   # canonical call/result pairing: ambiguous results attribute nothing
     tpl = prompts.load("large_read_steer")
     mid, _, rest = tpl.partition("{{PATH}}")[2].partition("{{LINES}}")
-    pat = re.compile(re.escape(mid) + r"(\d+)" + re.escape(rest.split("{{")[0]))
+    # The first sentence's shared size phrase also recognizes refusals retained from before
+    # the follow-up wording changed; provenance still comes from the paired refusal.
+    size_phrase = rest.split("{{")[0].partition(". ")[0]
+    pat = re.compile(re.escape(mid) + r"(\d+)" + re.escape(size_phrase))
     calls: dict = {}
     for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
@@ -10800,7 +10836,6 @@ class _CoderReplyReceipts:
         self._session = session
         self.latest = {}
         self.latest_remediation = ""
-        self.latest_reserve = None
         self._replies = []
 
     def chat(self, body, rlog):
@@ -10809,7 +10844,6 @@ class _CoderReplyReceipts:
         rlog.restored_on_wire = {}
         subject = body.get(bodykeys.COMPLETION_REMEDIATION, "")
         rlog.guidance_on_wire = []
-        self.latest_reserve = contextfloor.reserve_for(body)
         raw = self._chat(body, rlog)
         if self._session is not None:
             for note in getattr(rlog, 'guidance_on_wire', ()):
@@ -10823,20 +10857,16 @@ class _CoderReplyReceipts:
 
     def record(self, completion, receipt=None, *, remediation=None):
         self._replies.append((completion, dict(self.latest if receipt is None else receipt),
-                              self.latest_remediation if remediation is None else remediation,
-                              self.latest_reserve))
+                              self.latest_remediation if remediation is None else remediation))
 
     def receipt(self, completion):
-        return next((dict(receipt) for reply, receipt, _, _ in reversed(self._replies)
+        return next((dict(receipt) for reply, receipt, _ in reversed(self._replies)
                      if reply is completion), {})
 
-    def reserve_receipt(self, completion):
-        return next((reserve for reply, _, _, reserve in reversed(self._replies)
-                     if reply is completion), None)
-
     def remediation_receipt(self, completion):
-        return next((subject for reply, _, subject, _ in reversed(self._replies)
+        return next((subject for reply, _, subject in reversed(self._replies)
                      if reply is completion), "")
+
 
 def _generation_cut_services():
     from . import generationguards

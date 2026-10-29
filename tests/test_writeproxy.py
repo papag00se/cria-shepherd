@@ -91,7 +91,7 @@ class TranslateWriteTests(unittest.TestCase):
     def test_write_lowers_to_one_atomic_command_no_chunking(self):
         big = "x" * 500_000  # far over any old chunk size — must still be ONE call (heredoc stdin)
         comp = _call("write_file", {"path": "a/b.py", "content": big})
-        translate_outbound(comp, _ARR_SHELL, injected={"write_file"})
+        _translate_with_read_allowance(comp, _ARR_SHELL, injected={"write_file"})
         calls = comp["choices"][0]["message"]["tool_calls"]
         self.assertEqual(len(calls), 1)            # no chunking
         cmd = _lowered_cmd(comp)
@@ -104,7 +104,7 @@ class TranslateWriteTests(unittest.TestCase):
     def test_write_round_trip_is_byte_exact_and_stateless(self):
         content = "line1\n\ttabbed 'quotes' \"dq\" $VAR `bt`\nend\n"
         comp = _call("write_file", {"path": "x.py", "content": content})
-        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"write_file"})
         # NO store handed back — re-presentation reads the sentinel from the command itself
         out = represent_inbound(_history_from(comp))
         tc = out[0]["tool_calls"][0]["function"]
@@ -113,7 +113,7 @@ class TranslateWriteTests(unittest.TestCase):
 
     def test_write_result_reframed_only_on_the_success_token(self):
         comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="c9")
-        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"write_file"})
         # SUCCESS: the program's own typed `landed` record leads the result → clean confirmation (token hidden)
         from tests.resultshape import landed
         ok = _history_from(comp) + [{"role": "tool", "tool_call_id": "c9",
@@ -144,7 +144,7 @@ class WriteWithNoContentTests(unittest.TestCase):
 
     def _cmd(self, args):
         comp = _call("write_file", args)
-        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"write_file"})
         return _lowered_cmd(comp)
 
     def _execute(self, command):
@@ -195,7 +195,7 @@ class WriteWithNoContentTests(unittest.TestCase):
                 events.append((kind, fields))
 
         comp = _call("write_file", {"path": "keep.py"})
-        translate_outbound(comp, _CMD_SHELL, Rec(), injected={"write_file"})
+        _translate_with_read_allowance(comp, _CMD_SHELL, Rec(), injected={"write_file"})
         self.assertIn("writeproxy.write_missing_arg", [k for k, _f in events])
 
 
@@ -206,7 +206,7 @@ class MalformedFusedCallTests(unittest.TestCase):
 
     def test_fused_call_debris_is_refused_with_guidance(self):
         comp = _call("shell", {"command": ["bash", "-lc", 'pytest"]}<tool_call|><|tool_call>call:write_file{content:']})
-        translate_outbound(comp, _CMD_SHELL, injected=set())
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected=set())
         cmd = _lowered_cmd(comp)
         self.assertIn("malformed", cmd.lower())
         self.assertIn("ONE clean tool call", cmd)
@@ -214,7 +214,7 @@ class MalformedFusedCallTests(unittest.TestCase):
 
     def test_clean_shell_call_is_untouched(self):
         comp = _call("shell", {"command": ["bash", "-lc", "pytest test_lambda.py"]})
-        translate_outbound(comp, _CMD_SHELL, injected=set())
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected=set())
         cmd = _lowered_cmd(comp)
         self.assertIn("pytest test_lambda.py", cmd)
         self.assertNotIn("malformed", cmd.lower())
@@ -223,7 +223,7 @@ class MalformedFusedCallTests(unittest.TestCase):
 class TranslateEditReadTests(unittest.TestCase):
     def test_edit_file_lowers_to_python_replace_and_round_trips(self):
         comp = _call("edit_file", {"path": "m.py", "old_string": 'x, "id"}', "new_string": 'x, "id": id}'})
-        translate_outbound(comp, _CMD_SHELL, injected={"edit_file"})
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"edit_file"})
         cmd = _lowered_cmd(comp)
         self.assertIn("python3", cmd)
         self.assertIn("editfail", cmd)   # fail-closed on a miss → a structured ⟦ctx:editfail⟧ fact-report
@@ -234,10 +234,21 @@ class TranslateEditReadTests(unittest.TestCase):
     def test_read_file_range_and_start_only(self):
         both = _call("read_file", {"path": "f.py", "start_line": 10, "end_line": 20})
         _translate_with_read_allowance(both, _CMD_SHELL, injected={"read_file"})
-        self.assertIn("f.py 10 20 9000", _lowered_cmd(both))
+        with tempfile.TemporaryDirectory() as directory:
+            pathlib.Path(directory, "f.py").write_text("".join(f"line {i}\n" for i in range(1, 26)))
+            result = subprocess.run(["bash", "-c", _lowered_cmd(both)], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            from cria import resultpacket
+            rec = resultpacket.read_record(result.stdout, 0, writeproxy.receipt_of(_lowered_cmd(both)))
+            self.assertEqual(rec.body.decode(), "".join(f"{i}: line {i}\n" for i in range(10, 21)))
         start = _call("read_file", {"path": "f.py", "start_line": 10})   # was silently ignored before
         _translate_with_read_allowance(start, _CMD_SHELL, injected={"read_file"})
-        self.assertIn("f.py 10 0 9000", _lowered_cmd(start))
+        with tempfile.TemporaryDirectory() as directory:
+            pathlib.Path(directory, "f.py").write_text("".join(f"line {i}\n" for i in range(1, 13)))
+            result = subprocess.run(["bash", "-c", _lowered_cmd(start)], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            rec = resultpacket.read_record(result.stdout, 0, writeproxy.receipt_of(_lowered_cmd(start)))
+            self.assertEqual(rec.body.decode(), "".join(f"{i}: line {i}\n" for i in range(10, 13)))
         whole = _call("read_file", {"path": "f.py"})
         _translate_with_read_allowance(whole, _CMD_SHELL, injected={"read_file"})
         self.assertIn("__CRIA_RD_PY__", _lowered_cmd(whole))
@@ -265,14 +276,14 @@ class WebTests(unittest.TestCase):
         webfetch.fetch = lambda u, ua=None: webfetch.FetchResult(200, u, "application/json", body, False)
         try:
             plain = _call("web_fetch", {"url": "https://x/openapi.json"})
-            translate_outbound(plain, _CMD_SHELL, injected={"web_fetch"})
+            _translate_with_read_allowance(plain, _CMD_SHELL, injected={"web_fetch"})
             cmd = _lowered_cmd(plain)
             self.assertIn("printf", cmd)               # in-process fetch, not a raw curl
             self.assertNotIn("curl -sL", cmd)
             self.assertIn("HTTP 200", cmd)             # the reduced result is embedded verbatim
             self.assertIn("openapi", cmd)
             find = _call("web_fetch", {"url": "https://x/openapi.json", "find": "holders"})
-            translate_outbound(find, _CMD_SHELL, injected={"web_fetch"})
+            _translate_with_read_allowance(find, _CMD_SHELL, injected={"web_fetch"})
             self.assertIn("list holders", _lowered_cmd(find))  # structural find, served from cache
         finally:
             webfetch.fetch = orig
@@ -292,7 +303,7 @@ class WebTests(unittest.TestCase):
         webfetch.fetch = lambda u, ua=None: webfetch.FetchResult(200, u, "application/json", body, False)
         try:
             c = _call("web_fetch", {"url": "https://x/openapi.json", "find": "resolved", "raw": True})
-            translate_outbound(c, _CMD_SHELL, injected={"web_fetch"})
+            _translate_with_read_allowance(c, _CMD_SHELL, injected={"web_fetch"})
             cmd = _lowered_cmd(c)
             self.assertIn("resolved_addresses", cmd)          # the find RAN...
             self.assertNotIn("too large for the context", cmd)  # ...instead of the whole-doc spill
@@ -311,7 +322,7 @@ class WebTests(unittest.TestCase):
         webfetch.fetch = lambda u, ua=None: webfetch.FetchResult(200, u, "application/json", body, False)
         try:
             comp = _call("web_fetch", {"url": "https://x/openapi.json"})
-            translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
+            _translate_with_read_allowance(comp, _CMD_SHELL, injected={"web_fetch"})
             cmd = _lowered_cmd(comp)
             self.assertIn("mkdir -p", cmd)
             # THE DOC TRAVELS ON A HEREDOC. It must not be an argv argument — a big spec's base64
@@ -367,24 +378,23 @@ class WebTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(open(os.path.join(d, "tmp/reference/spec.txt")).read(), body)
 
-    def test_whole_read_of_a_big_file_is_size_guarded(self):
-        # A whole read_file lowers to a size-check: cat a small file, but hand a grep/range pointer for a
-        # big one (a raw cat is truncated head+tail by the harness). A ranged read is a plain sed.
+    def test_whole_and_ranged_reads_return_complete_content(self):
         from cria.writeproxy import _read_command, READ_INLINE_MAX
-        whole = _read_command({"path": "big.json"})
-        self.assertIn("est_tokens(", whole)          # size-checked
-        self.assertIn("sys.stdout.buffer.write(raw)", whole)   # small-file path still cats
-        self.assertIn("grep", whole)           # big-file path steers to grep
-        ranged = _read_command({"path": "f.py", "start_line": 2, "end_line": 9})
-        self.assertIn("f.py 2 9 9000", ranged)
-        self.assertIn("past the end of the file", ranged)   # a past-EOF read isn't a silent empty
-        self.assertIn("len(lines)", ranged)              # accurate line count (awk NR, not wc -l)
-        self.assertIn("larger than can be returned", ranged)  # an over-cap RANGE steers, never truncates
-        self.assertIn(str(READ_INLINE_MAX), ranged)
+        with tempfile.TemporaryDirectory() as directory:
+            body = "x" * (READ_INLINE_MAX + 4) + "\nlast\n"
+            pathlib.Path(directory, "big.json").write_text(body)
+            whole = subprocess.run(["bash", "-c", _read_command({"path": "big.json"})], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(whole.returncode, 0)
+            self.assertEqual(whole.stdout, body)
+            ranged = subprocess.run(["bash", "-c", _read_command({"path": "big.json", "start_line": 2, "end_line": 9})], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(ranged.returncode, 0)
+            self.assertEqual(ranged.stdout, "2: last\n")
+            past = subprocess.run(["bash", "-c", _read_command({"path": "big.json", "start_line": 3})], cwd=directory, capture_output=True, text=True)
+            self.assertIn("past the end of the file", past.stdout)
 
     def test_web_search_spills_results_to_read_only(self):
         comp = _call("web_search", {"query": "ada handle resolve endpoint"})
-        translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="k")
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"web_search"}, brave_key="k")
         cmd = _lowered_cmd(comp)
         self.assertIn("curl -sL", cmd)                    # still the Brave curl
         self.assertIn("./tmp/reference/search-", cmd)     # saved to the read-only spill dir
@@ -399,16 +409,16 @@ class WebTests(unittest.TestCase):
         self.assertIn("|| printf", cmd)
         self.assertNotIn("Traceback", cmd)
 
-    def test_spill_dir_is_read_only_no_edit_or_whole_read(self):
-        # A spilled reference doc must not be edited (it tried identical no-op edits, poisoning the
-        # reasoner) and a whole read is steered to grep (a raw cat of a big file gets truncated).
+    def test_spill_dir_is_read_only_but_allows_reads(self):
+        # A spilled reference doc must not be edited (identical no-op edits poisoned the
+        # reasoner); both whole and ranged reads remain available.
         p = "./tmp/reference/api.handle.me_openapi.json"
         edit = _call("edit_file", {"path": p, "old_string": "a", "new_string": "b"})
         _translate_with_read_allowance(edit, _CMD_SHELL, injected={"edit_file"})
         self.assertIn("READ-ONLY reference", _lowered_cmd(edit))
         wholeread = _call("read_file", {"path": p})
         _translate_with_read_allowance(wholeread, _CMD_SHELL, injected={"read_file"})
-        self.assertIn("grep", _lowered_cmd(wholeread))
+        self.assertIn("__CRIA_RD_PY__", _lowered_cmd(wholeread))
         # a RANGED read is legitimate → normal sed handler, not the steer
         ranged = _call("read_file", {"path": p, "start_line": 1, "end_line": 40})
         _translate_with_read_allowance(ranged, _CMD_SHELL, injected={"read_file"})
@@ -418,13 +428,11 @@ class WebTests(unittest.TestCase):
         _translate_with_read_allowance(normal, _CMD_SHELL, injected={"edit_file"})
         self.assertNotIn("READ-ONLY reference", _lowered_cmd(normal))
 
-    def test_whole_read_of_a_spilled_doc_is_steered_WITH_the_documents_outline(self):
+    def test_whole_read_of_a_spilled_doc_returns_the_document(self):
         # The SIBLING of the web_fetch spill refusal, and the other half of the closed loop that held
         # ada-handles_fabliq_codex_pon_1785721353 on step 1 for 267 calls: the re-fetch says "read the
         # file", the whole read of that file says "grep it for what you need", and neither ever names
-        # what is IN it. Measured across the 123 captured sessions: 1,931 coder calls carried this
-        # steer, 500 of them (26%) with no outline anywhere in the prompt. cria holds the doc parsed,
-        # so the steer says what to grep FOR.
+        # what is IN it. The size refusal is gone: the complete document itself must now be returned.
         import json as _json
         from cria import webfetch as wf
         url = "https://api.handle.me/swagger/swagger.yml"
@@ -436,16 +444,16 @@ class WebTests(unittest.TestCase):
             whole = _call("read_file", {"path": wf._spill_name(url)})
             _translate_with_read_allowance(whole, _CMD_SHELL, injected={"read_file"})
             cmd = _lowered_cmd(whole)
-            self.assertIn("API endpoints (2)", cmd)
-            self.assertIn("/holders/{address}", cmd)
-            self.assertNotIn("<keyword>", cmd)      # a real route list replaces the placeholder
-            self.assertNotIn("{{", cmd)             # every token filled — no raw placeholder shipped
-            # an UNCACHED spill file invents nothing — the steer still stands on its own (rule 5b)
-            other = _call("read_file", {"path": "./tmp/reference/some-other-doc.txt"})
-            _translate_with_read_allowance(other, _CMD_SHELL, injected={"read_file"})
-            ocmd = _lowered_cmd(other)
-            self.assertNotIn("API endpoints", ocmd)
-            self.assertIn("grep", ocmd)
+            with tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory, wf._spill_name(url))
+                path.parent.mkdir(parents=True)
+                path.write_text(body)
+                result = subprocess.run(["bash", "-c", cmd], cwd=directory, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0)
+                from cria import resultpacket
+                rec = resultpacket.read_record(result.stdout, 0, writeproxy.receipt_of(cmd))
+                self.assertEqual(rec.body.decode(), body)
+                self.assertIn("/holders/{address}", rec.body.decode())
         finally:
             wf.clear_cache()
 
@@ -456,21 +464,63 @@ class WebTests(unittest.TestCase):
             comp = _call(shell_name, {"cmd": "ls"})
             # inject tool-call sentinel debris into the raw arguments (a fused/corrupt call)
             comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = '{"cmd":"ls"}<|tool_call_start|>'
-            translate_outbound(comp, {"name": shell_name, "schema": {"properties": {"cmd": {}}}}, injected=set())
+            _translate_with_read_allowance(comp, {"name": shell_name, "schema": {"properties": {"cmd": {}}}}, injected=set())
             self.assertIn("ONE clean", _lowered_cmd(comp), shell_name)   # the malformed_call_refusal fired
 
     def test_list_dir_is_size_guarded(self):
         # A huge directory (node_modules, a data dir) would be silently truncated by the harness
-        # output cap. It used to be capped-and-disclosed; since the 2026-08-12 ruling it is REFUSED
-        # — a clipped listing is still a partial view the model reasons over as the directory, and
-        # naming the size of a clip does not make it actionable. No elision on any read path.
-        from cria.writeproxy import _list_command, READ_INLINE_MAX
-        cmd = _list_command({"path": "somedir"})
-        self.assertIn("ls -la", cmd)
-        self.assertIn("too many to list", cmd)
-        self.assertIn(str(READ_INLINE_MAX), cmd)
-        self.assertNotIn("head -c", cmd)          # nothing is clipped
-        self.assertNotIn("exit 1", cmd)           # and nothing claims the directory is missing
+        # output cap. The 2026-08-12 ruling refused clipped listings because a partial view is
+        # mistaken for the whole directory. The current owner instead saves the full result:
+        # no entries may appear as an inline partial listing, and recovery must lose no bytes.
+        import re
+        from cria import filecommands, resultpacket
+        receipt = 'c' * 16
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            listed = root / 'somedir'
+            listed.mkdir()
+            names = [f'entry-{i:03}-' + 'x' * 190 for i in range(65)]
+            for name in names:
+                (listed / name).touch()
+            env = dict(os.environ, LC_ALL='C')
+            listing = subprocess.run(['ls', '-la', 'somedir'], cwd=root, env=env,
+                                     capture_output=True, check=True).stdout
+            with denial.receipt_scope(receipt):
+                cmd = writeproxy._list_command({'path': 'somedir'})
+                expected = denial.frame(denial.RAN).encode() + listing
+            result = subprocess.run(['bash', '-c', cmd], cwd=root, env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertLessEqual(len(result.stdout) + result.stdout.count(b'\n'), 10_000)
+            record = resultpacket.read_record(result.stdout.decode(), 0, receipt)
+            self.assertIsNotNone(record)
+            self.assertEqual(record.kind, denial.RAN)
+            pointer = result.stdout[record.end:].decode()
+            self.assertFalse(any(name in pointer for name in names))
+            self.assertIn('No partial directory listing', pointer)
+            self.assertIn('read_file', pointer)
+            self.assertNotIn('web_fetch', pointer)
+            matches = re.findall(re.escape(webfetch.SPILL_DIR) + r'/stdout-[0-9a-f]{64}\.txt', pointer)
+            self.assertTrue(matches)
+            saved = root / matches[0]
+            self.assertEqual(saved.read_bytes(), expected)
+            lines = expected.splitlines(keepends=True)
+            recovered = bytearray()
+            for start in range(1, len(lines) + 1, 8):
+                end = min(start + 7, len(lines))
+                with denial.receipt_scope('d' * 16):
+                    read = filecommands._read_command({'path': matches[0], 'start_line': start, 'end_line': end})
+                page = subprocess.run(['bash', '-c', read], cwd=root, env=env, capture_output=True, check=True)
+                self.assertLessEqual(len(page.stdout) + page.stdout.count(b'\n'), 10_000)
+                answer = resultpacket.read_record(page.stdout.decode(), 0, 'd' * 16)
+                self.assertIsNotNone(answer)
+                self.assertEqual(answer.observe, resultpacket.RANGE)
+                expected_page = b''.join(str(i).encode() + b': ' + lines[i - 1] for i in range(start, end + 1))
+                self.assertEqual(answer.body, expected_page)
+                for number, numbered in enumerate(answer.body.splitlines(keepends=True), start):
+                    prefix = str(number).encode() + b': '
+                    self.assertTrue(numbered.startswith(prefix))
+                    recovered.extend(numbered[len(prefix):])
+            self.assertEqual(bytes(recovered), expected)
 
     def test_lowered_commands_avoid_sandbox_rejected_primitives(self):
         # cria's OWN lowered commands must never use a destructive primitive a harness sandbox rejects
@@ -508,14 +558,14 @@ class WebTests(unittest.TestCase):
         cmd = _lowered_cmd(ranged)
         self.assertNotIn("outside the working directory", cmd)                   # NOT the dirguard refusal
         self.assertIn("./tmp/reference/api.handle.me_openapi.json", cmd)         # hits the real file
-        self.assertIn(" 1 100 9000 ", cmd)
-        # a WHOLE read of the dropped-'./' spill is still steered to grep (with the corrected path)
+        self.assertIn(" 1 100 ", cmd)
+        # A whole read is also redirected to the corrected path.
         whole = _call("read_file", {"path": "/tmp/reference/api.handle.me_openapi.json"})
         _translate_with_read_allowance(whole, _CMD_SHELL, injected={"read_file"},
                            workspace_root="/home/jesse/src/proj", external_dir_permission="none")
         wcmd = _lowered_cmd(whole)
         self.assertNotIn("outside the working directory", wcmd)
-        self.assertIn("grep", wcmd)
+        self.assertIn("__CRIA_RD_PY__", wcmd)
         self.assertIn("./tmp/reference/api.handle.me_openapi.json", wcmd)
 
     def test_dropped_dot_slash_spill_COMMAND_is_redirected_not_dirguard_blocked(self):
@@ -523,7 +573,7 @@ class WebTests(unittest.TestCase):
         # redirected while a grep/cp naming the SAME string was dirguard-refused — the model, shown
         # both, learned "the sandbox blocks this file" and burned ~130 calls (run 0729-gemma4 pon2).
         comp = _call("exec_command", {"command": "grep -n 'holder' /tmp/reference/api.json"})
-        translate_outbound(comp, _CMD_SHELL, injected=set(),
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected=set(),
                            workspace_root="/home/jesse/src/proj", external_dir_permission="none")
         tc = comp["choices"][0]["message"]["tool_calls"][0]
         args = json.loads(tc["function"]["arguments"])
@@ -534,18 +584,18 @@ class WebTests(unittest.TestCase):
         # The anonymous "the project directory" left a blocked model inventing roots (/tmp/src,
         # /tmp/project) for whole runs — the refusal must state the one true root.
         comp = _call("exec_command", {"command": "cat /etc/passwd"})
-        translate_outbound(comp, _CMD_SHELL, injected=set(),
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected=set(),
                            workspace_root="/home/jesse/src/proj", external_dir_permission="none")
         self.assertIn("(/home/jesse/src/proj)", _lowered_cmd(comp))
 
     def test_web_search_routes_to_native_when_present(self):
         comp = _call("web_search", {"query": "ada handle"})
-        translate_outbound(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected=set(), native_search="local_web_search")
         self.assertEqual(comp["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "local_web_search")
 
     def test_web_search_lowers_to_brave_when_synthesized(self):
         comp = _call("web_search", {"query": "ada handle"})
-        translate_outbound(comp, _CMD_SHELL, injected={"web_search"}, brave_key="sk-brave")
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"web_search"}, brave_key="sk-brave")
         cmd = _lowered_cmd(comp)
         self.assertIn("brave", cmd)
         self.assertIn("curl", cmd)
@@ -640,7 +690,7 @@ class WebFetchEnvelopeTests(unittest.TestCase):
                     '{"openapi":"3.0.3"}', False)) as fetch, \
                 mock.patch("urllib.request.urlopen", side_effect=AssertionError(
                     "unexpected fixture network")) as network:
-            translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
+            _translate_with_read_allowance(comp, _CMD_SHELL, injected={"web_fetch"})
         fetch.assert_called_once_with("https://api.handle.me/openapi.json", None)
         network.assert_not_called()
         hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c7", "content": self._ENVELOPE}]
@@ -682,7 +732,7 @@ class WebFetchEnvelopeTests(unittest.TestCase):
 
     def test_write_failure_strips_envelope_but_keeps_the_error(self):
         comp = _call("write_file", {"path": "x.py", "content": "y"}, cid="w9")
-        translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={"write_file"})
         enveloped = "Chunk ID: 5\nProcess exited with code 1\nOutput:\nsed: cannot write: Permission denied"
         hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "w9", "content": enveloped}]
         out = represent_inbound(hist)
@@ -1012,7 +1062,7 @@ class CriaHomeGuardTests(unittest.TestCase):
 
     def _lowered(self, name, args):
         comp = _call(name, args)
-        translate_outbound(comp, _ARR_SHELL, injected={name})
+        _translate_with_read_allowance(comp, _ARR_SHELL, injected={name})
         return _lowered_cmd(comp)
 
     def test_write_into_cria_home_is_refused(self):
@@ -1078,7 +1128,7 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
     def _lower(self, workspace, *, cid="1"):
         comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {
             "name": "web_fetch", "arguments": json.dumps({"url": "https://api.example.com/openapi.json"})}}]}}]}
-        out = translate_outbound(comp, _ARR_SHELL, None, injected={"web_fetch"},
+        out = _translate_with_read_allowance(comp, _ARR_SHELL, None, injected={"web_fetch"},
                                  session="task:same-prompt", workspace_root=workspace,
                                  externalization_owner=self._owner)
         self._last_completion = out
@@ -1273,7 +1323,7 @@ class MissingPathRefusalTests(unittest.TestCase):
 
     def _cmd(self, name, args):
         comp = _call(name, args)
-        translate_outbound(comp, _CMD_SHELL, injected={name})
+        _translate_with_read_allowance(comp, _CMD_SHELL, injected={name})
         return _lowered_cmd(comp)
 
     def test_edit_with_no_path_is_refused_not_forwarded_raw(self):
@@ -1387,7 +1437,7 @@ class FusedContentRefusalTests(unittest.TestCase):
         comp = {"choices": [{"message": {"tool_calls": [
             {"id": "c1", "type": "function",
              "function": {"name": "write_file", "arguments": _json.dumps(args)}}]}}]}
-        out = translate_outbound(
+        out = _translate_with_read_allowance(
             comp, {"name": "shell", "parameters": {"properties": {"command": {"type": "string"}},
                                                    "required": ["command"]}},
             injected={"write_file"})
@@ -1425,14 +1475,7 @@ from cria import filecommands as _read_policy
 from cria.writeproxy import translate_outbound as _translate_reads
 
 
-@pytest.fixture(autouse=True)
-def _known_read_allowance():
-    with _read_policy.read_room_scope(9000):
-        yield
-
-
 def _translate_with_read_allowance(*args, **kwargs):
-    kwargs.setdefault("read_budget", 9000)
     return _translate_reads(*args, **kwargs)
 
 

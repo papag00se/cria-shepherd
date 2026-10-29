@@ -877,22 +877,78 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
+_STDOUT_SPILL_PY = r'''
+def bounded_stdout(raw, receipt, directory, template, placeholder, limit):
+    import hashlib, json, os, tempfile
+    if stdout_size(raw) <= limit:
+        return raw
+    target = directory + '/stdout-' + hashlib.sha256(raw).hexdigest() + '.txt'
+    os.makedirs(directory, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as stored:
+            temporary = stored.name
+            stored.write(raw)
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
+    first, separator, tail = raw.partition(b'\n')
+    prefix = b''
+    if receipt and separator:
+        try:
+            record = json.loads(first)
+            if type(record.get('v')) is int and record['v'] == 1 and record.get('r') == receipt:
+                prefix = first + separator
+        except (ValueError, AttributeError):
+            pass
+    pointer = template.replace(placeholder, target).replace('{{STDOUT_CHARS}}', format(len(raw.decode('utf-8', 'replace')), ',')).encode()
+    if stdout_size(prefix + pointer) > limit or receipt and not prefix:
+        # An untransportable record remains intact in the saved transcript.
+        # The inline refusal grants none of its unavailable reports.
+        prefix = (json.dumps({'v':1, 'r':receipt, 'k':'refused'}, separators=(',', ':')) + '\n').encode() if receipt else b''
+    assert stdout_size(prefix + pointer) <= limit
+    return prefix + pointer
+'''
+
+
+def _stdout_transport(*, listing: bool = False):
+    """One complete-result measurement and lossless spill program for producers."""
+    from . import externalization as e
+    target = webfetch.SPILL_DIR + '/stdout-' + '0' * 64 + '.txt'
+    arguments = (denial.active_receipt() or '', webfetch.SPILL_DIR,
+                 webfetch.stdout_spill_pointer(target, listing=listing), target, e.STDOUT_MAX_BYTES)
+    return e.STDOUT_SIZE_PY + _STDOUT_SPILL_PY, arguments
+
+
+def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: bool = False) -> str:
+    """Bound complete owned stdout, including records and possible PTY CRs.
+
+    The harness runs this adapter; it never reruns the producer. Static results
+    that already fit keep their original command. Oversize output is saved in
+    full, without the argv content cap of a cached-document upload.
+    """
+    from . import externalization as e
+    if expected is not None and e.stdout_size(expected.encode()) <= e.STDOUT_MAX_BYTES:
+        return command
+    program, arguments = _stdout_transport(listing=listing)
+    program += ("\nimport subprocess, sys\n"
+                "process = subprocess.run(['bash', '-c', sys.argv[1]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n"
+                "sys.stdout.buffer.write(bounded_stdout(process.stdout, *" + repr(arguments) + "))\n"
+                "sys.exit(process.returncode)\n")
+    return 'python3 -c ' + _qbash(program) + ' ' + _qbash(command)
+
+
 def _list_command(args: dict) -> str:
     path = args.get("path") or args.get("dir") or args.get("directory") or "."
     q = _qbash(path)
-    # Same principle as the read guard: a huge directory (node_modules, a data dir) would be SILENTLY
-    # truncated by the harness's output cap. Cap the listing at READ_INLINE_MAX bytes and DISCLOSE the
-    # total entry count so a cut isn't mistaken for the whole directory.
-    # NO CAP-AND-DISCLOSE. A clipped listing is still a partial view the model reasons over as if it
-    # were the directory (operator ruling: never elide, never truncate — refuse and make it narrow).
-    # The refusal is composed per call because it names the entry count, which only the shell knows.
-    refusal = denial.mark(
-        prompts.load_map("oversize_refusal")["list"].replace("{{PATH}}", str(path)))
-    head, _, tail = refusal.partition("{{ENTRIES}}")
-    return (f'__o=$(ls -la {q} 2>&1); '
-            f'if [ "$(printf %s "$__o" | wc -c)" -gt {READ_INLINE_MAX} ]; then '
-            f'printf "%s%s%s\\n" {_qbash(head)} "$(ls -1A {q} 2>/dev/null | wc -l | tr -cd 0-9)" {_qbash(tail)}; '
-            f"else {denial.ran_command()}printf '%s\\n' \"$__o\"; fi")
+    # Gather once; the complete listing and its record share the exact transport
+    # limit. Large listings are saved intact rather than refused at a raw 9 KB.
+    command = (f'__o=$(ls -la {q} 2>&1); __ec=$?; '
+               f'if [ "$__ec" -eq 0 ]; then {denial.ran_command()}:; '
+               f'else printf %s {_qbash(denial.frame(denial.REFUSED))}; fi; '
+               'printf \'%s\\n\' "$__o"; exit "$__ec"')
+    return _bounded_tool_stdout(command, listing=True)
 
 
 def _fetch_command(args: dict, session: str | None = None, workspace_root: str | None = None) -> str | None:
@@ -930,13 +986,14 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
     # decision, recorded on the text at the key it rendered (denial), never re-derived from wording:
     # a real 404 page is a RESULT and still exits 0 here.
     if refused:                    # the repeat gate's own typed decision — a fetched page quoting the marker is a page
-        return _refusal_command(result)
+        return _bounded_tool_stdout(_refusal_command(result), denial.mark(result))
     # THE FETCH'S OWN FACTS ride as a typed field of the `ran` record (`rep.fx`: url, status, routes, shapes, catalog), computed
     # from the producer's parse of the document — never re-read from the rendered page, whose body may quote any marker.
     # This is also the visibility receipt's complete response contract: every HTTP response has fx,
     # even a 404/empty body. RAN without fx means the attempt returned no HTTP response (status=None),
     # not that it was refused or that a document has since been evicted from the cache.
-    return f"printf %s {_qbash(denial.frame(denial.RAN, rep={'fx': facts} if facts else None) + result)}"
+    output = denial.frame(denial.RAN, rep={'fx': facts} if facts else None) + result
+    return _bounded_tool_stdout(f"printf %s {_qbash(output)}", output)
 
 
 
@@ -1010,7 +1067,8 @@ def _spill_command(target: str, content: str, msg: str, *, operation=None) -> st
     command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
                f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
                f"then printf %s {_qbash(denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else ''))}")
-    return command + '; else exit 1; fi'
+    output = denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else '')
+    return _bounded_tool_stdout(command + '; else exit 1; fi', output)
 
 
 def _spill_body(content: str) -> tuple[str, str]:
@@ -1157,6 +1215,20 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
                    # the stored fact is a TYPED field of the program's own first record, printed before the results
                    'sys.stdout.write(_rec("ran", st={"operation":' + repr(operation) + ',"target":T,"byte_count":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}))\n'
                    'print(' + search_offer.program.expression + ') if r else print("search API error: "+json.dumps(e) if e else "no results")\n')
+    # Keep the parser as the actual pipeline consumer. Its complete first
+    # record and answer share the same transport check as the other producers.
+    import textwrap
+    transport, transport_arguments = _stdout_transport()
+    if search_offer is None:
+        # This branch's first record remains shell-owned. Charge it to the
+        # same complete-result limit without making the parser emit it twice.
+        from . import externalization as e
+        transport_arguments = ('', *transport_arguments[1:-1],
+                               e.STDOUT_MAX_BYTES - e.stdout_size(denial.frame(denial.RAN).encode()))
+    script = (transport + '\nimport io, sys\ndef _produce():\n' + textwrap.indent(script, '    ')
+              + "\nbuffer = io.StringIO()\noriginal_stdout = sys.stdout\n"
+              + "try:\n    sys.stdout = buffer\n    _produce()\nfinally:\n    sys.stdout = original_stdout\n"
+              + "sys.stdout.write(bounded_stdout(buffer.getvalue().encode(), *" + repr(transport_arguments) + ").decode())\n")
     parse = 'python3 -c ' + _qbash(script)
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
     # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
@@ -1176,8 +1248,9 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
     # a plain pipeline rather than a redirect-then-announce.
     # With a search offer the PROGRAM prints the first record (it carries the stored fact); otherwise the shell does.
     lead = "" if search_offer is not None else denial.ran_command()
-    return (f"{lead}curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
-            f"|| printf %s {_qbash(denial.frame(denial.RAN) + fallback if search_offer is not None else fallback)}")
+    command = (f"{lead}curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
+               f"|| printf %s {_qbash(denial.frame(denial.RAN) + fallback if search_offer is not None else fallback)}")
+    return command
 
 
 
@@ -1284,6 +1357,7 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         return ShellCommand(command)
     if name in _READ_NAMES and name in request.injected:
         command = _read_command(args)
+        return ShellCommand(command, multipart_kind='read') if command is not None else None
     elif name in _LIST_NAMES and name in request.injected:
         command = _list_command(args)
     elif name in _FETCH_NAMES and name in request.injected:
@@ -1307,7 +1381,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        shrink_check=None, pack: bool = False, edit_echo: bool = False,
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
-                       observe_externalization=None, read_budget: int | None = None) -> dict:
+                       observe_externalization=None, multipart_command=None, multipart_new_id=None,
+                       observe_multipart_fallback=None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1317,9 +1392,6 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     ``shrink_check`` is retained only for explicit unbound library callers; a
     bound request never consults that legacy whole-policy callback.
 
-    ``read_budget`` is the scaled estimator allowance for file text the coder's remaining context has room for this turn
-    (`Loop.read_budget_bytes`); the reply's whole and ranged reads share it (`filecommands.whole_read_rooms`). None (no
-    known window, no measured usage, or not the coder) leaves reads unbounded rather than inventing a fixed allowance.
     """
     injected = injected or set()
     from . import assistruntime
@@ -1334,34 +1406,31 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             continue
         rebuilt: list[dict] = []
         edit_seq = _edit_sequence(tool_calls, injected)
-        # Unread-target writes may return the file instead of executing. Reserve
-        # their share too; a write that needs no read simply leaves its share unused.
-        # Early normalization may already have compiled a read alias to shell.
-        # Its leading declaration preserves the read identity, not result proof.
-        aliases = {}
-        for i, call in enumerate(tool_calls):
-            fn = call.get("function") or {}
-            if is_shell_tool_name(fn.get("name")):
-                original = original_call(_command_of(fn.get("arguments") or ""))
-                if original is not None and original.get("name") in _READ_NAMES:
-                    aliases[i] = original
-        budget_calls = [{**call, "function": aliases.get(i, call.get("function"))}
-                        for i, call in enumerate(tool_calls)]
-        read_names = (_READ_NAMES if aliases else _READ_NAMES & injected) | ((_WRITE_NAMES & injected) if unread_target else set())
-        rooms = (filecommands.whole_read_rooms(budget_calls, read_budget, wsview.current(workspace_root).size,
-                                               read_names=read_names)
-                 if read_budget is not None and read_names else {})
-        if rooms and rlog is not None:
-            rlog.emit("writeproxy.read_room", budget=read_budget, rooms=sorted(rooms.values()))
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
+            direct_synthetic_read = name in _READ_NAMES or name in _WRITE_NAMES
             call_request = request
-            if ti in aliases and read_budget is not None:
-                fn = aliases[ti]
-                tc = {**tc, "function": fn}
-                name = fn.get("name")
+            from .multipartcontext import take
+            alias = take(tc)
+            if alias is not None and is_shell_tool_name(name):
+                # A privately held identity from the normalization producer,
+                # not a declaration guessed out of model-supplied shell text.
+                tc = {**tc, 'function': {'name':'read_file', 'arguments':alias}}
+                fn = tc['function']
+                name = 'read_file'
                 call_request = replace(request, injected=request.injected | _READ_NAMES)
+                direct_synthetic_read = True
+            # Early normalization may already have lowered a read alias to shell.
+            # Recompile its declared original read with this call's receipt, without
+            # treating ordinary native shell calls as synthetic reads.
+            if is_shell_tool_name(name):
+                original = original_call(_command_of(fn.get("arguments") or ""))
+                if original is not None and original.get("name") in _READ_NAMES:
+                    fn = original
+                    tc = {**tc, "function": fn}
+                    name = fn.get("name")
+                    call_request = replace(request, injected=request.injected | _READ_NAMES)
             args = _parse(fn.get("arguments"))
             # THE CORRELATION TOKEN FOR THIS CALL, derived once and held while its command is composed: every
             # program authored inside prints it in its typed result record, which is the first line of stdout; the
@@ -1370,7 +1439,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # the marker or the token anywhere in the text.
             receipt = denial.receipt_for(tc.get("id"), name, fn.get("arguments"))
             declaration = denial.Declaration()      # what this call's compiler declares for its sentinel (a survey record)
-            with denial.receipt_scope(receipt, declaration), filecommands.read_room_scope(rooms.get(ti)):
+            with denial.receipt_scope(receipt, declaration):
                 tc, args, effect = toolstages.current().outbound_call(
                     OutboundCall(tc, args, call_request, edit_seq.get(ti), rlog))
                 fn = tc.get("function") or {}
@@ -1386,6 +1455,30 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             proposed_write = cmd if isinstance(cmd, WriteCommand) else None
             read_in_place = effect.read_in_place if effect is not None else False
             if cmd is not None:
+                if (multipart_command is not None and direct_synthetic_read
+                        and effect.multipart_kind and receipt == denial.receipt_for(tc.get('id'), name, fn.get('arguments'))):
+                    from .multipart import BridgeError
+                    from .filecommands import MultipartCommandTooLarge
+                    original_tc, original_receipt, original_cmd = tc, receipt, cmd
+                    if multipart_new_id is not None:
+                        tc = {**tc, 'id': multipart_new_id()}
+                        receipt = denial.receipt_for(tc.get('id'), name, fn.get('arguments'))
+                    try:
+                        replacement = multipart_command(tc, effect, receipt)
+                    except (BridgeError, MultipartCommandTooLarge) as exc:
+                        tc, receipt = original_tc, original_receipt
+                        replacement = None
+                        if rlog is not None:
+                            rlog.emit('multipart.register_failed', level='warn', error=str(exc))
+                    if replacement is not None:
+                        cmd = replacement
+                        if observe_multipart_fallback is not None:
+                            fallback = original_cmd
+                            if ti in edit_seq and EDIT_SEQ_DIR not in fallback:
+                                fallback = _seq_release(edit_seq[ti]) + fallback
+                            fallback_call = _shell_call(original_tc.get('id'), shell_tool,
+                                f"{_sentinel(name, fn.get('arguments'), original_receipt, declaration.survey)}\n{fallback}", 0)
+                            observe_multipart_fallback(tc.get('id'), fallback_call)
                 # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
                 # workspace a question only by putting a command in the reply it is already
                 # sending. This is that reply. The survey is appended to write/edit/list
@@ -1394,9 +1487,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # output cap would cut the CODER's content to pay for cria's instrumentation.
                 # `represent_inbound` strips it back out, so the model sees its own call's result
                 # and nothing else.
-                # A read answering a write carries no survey: its result is the file, up to the same
-                # byte limit a read has, and the ride-along must never push the coder's content past
-                # what a harness keeps.
+                # A read answering a write carries no survey: its result is the whole file, and
+                # instrumentation must not add to the coder's output.
                 if name in _SURVEYABLE and not read_in_place and _survey_due(session, name):
                     # BUDGETED for this one-result ride-along. The completion gate no longer shares
                     # this arithmetic: it carries the survey and probe evidence in checked pages.
@@ -1420,7 +1512,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     cmd = _seq_release(edit_seq[ti]) + cmd
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool,
                                            f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey)}\n{cmd}",
-                                           ((max(0, rooms.get(ti, 0)) * 4 + 1_500) if (name in _READ_NAMES or read_in_place) and ti in rooms else 0)))
+                                           0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
                     pending.lowered_arguments = rebuilt[-1]['function']['arguments']
@@ -1442,6 +1534,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     observe_lowering(tc, tc, None)
         choice["message"]["tool_calls"] = rebuilt
     return completion
+
 
 def _debinarized(content: str) -> str:
     """Terminal colour stripped, then binary SOUP replaced by a fact line (operator ruling: blobs have
@@ -1564,6 +1657,7 @@ class _Proof(NamedTuple):
     survey: str               # the survey text the declared second record carried, "" when none
     rep: dict | None = None   # the first record's typed reports (`resultpacket.REPORT_KEYS`), or None
     observe: str = ""         # what the verified body is: `whole` (the file) or `range` (a numbered window of it)
+    pre: str = ""             # exact producer-authored prelude, not inferred from file text
 
 
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
@@ -1576,6 +1670,7 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     a valid-looking survey is just the opaque tail and keeps every byte. A valid first record stands when the second is
     missing or cut. No record at offset 0 (a legacy command, a cut, an unlowered shape) means UNKNOWN: untouched."""
     paired = denial.paired_results(messages)
+    from .multipart import UnverifiedCarrier
     out: dict[str, _Proof] = {}
     for m in messages:
         if m.get("role") != "assistant":
@@ -1589,7 +1684,10 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             if declaration is None or not declaration.get("rcpt"):
                 continue
             token = str(declaration["rcpt"])
-            content = str(paired[cid].get("content") or "")
+            paired_result = paired[cid]
+            if isinstance(paired_result.get(bodykeys.MULTIPART_UNVERIFIED), UnverifiedCarrier):
+                continue
+            content = str(paired_result.get("content") or "")
             off = _payload_offset(content)
             first = resultpacket.read_record(content, off, token)
             if first is None:
@@ -1615,7 +1713,7 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                 text, exact = first.body.decode("utf-8"), True
             except UnicodeDecodeError:
                 text, exact = first.body.decode("utf-8", "replace"), False
-            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", survey, first.rep, first.observe)
+            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", survey, first.rep, first.observe, first.pre)
     return out
 
 
@@ -1703,6 +1801,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     ``sess_key`` is the session identity Candidate C40's delivered-state remembers against; without
     it that mechanism never fires (no identity to remember delivery against). ``tools_present=False``
     marks a harness compaction/summarize turn (empty tool menu) -- C40 skips those entirely."""
+    # Retired client-supplied hint spellings are never provenance, regardless
+    # of message role. Only the typed current owner marker can withhold proof.
+    messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
+                if isinstance(m, dict) else m for m in messages]
     note_harness_cuts(messages, rlog)   # observe only: did the harness cut anything before cria saw it?
     out: list[dict] = []
     rejected_notes_by_id: dict[str, str] = {}
@@ -1719,6 +1821,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # its payload, its envelope handling, the file fact it would cache) only when the id names exactly one call and
     # one result after it (`denial.paired_results`). An ambiguous result keeps its actual bytes and teaches nothing.
     paired = set(denial.paired_results(messages))
+    from .multipart import UnverifiedCarrier
     proofs = _frame_proofs(messages)
     outcomes = {tid: p.kind for tid, p in proofs.items() if p.kind in (denial.REFUSED, denial.UNAPPLIED)}
     landed_ids = {tid for tid, p in proofs.items() if p.kind == denial.LANDED}   # cria's own program reported the mutation landed
@@ -1858,13 +1961,25 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation
             elif tid in lowered_ids:
                 m[bodykeys.RESULT_OUTCOME] = denial.UNKNOWN   # cria lowered this call and cannot prove its branch
-            if tid in ambiguous:
+            unverified = isinstance(m.pop(bodykeys.MULTIPART_UNVERIFIED, None), UnverifiedCarrier)
+            if tid in ambiguous and not unverified:
                 # AMBIGUOUS: nothing call-attributed is cached, stripped or rendered, and no recovery or
                 # advice is composed from it — it keeps its actual bytes (no frame is trusted, so no survey is
                 # taken either).
                 out.append({**m, "content": _debinarized(str(m.get("content") or ""))})
                 continue
-            content = _debinarized(str(m.get("content") or ""))
+            # A verified UTF-8 read is user file content, not terminal log
+            # decoration. Stripping ANSI or binary-looking controls would change
+            # its bytes even though the record proved them exactly.
+            if unverified:
+                # Keep the complete original carrier, including non-text
+                # content, without attributing any source or write fact.
+                out.append(m)
+                continue
+            if proof is not None and proof.exact and proof.text is not None and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE):
+                content = str(m.get('content') or '')
+            else:
+                content = _debinarized(str(m.get("content") or ""))
             # THE SURVEY IS WHAT A DECLARED SECOND RECORD CARRIED, NOTHING ELSE: the sentinel said one follows the first
             # record, it was read on the very next line and removed there. A file, a native command or a read-instead
             # answer that quotes a perfectly valid-looking survey block keeps it — and teaches the view nothing.
@@ -1902,6 +2017,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     elif tid in read_whole and proof.kind == denial.RAN and proof.observe == resultpacket.WHOLE:
                         wsview.from_observation(observation, view.note_read, read_whole[tid], proof.text, **observation_options)
                 shown = content
+                final_prefix = proof.pre
                 if tid in write_paths and proof.kind == denial.REFUSED:
                     # THE REJECTED CANDIDATE STAYS. This answer is denied, so `_collapse_rejected_payload` took the
                     # coder's own large payload out of its call; the lossless copy rides here, in the authored prefix
@@ -1911,7 +2027,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     marker = denial.READ_INSTEAD_MARKER + "\n"
                     head = shown.removesuffix(proof.text)          # the authored prefix: the body is the tail by construction
                     if note and head.endswith(marker):
-                        shown = f"{head.removesuffix(marker)}{note}\n\n{marker}{proof.text}"
+                        final_prefix = f"{head.removesuffix(marker)}{note}\n\n{marker}"
+                        shown = final_prefix + proof.text
+                if exact and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE):
+                    from .multipartcontext import record_prefix
+                    record_prefix(tid, proof.text, final_prefix)
                 out.append({**m, "content": shown})
                 continue
             if tid in write_paths and write_paths[tid] and tid in landed_ids:

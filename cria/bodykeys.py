@@ -129,5 +129,19 @@ DENSITY_KIND = "cria_density_kind"
 
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
-ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
+PROTECTED_READS = "cria_protected_reads"
+READ_FIT_CALLBACKS = "cria_read_fit_callbacks"
+
+CODER_OBSERVER = "cria_coder_observer"
+CODER_ROLE_INTENT = "cria_coder_role_intent"
+
+CODER_ROUTE = "cria_coder_route"
+
+MULTIPART_UNVERIFIED = "cria_multipart_unverified"
+
+# The prototype spelling is reserved only for discarding client/old input.
+# It never carries authority and is not an active internal contract in ALL.
+LEGACY_MESSAGE_KEYS = ("_multipart_unverified",)
+
+ALL = (MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
        CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT)

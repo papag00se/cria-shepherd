@@ -110,12 +110,9 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
         self.assertTrue(denial.is_denied(r.stdout))
         self.assertEqual(r.returncode, 0)
 
-    def test_the_WHOLE_READ_size_guard_refuses_and_says_so(self):
-        # ADVERSARIAL PAIR, run for real: the same command must refuse a big file and READ a small
-        # one. The guard decides in bash at run time, which is why the mark is written into the
-        # refusing branch rather than derived from anything cria can see at lowering time.
-        from cria.filecommands import read_room_scope
-        with read_room_scope(9000), tempfile.TemporaryDirectory() as d:
+    def test_large_and_small_whole_reads_are_not_denied(self):
+        # Both sizes must be read, rather than falsely marked as calls that did not run.
+        with tempfile.TemporaryDirectory() as d:
             big, small = os.path.join(d, "big.json"), os.path.join(d, "small.py")
             with open(big, "w") as fh:
                 fh.write("x" * (writeproxy.READ_INLINE_MAX + 10))
@@ -125,18 +122,17 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
                                 capture_output=True, text=True)
             rs = subprocess.run(["bash", "-c", writeproxy._read_command({"path": small})],
                                 capture_output=True, text=True)
-        self.assertTrue(denial.is_denied(rb.stdout))
-        # Exit 0 since the 2026-08-12 ruling: a size refusal is not a failed call, and a non-zero
-        # exit on a read tells a small model the file is not there. The DENIED MARK above is what
-        # carries "no content came back" — that is the part this test exists for.
+        # The old size refusal used exit 0 to avoid falsely implying a missing file (2026-08-12).
+        # With that guard removed the full payload, not a refusal, is the authoritative result.
+        self.assertFalse(denial.is_denied(rb.stdout))
+        self.assertEqual(rb.stdout, "x" * (writeproxy.READ_INLINE_MAX + 10))
         self.assertEqual(rb.returncode, 0)
         self.assertFalse(denial.is_denied(rs.stdout))
         self.assertEqual(rs.stdout, "print('hi')\n")
         self.assertEqual(rs.returncode, 0)
 
-    def test_the_RANGED_read_size_guard_refuses_and_says_so(self):
-        from cria.filecommands import read_room_scope
-        with read_room_scope(9000), tempfile.TemporaryDirectory() as d:
+    def test_large_and_small_ranges_are_not_denied(self):
+        with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "spec.txt")
             with open(p, "w") as fh:
                 fh.write(("y" * 200 + "\n") * 200)          # ~40 KB over 200 lines
@@ -146,11 +142,25 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
             narrow = subprocess.run(
                 ["bash", "-c", writeproxy._read_command({"path": p, "start_line": 1, "end_line": 2})],
                 capture_output=True, text=True)
-        self.assertTrue(denial.is_denied(wide.stdout))
-        self.assertEqual(wide.returncode, 0)   # size refusal: declined, not failed
+            self.assertEqual(wide.returncode, 0)
+            self.assertTrue(denial.is_denied(wide.stdout))
+            self.assertIn('No file content was returned', wide.stdout)
+            args = json.loads(wide.stdout.split('Next read_file arguments: ', 1)[1])
+            self.assertEqual((args['path'], args['start_line']), (p, 1))
+            self.assertGreaterEqual(args['end_line'], 1)
+            self.assertLess(args['end_line'], 200)
+            first = subprocess.run(['bash', '-c', writeproxy._read_command(args)], capture_output=True, text=True, check=True)
+            self.assertFalse(denial.is_denied(first.stdout))
+            recovered = first.stdout
+            for start in range(args['end_line'] + 1, 201, 25):
+                args = {'path': p, 'start_line': start, 'end_line': min(start + 24, 200)}
+                part = subprocess.run(['bash', '-c', writeproxy._read_command(args)], capture_output=True, text=True, check=True)
+                self.assertFalse(denial.is_denied(part.stdout))
+                recovered += part.stdout
+            self.assertEqual(recovered, "".join(f"{i}: " + "y" * 200 + "\n" for i in range(1, 201)))
         self.assertFalse(denial.is_denied(narrow.stdout))
         self.assertEqual(narrow.returncode, 0)
-        self.assertIn("1: yyy", narrow.stdout)
+        self.assertEqual(narrow.stdout, ''.join(f'{i}: ' + 'y' * 200 + '\n' for i in (1, 2)))
 
     def test_webfetch_marks_its_repeat_GATES_and_nothing_else(self):
         # The distinction that keeps a successful fetch from being called a refusal: `spill` and

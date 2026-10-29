@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import hashlib
 import json
 import os
 import threading
@@ -23,6 +24,11 @@ import uuid
 from dataclasses import dataclass, replace
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from .imageworkflow import current as _image_current
+from . import imageassembly
+from . import upstream as _image_wire
+from .imageprotocol import ImageUnavailable
 
 from . import bodykeys, dirguard, handoffdistill, memoryhandoff, system1wiring
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
@@ -63,7 +69,7 @@ from .statusline import StatusWriter  # noqa: F401 — re-exported for tests
 from . import statusline
 from . import toolmenu
 from .turnstats import StatsStore
-from .upstream import Upstream, UpstreamError
+from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow
 from . import wsview, generation
 from .writeproxy import (advertise, native_search_name, needs_translation, redact_secrets,
                          represent_inbound, translate_outbound, retain_externalizations,
@@ -774,6 +780,7 @@ class CriaServer(ThreadingHTTPServer):
         def _ep(role):
             return self.router.endpoint_for(role) if self.router is not None else upstream
         self._endpoint_for = _ep
+        self.image_workflow = imageassembly.ConfiguredImages(self, _image_wire)
         self.classifier = (
             Classifier(_ep("classifier"), cfg.routing.engagement_bias, role=roles.get("classifier"))
             # The wire-only control never consumes a classifier verdict. Do not even
@@ -803,6 +810,8 @@ class CriaServer(ThreadingHTTPServer):
         self.compactor_role = roles.get("compactor") or roles.get("reasoner")
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
+        from .multipart_bridge import Bridge
+        self.multipart_bridge = Bridge(os.path.expanduser('~/.cria/multipart'))
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
         # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
         self.active_streams: dict = {}
@@ -987,7 +996,8 @@ class CriaHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")   # strip any query string (parity with do_GET)
-        with assistruntime.bound(self.server.pilot_runtime):
+        from . import multipartcontext
+        with assistruntime.bound(self.server.pilot_runtime), multipartcontext.bound():
             if path == "/v1/chat/completions":
                 self._handle_chat()
             elif path == "/v1/responses":
@@ -1010,13 +1020,18 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"invalid JSON body: {e}"})
             return
 
+        self._multipart_original_body = copy.deepcopy(body)
+        sk = session_key(self.headers, body.get('messages', []))
+        if self._multipart_inbound(body, sk, rlog, api='chat', stream=bool(body.get('stream'))):
+            return
+
         # INBOUND STRIP: remove cria's own indicator lines from the history before
         # the model re-reads them (they were injected only for the human's view).
         messages = body.get("messages")
         if isinstance(messages, list):
             # The view first: `reframe_compaction` asks it whether the workspace is empty, and an
             # unbound view answers "not surveyed" to everything (see _bind_workspace_view).
-            self._strip_and_reframe_inbound(body, session_key(self.headers, messages), rlog)
+            self._strip_and_reframe_inbound(body, getattr(self, '_multipart_guard_session', session_key(self.headers, messages)), rlog)
 
         # write_file↔shell: if the harness has shell but not write_file, re-present
         # our prior shell translations as write_file (so the model sees its own
@@ -1025,8 +1040,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         # Chat path: the downstream _translate_out uses session_key(self.headers, messages) too, so the
         # fetch gate's write/read keys match here (session_key hashes the stable root, unchanged by
         # represent_inbound).
-        self._setup_translation(body, session_key(self.headers, body.get("messages", [])), rlog)
-
+        self._setup_translation(body, getattr(self, '_multipart_guard_session', session_key(self.headers, body.get("messages", []))), rlog)
+        if not self._bind_multipart_read_facts(body, rlog):
+            self._representation_fallback(body, getattr(self, '_multipart_guard_session', sk), rlog)
 
         # Observation only (logs `ctx.estimate`): what the harness SENT. The usage reported back is
         # the MODEL-VISIBLE size, computed where the response path is known (see _report_context_usage).
@@ -1048,6 +1064,180 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._respond_stream(body, rlog)
         else:
             self._respond_buffered(body, rlog)
+
+    def _multipart_inbound(self, body, sess_key, rlog, *, api, stream):
+        from .multipart_bridge import BridgeError
+        self._multipart_input_fingerprint = hashlib.sha256(json.dumps(body.get('messages') or [], sort_keys=True,
+            ensure_ascii=False, separators=(',', ':')).encode()).digest()
+        try:
+            if not sess_key.startswith('sid:'):
+                # A task hash is not a session identity. Resolve only calls
+                # issued and durably indexed by this producer; mint a fresh
+                # invocation identity for a new anonymous completion.
+                resolved = self.server.multipart_bridge.resolve_anonymous(body.get('messages') or [])
+                self._multipart_guard_session = resolved or sess_key
+                sess_key = resolved or 'anon:' + uuid.uuid4().hex
+            messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, body.get('messages') or [])
+        except BridgeError as exc:
+            # The registry cannot authorize any reconstruction. Preserve the
+            # exact carriers and mark their provenance before any proof owner
+            # sees them; never guess which operation did or did not execute.
+            from . import resultnotes
+            from .multipart_bridge import UnverifiedCarrier
+            rlog.emit('multipart.failed', level='error', error=str(exc))
+            self._multipart_disabled = True
+            self._multipart_session = sess_key
+            self._multipart_facts = ()
+            messages = body.get('messages') or []
+            for message in messages:
+                if isinstance(message, dict) and message.get('role') == 'tool':
+                    message[bodykeys.MULTIPART_UNVERIFIED] = UnverifiedCarrier()
+            last = next((m for m in reversed(messages) if isinstance(m, dict) and m.get('role') == 'tool'
+                         and isinstance(m.get('content'), str)), None)
+            note = prompts.load('multipart_state_unavailable')
+            if last is not None:
+                resultnotes.append_note(last, note)
+            else:
+                messages.append({'role': 'user', 'content': note})
+            body['messages'] = messages
+            return False
+        body['messages'] = messages
+        self._multipart_session = sess_key
+        self._multipart_facts = facts
+        if not calls:
+            return False
+        completion = {'id':'multipart_' + uuid.uuid4().hex, 'object':'chat.completion',
+                      'created':int(time.time()), 'model':body.get('model') or '',
+                      'choices':[{'index':0, 'message':{'role':'assistant','content':None,'tool_calls':calls},
+                                  'finish_reason':'tool_calls'}]}
+        if not stream:
+            payload = (responses.to_responses_json(completion, body.get('model') or '') if api == 'responses'
+                       else completion)
+            self._send_raw_json(json.dumps(payload).encode('utf-8'))
+            return True
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.close_connection = True
+        if api == 'responses':
+            resp_id = responses._new_id('resp')
+            self._raw_write(responses.created_event(resp_id, body.get('model') or ''))
+            for chunk in responses.body_events(completion, resp_id, body.get('model') or ''):
+                self._raw_write(chunk)
+        else:
+            for chunk in completion_to_sse(completion):
+                self._raw_write(chunk)
+        return True
+
+    def _fit_fallback(self, error, sess_key, rlog):
+        sess_key = getattr(self, '_multipart_session', sess_key)
+        from .upstream import ReadFitUnknown, ReadFitOverflow
+        from .multipart_bridge import BridgeError
+        if isinstance(error, ReadFitOverflow):
+            reads, kind = error.measurement.reads, 'overflow'
+        elif isinstance(error, ReadFitUnknown):
+            reads, kind = error.reads, 'unknown'
+        else:
+            raise error
+        reported = {read.call_id for read in reads}
+        # Fit applies to the complete request, not an individual result. All
+        # current protected reads must be withheld for the unmeasured fallback;
+        # an error cannot nominate an unrelated client-supplied call id.
+        ids = tuple(fact.call_id for fact, _content, _prefix in getattr(self, '_multipart_offered', ()))
+        if not ids or not reported.issubset(ids):
+            raise error
+        try:
+            self.server.multipart_bridge.withhold_for_fit(sess_key, ids, kind)
+            fallback = copy.deepcopy(self._multipart_original_body)
+            messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, fallback.get('messages') or [])
+            from .multipart_bridge import ResultFact
+            if calls or any(not isinstance(f, ResultFact) for f in facts):
+                raise BridgeError('fit fallback is not settled')
+            fallback['messages'] = messages
+            self._multipart_facts = facts
+            self._strip_and_reframe_inbound(fallback, sess_key, rlog)
+            self._setup_translation(fallback, sess_key, rlog)
+            if not self._bind_multipart_read_facts(fallback, rlog):
+                raise BridgeError('fit fallback result could not be represented')
+            return fallback
+        except BridgeError:
+            raise error
+
+    def _representation_fallback(self, body, sess_key, rlog):
+        """Continue from the exact harness history when representation cannot bind."""
+        from .multipart_bridge import BridgeError, ReadFact, UnverifiedCarrier
+        from . import resultnotes
+        ids = tuple(f.call_id for f in getattr(self, '_multipart_facts', ()) if isinstance(f, ReadFact))
+        if ids:
+            try:
+                self.server.multipart_bridge.withhold_for_fit(self._multipart_session, ids, 'unknown')
+            except BridgeError as exc:
+                rlog.emit('multipart.withhold_failed', level='warn', error=str(exc))
+        original = copy.deepcopy(self._multipart_original_body)
+        messages = original.get('messages') or []
+        for message in messages:
+            if isinstance(message, dict) and message.get('role') == 'tool':
+                message[bodykeys.MULTIPART_UNVERIFIED] = UnverifiedCarrier()
+        last = next((m for m in reversed(messages) if isinstance(m, dict) and m.get('role') == 'tool'
+                     and isinstance(m.get('content'), str)), None)
+        note = prompts.load('multipart_state_unavailable')
+        if last is not None:
+            resultnotes.append_note(last, note)
+        else:
+            messages.append({'role': 'user', 'content': note})
+        original['messages'] = messages
+        body.clear(); body.update(original)
+        self._multipart_disabled = True
+        self._multipart_facts = ()
+        self._multipart_offered = ()
+        self._strip_and_reframe_inbound(body, sess_key, rlog)
+        self._setup_translation(body, sess_key, rlog)
+        rlog.emit('multipart.representation_unavailable', level='warn')
+
+    def _bind_multipart_read_facts(self, body, rlog):
+        # Body content is now the canonical *model-facing* representation, not
+        # the compact resultpacket transport. Bind by original call identity.
+        from .multipart_bridge import ResultFact
+        from . import resultnotes
+        offered = []
+        for fact in getattr(self, '_multipart_facts', ()):
+            matches = [m for m in body.get('messages', []) if isinstance(m,dict) and m.get('role') == 'tool'
+                       and m.get('tool_call_id') == fact.call_id]
+            if len(matches) != 1 or not isinstance(matches[0].get('content'), str):
+                return False
+            if isinstance(fact, ResultFact):
+                resultnotes.append_note(matches[0], prompts.render('multipart_logical_exit', code=fact.exit_code))
+                continue
+            content = matches[0]['content']
+            text = fact.exact_body.decode('utf-8')
+            prefix = fact.pre if fact.read_instead else ''
+            if fact.read_instead:
+                from .multipartcontext import prefix as representation_prefix
+                known = representation_prefix(fact.call_id)
+                if known is None or known[0] != text:
+                    return False
+                prefix = known[1]
+            if content != prefix + text:
+                return False
+            offered.append((fact, content, prefix))
+        self._multipart_offered = tuple(offered)
+        if offered:
+            from .upstream import ProtectedRead, bind_protected_reads, ReadFitUnknown
+            reads = []
+            for fact, content, prefix in offered:
+                def observe(accepted, cid=fact.call_id, session=getattr(self, '_multipart_session', None)):
+                    if accepted:
+                        self.server.multipart_bridge.settle_on_delivery(session, (cid,))
+                reads.append(ProtectedRead(fact.call_id, fact.source, content, fact.exact_body,
+                    observe=observe, read_instead=fact.read_instead, pre=prefix if fact.read_instead else None))
+            try:
+                bound = bind_protected_reads(body, tuple(reads))
+            except ReadFitUnknown:
+                return False
+            body.update(bound)
+        return True
 
     def _classify(self, body: dict, rlog, compaction: bool = False):
         """Classify the turn — unless cria ALREADY KNOWS what it is.
@@ -1319,7 +1509,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             retain_externalizations(owner, completion)
         return completion
 
-    def _translate_out(self, completion: dict, sess_key: str, rlog, read_budget: int | None = None) -> dict:
+    def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
@@ -1334,6 +1524,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             if proposed_write is not None:
                 admitted[lowered.get('id')] = proposed_write
         if self._shell_tool is not None:
+            multipart_session = getattr(self, '_multipart_session', sess_key)
+            multipart_fallbacks = {}
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
                                native_search=getattr(self, "_native_search", None), session=sess_key,
@@ -1349,8 +1541,24 @@ class CriaHandler(BaseHTTPRequestHandler):
                                # stay exactly the harness's own confirmation.
                                edit_echo=self.server.cfg.routing.assists_enabled,
                                observe_lowering=observed, externalization_owner=owner,
-                               # The coder's remaining context sizes its whole reads; None on every other path.
-                               read_budget=read_budget)
+                               multipart_command=(lambda original, effect, receipt: self.server.multipart_bridge.register(
+                                   multipart_session, original, effect, self._shell_tool, receipt)) if not getattr(self, '_multipart_disabled', False) else None,
+                               multipart_new_id=(lambda: 'ctxread_' + uuid.uuid4().hex) if multipart_session.startswith('anon:') else None,
+                               observe_multipart_fallback=lambda cid, call: multipart_fallbacks.__setitem__(cid, call))
+            if not getattr(self, '_multipart_disabled', False):
+                from .multipart_bridge import BridgeError
+                try:
+                    self.server.multipart_bridge.bind(multipart_session, completion, getattr(self, '_multipart_input_fingerprint', None))
+                except BridgeError as exc:
+                    # No call has reached the harness yet. Restore the exact
+                    # producer-compiled bounded alternatives, without rerunning
+                    # lowering or duplicating any peer mutation in the batch.
+                    rlog.emit('multipart.bind_failed', level='warn', error=str(exc))
+                    for choice in completion.get('choices', []):
+                        message = choice.get('message') or {}
+                        if message.get('tool_calls'):
+                            message['tool_calls'] = [multipart_fallbacks.get(c.get('id'), c)
+                                                     for c in message['tool_calls']]
             self._pasted_lowered = admitted
         else:
             self._pasted_lowered = None
@@ -1547,12 +1755,16 @@ class CriaHandler(BaseHTTPRequestHandler):
         under one guard: an upstream failure (e.g. a 500 from a strict chat template)
         becomes a clean in-stream error, never a dead handler thread."""
         server: CriaServer = self.server
+        workflow = getattr(server, 'image_workflow', None)
+        token = _image_current.set(None)
         try:
+            context = workflow.capture(getattr(self, '_multipart_guard_session', session_key(self.headers, body.get('messages', []))), body) if workflow else None
+            _image_current.set(context)
             # Recognized ONCE per request — the marker (free) or, when tools are empty/absent and
             # the marker is absent, the one focused judge call (see _recognize_compaction). Every
             # downstream compaction check in this request reuses this single answer.
             handoff = _selected_handoff(server)
-            sk = session_key(self.headers, body.get("messages", []))
+            sk = getattr(self, '_multipart_guard_session', session_key(self.headers, body.get("messages", [])))
             owner = _observe_handoff_write_results(server, sk, body.get("messages", []))
             compaction = _recognize_compaction(body, server, rlog, definition=handoff)
             classification = self._classify(body, rlog, compaction)
@@ -1564,7 +1776,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                     pasted_delivery=self._defer_pasted_delivery)
                 if completion is not None:
                     yield from completion_to_sse(self._finalize(self._translate_out(
-                        completion, sk, rlog, server.loop.read_budget_bytes(completion, rlog)), sk, rlog))
+                        completion, sk, rlog), sk, rlog))
                     return
             provider, indic = self._route(body, classification, rlog, compaction)
             rlog.phase = "proxy"
@@ -1574,21 +1786,61 @@ class CriaHandler(BaseHTTPRequestHandler):
                 sbody = _compaction_body(sbody, definition=handoff, facts=facts,
                                          distill=_handoff_distiller(provider, server, rlog))
             stream = massage.massage_stream(
-                provider.stream_chat(self._apply_route_role(sbody, indic, rlog), rlog),
+                self._image_stream(provider, self._apply_route_role(sbody, indic, rlog), indic, rlog),
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
-                post=lambda c: self._retain_external_output(self._translate_out(c, sk, rlog), sk),
+                post=lambda c: self._retain_external_output(self._translate_out(self._image_register(c, body), sk, rlog), sk),
             )
             yield from wrap_stream(stream, indic)
+        except (ReadFitUnknown, ReadFitOverflow) as e:
+            fallback = self._fit_fallback(e, sk, rlog)
+            completion, _ = self._produce_completion_once(fallback, rlog, sk)
+            yield from completion_to_sse(completion)
+        except ImageUnavailable as e:
+            rlog.emit("response.error", level="error", error=str(e))
+            yield _error_sse(e.response_error)
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(e.response_error if generation.is_generation_error(e.response_error) else str(e))
         except Exception as e:  # noqa: BLE001 — never die silently mid-stream (the g4 hole)
             rlog.emit("response.error", level="error", error=repr(e))
             yield _error_sse(f"cria internal error: {e}")
+        finally:
+            _image_current.reset(token)
+
+    def _image_register(self, completion, body):
+        context = _image_current.get()
+        if context is None or context.prepared.bindings or context.workflow.workspace is None:
+            return completion
+        # massage_stream's existing terminal quarantine admits the complete action
+        # before this source-owned post hook and before any tool fragments emit.
+        return context.workflow.workspace.register(context.session, completion, body.get('tools'))
+
+    def _image_stream(self, provider, body, indic, rlog):
+        context = _image_current.get()
+        if context is None or not context.prepared.bindings:
+            yield from provider.stream_chat(body, rlog)
+            return
+        role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, 'role', None) else None
+        # Internal image tool exchanges finish before exposing a completion to the harness.
+        raw = context.workflow.chat(provider, role, body, context, rlog)
+        yield from completion_to_sse(json.loads(raw))
 
     def _produce_completion(self, body: dict, rlog, sess_key: str):
+        from .upstream import ReadFitUnknown, ReadFitOverflow
+        workflow = getattr(self.server, 'image_workflow', None)
+        context = workflow.capture(sess_key, body) if workflow else None
+        token = _image_current.set(context)
+        try:
+            return self._produce_completion_once(body, rlog, sess_key)
+        except (ReadFitUnknown, ReadFitOverflow) as error:
+            fallback = self._fit_fallback(error, sess_key, rlog)
+            return self._produce_completion_once(fallback, rlog, sess_key)
+        finally:
+            _image_current.reset(token)
+
+    def _produce_completion_once(self, body: dict, rlog, sess_key: str):
         """Run the pipeline and return ``(chat-completion dict, Indicator|None)`` —
         the plan loop's completion, or a routed+massaged+lowered one. Raises
         ``UpstreamError`` on a model failure (callers turn that into a clean error).
@@ -1614,7 +1866,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             if completion is not None:
                 reply_estimate = modelview.reply_tokens(completion)
                 out = self._finalize(self._translate_out(
-                    completion, sess_key, rlog, server.loop.read_budget_bytes(completion, rlog)),
+                    completion, sess_key, rlog),
                     sess_key, rlog)
                 _report_context_usage(out, visible, rlog, reply_estimate=reply_estimate)
                 return out, None  # loop path carries no indicator
@@ -1628,7 +1880,12 @@ class CriaHandler(BaseHTTPRequestHandler):
                                      distill=_handoff_distiller(provider, server, rlog))
         pbody, _ = self._focus_trim(pbody, rlog)
         pbody = self._apply_route_role(pbody, indic, rlog)
-        raw = provider.chat(pbody, rlog)
+        image_context = _image_current.get()
+        if image_context is not None:
+            role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, 'role', None) else None
+            raw = image_context.workflow.chat(provider, role, pbody, image_context, rlog)
+        else:
+            raw = provider.chat(pbody, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
         except (json.JSONDecodeError, TypeError) as e:
@@ -1672,7 +1929,11 @@ class CriaHandler(BaseHTTPRequestHandler):
 
     def _respond_buffered(self, body: dict, rlog) -> None:
         try:
-            comp, indic = self._produce_completion(body, rlog, session_key(self.headers, body.get("messages", [])))
+            comp, indic = self._produce_completion(body, rlog, getattr(self, '_multipart_guard_session', session_key(self.headers, body.get("messages", []))))
+        except ImageUnavailable as e:
+            rlog.emit("response.error", level="error", error=str(e))
+            self._send_json(422, {"error": e.response_error})
+            return
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             if generation.is_generation_error(e.response_error):
@@ -1723,6 +1984,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(e)})
             return
         sess_key = f"sid:{sess}" if sess else session_key(None, body.get("messages", []))
+        self._multipart_original_body = copy.deepcopy(body)
+        if self._multipart_inbound(body, sess_key, rlog, api='responses', stream=bool(rbody.get('stream'))):
+            return
+        sess_key = getattr(self, '_multipart_guard_session', sess_key)
 
         # INBOUND STRIP (mirrors the chat path): remove cria's own "⟦cria⟧" indicator lines
         # from the history before anything re-reads them — the classifier, the plan's rewrite
@@ -1738,6 +2003,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # sess_key (sid:<sess>) so the fetch gate's visible-set is recorded under the SAME key the
         # outbound lowering reads — without this the exact-repeat gate is dead on the Responses path.
         self._setup_translation(body, sess_key, rlog)
+        if not self._bind_multipart_read_facts(body, rlog):
+            self._representation_fallback(body, sess_key, rlog)
 
         _incoming_ctx_tokens(body, rlog)  # observation only; reported usage is model-visible (see _produce_completion)
         stream = bool(rbody.get("stream"))
@@ -1874,6 +2141,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                                     custom_tools: frozenset[str] = frozenset()) -> None:
         try:
             comp, _indic = self._produce_completion(body, rlog, sess_key)
+        except ImageUnavailable as e:
+            rlog.emit("response.error", level="error", error=str(e))
+            self._send_json(422, {"error": e.response_error})
+            return
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             self._send_json(getattr(e, "code", None) or 502, {"error": e.response_error})

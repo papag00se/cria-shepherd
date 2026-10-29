@@ -1,0 +1,1 @@
+Reinspect a retained original task image with the same coder. Supply the exact image reference from its labelled observation. Workspace sources require a fresh harness image read.

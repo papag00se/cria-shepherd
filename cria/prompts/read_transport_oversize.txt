@@ -1,0 +1,7 @@
+# Transport refusal and its two next-step descriptions.
+body = ⟦ctx:denied⟧ No file content was returned: the read result exceeds the shared transport output limit.\n{{NEXT}}\n
+range = Next read_file arguments: {{ARGS}}
+same_path = Retry read_file with the same path, start_line={{START}}, end_line={{END}}.
+single = Reading the first line alone as a line range exceeds the limit; inspect it with a byte-oriented shell command.
+write = This write_file call was not run, so nothing was written and the file is unchanged.\n
+fact_omitted = Additional context about the requested target was omitted because it exceeds the transport limit.

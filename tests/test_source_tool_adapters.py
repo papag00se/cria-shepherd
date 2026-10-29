@@ -198,19 +198,33 @@ def test_promotion_explicitly_runs_actual_selected_upper_repair(disabled):
         repair=Mock(side_effect=AssertionError('ineligible repair'))) is comp
 
 
-def test_spill_source_renders_cached_facts_and_does_not_call_old_facade(monkeypatch):
+def test_spill_source_uses_pure_reader_without_old_facade(monkeypatch, tmp_path):
     monkeypatch.setattr(writeproxy, '_spill_read_command', Mock(side_effect=AssertionError('old spill adapter')), raising=False)
-    monkeypatch.setattr(outboundpolicies.webfetch, 'format_for_spill_path', lambda p: 'OpenAPI')
-    monkeypatch.setattr(outboundpolicies.webfetch, 'spill_reading_hint', lambda p, n: 'extent')
-    monkeypatch.setattr(outboundpolicies.webfetch, 'page_not_file_for_spill_path', lambda p: True)
-    monkeypatch.setattr(outboundpolicies.webfetch, 'outline_for_spill_path', lambda p: 'real outline')
-    # Capture the boundary, then use the real immutable pure builder.
     build = Mock(wraps=filecommands._spill_read_command)
     monkeypatch.setattr(outboundpolicies, '_format_spill_read', build)
-    command = outboundpolicies._spill_read_command('a b')
-    path, steer = build.call_args.args
-    assert path == 'a b' and 'OpenAPI' in steer and 'extent' in steer and 'real outline' in steer
-    assert command == filecommands._spill_read_command(path, steer)
+    path = 'a b'
+    (tmp_path / path).write_text('actual file\n' * 2000)
+    command = outboundpolicies._spill_read_command(path)
+    build.assert_called_once_with(path)
+    result = subprocess.run(['bash', '-c', command], cwd=tmp_path, capture_output=True, text=True)
+    from cria import denial
+    assert result.returncode == 0 and denial.is_denied(result.stdout)
+    assert 'No file content was returned' in result.stdout
+    assert len(result.stdout.encode()) + result.stdout.count('\n') <= 10_000
+    args = json.loads(result.stdout.split('Next read_file arguments: ', 1)[1])
+    assert args['path'] == path and args['start_line'] == 1 and 1 <= args['end_line'] < 2000
+    page = subprocess.run(['bash', '-c', filecommands._read_command(args)], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert page.stdout == ''.join(f'{i}: actual file\n' for i in range(1, args['end_line'] + 1))
+    recovered = page.stdout
+    for start in range(args['end_line'] + 1, 2001, 200):
+        end = min(start + 199, 2000)
+        part = subprocess.run(['bash', '-c', filecommands._read_command({'path': path, 'start_line': start, 'end_line': end})],
+                              cwd=tmp_path, capture_output=True, text=True, check=True)
+        recovered += part.stdout
+    assert recovered == ''.join(f'{i}: actual file\n' for i in range(1, 2001))
+    (tmp_path / path).write_text('actual file\n')
+    small = subprocess.run(['bash', '-c', command], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert small.stdout == 'actual file\n'
 
 
 @pytest.mark.parametrize('first', ['webfetch', 'apidiscovery', 'planner_tools'])

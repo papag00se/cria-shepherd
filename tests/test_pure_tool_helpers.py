@@ -245,21 +245,22 @@ def test_spill_paths_are_explicit_and_root_rewrite_is_narrow():
     assert not filecommands._targets_cria_home('.cria/logs/a')
 
 
-def test_read_builders_preserve_quoted_paths_and_explicit_spill_guidance(tmp_path):
+def test_read_builders_preserve_quoted_paths_and_spill_content(tmp_path):
     assert filecommands._read_command({}) is None
     command = filecommands._read_command({"path": "a b"})
     assert "python3 - 'a b' " in command
     assert "else cat" not in command
-    assert "__CRIA_READ_WINDOW__" in command
+    (tmp_path / 'a b').write_text('first\nsecond\nthird\n')
+    whole = subprocess.run(['bash', '-c', command], cwd=tmp_path, capture_output=True, text=True)
+    assert whole.returncode == 0 and whole.stdout == 'first\nsecond\nthird\n'
     ranged = filecommands._read_command({"path": "a b", "end_line": 2})
-    assert "python3 - 'a b' 1 2 -1" in ranged
+    page = subprocess.run(['bash', '-c', ranged], cwd=tmp_path, capture_output=True, text=True)
+    assert page.returncode == 0 and page.stdout == '1: first\n2: second\n'
     assert callformats._read_command({"path": "a b", "start": "1", "end": "2"}) == ranged
-    spill = filecommands._spill_read_command('a b', "caller supplied outline")
-    assert "⟦ctx:denied⟧ caller supplied outline" in spill
-    assert "python3 - 'a b' " in spill
-    assert "__CRIA_RD_PY__" in spill and "else cat" not in spill
+    spill = filecommands._spill_read_command('a b')
+    spilled = subprocess.run(['bash', '-c', spill], cwd=tmp_path, capture_output=True, text=True)
+    assert spilled.returncode == 0 and spilled.stdout == whole.stdout
     unread = filecommands._read_in_place_of_write('a b', 'authoritative fact')
-    import subprocess
     (tmp_path / 'a b').write_text('exact source bytes')
     result = subprocess.run(['bash', '-c', unread], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0 and not result.stderr
@@ -423,6 +424,9 @@ def test_a_landed_fact_is_dropped_for_an_ambiguous_pairing():
 
 def test_new_spill_apis_require_explicit_inputs():
     for fn in (filecommands._under_spill_dir, filecommands._spill_relpath,
-               filecommands._respill_command, filecommands._spill_read_command):
+               filecommands._respill_command):
         with pytest.raises(TypeError):
             fn('path')
+    with pytest.raises(TypeError):
+        filecommands._spill_read_command()
+    assert filecommands._spill_read_command('path')

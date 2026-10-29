@@ -1,0 +1,1 @@
+⟦ctx:read-unverified⟧ The read transport state could not be verified. The tool results above are preserved, but they do not establish a completed read or whether a write ran. Continue using a fresh read or another available inspection tool; do not assume a write did or did not run.

@@ -1,0 +1,2 @@
+unknown = whether the complete request can fit could not be established.
+overflow = the measured complete request did not fit after a compaction attempt.

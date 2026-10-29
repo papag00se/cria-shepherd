@@ -139,7 +139,7 @@ def _exchange(tmp_path, n, **args):
     comp = {"choices": [{"message": {"tool_calls": [{"id": f"b{n}", "type": "function", "function": {
         "name": "read_file", "arguments": json.dumps({"path": "Big.java", **args})}}]}}]}
     translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
-                       injected={"read_file"}, workspace_root=str(tmp_path), read_budget=9000)
+                       injected={"read_file"}, workspace_root=str(tmp_path))
     tc = comp["choices"][0]["message"]["tool_calls"][0]
     out = subprocess.run(["bash", "-c", json.loads(tc["function"]["arguments"])["cmd"]],
                          cwd=tmp_path, capture_output=True, text=True)
@@ -161,21 +161,19 @@ def _held(view, messages):
 
 
 def test_a_big_file_read_in_ranges_to_the_end_is_read(tmp_path):
-    """Reviewer repro: a 200-line file over the byte limit; the whole read is refused ("N lines … read a line
-    range"), then 1-90, 91-180, 181-200 — every window REAL output of the lowered command."""
+    """Whole reads and real partial windows retain separate read-credit semantics."""
     size = _big_file(tmp_path)
     view = _big_view(size)
     token = wsview.bind(view)
     try:
-        refused = _exchange(tmp_path, 0)
-        assert "200 lines" in refused[1]["content"]                       # the real refusal
-        assert _held(view, refused)                                       # a refused read is not a read
         wins = [m for n, (a, b) in enumerate([(1, 90), (91, 180)], 1)
                 for m in _exchange(tmp_path, n, start_line=a, end_line=b)]
-        assert _held(view, refused + wins)                                # 1-180 of 200: not yet
+        assert _held(view, wins)                                          # 1-180 of 200: not yet
         last = _exchange(tmp_path, 3, start_line=181, end_line=200)
-        assert _held(view, wins + last) != ""                             # no refusal in view, end unknown…
-        assert _held(view, refused + wins + last) == ""                   # …with it, 1..200 covers the file
+        assert _held(view, wins + last) != ""                             # without a whole read, end unknown
+        whole = _exchange(tmp_path, 0)
+        assert whole[1]["content"] == (tmp_path / "Big.java").read_text()
+        assert _held(view, whole + wins + last) == ""                     # a whole read proves coverage
     finally:
         wsview.unbind(token)
 

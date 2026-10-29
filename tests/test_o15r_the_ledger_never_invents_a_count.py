@@ -23,6 +23,15 @@ def _sh(cid, cmd):
     return [_call(cid, name="exec_command", cmd=cmd), _res(cid, "Process exited with code 0")]
 
 
+def test_old_and_current_read_refusals_retain_the_line_count():
+    old = (f"⟦ctx:denied⟧ {JAVA} is 267 lines, which is larger than can be returned in one read, "
+           "so nothing is shown. Read it deliberately instead.")
+    current = "⟦ctx:denied⟧ " + prompts.render("large_read_steer", path=JAVA, lines=267, window="")
+    for body in (old, current):
+        msgs = [_call("r", path=JAVA), _res("r", body, denial.REFUSED)]
+        assert loop._refused_line_counts(msgs) == {JAVA: 267}
+
+
 def test_a_gap_before_eof_is_not_a_whole_reading():
     msgs = [_call("a", path=JAVA, start_line=1, end_line=50), _res("a", _numbered(1, 50)),
             _call("b", path=JAVA, start_line=200, end_line=300), _res("b", _numbered(200, 267))]

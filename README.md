@@ -57,6 +57,8 @@ python -m cria --config ./cria.toml
 
 The example uses a model server at `http://127.0.0.1:18084` and serves cria on port `18085`. Point your harness at `http://127.0.0.1:18085/v1`. For Codex, follow the [setup and context-window instructions](docs/codex-context-window.md).
 
+Automatic multipart synthetic reads require a harness that can execute successive shell calls and return their paired results. A stable, unique `X-Cria-Session-Id` for Chat Completions (or `prompt_cache_key` for Responses) identifies a conversation; without one, cria correlates its own issued calls through a private durable index rather than assuming identical task text identifies a session. Ambiguous or unavailable state is not credited as a read. Multipart state is retained privately under `~/.cria/multipart`; automatic cleanup is not yet available because a trusted session-close signal and shared lease fence have not been integrated.
+
 ### Optional CPU decision classifier
 
 The optional `system1` extra serves a trained GLiClass artifact in-process on CPU for two existing guard questions: whether a briefing contains a forward plan, and whether a directive dictates code or a verbatim command. Other reasoner checks remain independent. It is disabled by default and needs an admitted local model bundle. See [serving and configuration](docs/system1.md) and [training tools and methodology](docs/training/methodology.md).

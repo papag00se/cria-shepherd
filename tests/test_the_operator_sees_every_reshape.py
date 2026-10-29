@@ -24,6 +24,8 @@ _NOT_A_RESHAPE = {
     "context.calibrated": "the token-density average moved; no message was touched",
     "context.refit": "the density to re-prep WITH — the trim it causes fires as context.floor",
     "context.measured": "exact server token count; any resulting rewrite fires as context.floor",
+    "context.image_fit_unknown": "visual input cost is unmeasured; no message is changed or fit claimed",
+    "context.image_density_unknown": "visual usage cannot calibrate text density; learning abstains without changing messages",
     "context.briefing_symbols_unreachable": "an ABSTENTION — the vouching note was withheld and "
                                             "nothing was appended; the event records the silence",
 }

@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Callable, Iterator
 
 from . import bodykeys
 from . import (callcapture, config, contextfloor, failover, generation, indicators, massage, modelview,
@@ -243,7 +243,347 @@ def _density_key(model, rlog, body=None) -> str:
     return f"{model or ''}#{kind}" if kind else model
 
 
+@dataclass(frozen=True)
+class ProtectedRead:
+    call_id: str
+    source: tuple[int, str]
+    model_content: str
+    exact_body: bytes
+    observe: Callable[[bool], None] | None = None
+    read_instead: bool = False
+    pre: str | None = None
+
+
+@dataclass(frozen=True)
+class MeasuredReadOverflow:
+    window: int
+    tokens: int
+    reserve: int
+    reads: tuple[ProtectedRead, ...]
+    final_wire: bytes
+
+
+@dataclass(frozen=True)
+class ReadFitCallbacks:
+    # compact(full_request, protected_reads) -> replacement full_request or None.
+    compact: Callable[[dict, tuple[ProtectedRead, ...]], dict | None]
+    # guidance(measured_overflow) -> owner-authored line/byte guidance, never a fit guess.
+    guidance: Callable[[MeasuredReadOverflow], object] | None = None
+
+
+class ReadFitUnknown(UpstreamError):
+    def __init__(self, reason, reads=()):
+        super().__init__(reason)
+        self.reason, self.reads = reason, reads
+
+
+class ReadFitOverflow(UpstreamError):
+    def __init__(self, measurement, guidance=None):
+        super().__init__('Measured protected logical read cannot fit the context window')
+        self.measurement, self.guidance = measurement, guidance
+
+
+_READ_FIT_SCOPE = __import__('contextvars').ContextVar('protected_read_fit', default=False)
+
+
+def _read_positions(messages, reads):
+    positions = set()
+    for read in reads:
+        calls = [(i, c) for i, m in enumerate(messages) if isinstance(m, dict)
+                 and m.get('role') == 'assistant' for c in m.get('tool_calls') or []
+                 if isinstance(c, dict) and c.get('id') == read.call_id]
+        results = [(i, m) for i, m in enumerate(messages) if isinstance(m, dict)
+                   and m.get('role') == 'tool' and m.get('tool_call_id') == read.call_id]
+        if (len(calls) != 1 or len(results) != 1 or calls[0][0] >= results[0][0]
+                or results[0][1].get('content') != read.model_content):
+            raise ReadFitUnknown('protected_read_changed_or_missing', reads)
+        positions.update((calls[0][0], results[0][0]))
+    return positions
+
+
+def protected_reads(body):
+    value = body.get(bodykeys.PROTECTED_READS, ())
+    if not isinstance(value, tuple) or not all(isinstance(r, ProtectedRead) for r in value):
+        raise ReadFitUnknown('untyped_protected_reads')
+    if len({r.call_id for r in value}) != len(value):
+        raise ReadFitUnknown('ambiguous_protected_reads', value)
+    for read in value:
+        if (not isinstance(read.call_id, str) or not read.call_id
+                or not isinstance(read.exact_body, bytes) or not isinstance(read.model_content, str)
+                or not isinstance(read.source, tuple) or len(read.source) != 2
+                or type(read.source[0]) is not int or read.source[0] < 0
+                or not isinstance(read.source[1], str) or len(read.source[1]) != 64
+                or any(c not in '0123456789abcdef' for c in read.source[1])):
+            raise ReadFitUnknown('invalid_protected_read_source', value)
+        try:
+            decoded = read.exact_body.decode('utf-8')
+        except UnicodeError as error:
+            raise ReadFitUnknown('non_text_protected_read', value) from error
+        if read.read_instead:
+            if not isinstance(read.pre, str) or read.model_content != read.pre + decoded:
+                raise ReadFitUnknown('read_instead_representation_changed', value)
+        elif read.model_content != decoded:
+            raise ReadFitUnknown('read_representation_changed', value)
+    return value
+
+
+def bind_protected_reads(body, reads, callbacks=None):
+    """Bind only after canonical inbound representation; no transport envelope bytes."""
+    out = {**body, bodykeys.PROTECTED_READS: tuple(reads)}
+    reads = protected_reads(out)
+    _read_positions(out.get('messages') or [], reads)
+    if callbacks is not None:
+        if not isinstance(callbacks, ReadFitCallbacks) or not callable(callbacks.compact):
+            raise ReadFitUnknown('untyped_read_fit_callbacks', reads)
+        out[bodykeys.READ_FIT_CALLBACKS] = callbacks
+    return out
+
+
+@dataclass(frozen=True)
+class CoderObserverBinding:
+    owner_token: object
+    role_signature: str
+    started: Callable[[CoderWireReceipt], None]
+    completed: Callable[[CoderWireReceipt, dict | None, bool], None]
+
+
+@dataclass(frozen=True)
+class CoderWireReceipt:
+    owner_token: object
+    dispatch_token: object
+    provider: object
+    model: str
+    role_signature: str
+    final_wire: bytes
+
+
+@dataclass(frozen=True)
+class _CoderRoleIntent:
+    protocol: str
+    reasoning: str | None
+    collapse_system_prompt: bool
+
+
+def record_applied_coder_role(body, role):
+    """Called by the selected owner immediately after its actual Role.apply."""
+    if role is not None:
+        body[bodykeys.CODER_ROLE_INTENT] = _CoderRoleIntent(
+            role.think_protocol, role.reasoning, role.collapse_system_prompt)
+    return body
+
+
+def coder_role_signature(body):
+    excluded = {'messages', 'tools', 'tool_choice', 'model', 'stream', 'stream_options',
+                'metadata', 'user', 'store'} | set(bodykeys.ALL)
+    settings = {k: v for k, v in body.items() if k not in excluded}
+    settings['output_reserve_intent'] = body.get(bodykeys.OUTPUT_RESERVE)
+    settings['merge_turns_intent'] = body.get(bodykeys.MERGE_TURNS, False)
+    intent = body.get(bodykeys.CODER_ROLE_INTENT)
+    if isinstance(intent, _CoderRoleIntent):
+        settings['role_instruction_intent'] = [intent.protocol, intent.reasoning, intent.collapse_system_prompt]
+    return hashlib.sha256(json.dumps(settings, sort_keys=True, ensure_ascii=False,
+                                    separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+
+def bind_coder_observer(applied_body, binding):
+    if (not isinstance(binding, CoderObserverBinding) or not callable(binding.started)
+            or not callable(binding.completed) or binding.role_signature != coder_role_signature(applied_body)):
+        raise UpstreamError('Coder observer does not match actual applied role settings')
+    return {**applied_body, bodykeys.CODER_OBSERVER: binding}
+
+
+_CODER_OBSERVER_SCOPE = __import__('contextvars').ContextVar('coder_wire_observer', default=None)
+
+
+class _CoderOperation:
+    def __init__(self, provider, binding):
+        self.provider, self.binding = provider, binding
+        self.pending = None
+        self.content, self.reasoning, self.calls = [], [], {}
+        self.finish, self.usage, self.invalid = None, None, False
+        self.indices = set()
+
+    def start(self, provider, body, wire):
+        if body.get(bodykeys.CODER_OBSERVER) is not self.binding or provider is not self.provider:
+            return
+        if coder_role_signature(body) != self.binding.role_signature:
+            raise UpstreamError('Coder role settings changed before actual dispatch')
+        self.complete(None, False)
+        parsed = json.loads(wire)
+        receipt = CoderWireReceipt(self.binding.owner_token, object(), provider,
+                                   parsed.get('model'), self.binding.role_signature, bytes(wire))
+        self.pending = receipt
+        self.binding.started(receipt)
+
+    def complete(self, completion, terminal):
+        receipt, self.pending = self.pending, None
+        if receipt is not None:
+            self.binding.completed(receipt, completion, bool(terminal))
+
+    def feed(self, obj):
+        if obj.get('error'):
+            self.invalid = True
+        for choice in obj.get('choices') or []:
+            self.indices.add(choice.get('index', 0))
+            if len(self.indices) > 1:
+                self.invalid = True
+            delta = choice.get('delta') or {}
+            if delta.get('content'):
+                self.content.append(delta['content'])
+            if delta.get('reasoning_content') or delta.get('reasoning'):
+                self.reasoning.append(delta.get('reasoning_content') or delta.get('reasoning'))
+            _accumulate_tool_deltas(self.calls, delta.get('tool_calls') or [])
+            if choice.get('finish_reason'):
+                self.finish = choice['finish_reason']
+        self.usage = obj.get('usage') or self.usage
+
+    def finish_stream(self):
+        completion = None
+        if self.pending is not None:
+            completion = _assemble_completion(self.pending.model, self.content, self.reasoning,
+                                              self.calls, self.finish, self.usage, None)
+        self.complete(completion, self.finish is not None and not self.invalid
+                      and isinstance(completion, dict) and not generation.incomplete(completion))
+
+
+def _observed_buffered(method):
+    from functools import wraps
+    @wraps(method)
+    def call(self, body, rlog, *args, **kwargs):
+        binding = body.get(bodykeys.CODER_OBSERVER)
+        if not isinstance(binding, CoderObserverBinding):
+            return method(self, body, rlog, *args, **kwargs)
+        operation = _CoderOperation(self, binding)
+        token = _CODER_OBSERVER_SCOPE.set(operation)
+        try:
+            raw = method(self, body, rlog, *args, **kwargs)
+            completion = _try_json(raw)
+            choices = completion.get('choices') if isinstance(completion, dict) else None
+            terminal = (bool(choices) and all(c.get('finish_reason') for c in choices)
+                        and not completion.get('error') and not generation.incomplete(completion))
+            operation.complete(completion, terminal)
+            return raw
+        finally:
+            operation.complete(None, False)
+            _CODER_OBSERVER_SCOPE.reset(token)
+    return call
+
+
+def _observed_stream(method):
+    from functools import wraps
+    @wraps(method)
+    def call(self, body, rlog, *args, **kwargs):
+        binding = body.get(bodykeys.CODER_OBSERVER)
+        if not isinstance(binding, CoderObserverBinding):
+            yield from method(self, body, rlog, *args, **kwargs)
+            return
+        operation = _CoderOperation(self, binding)
+        iterator = method(self, body, rlog, *args, **kwargs)
+        try:
+            while True:
+                token = _CODER_OBSERVER_SCOPE.set(operation)
+                try:
+                    value = next(iterator)
+                except StopIteration:
+                    operation.finish_stream()
+                    break
+                finally:
+                    _CODER_OBSERVER_SCOPE.reset(token)
+                yield value
+        finally:
+            try:
+                iterator.close()
+            finally:
+                operation.complete(None, False)
+    return call
+
+
+def _request_has_images(body):
+    from . import imageprotocol
+    return any(imageprotocol.has_images(m) for m in (body or {}).get('messages') or [])
+
+
+def bind_coder_route(applied_body, route):
+    from . import imageprotocol
+    if (type(route) is not imageprotocol.CoderRoute or route.vision is not True
+            or not isinstance(route.model, str) or not route.model
+            or applied_body.get('model') != route.model
+            or coder_role_signature(applied_body) != route.role_signature):
+        raise imageprotocol.ImageUnavailable('Actual positively vision-capable coder route is unavailable')
+    return {**applied_body, bodykeys.CODER_ROUTE: route}
+
+
+def _validate_coder_route(provider, body, wire):
+    from . import imageprotocol
+    final = json.loads(wire)
+    if not _request_has_images(final):
+        return
+    route = body.get(bodykeys.CODER_ROUTE)
+    if (type(route) is not imageprotocol.CoderRoute or route.vision is not True
+            or route.provider is not provider or route.model != final.get('model')
+            or route.role_signature != coder_role_signature(body)):
+        raise imageprotocol.ImageUnavailable('Actual image dispatch does not match selected vision coder route')
+
+
 class Upstream:
+    def _prep_protected_reads(self, body, stream, rlog, safety_override=None,
+                              _previous_fit=None, _wire_overhead=0):
+        reads = protected_reads(body)
+        _read_positions(body.get('messages') or [], reads)
+        for read in reads:
+            if callable(read.observe):
+                read.observe(False)
+        window = self._resolve_window(rlog)
+        if not window or self._window_guessed:
+            raise ReadFitUnknown('authoritative_context_window_unavailable', reads)
+        callbacks = body.get(bodykeys.READ_FIT_CALLBACKS)
+        current = body
+        for attempt in range(2):
+            token = _READ_FIT_SCOPE.set(True)
+            try:
+                prepared = self._prep(current, stream, rlog, safety_override, _previous_fit,
+                                      _wire_overhead=_wire_overhead)
+                if not self._context_fixes:
+                    final = json.loads(prepared[0])
+                    rendered = self._render_prompt(final)
+                    real = self._tokenize_prompt(rendered, rlog) if rendered is not None else None
+                    if real is None:
+                        raise ReadFitUnknown('native_measurement_unavailable', reads)
+                    reserve = contextfloor.reserve_for(current)
+                    rlog.emit('context.measured', tokens=real, n_ctx=window, reserve=reserve)
+                    if real + reserve > window:
+                        raise ReadFitOverflow(MeasuredReadOverflow(window, real, reserve, reads, prepared[0]))
+                return prepared
+            except (ReadFitUnknown, ReadFitOverflow) as error:
+                if isinstance(error, ReadFitUnknown) and error.reason not in (
+                        'protected_read_changed_or_missing',):
+                    raise
+                if attempt:
+                    if isinstance(error, ReadFitOverflow) and isinstance(callbacks, ReadFitCallbacks):
+                        guidance = callbacks.guidance(error.measurement) if callable(callbacks.guidance) else None
+                        raise ReadFitOverflow(error.measurement, guidance) from error
+                    raise
+                if not isinstance(callbacks, ReadFitCallbacks) or not callable(callbacks.compact):
+                    raise ReadFitUnknown('compaction_unavailable', reads) from error
+            finally:
+                _READ_FIT_SCOPE.reset(token)
+            replacement = callbacks.compact(body, reads)
+            if not isinstance(replacement, dict):
+                raise ReadFitUnknown('compaction_unavailable', reads)
+            if protected_reads(replacement) != reads:
+                raise ReadFitUnknown('compaction_changed_read_binding', reads)
+            _read_positions(replacement.get('messages') or [], reads)
+            # Received user/system/developer packets are authority, never a summary target.
+            def packets(request):
+                return [m for m in request.get('messages') or [] if m.get('role') in ('system', 'developer')
+                        or contextfloor._request_user(m)]
+            remaining = iter(replacement.get('messages') or [])
+            for original in packets(body):
+                if not any(candidate == original for candidate in remaining):
+                    raise ReadFitUnknown('compaction_changed_user_packet', reads)
+            current = replacement
+        raise AssertionError('bounded protected-read preparation exhausted')
+
     """An OpenAI-compatible chat endpoint. With no ``api_key`` this is the local
     llama.cpp; with one it is an OpenAI-compatible *cloud* provider (Bearer auth) —
     the same wire protocol, so one client serves both roles."""
@@ -487,6 +827,8 @@ class Upstream:
     def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None,
               _previous_fit: bytes | None = None, _wire_overhead: int = 0) -> tuple[bytes, int, str | None]:
         """Prepare at the sole wire boundary, serializing each session's fitting state."""
+        if body.get(bodykeys.PROTECTED_READS) and not _READ_FIT_SCOPE.get():
+            return self._prep_protected_reads(body, stream, rlog, safety_override, _previous_fit, _wire_overhead)
         session = getattr(rlog, 'session', None)
         phase = getattr(rlog, 'phase', None) or 'proxy'
         role = 'coder' if phase.startswith('coder-') else phase
@@ -533,7 +875,7 @@ class Upstream:
         from . import assistruntime
         runtime = (assistruntime.current() if assistruntime.is_bound() else
                    assistruntime.AssistRuntime.select(level=self._engagement_level))
-        wire_folds = runtime.wire_folds if self._context_fixes else ()
+        wire_folds = runtime.wire_folds if self._context_fixes and not body.get(bodykeys.PROTECTED_READS) else ()
         out = {**body, "stream": stream}
         msgs = body.get("messages")
         fitted_source = None
@@ -588,11 +930,16 @@ class Upstream:
                     root = next((m for m in msgs if m.get('role') == 'user'), None)
                     scope = (body.get('model'), runtime.selected, pinned,
                              contextfloor._fingerprint(root))
+                    if body.get(bodykeys.PROTECTED_READS):
+                        scope += (tuple((read.call_id, read.source, hashlib.sha256(read.model_content.encode()).hexdigest())
+                                        for read in protected_reads(body)),)
                     if fitting.scope != scope:
                         fitting.floor = contextfloor.FitState()
                         fitting.scope = scope
                     msgs, tools_in, invalidated = fitting.floor.reuse(msgs, tools_in)
                 fit_options = {'headroom': True} if prefix_state is not None else {}
+                if body.get(bodykeys.PROTECTED_READS):
+                    fit_options['protected_call_ids'] = tuple(read.call_id for read in protected_reads(body))
                 if _wire_overhead:
                     fit_options['wire_overhead'] = _wire_overhead
                 # THE ONE-COPY FOLD (modelview.fold_evidence) NEVER RUNS BEFORE THE FLOOR DECIDES
@@ -700,7 +1047,7 @@ class Upstream:
         # so adding a key here is all it takes to keep it off the API" — had no reader anywhere in the
         # package. The promise was inert: a sixth key added to that tuple would have shipped. The
         # completion-side keys pop harmlessly here, which is what makes the list safe to trust.
-        for _k in bodykeys.ALL:
+        for _k in (*bodykeys.ALL, *bodykeys.LEGACY_MESSAGE_KEYS):
             out.pop(_k, None)
         # Caller-instruction provenance is a cria message hint, never an upstream API field.
         if isinstance(out.get("messages"), list):
@@ -709,7 +1056,8 @@ class Upstream:
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
                                              bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE,
-                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT)}
+                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED,
+                                             *bodykeys.LEGACY_MESSAGE_KEYS)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         # Historical arguments are a final-wire invariant: role merges/folds can
         # introduce calls after any earlier repair. Optional recovery is selected
@@ -727,11 +1075,20 @@ class Upstream:
         # transform and internal-key strip, with the exact bytes about to be POSTed.  A non-coder
         # role or a coder call without a fresh observer remains silent rather than inheriting state.
         data = json.dumps(out).encode("utf-8")
+        read_bindings = protected_reads(body)
+        if read_bindings:
+            _read_positions(out.get('messages') or [], read_bindings)
+        visual_unknown = _request_has_images(out)
+        if visual_unknown:
+            rlog.emit('context.image_fit_unknown', reason='visual_cost_not_measured_by_text_tokenizer')
+            if read_bindings:
+                raise ReadFitUnknown('visual_capacity_unavailable', read_bindings)
         rendered = None
         real = None
-        if (isinstance(msgs, list) and window and self._api_key is None
+        if (isinstance(msgs, list) and window and self._api_key is None and not visual_unknown
                 and ((isinstance(self._props, dict) and self._props.get("chat_template"))
-                     or sent_estimate * safety > window - rep.reserve)):
+                     or sent_estimate * safety > window - rep.reserve
+                     or bool(read_bindings))):
             # A configured window can leave /props uncached. Measure this exact
             # final body before refusing an estimated overflow; unavailable
             # native metadata grants no new admission authority.
@@ -747,12 +1104,16 @@ class Upstream:
                 # leaves the answer no space: a self-compaction briefing measured 48,192 of a
                 # 49,152 window and was cut off after 959 tokens (run 1792480002 call 0051).
                 if real > window - rep.reserve:
+                    if read_bindings and data == _previous_fit:
+                        raise ReadFitOverflow(MeasuredReadOverflow(window, real, rep.reserve, read_bindings, data))
                     if data == _previous_fit:
                         raise UpstreamError("Measured input cannot fit the context window without losing protected input")
                     tighter = max(safety, real / max(sent_estimate, 1))
                     return self._prep(body, stream, rlog, safety_override=tighter,
                                       _previous_fit=data, _wire_overhead=_wire_overhead)
-        if (isinstance(msgs, list) and window and real is None
+        if read_bindings and self._context_fixes and real is None:
+            raise ReadFitUnknown('native_measurement_unavailable', read_bindings)
+        if (isinstance(msgs, list) and window and real is None and not visual_unknown
                 and sent_estimate * safety > window - rep.reserve):
             # All protocol repairs, settlements and labels have now run. Never
             # POST or capture a request the one floor still knows cannot fit.
@@ -836,6 +1197,9 @@ class Upstream:
         self._window_at_least(usage.get("total_tokens")
                               or ((prompt_tokens or 0) + (usage.get("completion_tokens") or 0))
                               or None, rlog)
+        if _request_has_images(body):
+            rlog.emit('context.image_density_unknown', reason='visual_tokens_not_text_density')
+            return
         shifted = tokenratio.record(_density_key(model, rlog, body), prompt_tokens, estimate)
         if shifted is not None:
             rlog.emit("context.calibrated", model=model, real=prompt_tokens, est=estimate, ratio=round(shifted, 2))
@@ -844,7 +1208,8 @@ class Upstream:
         """Record authoritative counts/window; no optional refit choice or return value."""
         real, n_ctx = facts.rejection.real, facts.rejection.window
         sent_estimate = facts.prepared.estimate
-        tokenratio.record(_density_key(model, rlog, body), real, sent_estimate)
+        if not _request_has_images(body):
+            tokenratio.record(_density_key(model, rlog, body), real, sent_estimate)
         density = float(real) / float(sent_estimate)
         rlog.emit("context.refit", level="warn", model=model, real=real, est=sent_estimate,
                   n_ctx=n_ctx, safety=round(density, 2))
@@ -892,6 +1257,12 @@ class Upstream:
                 caller_refit=body.get(bodykeys.CONTEXT_REFIT_NO_CHANGE),
                 model=lambda: body.get('model'))
         if isinstance(result.outcome, capacitypolicy.Accepted):
+            reads = protected_reads(body)
+            if reads:
+                _read_positions(json.loads(result.prepared.wire).get('messages') or [], reads)
+                for read in reads:
+                    if callable(read.observe):
+                        read.observe(True)
             return result.outcome.response, result.prepared.estimate, result.prepared.capture_path
         e = result.outcome.source
         rlog.emit('upstream.error', level='error', url=self._chat_url, error=str(e))
@@ -906,7 +1277,11 @@ class Upstream:
         from . import assistruntime, capacitypolicy
         data, sent_estimate, capture_path = prepared.wire, prepared.estimate, prepared.capture_path
         with assistruntime.bound(runtime):
+            _validate_coder_route(self, body, data)
             req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=stream))
+            operation = _CODER_OBSERVER_SCOPE.get()
+            if operation is not None:
+                operation.start(self, body, data)
             rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
                       stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
             receipt = None
@@ -1075,6 +1450,9 @@ class Upstream:
                     if payload and payload != b"[DONE]":
                         obj = _try_json(payload)
                         if obj is not None:
+                            operation = _CODER_OBSERVER_SCOPE.get()
+                            if operation is not None:
+                                operation.feed(obj)
                             if _has_content_delta(obj):
                                 if t_first is None:
                                     t_first = time.monotonic()
@@ -1649,3 +2027,8 @@ def _has_content_delta(chunk: dict) -> bool:
         if delta.get("content"):
             return True
     return False
+
+
+Upstream.chat = _observed_buffered(Upstream.chat)
+Upstream.chat_watched = _observed_buffered(Upstream.chat_watched)
+Upstream._stream_chat = _observed_stream(Upstream._stream_chat)

@@ -1,0 +1,8 @@
+⟦ctx:image-observation⟧ Historical coder observation of image {{REF}} ({{MODEL}}). This is a model-made account, not the original pixels; visual details may have been missed. Task scope: {{TASK_SCOPE}}.
+Extracted text reported by the coder:
+{{EXTRACTED}}
+Task-relevant description reported by the coder:
+{{DESCRIPTION}}
+Uncertainty reported by the coder:
+{{UNCERTAINTY}}
+Reinspection reference: {{REF}}. {{SOURCE}}

@@ -1,1 +1,3 @@
-That line range of {{PATH}} is larger than can be returned in one read, so nothing is shown. Narrow it to a smaller start_line/end_line window, or grep {{PATH}} for what you need (e.g. grep -n on it).
+The requested range of {{PATH}} is too large. No file content was returned.
+
+Retry read_file with the same path and start_line, but a smaller end_line. If a single line is too large, use grep -n on {{PATH}} to find what you need.

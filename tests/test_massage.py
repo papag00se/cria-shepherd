@@ -1,4 +1,7 @@
 import json
+import pathlib
+import subprocess
+import tempfile
 import unittest
 
 from cria import massage
@@ -363,23 +366,53 @@ class NormalizeToolCallsTests(unittest.TestCase):
         self.assertEqual(fn["name"], "shell")
         self.assertIn("cat h.py", " ".join(json.loads(fn["arguments"])["command"]))
 
-    def test_read_file_lowered_to_guarded_numbered_range(self):
+    def test_read_file_lowered_to_numbered_range(self):
         c = normalize_tool_calls(_completion(tool_calls=[_tc("read_file", json.dumps({"path": "h.py", "start_line": 2, "end_line": 5}))]), [_SHELL])
         fn = _first(c)["message"]["tool_calls"][0]["function"]
         self.assertEqual(fn["name"], "shell")
-        self.assertIn("python3 - h.py 2 5 -1", " ".join(json.loads(fn["arguments"])["command"]))
+        with tempfile.TemporaryDirectory() as directory:
+            pathlib.Path(directory, "h.py").write_text("one\ntwo\nthree\nfour\nfive\nsix\n")
+            result = subprocess.run(json.loads(fn["arguments"])["command"], cwd=directory, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "2: two\n3: three\n4: four\n5: five\n")
 
-    def test_aliased_read_lowers_through_the_guarded_path(self):
-        # A read alias (read_file when the harness has no native one, or cat_file/view_file) must lower
-        # through the SAME guarded shell read as the synthetic read_file — never a bare cat/sed the
-        # harness can silently truncate (that duplicate was the second place the truncation bug lived).
+    def test_aliased_read_returns_content_and_reports_past_eof(self):
+        # The alias once bypassed the shared read owner and could silently truncate; exercise the
+        # actual normalized shell command, including the distinct past-EOF result.
         whole = normalize_tool_calls(_completion(tool_calls=[_tc("read_file", json.dumps({"path": "big.json"}))]), [_SHELL])
-        wcmd = " ".join(json.loads(_first(whole)["message"]["tool_calls"][0]["function"]["arguments"])["command"])
-        self.assertIn("grep", wcmd)                          # big whole read → grep steer, not a raw cat
+        wcmd = json.loads(_first(whole)["message"]["tool_calls"][0]["function"]["arguments"])["command"]
         ranged = normalize_tool_calls(_completion(tool_calls=[_tc("read_file", json.dumps(
             {"path": "f.json", "start_line": 9999, "end_line": 9999}))]), [_SHELL])
-        rcmd = " ".join(json.loads(_first(ranged)["message"]["tool_calls"][0]["function"]["arguments"])["command"])
-        self.assertIn("past the end of the file", rcmd)      # past-EOF signal, not a silent empty
+        rcmd = json.loads(_first(ranged)["message"]["tool_calls"][0]["function"]["arguments"])["command"]
+        with tempfile.TemporaryDirectory() as directory:
+            body = "line\n" * 3000
+            pathlib.Path(directory, "big.json").write_text(body)
+            pathlib.Path(directory, "f.json").write_text("one\ntwo\n")
+            whole_result = subprocess.run(wcmd, cwd=directory, capture_output=True, text=True)
+            ranged_result = subprocess.run(rcmd, cwd=directory, capture_output=True, text=True)
+            from cria import denial
+            self.assertEqual(whole_result.returncode, 0)
+            self.assertTrue(denial.is_denied(whole_result.stdout))
+            self.assertIn('No file content was returned', whole_result.stdout)
+            self.assertLessEqual(len(whole_result.stdout.encode()) + whole_result.stdout.count('\n'), 10_000)
+            args = json.loads(whole_result.stdout.split('Next read_file arguments: ', 1)[1])
+            self.assertEqual((args['path'], args['start_line']), ('big.json', 1))
+            self.assertGreaterEqual(args['end_line'], 1)
+            self.assertLess(args['end_line'], 3000)
+            retry = normalize_tool_calls(_completion(tool_calls=[_tc('read_file', json.dumps(args))]), [_SHELL])
+            pcmd = json.loads(_first(retry)['message']['tool_calls'][0]['function']['arguments'])['command']
+            page = subprocess.run(pcmd, cwd=directory, capture_output=True, text=True, check=True)
+            self.assertEqual(page.stdout, ''.join(f'{i}: line\n' for i in range(1, args['end_line'] + 1)))
+            recovered = page.stdout
+            for start in range(args['end_line'] + 1, 3001, 200):
+                bounds = {'path': 'big.json', 'start_line': start, 'end_line': min(start + 199, 3000)}
+                retry = normalize_tool_calls(_completion(tool_calls=[_tc('read_file', json.dumps(bounds))]), [_SHELL])
+                pcmd = json.loads(_first(retry)['message']['tool_calls'][0]['function']['arguments'])['command']
+                recovered += subprocess.run(pcmd, cwd=directory, capture_output=True, text=True, check=True).stdout
+            self.assertEqual(recovered, ''.join(f'{i}: line\n' for i in range(1, 3001)))
+        self.assertEqual(ranged_result.returncode, 0)
+        self.assertIn("f.json has 2 lines", ranged_result.stdout)
+        self.assertIn("past the end of the file", ranged_result.stdout)
 
     def test_reshapes_shell_string_to_array(self):
         c = normalize_tool_calls(_completion(tool_calls=[_tc("shell", json.dumps({"command": "ls -la"}))]), [_SHELL])

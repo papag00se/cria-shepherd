@@ -1,1 +1,3 @@
- — start_line=1 end_line={{FITS}} fits in one read, and you can page on from there
+
+
+First call read_file with the same path, start_line=1 end_line={{FITS}}. If you need more, continue with start_line={{NEXT}}.

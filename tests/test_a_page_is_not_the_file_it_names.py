@@ -33,16 +33,18 @@ class TheSpillSaysWhatItHoldsTests(unittest.TestCase):
     def test_an_ordinary_html_page_is_not(self):
         self.assertFalse(webfetch.html_page_about_a_file("https://example.com/docs", PAGE))
 
-    def test_the_read_refusal_says_so(self):
-        webfetch._DOC_CACHE[self.blob] = (200, "text/html", PAGE, None, False)
-        cmd = writeproxy._spill_read_command(webfetch._spill_name(self.blob))
-        self.assertIn("web PAGE at that address", cmd)
-        self.assertIn("fetch the address that serves it raw", cmd)
+    def test_the_spill_message_says_the_page_is_not_source(self):
+        _, _, content, message = webfetch.render_cached_spill(
+            self.blob, (200, "text/html", PAGE, None, False))
+        self.assertIn("web PAGE at that address", message)
+        self.assertIn("fetch the address that serves it raw", message)
+        self.assertIn("stylesheet", content)
 
     def test_a_real_source_spill_gets_no_such_note(self):
-        webfetch._DOC_CACHE[self.raw] = (200, "text/plain", SOURCE, None, False)
-        cmd = writeproxy._spill_read_command(webfetch._spill_name(self.raw))
-        self.assertNotIn("web PAGE at that address", cmd)
+        _, _, content, message = webfetch.render_cached_spill(
+            self.raw, (200, "text/plain", SOURCE, None, False))
+        self.assertNotIn("web PAGE at that address", message)
+        self.assertEqual(content, SOURCE)
 
     def test_the_note_never_names_the_shim(self):
         from cria import prompts

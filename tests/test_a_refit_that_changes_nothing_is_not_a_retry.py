@@ -64,8 +64,12 @@ class _Up(upstream.Upstream):
 
     def _prep(self, body, stream, rlog, safety_override=None):
         # The real question this test asks: does re-prepping produce different bytes?
-        payload = b"x" * (100 if safety_override is None or not self._shrinks else 50)
-        return payload, 1000, None
+        size = 100 if safety_override is None or not self._shrinks else 50
+        # Real _prep supplies an OpenAI JSON object at this boundary. Keep the
+        # controlled byte equality/shrink without bypassing that wire contract.
+        payload = {**body, "messages": [{"role": "user", "content": "x" * size}],
+                   "stream": stream}
+        return json.dumps(payload).encode("utf-8"), 1000, None
 
 
 class ABodyThatCannotShrinkIsNotResentTests(unittest.TestCase):
@@ -97,6 +101,9 @@ class ABodyThatCannotShrinkIsNotResentTests(unittest.TestCase):
         opened, rlog = self._run(shrinks=True)
         self.assertEqual(len(opened), 2)
         self.assertNotEqual(opened[0], opened[1])
+        self.assertLess(len(opened[1]), len(opened[0]))
+        self.assertEqual([json.loads(wire)["messages"][0]["content"] for wire in opened],
+                         ["x" * 100, "x" * 50])
         self.assertNotIn("upstream.refit_no_change", rlog.kinds())
 
     def test_the_window_the_server_stated_is_kept_either_way(self):
@@ -106,7 +113,7 @@ class ABodyThatCannotShrinkIsNotResentTests(unittest.TestCase):
         rlog = _Rlog()
 
         def _urlopen(req, timeout=None):
-            raise _overflow(n_ctx=49152)
+            raise _overflow(n_ctx=32768)
 
         real = upstream.urllib.request.urlopen
         upstream.urllib.request.urlopen = _urlopen
@@ -115,14 +122,16 @@ class ABodyThatCannotShrinkIsNotResentTests(unittest.TestCase):
                 up._open_with_refit({"model": "m", "messages": []}, False, rlog)
         finally:
             upstream.urllib.request.urlopen = real
-        self.assertEqual(up._window, 49152)
+        self.assertEqual(up._window, 32768)
         self.assertTrue(up._window_final)
 
     def test_the_failure_still_reaches_the_caller_as_the_real_status(self):
         """classify_failure keys on `err.code`; a short-circuit must not turn a 400 into a None."""
         up = _Up(shrinks=False)
 
+        posted = []
         def _urlopen(req, timeout=None):
+            posted.append(bytes(req.data))
             raise _overflow()
 
         real = upstream.urllib.request.urlopen
@@ -134,7 +143,10 @@ class ABodyThatCannotShrinkIsNotResentTests(unittest.TestCase):
             upstream.urllib.request.urlopen = real
         self.assertEqual(caught.exception.code, 400)
         self.assertIsInstance(caught.exception, upstream.ContextRefitNoChange)
-        self.assertEqual(caught.exception.final_wire, b"x" * 100)
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(caught.exception.final_wire, posted[0])
+        self.assertEqual(json.loads(posted[0]), {
+            "model": "m", "messages": [{"role": "user", "content": "x" * 100}], "stream": False})
 
 
 if __name__ == "__main__":

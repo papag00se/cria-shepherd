@@ -1,0 +1,33 @@
+# Image observation and reinspection
+
+Image viewing uses the selected coder, not a separate judge. Vision capability defaults to unknown. To opt in, merge these settings into the existing operator configuration, using the exact model identity resolved by the configured HTTP backend:
+
+```toml
+[roles.coder]
+backend = "existing-http-backend"
+vision = true
+vision_model = "<exact wire model id>"
+```
+
+The backend table must already exist. For a served backend, the pin must match its `/v1/models` identity; for a keyed backend, it must match its configured wire model. A harness alias does not supply capability. Unknown, false, missing discovery, different providers/models, CLI backends and unresolved routes cannot authorize an image POST. `vision = true` requires a nonempty string model pin. Changing models requires deliberate configuration of the new identity.
+
+Workspace reinspection has a separate, default-unbound harness contract. Only when the operator knows this deployment uses the native `view_image(path)` harness tool should they declare:
+
+```toml
+[tools]
+workspace_image_tool = "view_image"
+```
+
+Merge this into an existing tools table rather than duplicating it. A request must also offer that tool with a compatible string `path` schema. A matching client name, schema, marker or path-shaped text alone never binds the contract. Other native contracts are currently unsupported. Attachment observation does not require this workspace declaration.
+
+The original image remains private until a completed observation is correlated with its exact occurrence, selected provider, applied coder role/model and actual image-bearing POST. Subsequent coder context contains a labelled historical account, extracted text, uncertainty and a reinspection reference. It does not claim the account is verified perception. Task/root packets and unrelated tool history are preserved; projection happens only in the prepared model view.
+
+For a retained attachment, `reinspect_image` sends the original source to the same coder again. For a workspace reference, it emits a fresh native read for the harness to execute. The returned image becomes a new occurrence and observation; the server does not read the workspace locally or silently reuse old pixels as current file contents. Data URLs retain their encoded source; remote URLs remain references rather than frozen remote bytes.
+
+Private producer-issued call IDs correlate exact issued actions with returned result packets. They are not authentication credentials: the operator declaration does not authenticate an arbitrary API caller or independently prove that a harness executed a read. Observations remain labelled accounts of the image bytes reported by the harness. Duplicate, changed, unregistered or unsupported result structures are explicit errors.
+
+Image token cost remains explicitly unknown when native measurement cannot establish it. No text-density estimate proves visual fit. Protected multipart reads settle only after their final full model request is measured and delivered; a prior image observation gives them no read credit. Unknown or overflow fallback preserves the received carriers without credit.
+
+Ordinary text SSE remains progressive, including when an image tool is offered. Image-bearing requests currently buffer their internal observation/reinspection exchanges before emitting the final completion. No physical vision or capacity validation is implied by offline handler tests.
+
+There is no trusted session-close authority wired yet. Retained private resources are not deleted on request end, model completion, cache eviction or idle timeout. Operator call captures and backend caches have separate retention. No automatic cleanup is enabled by these settings.

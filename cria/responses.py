@@ -46,7 +46,7 @@ def to_chat_body(r: dict) -> dict:
         t = item.get("type", "message")
         if t == "message":
             role = item.get("role")
-            text = _content_text(item.get("content"))
+            text = _message_content(item.get("content"), role)
             # `developer`/`system` items are instructions → fold into the single
             # leading system message (a 2nd leading system message breaks strict
             # chat templates — see toolmenu.add_cheatsheet).
@@ -118,6 +118,41 @@ def to_chat_body(r: dict) -> dict:
     return body
 
 
+def _message_content(content, role):
+    """Translate supported image parts in order; never silently omit unknown parts."""
+    if not isinstance(content, list):
+        return _content_text(content)
+    text_kinds = ("input_text", "output_text", "text", "summary_text")
+    image = any(isinstance(p, dict) and p.get("type") == "input_image" for p in content)
+    if not image:
+        if any(not isinstance(p, dict) or p.get("type") not in text_kinds for p in content):
+            raise ValueError("unsupported Responses non-text content type")
+        return _content_text(content)  # preserve existing text-only metadata handling
+    parts = []
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("unsupported Responses content part")
+        kind = part.get("type")
+        if kind in ("input_text", "output_text", "text", "summary_text"):
+            if set(part) != {"type", "text"} or not isinstance(part["text"], str):
+                raise ValueError("unsupported Responses text metadata")
+            parts.append({"type": "text", "text": part["text"]})
+        elif kind == "input_image":
+            if role not in ("user", "tool"):
+                raise ValueError("unsupported Responses image role")
+            if (set(part) - {"type", "image_url", "detail"} or
+                    not isinstance(part.get("image_url"), str) or not part["image_url"]):
+                raise ValueError("unsupported Responses image reference or metadata")
+            value = {"url": part["image_url"]}
+            if "detail" in part:
+                value["detail"] = part["detail"]
+            parts.append({"type": "image_url", "image_url": value})
+            image = True
+        else:
+            raise ValueError("unsupported Responses content type")
+    return parts if image else _content_text(content)
+
+
 def _content_text(content) -> str:
     if isinstance(content, str):
         return content
@@ -134,7 +169,8 @@ def _output_text(output) -> str:
     if isinstance(output, str):
         return output
     if isinstance(output, list):  # some clients wrap output in content parts
-        return _content_text(output)
+        converted = _message_content(output, "tool")
+        return converted
     if isinstance(output, dict):
         return output.get("output") or output.get("text") or json.dumps(output)
     return "" if output is None else str(output)

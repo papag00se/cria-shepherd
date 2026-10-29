@@ -1,0 +1,1 @@
+⟦ctx:read-not-delivered⟧ The read result was verified, but {{DETAIL}} The complete file was not delivered and these transport outputs do not establish read credit. Continue working without treating them as the file.{{CONTINUATIONS}}

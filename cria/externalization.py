@@ -15,6 +15,17 @@ from . import prompts
 from .assistcontract import Policy, Reference
 
 
+# Complete producer stdout, before any harness envelope. A PTY can add one CR
+# per LF. Embed the same byte measurement in harness-side producers.
+STDOUT_MAX_BYTES = 10_000
+STDOUT_SIZE_PY = '''def stdout_size(raw):
+    return len(raw) + raw.count(b'\\n')
+'''
+_stdout_namespace: dict = {}
+exec(STDOUT_SIZE_PY, _stdout_namespace)
+stdout_size = _stdout_namespace['stdout_size']
+
+
 @dataclass(frozen=True)
 class Spill:
     target: str

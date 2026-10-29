@@ -16,9 +16,7 @@ class EndOnlyReadContract(unittest.TestCase):
         self.path = pathlib.Path(self.tmp.name) / "fixture.txt"
 
     def run_read(self, **bounds):
-        from cria.filecommands import read_room_scope
-        with read_room_scope(9000):
-            command = _read_command({"path": str(self.path), **bounds})
+        command = _read_command({"path": str(self.path), **bounds})
         result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
         return result.returncode, result.stdout, result.stderr
 
@@ -45,9 +43,22 @@ class EndOnlyReadContract(unittest.TestCase):
         self.path.write_text("one\ntwo\nthree\n")
         self.assertIn("denied", self.run_read(start_line=3, end_line=1)[1])
 
-    def test_oversized_requested_prefix_is_still_refused(self):
-        self.path.write_text("x" * 20000 + "\n")
-        self.assertIn("denied", self.run_read(end_line=1)[1])
+    def test_large_requested_prefix_is_recovered_without_the_tail(self):
+        import random
+        from cria import denial, filecommands
+        from tests.test_a_result_is_ciras_refusal_only_when_ciras_own_lowering_proved_it import _recover_multipart
+        for line, minimum_pages in [('x' * 20000, 1), (random.Random(512).randbytes(10000).hex(), 2)]:
+            with self.subTest(minimum_pages=minimum_pages):
+                self.path.write_text(line + '\nUNREQUESTED TAIL\n')
+                code, raw, _ = self.run_read(end_line=1)
+                self.assertEqual(code, 0)
+                self.assertTrue(denial.is_denied(raw))
+                self.assertNotIn('UNREQUESTED TAIL', raw)
+                self.assertLessEqual(len(raw.encode()) + raw.count('\n'), filecommands.READ_TRANSPORT_STDOUT_BYTES)
+                body, pages = _recover_multipart(self.path.parent, {'path': str(self.path), 'end_line': 1}, 'range')
+                self.assertGreaterEqual(pages, minimum_pages)
+                self.assertEqual(body, ('1: ' + line + '\n').encode())
+                self.assertNotIn(b'UNREQUESTED TAIL', body)
 
     def test_end_beyond_eof_matches_explicit_range(self):
         self.path.write_text("one\ntwo\n")

@@ -52,5 +52,10 @@ class PathParityTests(unittest.TestCase):
         for m in ("_produce_stream", "_produce_completion"):
             self.assertIn(m, methods, f"{m} missing")
             calls = {getattr(c.func, "attr", None) for c in ast.walk(methods[m]) if isinstance(c, ast.Call)}
+            # Buffered fit handling delegates to the real producer, including
+            # the retry; the shared dispatch contract is on that owner.
+            if "_produce_completion_once" in calls:
+                calls |= {getattr(c.func, "attr", None) for c in ast.walk(methods["_produce_completion_once"])
+                          if isinstance(c, ast.Call)}
             self.assertIn("_engages_loop", calls, f"{m} never calls _engages_loop — the shared dispatch gate")
             self.assertIn("drive", calls, f"{m} never calls loop.drive — the ONE coder driver")

@@ -22,16 +22,8 @@ from .toolargs import PATH_KEYS as _PATH_KEYS, tool_path as _tool_path
 
 
 def _spill_read_command(path: str) -> str:
-    """Gather cached spill facts and render guidance above pure command formatting."""
-    fmt = webfetch.format_for_spill_path(path)
-    extent = webfetch.spill_reading_hint(path, content_reduce_mod.INLINE_RESULT_MAX_BYTES)
-    fmt_clause = f' It is {fmt}.' if fmt else ''
-    if webfetch.page_not_file_for_spill_path(path):
-        fmt_clause += ' ' + prompts.load_map('webfetch_guards')['spill_is_the_page_not_the_file']
-    steer = prompts.render('spill_read_steer', path=path, format=fmt_clause,
-                           extent=(f' {extent}\n' if extent else ''),
-                           outline=webfetch.outline_for_spill_path(path))
-    return _format_spill_read(path, steer)
+    """Format an unrestricted whole read of a spilled document."""
+    return _format_spill_read(path)
 
 def malformed_shell(source: OutboundCall) -> ShellCommand | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
@@ -83,7 +75,7 @@ def reference_files(source: OutboundCall) -> ShellCommand | None:
         cmd = _spill_read_command(str(sp)) if name in _READ_NAMES else _refusal_command(prompts.render('spill_edit_refusal', path=str(sp)))
         if rlog is not None:
             rlog.emit('writeproxy.spill_read_gated' if name in _READ_NAMES else 'writeproxy.blocked_spill', tool=name, path=str(sp))
-        return ShellCommand(cmd)
+        return ShellCommand(cmd, multipart_kind='read' if name in _READ_NAMES else '')
     return None
 
 
@@ -142,7 +134,8 @@ def unread_replacement(source: OutboundCall) -> ShellCommand | None:
         return None
     if source.log is not None:
         source.log.emit('writeproxy.write_unread_target', tool=source.name, path=str(mutation.path))
-    return ShellCommand(_read_in_place_of_write(str(mutation.path), fact), read_in_place=True)
+    return ShellCommand(_read_in_place_of_write(str(mutation.path), fact), read_in_place=True,
+                        multipart_kind='read-instead', multipart_fact=fact)
 
 
 def candidate_safety(source: OutboundCall, command: str) -> str:

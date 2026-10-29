@@ -39,6 +39,7 @@ class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
         for name in self.STEERS:
             with self.subTest(steer=name):
                 self.assertNotIn("truncat", prompts.load(name).lower())
+
     def test_neither_steer_blames_the_harness(self):
         """#18: a claim about the harness is one cria is not positioned to make, and #17 keeps
         cria's own name out of the alternative — so the sentence is about the READ."""
@@ -47,12 +48,17 @@ class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
                 body = prompts.load(name).lower()
                 self.assertNotIn("harness", body)
                 self.assertNotIn("cria", body)
+
     def test_both_say_what_actually_happened(self):
         for name in self.STEERS:
             with self.subTest(steer=name):
                 body = prompts.load(name)
-                self.assertIn("larger than can be returned", body)
-                self.assertIn("nothing is shown", body)
+                if name == "spill_read_steer":
+                    self.assertIn("larger than can be returned", body)
+                    self.assertIn("nothing is shown", body)
+                else:
+                    self.assertIn("No file content was returned.", body)
+
     def test_both_still_offer_a_route_the_coder_can_take(self):
         """A refusal must name something the coder can actually change (#5b)."""
         for name in self.STEERS:
@@ -60,6 +66,7 @@ class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
                 body = prompts.load(name)
                 self.assertIn("grep", body)
                 self.assertIn("{{PATH}}", body)
+
 
 class TheGapThatMadeItFalseTests(unittest.TestCase):
     def test_the_threshold_is_far_below_the_observed_cut(self):
@@ -70,15 +77,40 @@ class TheGapThatMadeItFalseTests(unittest.TestCase):
 
 
 class TheRefusalStillRefusesTests(unittest.TestCase):
-    def test_an_oversize_whole_read_is_still_declined(self):
-        cmd = writeproxy._read_command({"path": "big.txt"})
-        self.assertIn(str(writeproxy.READ_INLINE_MAX), cmd)
-        self.assertIn("larger than can be returned", cmd)
+    def test_a_large_whole_read_states_the_transport_refusal(self):
+        # The removed guard falsely predicted a harness truncation. A transport
+        # refusal states what actually happened and its suggested range must work.
+        import json
+        import pathlib
+        import subprocess
+        import tempfile
+        from cria import denial
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory, "big.txt")
+            content = "large content\n" * 2000
+            path.write_text(content)
+            result = subprocess.run(["sh", "-c", writeproxy._read_command({"path": str(path)})],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(denial.is_denied(result.stdout))
+            self.assertIn('No file content was returned', result.stdout)
+            self.assertNotIn('truncat', result.stdout.lower())
+            args = json.loads(result.stdout.split('Next read_file arguments: ', 1)[1])
+            page = subprocess.run(["sh", "-c", writeproxy._read_command(args)], capture_output=True, text=True, check=True)
+            self.assertEqual(args['path'], str(path))
+            self.assertEqual(args['start_line'], 1)
+            self.assertEqual(page.stdout, ''.join(f'{i}: large content\n' for i in range(1, args['end_line'] + 1)))
 
     def test_a_small_read_is_untouched(self):
-        """The guard is a size test in the lowered command, not a remembered flag — a file under the
-        limit still cats."""
-        self.assertIn("sys.stdout.buffer.write(raw)", writeproxy._read_command({"path": "small.txt"}))
+        """A file under the transport limit still returns its exact bytes."""
+        import pathlib
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory, 'small.txt')
+            path.write_bytes(b'hello\r\nworld')
+            result = subprocess.run(['sh', '-c', writeproxy._read_command({'path': str(path)})], capture_output=True)
+        self.assertEqual((result.returncode, result.stdout), (0, b'hello\r\nworld'))
 
 
 
@@ -88,14 +120,11 @@ class TheRefusalStillRefusesTests(unittest.TestCase):
 # Unknown usage and replacement of fixed caps are covered in test_shared_read_budget.
 import pytest
 from cria import filecommands as _read_policy
+from cria.writeproxy import translate_outbound as _translate_reads
 
 
-@pytest.fixture(autouse=True)
-def _known_read_allowance():
-    with _read_policy.read_room_scope(9000):
-        yield
-
-
+def _translate_with_read_allowance(*args, **kwargs):
+    return _translate_reads(*args, **kwargs)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+invalid = The returned transport record was not verified.
+cut = The harness reported that this execution's output was truncated.
+running = The harness reported that this execution was still running; its final result is not known.
+nonzero = The harness reported that the paging execution exited with code {{CODE}}.
+unknown = The execution's completion status is not known.
+continuation = \n\nExact continuation execution output (as reported by the harness):\n{{OUTPUT}}

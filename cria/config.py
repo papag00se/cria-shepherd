@@ -299,6 +299,18 @@ class Role:
     max_tokens: int | None = None
     output_reserve: int | None = None
 
+    # Operator declaration for this exact served/remote wire model, never a client hint.
+    vision: bool | None = None
+    vision_model: str | None = None
+
+    def __post_init__(self):
+        if self.vision is not None and type(self.vision) is not bool:
+            raise ValueError('role vision must be a boolean or omitted (unknown)')
+        if self.vision_model is not None and (not isinstance(self.vision_model,str) or not self.vision_model.strip()):
+            raise ValueError('role vision_model must be a nonempty exact wire model identity')
+        if self.vision is True and self.vision_model is None:
+            raise ValueError('role vision=true requires an exact vision_model pin')
+
     def apply(self, body: dict, *, internal: bool = False, rlog=None) -> None:
         """Attach this role's sampling + reasoning to a chat-completions body, in place.
         Only keys that are set are written (an unset key leaves the server/internal default).
@@ -513,6 +525,14 @@ class ToolsConfig:
 
     cheatsheet: bool = True
     focus: bool = True  # curate the tool menu to coding essentials (ToolSubset::Focused port)
+    # Operator-owned native harness contract; a client-offered schema cannot bind it.
+    workspace_image_tool: str | None = None
+
+    def __post_init__(self):
+        if self.workspace_image_tool is not None and (
+                type(self.workspace_image_tool) is not str or self.workspace_image_tool != 'view_image'):
+            raise ValueError('tools.workspace_image_tool must be omitted or the supported native view_image contract')
+
 
 
 @dataclass(frozen=True)
@@ -668,6 +688,7 @@ class Config:
             tools=ToolsConfig(
                 cheatsheet=bool(data.get("tools", {}).get("cheatsheet", True)),
                 focus=bool(data.get("tools", {}).get("focus", True)),
+                workspace_image_tool=data.get("tools", {}).get("workspace_image_tool"),
             ),
             context=ContextConfig(
                 focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
@@ -901,6 +922,8 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
         merge_consecutive_turns=bool(spec.get("merge_consecutive_turns", False)),
         max_tokens=_int("max_tokens"),
         output_reserve=_int("output_reserve"),
+        vision=spec.get("vision"),
+        vision_model=spec.get("vision_model"),
     )
 
 

@@ -136,7 +136,8 @@ class PackIsGatedToTheGatesRungTests(unittest.TestCase):
         h = object.__new__(CriaHandler)
         cfg = Config(routing=RoutingConfig(engagement_level=level),
                      safety=SafetyConfig(external_dir_permission="write"))
-        h.server = SimpleNamespace(cfg=cfg, loop_store=LoopStore())
+        from cria.multipart_bridge import Bridge
+        h.server = SimpleNamespace(cfg=cfg, loop_store=LoopStore(), multipart_bridge=Bridge())
         h._shell_tool = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
         h._synthetic = {tool}
         h._workspace_root = "/w"

@@ -1,4 +1,4 @@
-# What cria answers when a READ would return more than it can hand over whole. Parsed by load_map.
+# What to answer when a READ would return more than can be handed over whole. load_map format.
 #
 # NO ELISION AND NO TRUNCATION, ON ANY PATH (operator ruling, 2026-08-12). A clip is a lie the model
 # cannot detect, and stating the size of the clip does not make it one it can act on -- it still

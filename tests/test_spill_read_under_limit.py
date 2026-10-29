@@ -112,16 +112,14 @@ class ThroughTranslateOutboundTests(_Workspace):
         self.assertTrue(anchor, "the steer template has no literal text to anchor on")
         self.assertNotIn(anchor, self.run_in_ws(_lowered(comp)).stdout)
 
-    def test_an_OVERSIZED_spilled_file_is_STILL_refused_through_the_same_path(self):
+    def test_an_oversized_spilled_file_is_returned_through_the_same_path(self):
         rel = self.spilled("openapi.json", writeproxy.READ_INLINE_MAX + 4)
         comp = _read_call(rel)
         _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
-        self.assertEqual(r.returncode, 0)      # declined on size is not a failed call
-        self.assertTrue(denial.is_denied(r.stdout))
-        self.assertIn("large reference document", r.stdout)
-        self.assertNotIn("xxxx", r.stdout)          # and NOT the document
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(_unframed(r.stdout, _lowered(comp)), "x" * (writeproxy.READ_INLINE_MAX + 4))
 
     def test_a_root_absolute_spill_path_ALSO_gets_the_file(self):
         """The dropped-'./' rewrite runs before the guard chain, so `/tmp/reference/x` reaches the
@@ -143,7 +141,7 @@ class ThroughTranslateOutboundTests(_Workspace):
              "function": {"name": "edit_file",
                           "arguments": json.dumps({"path": rel, "old_string": "a",
                                                    "new_string": "b"})}}]}}]}
-        writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"edit_file"},
+        _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"edit_file"},
                                       workspace_root=self.ws)
         cmd = _lowered(comp)
         self.assertIn("READ-ONLY reference document", cmd)
@@ -161,7 +159,9 @@ class ThroughTranslateOutboundTests(_Workspace):
                                                    "end_line": 2})}}]}}]}
         _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
-        self.assertIn(" 1 2 9000 ", _lowered(comp))
+        r = self.run_in_ws(_lowered(comp))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(_unframed(r.stdout, _lowered(comp)), "1: " + "x" * (writeproxy.READ_INLINE_MAX + 4) + "\n")
 
 
 class SpillReadCommandTests(_Workspace):
@@ -176,27 +176,27 @@ class SpillReadCommandTests(_Workspace):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(len(r.stdout), LARGEST_REFUSED)
 
-    def test_an_OVERSIZED_spilled_file_is_still_refused(self):
-        """Still refused, and now with exit 0 — see ASizeRefusalReportsNoFailureTests for why a
-        non-zero exit on a read tells a small model the file is gone."""
+    def test_an_oversized_spilled_file_is_returned(self):
+        """A large reference is returned intact rather than falsely described as missing."""
         rel = self.spilled("spec.json", writeproxy.READ_INLINE_MAX + 4)
         r = self._run(rel)
         self.assertEqual(r.returncode, 0)
-        self.assertIn("large reference document", r.stdout)
-        self.assertTrue(denial.is_denied(r.stdout))
+        self.assertEqual(r.stdout, "x" * (writeproxy.READ_INLINE_MAX + 4))
+        self.assertFalse(denial.is_denied(r.stdout))
 
     def test_exactly_at_the_limit_is_read(self):
         rel = self.spilled("edge.txt", writeproxy.READ_INLINE_MAX)
         self.assertEqual(self._run(rel).returncode, 0)
 
-    def test_the_size_is_decided_at_READ_TIME_on_the_harness_side(self):
-        """The check that could wedge the next run is a size cria measured a turn earlier: a spilled
-        file that grows past the limit, or a workspace that is not on cria's own disk, and cria then
-        hands back the wrong branch. So the test is IN the lowered command, where the filesystem
-        answers at the moment of the read — the same place :func:`_read_command` puts it."""
-        cmd = writeproxy._spill_read_command("./tmp/reference/a.json")
-        self.assertIn("est_tokens(", cmd)
-        self.assertIn(str(writeproxy.READ_INLINE_MAX), cmd)
+    def test_the_file_is_read_at_execution_time_on_the_harness_side(self):
+        """A file can grow after lowering or exist only on the harness filesystem."""
+        rel = self.spilled("a.json", 10)
+        cmd = writeproxy._spill_read_command(rel)
+        with open(os.path.join(self.spill, "a.json"), "w") as fh:
+            fh.write("y" * (writeproxy.READ_INLINE_MAX + 4))
+        r = self.run_in_ws(cmd)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "y" * (writeproxy.READ_INLINE_MAX + 4))
 
 
 class MissingSpilledFileTests(_Workspace):
@@ -247,8 +247,10 @@ class MissingSpilledFileTests(_Workspace):
         self.assertEqual(ranged.returncode, whole.returncode)
 
 
-class ASizeRefusalReportsNoFailureTests(_Workspace):
-    """REVERSED 2026-08-12 by operator ruling. These two guards used to exit non-zero.
+class LargeReadsReportSuccessTests(_Workspace):
+    """The size guards were removed; large reads now return content and exit successfully.
+
+    REVERSED 2026-08-12 by operator ruling. These two guards used to exit non-zero.
 
     They were switched to :data:`writeproxy.REFUSED_EXIT_CODE` alongside the blocked-call refusals,
     on the module header's rule that "a REFUSED call did not run, so it must not report success".
@@ -265,14 +267,14 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
     back — see :func:`writeproxy._oversize_command` against its sibling `_refusal_command`.
     """
 
-    def test_the_whole_read_size_guard_exits_zero(self):
+    def test_the_large_whole_read_exits_zero_and_returns_content(self):
         rel = self.spilled("big.json", writeproxy.READ_INLINE_MAX + 4)
         r = self.run_in_ws(writeproxy._read_command({"path": rel}))
         self.assertEqual(r.returncode, 0)
-        self.assertIn("larger than can be returned", r.stdout)  # the steer still reaches the model
-        self.assertTrue(denial.is_denied(r.stdout))        # and cria still knows nothing came back
+        self.assertEqual(r.stdout, "x" * (writeproxy.READ_INLINE_MAX + 4))
+        self.assertFalse(denial.is_denied(r.stdout))
 
-    def test_the_ranged_read_size_guard_exits_zero(self):
+    def test_the_large_ranged_read_exits_zero_and_recovers_content(self):
         # 400 lines of 60 chars ≈ 24 KB — over the cap once the line numbers are added.
         p = os.path.join(self.spill, "wide.txt")
         with open(p, "w") as fh:
@@ -280,8 +282,22 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
         rel = f"{webfetch.SPILL_DIR}/wide.txt"
         r = self.run_in_ws(writeproxy._read_command({"path": rel, "start_line": 1, "end_line": 400}))
         self.assertEqual(r.returncode, 0)
-        self.assertIn("larger than can be returned", r.stdout)
         self.assertTrue(denial.is_denied(r.stdout))
+        self.assertIn('No file content was returned', r.stdout)
+        args = json.loads(r.stdout.split('Next read_file arguments: ', 1)[1])
+        self.assertEqual((args['path'], args['start_line']), (rel, 1))
+        self.assertGreaterEqual(args['end_line'], 1)
+        self.assertLess(args['end_line'], 400)
+        page = self.run_in_ws(writeproxy._read_command(args))
+        self.assertEqual(page.returncode, 0)
+        self.assertFalse(denial.is_denied(page.stdout))
+        recovered = page.stdout
+        for start in range(args['end_line'] + 1, 401, 50):
+            part = self.run_in_ws(writeproxy._read_command({'path': rel, 'start_line': start, 'end_line': min(start + 49, 400)}))
+            self.assertEqual(part.returncode, 0)
+            self.assertFalse(denial.is_denied(part.stdout))
+            recovered += part.stdout
+        self.assertEqual(recovered, "".join(f"{i}: {'z' * 60}\n" for i in range(1, 401)))
 
     def test_a_call_that_was_BLOCKED_still_exits_non_zero(self):
         """The distinction the split preserves: a malformed or refused call really did not run."""
@@ -301,21 +317,13 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
 
 
 
-# These legacy refusal cases exercise a known, explicit context allowance.
-# Unknown usage and replacement of fixed caps are covered in test_shared_read_budget.
+# Exercise the same outbound translation as other tests.
 import pytest
 from cria import filecommands as _read_policy
 from cria.writeproxy import translate_outbound as _translate_reads
 
 
-@pytest.fixture(autouse=True)
-def _known_read_allowance():
-    with _read_policy.read_room_scope(9000):
-        yield
-
-
 def _translate_with_read_allowance(*args, **kwargs):
-    kwargs.setdefault("read_budget", 9000)
     return _translate_reads(*args, **kwargs)
 
 

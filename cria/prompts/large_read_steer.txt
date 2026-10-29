@@ -1,1 +1,3 @@
-{{PATH}} is {{LINES}} lines, which is larger than can be returned in one read, so nothing is shown. Read it deliberately instead: grep for what you need (e.g. grep -n "<keyword>" {{PATH}}), or read a specific line range with read_file start_line/end_line{{WINDOW}}.
+{{PATH}} is {{LINES}} lines, which is larger than can be returned in one read. No file content was returned.
+
+Read it in parts with read_file using the same path and start_line/end_line. If a single line is too large, use grep -n on {{PATH}} to find what you need.{{WINDOW}}

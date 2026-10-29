@@ -349,6 +349,11 @@ def merge_for_alternation(messages: list) -> list:
         r = m.get("role") if isinstance(m, dict) else None
         return "u" if r in _USER_SIDE else ("a" if r == "assistant" else None)
 
+    def parts(content):
+        if isinstance(content, str):
+            return [{"type": "text", "text": content}]
+        return list(content)
+
     head = list(messages[:1]) if isinstance(messages[0], dict) and messages[0].get("role") == "system" else []
     out: list = []
     for m in messages[len(head):]:
@@ -359,9 +364,27 @@ def merge_for_alternation(messages: list) -> list:
         mergeable = (sd is not None and prev is not None and side(prev) == sd
                      and not (prev.get("tool_calls") or m.get("tool_calls"))
                      and isinstance(prev.get("content"), str) and isinstance(m.get("content"), str))
+        multipart = (sd is not None and prev is not None and side(prev) == sd
+                     and (isinstance(prev.get("content"), list) or isinstance(m.get("content"), list)))
+        if multipart:
+            compatible = (sd == "u" and prev.get("role") == m.get("role") == "user"
+                          and {k: v for k, v in prev.items() if k != "content"} ==
+                              {k: v for k, v in m.items() if k != "content"}
+                          and all(prev.get(k) is m.get(k) for k in bodykeys.ALL
+                                  if k in prev or k in m))
+            if compatible:
+                mergeable = True
+            else:
+                # Structural empty boundary: no invented action or user instruction.
+                out.append({"role": "assistant" if sd == "u" else "user", "content": ""})
+                out.append(dict(m))
+                continue
         if mergeable:
             merged = dict(prev)
-            merged["content"] = f"{prev['content']}\n\n{m['content']}".strip()
+            if isinstance(prev["content"], str) and isinstance(m["content"], str):
+                merged["content"] = f"{prev['content']}\n\n{m['content']}".strip()
+            else:
+                merged["content"] = parts(prev["content"]) + [{"type": "text", "text": "\n\n"}] + parts(m["content"])
             out[-1] = merged
         else:
             out.append(dict(m) if isinstance(m, dict) else m)

@@ -145,7 +145,13 @@ class BothTransportsUseTheOneOwnerTests(unittest.TestCase):
         import inspect
         for fn in (server.CriaHandler._produce_stream, server.CriaHandler._produce_completion):
             with self.subTest(producer=fn.__name__):
-                self.assertIn("_compaction_body(", inspect.getsource(fn))
+                source = inspect.getsource(fn)
+                if fn is server.CriaHandler._produce_completion:
+                    # The fit-failure wrapper delegates both attempts to the
+                    # same buffered producer; check that owner, not the wrapper.
+                    self.assertIn("_produce_completion_once(", source)
+                    source = inspect.getsource(server.CriaHandler._produce_completion_once)
+                self.assertIn("_compaction_body(", source)
 
 
 if __name__ == "__main__":

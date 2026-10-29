@@ -427,6 +427,20 @@ def search_spill_name(query: str) -> str:
     return f"{SPILL_DIR}/search-{stem}-{tag}.txt"
 
 
+def stdout_spill_pointer(target: str, chars: int | None = None, *, listing: bool = False) -> str:
+    """Existing navigation prose for a complete saved tool-result transcript.
+
+    Call identity already rides in the tool call. Do not echo an unbounded URL,
+    query or outline in the pointer whose purpose is to fit the transport.
+    """
+    if listing:
+        return prompts.render('listing_stdout_spill', target=target)
+    return _guard_msg('spill', status_label='', url='',
+                      chars=f'{chars:,}' if chars is not None else '{{STDOUT_CHARS}}',
+                      target=target, extent=_guard_msg('spill_extent_full'),
+                      format='', outline='')
+
+
 def search_spill(query: str) -> tuple[str, str]:
     """(``SPILL_DIR`` target, model pointer) for a search whose noisy results are saved to a read-only
     file instead of inlined — search snippets are mostly irrelevant, so they don't belong in context."""

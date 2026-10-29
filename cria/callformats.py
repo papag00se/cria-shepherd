@@ -71,12 +71,8 @@ def _alias_command(name: str, args: dict) -> str:
     return " ".join(parts)
 
 
-def _read_command(args: dict) -> str:
-    """Lower a read ALIAS (cat_file/view_file, or read_file when the harness has no native one) to the
-    SAME guarded shell read the writeproxy synthetic-read path builds — size-guarded (never hands the
-    harness a truncatable blob) and past-EOF-signalled. ONE read-lowering, not two divergent ones (this
-    used to be a bare cat/sed with no guards — the exact truncation footgun the writeproxy path fixes).
-    Normalizes the ``start``/``end`` aliases to ``start_line``/``end_line`` and int-coerces them first."""
+def _normalize_read_args(args: dict) -> dict:
+    """The shared canonical input to alias lowering and its private intent."""
     a = dict(args) if isinstance(args, dict) else {}
     for src, dst in (("start", "start_line"), ("end", "end_line")):
         if a.get(dst) is None and a.get(src) is not None:
@@ -87,7 +83,12 @@ def _read_command(args: dict) -> str:
                 a[k] = int(a[k])
             except (TypeError, ValueError):
                 a.pop(k, None)
-    return _wp_read_command(a) or ""
+    return a
+
+
+def _read_command(args: dict) -> str:
+    """Lower aliases through the guarded filecommands owner."""
+    return _wp_read_command(_normalize_read_args(args)) or ""
 
 
 def _pure_add_file(body: str):

@@ -164,21 +164,15 @@ def test_read_alias_and_synthetic_read_sets_remain_distinct():
     assert massage._READ_NAMES is not writeproxy._READ_NAMES
 
 
-def test_legacy_spill_adapters_pass_real_context_and_preserve_command_bytes(monkeypatch):
-    from cria import webfetch, prompts
+def test_spill_adapters_use_live_path_and_preserve_command_bytes(monkeypatch):
+    from cria import webfetch
     monkeypatch.setattr(webfetch, 'SPILL_DIR', './tmp/custom-read-only')
     assert writeproxy._under_spill_dir('./tmp/custom-read-only/a') is True
     assert writeproxy._under_spill_dir('./tmp/read-only/a') is False
     assert writeproxy._spill_relpath('/tmp/custom-read-only/a') == './tmp/custom-read-only/a'
     assert writeproxy._respill_command('cat /tmp/custom-read-only/a') == 'cat ./tmp/custom-read-only/a'
-    monkeypatch.setattr(webfetch, 'format_for_spill_path', lambda path: 'JSON')
-    monkeypatch.setattr(webfetch, 'spill_reading_hint', lambda path, budget: f'extent {budget}')
-    monkeypatch.setattr(webfetch, 'page_not_file_for_spill_path', lambda path: False)
-    monkeypatch.setattr(webfetch, 'outline_for_spill_path', lambda path: 'actual outline')
     path = './tmp/custom-read-only/a'
-    steer = prompts.render('spill_read_steer', path=path, format=' It is JSON.',
-        extent=f' extent {filecommands.READ_INLINE_MAX}\n', outline='actual outline')
-    assert writeproxy._spill_read_command(path) == filecommands._spill_read_command(path, steer)
+    assert writeproxy._spill_read_command(path) == filecommands._spill_read_command(path)
 
 
 @pytest.mark.parametrize('module', ['discoverypolicy', 'documentguidance', 'externalization'])

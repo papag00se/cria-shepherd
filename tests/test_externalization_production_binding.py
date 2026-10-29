@@ -576,6 +576,7 @@ class FakeLog:
 
 def _fake_handler(store, runtime):
     from cria.server import CriaHandler
+    from cria.multipart_bridge import Bridge
     handler = object.__new__(CriaHandler)
     cfg = SimpleNamespace(
         routing=SimpleNamespace(simple_tools=True, context_fixes=False, done_refusals=False,
@@ -585,7 +586,8 @@ def _fake_handler(store, runtime):
         tools=SimpleNamespace(focus=False, cheatsheet=False))
     stats = SimpleNamespace(calls=0, observe=lambda *a: None)
     handler.server = SimpleNamespace(loop_store=store, loop=None, cfg=cfg, pilot_runtime=runtime,
-                                    stats_store=SimpleNamespace(get=lambda key: stats))
+                                    stats_store=SimpleNamespace(get=lambda key: stats),
+                                    multipart_bridge=Bridge())
     handler.headers = {'X-Cria-Session-Id': 'externalization-before'}
     handler._shell_tool = {'name': 'exec_command', 'schema': {'type': 'object',
         'properties': {'cmd': {'type': 'string'}}, 'required': ['cmd']}}

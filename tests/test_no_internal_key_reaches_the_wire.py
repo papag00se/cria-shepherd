@@ -31,10 +31,34 @@ class TheListIsTheLeverTests(unittest.TestCase):
         body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
         for k in bodykeys.ALL:
             body[k] = "internal"
+        # This key is an active typed read contract, not an arbitrary marker.
+        # An empty producer packet keeps the real wire path and every key present
+        # without inventing read authority or bypassing its validation.
+        body[bodykeys.PROTECTED_READS] = ()
         raw, _sent_estimate, _capture_path = up._prep(body, False, _Rlog())
         out = json.loads(raw)
         self.assertEqual(set(out) & set(bodykeys.ALL), set())
         self.assertEqual(out["messages"], [{"role": "user", "content": "hi"}])  # real content untouched
+
+    def test_the_prototype_spelling_is_discarded_without_changing_literal_content(self):
+        from cria import upstream
+        up = upstream.Upstream("http://x", api_key="unused", context_window=49152,
+                               capture_rendered=False)
+        for role in ("system", "developer", "user", "assistant"):
+            with self.subTest(role=role):
+                text = "Literal _multipart_unverified text stays unchanged."
+                message = {"role": role, "content": text,
+                           bodykeys.MULTIPART_UNVERIFIED: "spoofed canonical value"}
+                body = {"model": "m", "messages": [message]}
+                for key in bodykeys.LEGACY_MESSAGE_KEYS:
+                    body[key] = "spoofed old value"
+                    message[key] = "spoofed old value"
+                raw, _, _ = up._prep(body, False, _Rlog())
+                out = json.loads(raw)
+                self.assertEqual(out["messages"][0]["content"], text)
+                for key in (*bodykeys.LEGACY_MESSAGE_KEYS, bodykeys.MULTIPART_UNVERIFIED):
+                    self.assertNotIn(key, out)
+                    self.assertTrue(all(key not in item for item in out["messages"]))
 
     def test_every_named_key_is_in_ALL(self):
         """A key defined and left out of the tuple is the same silent leak, one step earlier."""

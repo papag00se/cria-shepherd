@@ -200,7 +200,8 @@ def tracking(**overrides):
 def output_handler(driver, *, shell=False):
     from cria.server import CriaHandler
     handler = object.__new__(CriaHandler)
-    handler.server = SimpleNamespace(loop=driver, loop_store=driver._store,
+    from cria.multipart_bridge import Bridge
+    handler.server = SimpleNamespace(multipart_bridge=Bridge(), loop=driver, loop_store=driver._store,
         pilot_runtime=driver._ctx.pilot_runtime, cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission='none'),
             routing=SimpleNamespace(done_refusals=False, assists_enabled=False)))
     handler._shell_tool = ({'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}}

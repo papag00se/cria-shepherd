@@ -1,0 +1,2 @@
+The directory-listing result exceeds the transport output limit. No partial directory listing is shown inline. The full result was saved without truncation to {{TARGET}}.
+Recover the full result with read_file on {{TARGET}} using start_line/end_line ranges, or inspect the saved result with grep -n on {{TARGET}}.

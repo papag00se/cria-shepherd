@@ -1,0 +1,1 @@
+The original attachment is retained privately for this session. Request reinspection using this reference when the observation is insufficient. The reference expires when the session is closed or its retention expires.

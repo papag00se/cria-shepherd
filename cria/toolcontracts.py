@@ -100,6 +100,9 @@ class RewrittenCall:
 class ShellCommand:
     command: str
     read_in_place: bool = False
+    # Producer-owned authorization facts; never inferred from shell text.
+    multipart_kind: str = ''
+    multipart_fact: str = ''
 
 
 # None means not applicable, RewrittenCall continues, ShellCommand terminates.

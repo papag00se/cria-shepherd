@@ -83,7 +83,7 @@ class TheCodersOwnOutputReachesTheModelWholeTests(unittest.TestCase):
 
 
 class TheOutboundReadGuardSurvivesTests(unittest.TestCase):
-    """Interactive reads retain their explicit size refusal; gate output uses paged transport."""
+    """The shared constant still serves other output paths; gate output uses paged transport."""
 
     def test_the_read_guard_still_shares_the_constant(self):
         self.assertEqual(READ_INLINE_MAX, content_reduce.INLINE_RESULT_MAX_BYTES)
@@ -94,7 +94,9 @@ class TheOutboundReadGuardSurvivesTests(unittest.TestCase):
 
 
 class ASizeRefusalExitsZeroTests(unittest.TestCase):
-    """A non-zero exit on a read means one thing to a small model: the path is not there.
+    """Historical read-size refusal ruling; transport refusals preserve the same exit semantics.
+
+    A non-zero exit on a read means one thing to a small model: the path is not there.
 
     Operator ruling, 2026-08-12: *"You must still use an exit code of 0 or the weak model will
     assume something like the file doesn't exist."* The call did not fail — cria declined to hand
@@ -109,10 +111,6 @@ class ASizeRefusalExitsZeroTests(unittest.TestCase):
     def setUp(self):
         import tempfile, pathlib
         self.ws = tempfile.mkdtemp()
-        from cria.filecommands import read_room_scope
-        allowance = read_room_scope(9000)
-        allowance.__enter__()
-        self.addCleanup(allowance.__exit__, None, None, None)
         pathlib.Path(self.ws, "big.txt").write_text("x" * (READ_INLINE_MAX * 3))
         pathlib.Path(self.ws, "small.txt").write_text("hello\n")
         for i in range(600):
@@ -126,13 +124,35 @@ class ASizeRefusalExitsZeroTests(unittest.TestCase):
         r = self._run(writeproxy._list_command({"path": "."}), self.ws)
         self.assertEqual(r.returncode, 0)
 
-    def test_both_still_carry_the_denied_mark(self):
-        """Exit 0 is for the model. cria's own readers must still know no content came back."""
-        from cria import denial
-        for cmd in (writeproxy._read_command({"path": "big.txt"}),
-                    writeproxy._list_command({"path": "."})):
-            with self.subTest(cmd=cmd[:40]):
-                self.assertTrue(denial.is_denied(self._run(cmd, self.ws).stdout))
+    def test_read_refusal_and_listing_spill_preserve_complete_evidence(self):
+        import re
+        import subprocess
+        from cria import denial, webfetch
+        read = self._run(writeproxy._read_command({"path": "big.txt"}), self.ws)
+        expected = subprocess.run(['ls', '-la', '.'], cwd=self.ws, capture_output=True, text=True, check=True).stdout
+        listing = self._run(writeproxy._list_command({"path": "."}), self.ws)
+        self.assertEqual((read.returncode, listing.returncode), (0, 0))
+        self.assertTrue(denial.is_denied(read.stdout))
+        self.assertIn('No file content was returned', read.stdout)
+        self.assertIn('byte-oriented shell command', read.stdout)
+        self.assertIn('No partial directory listing', listing.stdout)
+        self.assertNotIn('f599.txt', listing.stdout)
+        matches = re.findall(re.escape(webfetch.SPILL_DIR) + r'/stdout-[0-9a-f]{64}\.txt', listing.stdout)
+        self.assertTrue(matches)
+        saved = pathlib.Path(self.ws, matches[0])
+        self.assertEqual(saved.read_text(), expected)
+        lines = expected.splitlines(keepends=True)
+        recovered = ''
+        for start in range(1, len(lines) + 1, 50):
+            end = min(start + 49, len(lines))
+            page = self._run(writeproxy._read_command({'path': matches[0], 'start_line': start, 'end_line': end}), self.ws)
+            self.assertEqual(page.returncode, 0)
+            self.assertFalse(denial.is_denied(page.stdout))
+            for number, numbered in enumerate(page.stdout.splitlines(keepends=True), start):
+                prefix = f'{number}: '
+                self.assertTrue(numbered.startswith(prefix))
+                recovered += numbered[len(prefix):]
+        self.assertEqual(recovered, expected)
 
     def test_a_file_that_really_is_missing_still_exits_non_zero(self):
         """The distinction: the world is wrong here, not just the size."""
