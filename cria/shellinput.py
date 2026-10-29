@@ -7,6 +7,8 @@ projection alone is never proof that a body is inert.
 """
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass
 
 
@@ -100,6 +102,83 @@ def _escaped_quotes(source: str, start: int, end: int) -> list[tuple[int, int]]:
             continue
         j += 1
     return out
+
+
+def decode_ansi_c(source: str, projection: str | None = None) -> str:
+    """Render bash ANSI-C quoted words as ordinary quoted data for shell analysis.
+
+    The optional same-length projection retains the caller's masked input and syntax;
+    source supplies the original escape bytes. This is a lexical view, never a command
+    to execute. Expansion results outside the quotes remain unresolved.
+    """
+    view = source if projection is None else projection
+    if "$'" not in source:
+        return view
+    out, i, quote = [], 0, ''
+    simple = {'a': 7, 'b': 8, 'e': 27, 'E': 27, 'f': 12, 'n': 10,
+              'r': 13, 't': 9, 'v': 11, '\\': 92, "'": 39, '"': 34, '?': 63}
+    while i < len(source):
+        c = source[i]
+        if view[i] != c:
+            out.append(view[i]); i += 1; continue
+        if c == '\\' and quote != "'":
+            out.append(view[i:i + 2]); i += 2; continue
+        if quote:
+            out.append(c)
+            if c == quote:
+                quote = ''
+            i += 1; continue
+        if c == '#' and (i == 0 or source[i - 1] in _COMMENT_LEAD):
+            end = source.find('\n', i)
+            end = len(source) if end < 0 else end
+            out.append(view[i:end]); i = end; continue
+        if source.startswith('$$', i):
+            out.append(view[i:i + 2]); i += 2; continue
+        if source.startswith("$'", i):
+            end = ansi_c_end(source, i + 2)
+            if end is None:
+                out.append(view[i:]); break
+            body, data, j = source[i + 2:end], bytearray(), 0
+            while j < len(body):
+                c = body[j]
+                if c != '\\' or j + 1 == len(body):
+                    data.extend(os.fsencode(c)); j += 1; continue
+                esc = body[j + 1]
+                if esc in simple:
+                    data.append(simple[esc]); j += 2
+                elif esc in '01234567':
+                    m = re.match(r'[0-7]{1,3}', body[j + 1:])
+                    data.append(int(m.group(), 8) & 255); j += 1 + len(m.group())
+                elif esc in 'xuU':
+                    limit = {'x': 2, 'u': 4, 'U': 8}[esc]
+                    m = re.match(r'[0-9a-fA-F]{1,%d}' % limit, body[j + 2:])
+                    if not m:
+                        data.extend(os.fsencode('\\' + esc)); j += 2; continue
+                    value = int(m.group(), 16)
+                    if esc == 'x':
+                        data.append(value)
+                    elif value <= 0x10ffff:
+                        data.extend(chr(value).encode('utf-8', 'surrogatepass'))
+                    else:
+                        data.extend(os.fsencode('\\' + esc + m.group()))
+                    j += 2 + len(m.group())
+                elif esc == 'c' and j + 2 < len(body):
+                    control = os.fsencode(body[j + 2])
+                    data.append(127 if control == b'?' else control[0] & 31)
+                    data.extend(control[1:])
+                    j += 3
+                    if control == b'\\' and body[j:j + 1] == '\\':
+                        j += 1
+                else:
+                    data.extend(os.fsencode('\\' + esc)); j += 2
+            value = os.fsdecode(bytes(data).split(b'\0', 1)[0])
+            # Double quotes keep shell metacharacters inert, including a decoded dollar.
+            out.append('"' + re.sub(r'([\\"$`])', r'\\\1', value) + '"')
+            i = end + 1; continue
+        if c in "\"'":
+            quote = c
+        out.append(c); i += 1
+    return ''.join(out)
 
 
 def _word(source: str, start: int) -> tuple[str, int, bool] | None:

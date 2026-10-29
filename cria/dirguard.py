@@ -22,6 +22,7 @@ import os
 import re
 import shlex
 from collections.abc import Sequence
+from fnmatch import fnmatchcase
 from typing import NamedTuple
 
 from . import bodykeys, prompts, shellinput, toolpath
@@ -673,7 +674,7 @@ class _InputRefusal:
         self.message = message
 
 
-def _shell_tokens(command: str) -> list[tuple[str, int, int]] | None:
+def _shell_tokens(command: str, *, extra_wordchars: str = "") -> list[tuple[str, int, int]] | None:
     """The existing shlex words with their exact source spans, before quote removal. The spans index
     ``_join_continuations(command)[0]`` (the text the shell reads), which equals ``command`` unless it
     holds a backslash-newline; a caller comparing a span with source text compares against that."""
@@ -682,6 +683,7 @@ def _shell_tokens(command: str) -> list[tuple[str, int, int]] | None:
     lexer.whitespace = " \t\r"
     lexer.commenters = ""
     lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
+    lexer.wordchars += extra_wordchars
     tokens = []
     try:
         while True:
@@ -1823,39 +1825,147 @@ def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, r
     return _refusal("Writing" if is_write else "Reading", path, workspace, roots, level)
 
 
-def _root_delete_in_flat(text: str, mark: str = "") -> bool:
-    """The flat tokenizer's verdict on ONE command text (comments already neutralised). ``mark`` is the
-    placeholder an executable substitution was replaced by: it may expand to nothing, so a word that
-    holds it is judged without it (`$(x)find / -delete` is `find / -delete` when x is empty) and a word
-    that was only the placeholder is no word — the conservative reading."""
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=';&|()\n')
-    lexer.commenters = ''
-    lexer.whitespace = ' \t\r'
-    try:
-        words = list(lexer)
-    except ValueError:
-        return False
-    if mark:
-        words = [w for w in (w if (w and set(w) <= set(';&|()\n')) else w.replace(mark, '') for w in words) if w]
-    segment = []
-    for word in [*words, ';']:
-        if word and set(word) <= set(';&|()\n'):
-            if segment[:1] == ['sudo']:
-                segment = segment[1:]
-                while segment and segment[0] in ('-n', '--'):
-                    segment = segment[1:]
-            recursive = any(w == '--recursive' or (w.startswith('-') and not w.startswith('--')
-                                                    and 'r' in w.lower()) for w in segment[1:])
-            if ((segment[:1] == ['rm'] and recursive and any(w in ('/', '/*') for w in segment[1:]))
-                    or (segment[:2] == ['find', '/'] and '-delete' in segment[2:])):
+def _root_glob_may_recurse(source: str) -> bool:
+    """Can this active filename pattern supply a recursive rm option? No IO."""
+    def glob_fields(source):
+        # Quote removal must not turn quoted wildcard data into active syntax.
+        unquoted = {i: c for i, c in _unquoted_chars(source)}
+        if not any(c in '*?[' for c in unquoted.values()):
+            return []
+        placeholder = '\U000f0000'
+        while placeholder in source:
+            placeholder = chr(ord(placeholder) + 1)
+        projected, patterns, i = [], [], 0
+        while i < len(source):
+            c = unquoted.get(i)
+            if c in ('*', '?'):
+                patterns.append(c)
+                projected.append(placeholder)
+                i += 1
+            elif c == '[':
+                start = i + 1
+                if source[start:start + 1] in ('!', '^'):
+                    start += 1
+                if source[start:start + 1] == ']':
+                    start += 1
+                end = source.find(']', start)
+                if (end < 0 or unquoted.get(end) != ']'
+                        or any(ch in "[]\\\"'" for ch in source[i + 1:end])):
+                    return None  # unsupported class: retain possibility
+                pattern = source[i:end + 1]
+                if pattern.startswith('[^'):
+                    pattern = '[!' + pattern[2:]
+                patterns.append(pattern)
+                projected.append(placeholder)
+                i = end + 1
+            else:
+                projected.append(source[i])
+                i += 1
+        tokens = _shell_tokens(''.join(projected), extra_wordchars=placeholder)
+        if tokens is None or len(tokens) != 1:
+            return None
+        shape = tokens[0][0]
+        active = iter(patterns)
+        fields = [[]]
+        for char in shape:
+            if char == placeholder:
+                fields[-1].append(next(active))
+            else:
+                # fnmatch's literal spellings preserve quoted metacharacters.
+                fields[-1].append({'*': '[*]', '?': '[?]', '[': '[[]'}.get(char, char))
+        return fields
+
+    def glob_may_recurse(source):
+        first = next(i for i, c in _unquoted_chars(source) if c in '*?[')
+        prefix = _shell_tokens(source[:first])
+        if prefix and prefix[0][0] and not prefix[0][0].startswith('-'):
+            return False
+        fields = glob_fields(source)
+        if fields is None:
+            return True
+        for field in fields:
+            pattern = ''.join(field)
+            if any(fnmatchcase('--recursive'[:n], pattern) for n in range(3, len('--recursive') + 1)):
                 return True
-            segment = []
-        else:
-            segment.append(word)
-    return False
+            # Intersect the glob with short options containing r/R. Four
+            # states: start, initial dash, non-dash option, recursive option.
+            # This avoids enumerating flag combinations or treating [ab] as r.
+            def advance(states, atom):
+                result = set()
+                for state in states:
+                    if state == 0 and fnmatchcase('-', atom):
+                        result.add(1)
+                    elif state:
+                        if any(fnmatchcase(c, atom) for c in ('r', 'R')):
+                            result.add(3)
+                        if state >= 2:
+                            result.add(state)
+                        elif atom not in ('-', '[-]'):
+                            result.add(2)
+                return result
+            states = {0}
+            for atom in field:
+                if atom == '*':
+                    while True:
+                        expanded = states | advance(states, '?')
+                        if expanded == states:
+                            break
+                        states = expanded
+                else:
+                    states = advance(states, atom)
+            if 3 in states:
+                return True
+        return False
+
+    return glob_may_recurse(source)
 
 
-def root_recursive_delete_refusal(command: str) -> str | None:
+def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
+    """Keep source quote ownership and distinguish possible glob options."""
+    tokens = _shell_tokens(text)
+    if tokens is None:
+        return None
+    segment, possible, redirect = [], False, False
+    for word, start, end in [*tokens, (';', len(text), len(text))]:
+        source = text[start:end]
+        if redirect:
+            redirect = False
+            continue
+        if source == word and any(c in word for c in '<>'):
+            redirect = True
+            continue
+        operator = bool(word) and set(word) <= set(';&|()\n') and (source == word or start == len(text))
+        if not operator:
+            word = word.replace(mark, '') if mark else word
+            if word:
+                segment.append((word, source))
+            continue
+        if segment[:1] and segment[0][0] == 'sudo':
+            segment = segment[1:]
+            while segment and segment[0][0] in ('-n', '--'):
+                segment = segment[1:]
+        if segment[:1] and segment[0][0] == 'rm':
+            recursive, glob_recursive = False, False
+            for option, spelling in segment[1:]:
+                if option == '--':
+                    break
+                active = any(c in '*?[' for _, c in _unquoted_chars(spelling))
+                if active:
+                    glob_recursive |= _root_glob_may_recurse(spelling.replace(mark, '') if mark else spelling)
+                elif option == '--recursive' or (option.startswith('-') and not option.startswith('--')
+                                                and 'r' in option.lower()):
+                    recursive = True
+            if any(w in ('/', '/*') for w, _ in segment[1:]):
+                if recursive:
+                    return 'PROVEN'
+                possible |= glob_recursive
+        elif [w for w, _ in segment[:2]] == ['find', '/'] and any(w == '-delete' for w, _ in segment[2:]):
+            return 'PROVEN'
+        segment = []
+    return 'POSSIBLE' if possible else None
+
+
+def _root_delete_assessment(command: str) -> str | None:
     """Narrow direct-shell root deletion backstop, independent of directory permission.
 
     Tokenize rather than matching prose in echo/grep/comments. This is not a shell
@@ -1880,22 +1990,31 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     # A LIST, never recursion, so nesting depth is unbounded by the interpreter; each body is judged
     # BEFORE any permission level is looked at (the write level returns this verdict alone). An expansion
     # that owner cannot delimit abstains, as it always did.
-    pending = [command]
+    pending, possible = [command], False
     while pending:
         # Each text is read with its ANSI-C strings ended where bash ends them (same length, so every
         # extent below still indexes it): `echo $'\'' ; rm -rf / #'` runs the rm.
-        raw = shellinput.layout(pending.pop()).literal_shell
+        original = pending.pop()
+        raw = shellinput.layout(original).literal_shell
         bodies, _unknown = shellinput.expansions(raw, shell=True)
         mark = next((chr(c) for c in range(0xE000, 0xF8FF) if chr(c) not in raw), "\ue000")
-        outer, last = [], 0
+        outer, original_outer, last = [], [], 0
         for body in bodies:
             outer.append(raw[last:body.start])
+            original_outer.append(original[last:body.start])
             outer.append(mark)
+            original_outer.append(mark)
             last = body.end
         outer.append(raw[last:])
-        text = _join_continuations("".join(outer), drop_comments=True)[0]
-        if _root_delete_in_flat(text, mark):
-            return prompts.load('root_recursive_delete_refusal')
+        original_outer.append(original[last:])
+        outer_text = "".join(outer)
+        # Decode against the unmasked source while retaining substitution placeholders.
+        decoded = shellinput.decode_ansi_c("".join(original_outer), outer_text)
+        text = _join_continuations(decoded, drop_comments=True)[0]
+        verdict = _root_delete_in_flat(text, mark)
+        if verdict == 'PROVEN':
+            return verdict
+        possible |= verdict == 'POSSIBLE'
         extents = {(body.start, body.end) for body in bodies}
         found = [(body.body, raw) for body in bodies]
         if "\\" in raw:                                   # a continuation can hide an opener from step 1
@@ -1915,6 +2034,17 @@ def root_recursive_delete_refusal(command: str) -> str | None:
                 # another backslash BEFORE it reads the body as a script, so `\$(…)` there is a live `$(…)`.
                 inner = re.sub(r'\\([\\`$])', r'\1', inner)
             pending.append(inner)
+    return 'POSSIBLE' if possible else None
+
+
+def root_recursive_delete_refusal(command: str) -> str | None:
+    """The refusal text for a root deletion the lexical backstop proves (or cannot rule out, for a
+    wildcard that may supply the recursive option); None otherwise. A bounded backstop, not a parser."""
+    assessment = _root_delete_assessment(command)
+    if assessment == 'PROVEN':
+        return prompts.load('root_recursive_delete_refusal')
+    if assessment == 'POSSIBLE':
+        return prompts.load('work_log_denied')
     return None
 
 
@@ -2031,6 +2161,17 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
                 return refusal
     if layout.documents:
         refusal = _input_refusal(layout, outer_shell, scripts, level, workspace, roots, cwd, _depth)
+        if refusal:
+            return refusal
+    decoded = shellinput.decode_ansi_c(layout.source, outer_shell)
+    if decoded != outer_shell:
+        # Judge the decoded view as well as the original, while keeping the original
+        # coordinate system for heredocs, substitutions and read-proof explanations.
+        if _depth == 0:
+            moved = _persisted_cwd_refusal(decoded, workspace)
+            if moved:
+                return moved
+        refusal = command_refusal(decoded, level, workspace, roots, _cwd=cwd, _depth=_depth + 1)
         if refusal:
             return refusal
     command = outer_shell

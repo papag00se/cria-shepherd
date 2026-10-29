@@ -82,4 +82,5 @@ class Analysis:
 
     @property
     def blocked(self):
-        return any(f.confidence == 'PROVEN' for f in self.findings)
+        return any(f.confidence == 'PROVEN' or (f.confidence == 'POSSIBLE' and f.rule == 'root_uncertain')
+                   for f in self.findings)

@@ -26,9 +26,12 @@ def analyze(path: str, source: str, workspace: str | None, permission: str = 'no
         from .cleanup_languages import LANGUAGES, inspect_source
         language = LANGUAGES.get(suffix, 'universal')
         result = inspect_source(source, language, workspace, permission)
-        if language == 'shell' and dirguard.root_recursive_delete_refusal(source):
-            return Analysis('shell', result.findings + (Finding('PROVEN', 'root', 1, source, ('/',)),),
-                            'supported-subset')
+        if language == 'shell':
+            root = dirguard._root_delete_assessment(source)
+            if root:
+                rule, targets = ('root', ('/',)) if root == 'PROVEN' else ('root_uncertain', ())
+                return Analysis('shell', result.findings + (Finding(root, rule, 1, source, targets),),
+                                'supported-subset')
         return result
     except (RecursionError, SyntaxError, ValueError) as exc:
         return Analysis('python' if suffix in ('.py', '.pyw') else 'universal', (),
@@ -45,7 +48,7 @@ def review(path: str, candidate: str, previous: str | None, workspace: str | Non
                   coverage=result.coverage, findings=[asdict(f) for f in result.findings])
     proven = [f for f in result.findings if f.confidence == 'PROVEN']
     if not proven:
-        return None
+        return prompts.load('work_log_denied') if result.blocked else None
     descriptions = prompts.load_map('cleanup_findings')
     return prompts.render('cleanup_refusal', evidence='\n\n'.join(f.evidence for f in proven),
                           reason='\n'.join(descriptions[f.rule] for f in proven))
