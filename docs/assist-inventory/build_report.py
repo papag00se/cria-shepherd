@@ -18,6 +18,7 @@ from cria.assistfamilies import (  # noqa: E402
 
 HISTORY = Path(__file__).with_name("detail-history.json")
 REPORT = Path(__file__).with_name("REPORT.md")
+LEVELS = Path(__file__).with_name("LEVELS.md")
 SCOPES = {
     "gated_runtime": "Existing runtime/config gates; navigation coverage is pending migration.",
     "experimental_planning": "Explicit experimental planning only; OFF by default.",
@@ -25,6 +26,16 @@ SCOPES = {
     "configured_cli_provider": "Optional configured provider; not an ordinary runtime assist.",
 }
 from cria.assistcontract import Reference  # noqa: E402
+from cria import config  # noqa: E402
+
+LEVEL_TITLES = {
+    config.PURE_PROXY: "Pure proxy",
+    config.TOOL_CALL_FIXES: "Tool-call fixes",
+    config.SIMPLE_TOOLS: "Simple tools",
+    config.CONTEXT_FIXES: "Context fixes",
+    config.DONE_REFUSALS_ENABLED: "Completion refusals",
+    config.ASSISTS_ENABLED: "Assists",
+}
 
 # Executable Policy scope -> maintenance-family applicability. Artifacts and
 # configured providers have no ordinary executable-policy scope here.
@@ -289,19 +300,35 @@ def render(families: tuple[AssistFamily, ...] = FAMILIES, history: dict | None =
     return "\n".join(lines)
 
 
+def render_levels() -> str:
+    """List registered definitions at their own default engagement level."""
+    definitions = executable_definitions()
+    lines = []
+    for level in range(config.MAX_ENGAGEMENT_LEVEL + 1):
+        lines += [f"## L{level} — {LEVEL_TITLES[level]}", ""]
+        for definition in definitions:
+            policy = definition.policy
+            if policy.default_level == level:
+                lines.append(f"- `{policy.id}` — [{policy.family_id}](REPORT.md#{policy.family_id.lower()})")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    content = render()
+    outputs = ((REPORT, render()), (LEVELS, render_levels()))
     if args.check:
-        if not REPORT.is_file() or REPORT.read_text() != content:
-            print("Family report is stale; regenerate it", file=sys.stderr)
+        stale = [path for path, content in outputs if not path.is_file() or path.read_text() != content]
+        if stale:
+            print("Generated inventory is stale: " + ", ".join(path.name for path in stale), file=sys.stderr)
             return 1
-        print("PASS: taxonomy, frozen lineage, executable definitions and generated report")
+        print("PASS: taxonomy, frozen lineage, executable definitions and generated reports")
         return 0
-    REPORT.write_text(content)
-    print("Wrote " + str(REPORT.relative_to(ROOT)))
+    for path, content in outputs:
+        path.write_text(content)
+        print("Wrote " + str(path.relative_to(ROOT)))
     return 0
 
 

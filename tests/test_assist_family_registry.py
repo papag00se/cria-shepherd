@@ -258,3 +258,48 @@ def test_generated_map_agrees_and_discloses_pending_coverage():
     assert "pending R1/R7 migration" in rendered
     assert "Planning remains OFF" in rendered
     assert "child_score_range" not in rendered and "Score range" not in rendered
+
+
+def test_levels_document_lists_registry_by_default_level_with_family_anchors():
+    from collections import Counter
+    import re
+    text = report.render_levels()
+    assert report.LEVELS.read_text() == text
+    sections = re.split(r"(?m)^## L([0-5]) — ", text)
+    assert sections[0] == "" and sections[1::2] == list("012345")
+    actual = []
+    family_report = report.REPORT.read_text()
+    names = ("Pure proxy", "Tool-call fixes", "Simple tools", "Context fixes", "Completion refusals", "Assists")
+    for raw_level, section in zip(sections[1::2], sections[2::2]):
+        level = int(raw_level)
+        lines = section.strip().splitlines()
+        assert lines[0] == names[level]
+        for row in lines[1:]:
+            if not row:
+                continue
+            match = re.fullmatch(r"- `([^`]+)` — \[([^]]+)\]\(REPORT\.md#(f[0-9]+)\)", row)
+            assert match, row
+            atomic_id, family, anchor = match.groups()
+            assert anchor == family.lower()
+            assert f'<a id="{anchor}"></a>' in family_report
+            actual.append((atomic_id, level, family))
+    expected = [(d.policy.id, level, d.policy.family_id) for level in range(6)
+                for d in DEFINITIONS if d.policy.default_level == level]
+    assert Counter(actual) == Counter(expected)
+    assert actual == expected
+
+
+def test_check_rejects_stale_levels_document(monkeypatch, tmp_path, capsys):
+    family_report = tmp_path / "REPORT.md"
+    levels = tmp_path / "LEVELS.md"
+    family_report.write_text("family\n")
+    levels.write_text("stale\n")
+    monkeypatch.setattr(report, "REPORT", family_report)
+    monkeypatch.setattr(report, "LEVELS", levels, raising=False)
+    monkeypatch.setattr(report, "render", lambda: "family\n")
+    monkeypatch.setattr(report, "render_levels", lambda: "levels\n", raising=False)
+    monkeypatch.setattr(sys, "argv", ["build_report.py", "--check"])
+    assert report.main() == 1
+    assert "LEVELS" in capsys.readouterr().err
+    levels.write_text("levels\n")
+    assert report.main() == 0
