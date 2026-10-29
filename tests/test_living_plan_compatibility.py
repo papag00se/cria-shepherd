@@ -22,7 +22,7 @@ def invoke(replies, **changes):
 def test_literal_requests_and_string_only_result():
     result, q, log = invoke(['["Write tests", "Write guide"]', 'NONE', '{"missing": []}'])
     assert result == ['Write tests', 'Write guide']
-    assert q.calls == [
+    assert full_calls(q.calls) == [
         (REPLAN_SYSTEM, REPLAN_USER, {'coder_tools': '  - shell: command'}),
         (NOISE_SYSTEM, 'REAL RESEARCH FACTS\n\nTASK:\nBuild the CLI, tests, and guide\n\nPLAN:\n1. Write tests\n2. Write guide', {}),
         (COVERAGE_SYSTEM, 'REQUEST:\nBuild the CLI, tests, and guide\n\nPLAN:\n1. Build the CLI\n2. Write tests\n3. Write guide', {})]
@@ -96,7 +96,7 @@ def public_invoke(monkeypatch, replies, **changes):
 def test_public_helper_literal_requests_and_roles(monkeypatch):
     result, q, log = public_invoke(monkeypatch, ['["Write tests", "Write guide"]', 'NONE', '{"missing": []}'])
     assert result == ['Write tests', 'Write guide']
-    assert q.calls == [
+    assert full_calls(q.calls) == [
         (REPLAN_SYSTEM, REPLAN_USER, {'coder_tools': '  - shell: command'}),
         (NOISE_SYSTEM, 'REAL RESEARCH FACTS\n\nTASK:\nBuild the CLI, tests, and guide\n\nPLAN:\n1. Write tests\n2. Write guide', {}),
         (COVERAGE_SYSTEM, 'REQUEST:\nBuild the CLI, tests, and guide\n\nPLAN:\n1. Build the CLI\n2. Write tests\n3. Write guide', {})]
@@ -108,7 +108,7 @@ def test_public_helper_literal_requests_and_roles(monkeypatch):
 def test_public_helper_absent_empty_literals(monkeypatch, reply, expected):
     result, q, log = public_invoke(monkeypatch, [reply])
     assert result == expected
-    assert q.calls == [(REPLAN_SYSTEM, REPLAN_USER, {'coder_tools': '  - shell: command'})]
+    assert full_calls(q.calls) == [(REPLAN_SYSTEM, REPLAN_USER, {'coder_tools': '  - shell: command'})]
     assert q.replies == [] and log.events == []
 
 
@@ -127,7 +127,7 @@ def test_public_helper_obeys_actual_source_proposal_authority(monkeypatch, steps
     assert len(seen) == 1
     assert seen[0]['completed_steps'] == ('Build the CLI',)
     assert seen[0]['tool_names'] == ('shell',)
-    assert q.calls == [] and log.events == []
+    assert full_calls(q.calls) == [] and log.events == []
 
 
 @pytest.mark.parametrize('changes', [dict(reasoner_role=None), dict(remaining=' \n\t')])
@@ -185,7 +185,9 @@ def test_public_helper_uses_exact_source_adapter_and_live_services(monkeypatch):
     assert seen[0]['tool_names'] == ('shell',)
     assert coverage_calls == [('Build the CLI, tests, and guide', ['complete', 'tail'])]
     assert uncovered == ['prior', 'guide']
-    assert q.calls == [('proposal question', 'proposal evidence', {'coder_tools': '  - shell: command'}),
+    assert full_calls(q.calls) == [('proposal question', 'proposal evidence', {'coder_tools': '  - shell: command'}),
                        ('noise question', 'noise evidence', {}),
                        ('coverage question', 'coverage evidence', {})]
     assert q.replies == [] and log.events == []
+
+from test_living_plan_policy import full_calls

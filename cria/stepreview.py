@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol
 
-from . import callsyntax, groundtruth, prompts, research
+from . import evidencesummary, callsyntax, groundtruth, prompts, research
 from .assistcontract import Policy, Reference
 from .planningcontracts import EventLog
 from .jsontext import strip_think
@@ -76,6 +76,7 @@ class StepRead:
     # the shared reader's recovery/normalization key MUST still be 'done'.
     verdict_key: str = ""
     recovery_key: str = "done"
+    evidence_blocks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -206,7 +207,7 @@ class StepResult:
         return self.status is StepStatus.APPROVED
 
 
-def _prompt(source: StepInput) -> tuple[str, str]:
+def _prompt_packet(source: StepInput) -> tuple[str, str, str, tuple[str, ...]]:
     labels = prompts.load_map("verify_user")
     parts = [prompts.fill(labels["step"], step=source.step)]
     if source.evidence:
@@ -231,7 +232,14 @@ def _prompt(source: StepInput) -> tuple[str, str]:
     if source.sources_read:
         parts.append(prompts.fill(labels["sources_read"], sources=research._sources_block(source.sources_read)))
     parts.append(prompts.fill(labels["step_again"], step=source.step))
-    return prompts.load("verify"), "\n\n".join(parts)
+    full = "\n\n".join(parts)
+    evidence = tuple(evidencesummary.blocks(parts.pop(1))) if source.evidence else ()
+    return prompts.load("verify"), full, "\n\n".join(parts), evidence
+
+
+def _prompt(source: StepInput) -> tuple[str, str]:
+    system, full, _, _ = _prompt_packet(source)
+    return system, full
 
 
 def _confirm_applies(source: StepInput) -> bool:
@@ -293,8 +301,8 @@ def review_step(source: StepInput) -> StepResult:
         return StepResult(StepStatus.PERIODIC,
                           effect=StepEffect(StepAction.RENUDGE if source.probe.repair_text else StepAction.KEEP_WORKING,
                                             source.probe.repair_text))
-    system, user = _prompt(source)
-    answer = source.services.read(StepRead(system, user, False, source.workspace_root))
+    system, user, question, blocks = _prompt_packet(source)
+    answer = source.services.read(StepRead(system, question, False, source.workspace_root, evidence_blocks=blocks))
     obj = (source.services.normalize_flag(answer.verdict, "done", "critic")
            if answer.verdict is not None else None)
     if obj is not None:
@@ -327,7 +335,7 @@ def review_step(source: StepInput) -> StepResult:
     source.log.emit("loop.verify_retry", level="info", reason="no parseable verdict; retry reasoning-off")
     # Preserve the original retry's empty workspace declaration, not a new
     # inspection loop or another role-dependent confirmation attempt.
-    retry_answer = source.services.read(StepRead(system, user, True))
+    retry_answer = source.services.read(StepRead(system, question, True, evidence_blocks=blocks))
     retry = (source.services.normalize_flag(retry_answer.verdict, "done", "critic-retry")
              if retry_answer.verdict is not None else None)
     if retry is not None and retry.get("done"):

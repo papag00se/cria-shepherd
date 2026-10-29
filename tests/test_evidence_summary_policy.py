@@ -54,19 +54,9 @@ def test_exact_post_fold_threshold_question_options_and_label(size, asked):
     original = "x" * size
     value, calls = source(original)
     result = es.DEFINITION.execute(value)
-    assert bool(calls) is asked
-    assert result.raw == original and result.folded == original
-    if asked:
-        args, options = calls[0]
-        assert args == (value.chat_fn, value.role, prompts.load("evidence_summary"), original, value.log)
-        assert options == {"phase": "compactor"}
-        assert result.selected == prompts.render("evidence_summary_note", summary="model-made summary")
-        assert result.summary == " model-made summary " and result.selection is es.Selection.SUMMARY
-        assert value.log.events == [("evidence.summarised", {"level": "info", "chars_before": size,
-                                                             "chars_after": len(result.summary)})]
-    else:
-        assert result.selected == original and result.selection is es.Selection.RAW
-        assert not value.log.events
+    assert not calls and not value.log.events
+    assert result.raw == result.folded == result.selected == original
+    assert result.selection is es.Selection.RAW and result.summary is None
 
 
 def test_threshold_uses_real_folded_output_not_raw_size_or_count_reconstruction(monkeypatch):
@@ -108,25 +98,20 @@ def test_blank_provider_reply_retains_every_folded_byte_and_does_not_cache(answe
     value, calls = source("start" + "x" * 48001 + "end", answer)
     first = es.DEFINITION.execute(value)
     second = es.DEFINITION.execute(value)
-    assert len(calls) == 2 and first is not second
+    assert not calls and first is not second
     assert first.selected == second.selected == value.raw
     assert not value.log.events
 
 
 def test_compactor_role_choice_and_explicit_role_fallback_preserve_actual_objects():
     value, calls = source("x" * 48001)
-    compactor = object()
-    result = es.DEFINITION.execute(replace(value, compactor_role=compactor))
-    assert calls[0][0][1] is compactor and result.selection is es.Selection.SUMMARY
     class FalseRole:
         def __bool__(self):
-            return False
-    es.DEFINITION.execute(replace(value, compactor_role=FalseRole()))
-    assert calls[-1][0][1] is value.role
-    # Explicit fallback roles are checked for None, not truthiness.
-    fallback = FalseRole()
-    es.DEFINITION.execute(replace(value, role=fallback))
-    assert calls[-1][0][1] is fallback
+            raise AssertionError("folding must not select an inference role")
+    for kwargs in ({"compactor_role": object()}, {"compactor_role": FalseRole()}, {"role": FalseRole()}):
+        result = es.DEFINITION.execute(replace(value, **kwargs))
+        assert result.selected == value.raw and result.selection is es.Selection.RAW
+    assert not calls
 
 
 def test_no_cache_or_cross_task_reuse_and_settlement_retains_its_own_raw_source():
@@ -135,8 +120,8 @@ def test_no_cache_or_cross_task_reuse_and_settlement_retains_its_own_raw_source(
     a = es.DEFINITION.execute(first)
     b = es.DEFINITION.execute(second)
     c = es.DEFINITION.execute(first)
-    assert len(calls) == 3
-    assert [call[0][3] for call in calls] == [first.raw, second.raw, first.raw]
+    assert not calls
+    assert [a.selected, b.selected, c.selected] == [first.raw, second.raw, first.raw]
     assert a is not c and a.raw != b.raw
     settled = es.DEFINITION.settle(b, b.selected)
     assert settled.result is b and settled.result.raw == second.raw and settled.selected_delivered
@@ -163,16 +148,14 @@ def test_provider_errors_are_not_silently_reclassified_or_retried(error):
     def provider(*args, **kwargs):
         calls.append((args, kwargs))
         raise error
-    with pytest.raises(type(error), match=str(error)):
-        es.DEFINITION.execute(replace(value, provider=provider))
-    assert len(calls) == 1 and not value.log.events
+    result = es.DEFINITION.execute(replace(value, provider=provider))
+    assert result.selected == value.raw and not calls and not value.log.events
 
 
 def test_invalid_provider_value_keeps_existing_failure_contract_instead_of_new_fallback():
     value, calls = source("x" * 48001, None)
-    with pytest.raises(AttributeError):
-        es.DEFINITION.execute(value)
-    assert len(calls) == 1 and not value.log.events
+    result = es.DEFINITION.execute(value)
+    assert result.selected == value.raw and not calls and not value.log.events
 
 
 @pytest.mark.parametrize("answer,expected_tail,reply_chars", [
@@ -181,6 +164,7 @@ def test_invalid_provider_value_keeps_existing_failure_contract_instead_of_new_f
     ("x" * 60000, "x" * 60000, 60000),
 ])
 def test_original_selection_question_events_and_unbounded_reply_parity(monkeypatch, answer, expected_tail, reply_chars):
+    # Retained blank, ordinary and oversized reply fixtures cannot replace evidence.
     raw = "authoritative tool result\n" + "x" * 48001
     value, calls = source(raw, answer)
     old_calls, old_log = [], Log()
@@ -188,20 +172,11 @@ def test_original_selection_question_events_and_unbounded_reply_parity(monkeypat
         old_calls.append((args, kwargs))
         return answer
     monkeypatch.setattr(loop, "summarize", provider)
-    old = loop._dedup_evidence(raw, old_log, value.chat_fn, value.role)
+    public = loop._dedup_evidence(raw, old_log, value.chat_fn, value.role)
     actual = es.DEFINITION.execute(value)
-    expected = raw if expected_tail is None else SUMMARY_LABEL + expected_tail
-    events = ([] if expected_tail is None else [("evidence.summarised", {
-        "level": "info", "chars_before": len(raw), "chars_after": reply_chars})])
-    assert actual.selected == expected and actual.raw == raw and actual.folded == raw
-    assert actual.folded_actions == 0
-    assert actual.selection is (es.Selection.RAW if expected_tail is None else es.Selection.SUMMARY)
-    assert actual.summary == (None if expected_tail is None else answer)
-    assert value.log.events == events
-    assert calls == [((value.chat_fn, value.role, SUMMARY_SYSTEM, raw, value.log), {"phase": "compactor"})]
-    # The old public entry remains compatibility coverage, never the oracle.
-    assert old == expected and old_log.events == events
-    assert old_calls == [((value.chat_fn, value.role, SUMMARY_SYSTEM, raw, old_log), {"phase": "compactor"})]
+    assert public == actual.selected == actual.raw == actual.folded == raw
+    assert actual.summary is None and actual.selection is es.Selection.RAW
+    assert not calls and not old_calls and not value.log.events and not old_log.events
 
 
 def test_actual_shared_summary_transport_uses_compactor_role_without_new_options():
@@ -217,12 +192,15 @@ def test_actual_shared_summary_transport_uses_compactor_role_without_new_options
     role = Role(name="compactor", backend="local", reasoning="off", temperature=0.0)
     value = es.Input(raw, loop.summarize, chat, Role(name="reasoner", backend="local"), Log(), role)
     result = es.DEFINITION.execute(value)
+    assert not bodies and not phases
+    assert result.selected == raw and result.summary is None
+    # Shared transport remains independently usable for actual summary work.
+    assert loop.summarize(chat, role, SUMMARY_SYSTEM, raw, value.log, phase="compactor") == "transport-authored summary"
     assert bodies == [off_compactor_request(raw)] and phases == ["compactor"]
-    assert result.selected == SUMMARY_LABEL + "transport-authored summary"
-    assert result.summary == "transport-authored summary" and result.raw == result.folded == raw
-    assert result.selection is es.Selection.SUMMARY and result.folded_actions == 0
-    assert value.log.events == [("evidence.summarised", {
-        "level": "info", "chars_before": len(raw), "chars_after": 26})]
+    assert result.selected == raw
+    assert result.summary is None and result.raw == result.folded == raw
+    assert result.selection is es.Selection.RAW and result.folded_actions == 0
+    assert not value.log.events
 
 
 def test_old_and_source_send_identical_requests_through_actual_shared_transport():
@@ -242,11 +220,11 @@ def test_old_and_source_send_identical_requests_through_actual_shared_transport(
     old = loop._dedup_evidence(raw, old_log, chat, role)
     actual = es.DEFINITION.execute(es.Input(raw, loop.summarize, chat, role, source_log))
     expected_body = off_compactor_request(raw)
-    assert bodies == [expected_body, expected_body] and phases == ["compactor", "compactor"]
-    expected = SUMMARY_LABEL + "same shared-provider summary"
-    events = [("evidence.summarised", {"level": "info", "chars_before": len(raw), "chars_after": 28})]
+    assert not bodies and not phases
+    expected = raw
+    events = []
     assert actual.selected == expected and actual.raw == actual.folded == raw
-    assert actual.summary == "same shared-provider summary" and actual.selection is es.Selection.SUMMARY
+    assert actual.summary is None and actual.selection is es.Selection.RAW
     assert actual.folded_actions == 0 and source_log.events == events
     assert old == expected and old_log.events == events
 

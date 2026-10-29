@@ -108,7 +108,7 @@ def test_claim_dialect_detection_uses_pure_syntax_not_upper_pipeline(claim, summ
     with patch.object(massage, 'has_tool_call_leak', side_effect=AssertionError('upper parser backedge')):
         result = sp.StepSelection.opt_in().run(source)
     assert result.status is sp.StepStatus.REJECTED and len(reader.calls) == len(records) == 1
-    assert reader.calls[0].user == (
+    assert full_read(reader.calls[0]).user == (
         'STEP: Write report\n\n'
         'WHAT THE CODER DID — its tool CALLS and what they returned (real ground truth):\n'
         'current tool evidence\n\n'
@@ -263,8 +263,8 @@ def test_prompt_is_identical_to_existing_step_review_and_preserves_full_evidence
         "If THIS step's goal was to find something out, judge whether what is listed here answers it. If the step's goal was to BUILD something, this list is background and does not make it done.\n\n"
         "THE STEP YOU ARE RULING ON IS THE ONE AT THE TOP, RESTATED HERE — any step numbering inside the coder's summary is the CODER's own and is NOT what you judge:\n"
         "Update report.md with the literal 'needed'")
-    assert reader.calls == [sp.StepRead(VERIFY_SYSTEM, user, False, str(tmp_path))]
-    assert source.evidence in reader.calls[0].user and 'END' in reader.calls[0].user
+    assert full_read(reader.calls[0]).user == user
+    assert source.evidence in full_read(reader.calls[0]).user and 'END' in full_read(reader.calls[0]).user
     assert records == [sp.StepRecord(source.step, VERIFY_SYSTEM, user, False, 'accepted judge reason',
                                      'raw 0', 'session', 2, 4)]
 
@@ -294,7 +294,7 @@ def test_source_matches_legacy_careful_retry_outcomes_and_counts(answers):
               sp.StepEffect(sp.StepAction.RENUDGE, reason, verify_failures=1,
                             critic_failures=1, consider_critic_rescue=True))
     assert result == sp.StepResult(status, reason, effect=effect, readable=not unknown, review_done=done)
-    assert reader.calls == expected_reads and not reader.answers
+    assert [full_read(r) for r in reader.calls] == expected_reads and not reader.answers
     assert not confirmations and not applicability and source.log.events == events
     assert records == [sp.StepRecord('Write report', VERIFY_SYSTEM, BASIC_USER, done, reason,
                                      f'raw {len(answers) - 1}', 'session', 2, 4)]
@@ -324,7 +324,7 @@ def test_shared_reader_rejects_truncation_and_uses_step_key():
     source, _, records, _, _, _ = make([])
     def shared(request):
         obj, raw = loop._critic_verdict(request.system, request.user, chat, role, log,
-            reasoning_off=request.reasoning_off, workspace_root=request.workspace_root,
+            evidence_blocks=list(request.evidence_blocks), reasoning_off=request.reasoning_off, workspace_root=request.workspace_root,
             verdict_key=request.verdict_key)
         return sp.StepAnswer(obj, raw)
     source = replace(source, log=log, services=replace(source.services, read=shared))
@@ -349,7 +349,7 @@ def test_scheduled_positive_needs_its_own_observed_confirmation(confirmed, obser
     assert result.done == (confirmed and observed)
     assert result.review_done == confirmed and result.effect.verify_failures == result.effect.critic_failures == 0
     assert len(reader.calls) == len(records) == 1
-    assert 'coder claims done' not in reader.calls[0].user
+    assert 'coder claims done' not in full_read(reader.calls[0]).user
 
 
 def test_scheduled_skip_or_missing_workspace_does_not_grant_new_authority():
@@ -376,7 +376,7 @@ def test_observation_discards_positive_and_rejudges_fresh_facts():
     second = sp.StepSelection.opt_in().run(settled)
     assert second.status is sp.StepStatus.REJECTED and not second.done
     assert second.effect.action is sp.StepAction.KEEP_WORKING
-    assert len(reader.calls) == len(records) == 2 and 'FRESH WORKSPACE OBSERVATION' in reader.calls[1].user
+    assert len(reader.calls) == len(records) == 2 and 'FRESH WORKSPACE OBSERVATION' in full_read(reader.calls[1]).user
     assert not second.effect.verify_failures and not second.effect.critic_failures
 
 
@@ -461,3 +461,10 @@ def test_bad_consent_scope_or_contract_is_rejected():
     with pytest.raises(ValueError): sp.StepSelection.opt_in(replace(sp.DEFINITION, policy=replace(sp.DEFINITION.policy, scope='runtime')))
     assert sp.DEFINITION.policy.family_id == 'F50' and sp.DEFINITION.policy.scope == 'experimental'
     assert sp.DEFINITION.policy.hooks and sp.DEFINITION.policy.regressions and not sp.DEFINITION.policy.migrated
+
+
+def full_read(request):
+    if not request.evidence_blocks:
+        return request
+    first, rest = request.user.split("\n\n", 1)
+    return replace(request, user=first+"\n\n"+"".join(request.evidence_blocks)+"\n\n"+rest, evidence_blocks=())

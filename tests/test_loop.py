@@ -6629,10 +6629,8 @@ class ComposedPromptBoundsTests(unittest.TestCase):
     their own slots — the floor cannot drop turns a two-message call does not have."""
 
     def test_an_oversized_slot_is_SUMMARISED_by_the_model_never_clipped(self):
-        # The e4564da bound kept 24,000 characters of this slot and dropped the rest. #5 now allows
-        # only two ways to make a composed prompt smaller: de-duplication, and a MODEL-MADE summary.
-        # A single 80KB tool result is not repetition, so this is the summary path — and the floor
-        # cannot save it either, because its lever is dropping whole turns and this call has two.
+        # Historical regression: never return to the old 24,000-character tail.
+        # All evidence reaches composition; only the existing floor can reduce it.
         from cria.config import Role
         from cria.loop import _satisfaction_evidence, EVIDENCE_SUMMARY_TRIGGER_CHARS
         msgs = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
@@ -6648,9 +6646,9 @@ class ComposedPromptBoundsTests(unittest.TestCase):
 
         ev = _satisfaction_evidence(msgs, rlog=_Rlog(), chat_fn=chat,
                                     role=Role(name="reasoner", backend="local"))
-        self.assertIn("CONDENSED record", ev)                    # labelled as a summary, not the log
-        self.assertIn("80,000 X characters", ev)                 # the model's words are what rides
-        self.assertGreater(len(seen["user"]), EVIDENCE_SUMMARY_TRIGGER_CHARS)   # it saw the whole log
+        self.assertIn("X" * 80000, ev)  # every original result byte reaches composition
+        self.assertNotIn("CONDENSED record", ev)
+        self.assertEqual(seen, {})  # no writer can replace the result
 
     def test_without_a_reasoner_the_oversized_slot_rides_WHOLE(self):
         """No summariser is not a licence to clip: carrying too much is recoverable, a silent

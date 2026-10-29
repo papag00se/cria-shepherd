@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Protocol
 
-from . import planner, prompts, urlgrounding
+from . import evidencesummary, planner, prompts, urlgrounding
 from .assistcontract import Policy, Reference
 from .planner import CoverageDefinition
 from .planningcontracts import EventLog
@@ -55,7 +55,7 @@ class TailFacts:
 
 
 class Question(Protocol):
-    def __call__(self, system: str, user: str, *, coder_tools: str = "") -> str | None: ...
+    def __call__(self, system: str, user: str, *, coder_tools: str = "", evidence_blocks: list[str] | None = None) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -207,8 +207,9 @@ def propose_tail(*, question: Question, task: str, completed: str,
     """
     text = question(prompts.render("replan", TRIGGER=trigger),
                     prompts.render("replan_user", task=task, completed=completed or "(none)",
-                                   remaining=remaining, evidence=evidence or "(no actions recorded yet)"),
-                    coder_tools=coder_tools) or ""
+                                   remaining=remaining, evidence=prompts.load("composed_evidence_intro")),
+                    coder_tools=coder_tools,
+                    evidence_blocks=evidencesummary.blocks(evidence or "(no actions recorded yet)")) or ""
     cleaned = planner.json_steps(strip_think(text))
     if cleaned is None:
         return Proposal(TailStatus.ABSENT)
@@ -374,7 +375,7 @@ class LivingDefinition:
 
 DEFINITION = LivingDefinition(Policy(
     "experimental-living-plan", "experimental-living-plan", 5, family_id="F50", scope="experimental",
-    prompts=("replan", "replan_user", "plan_noise_steps", "plan_drop_check", "plan_drop_check_user", "planner_steers"),
+    prompts=("replan", "replan_user", "composed_evidence_intro", "plan_noise_steps", "plan_drop_check", "plan_drop_check_user", "planner_steers"),
     state="session/task/step-position one-shot critic/thrash rescues; correlated empty-tail pending confirmation; transient on resume; reset on advance/task/fork",
     services=("shared-grounded-evidence", "reasoner-question", "selected-plan-coverage", "tool-menu-adapter", "whole-task-confirmation", "owned-plan-persistence"),
     dependencies=(planner.COVERAGE.policy.id,),

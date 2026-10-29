@@ -1,9 +1,11 @@
 """A caller may suppress exactly one retry only after the wire proves it is identical.
 
 The historical caller repeated a compactor request after the inner refit had already parsed a
-context error and declined to resend identical bytes.  This test drives real Role.apply, normal
-Upstream._prep, capture, context state, chat_watched, summarize, and both evidence builders.  The
-fake is transport only; it supplies model discovery, a server context error, and tiny SSE replies.
+context error and declined to resend identical bytes. Evidence builders now fold without
+inference, but summarize's caller retry contract survives for actual summary work. Drive that
+shared caller directly through real Role.apply, Upstream._prep, capture, context state and
+chat_watched. Separate builder controls preserve source custody without entering transport.
+The fake supplies only HTTP discovery, context errors and tiny SSE replies.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 from memory_http import MemoryTransport, Reply, json_reply, stream_reply
 
-from cria import bodykeys, loop, tokenratio
+from cria import assistruntime, bodykeys, evidencesummary, loop, tokenratio
 from cria.config import Backend, Role
 from cria.plan import Plan
 from cria.upstream import Upstream
@@ -68,6 +70,7 @@ class _Transport:
 
     def __init__(self, mode):
         self.mode, self.posts, self.calls = mode, [], 0
+        self.template_requests = []
 
     def open(self, req, timeout=None):
         url = req.full_url
@@ -75,6 +78,12 @@ class _Transport:
             return json_reply({"data": [{"id": MODEL}]})
         if url.endswith("/props"):
             return json_reply({"default_generation_settings": {}})
+        if url.endswith("/apply-template"):
+            # Native capacity probes are legitimate after a server context error.
+            # Model an endpoint without native templating, rather than accidentally
+            # failing this fixture and accepting its unrelated AssertionError.
+            self.template_requests.append(bytes(req.data or b""))
+            return json_reply({"error": {"message": "native templating unavailable"}}, status=404)
         if not url.endswith("/v1/chat/completions"):
             raise AssertionError(url)
         self.posts.append(bytes(req.data or b""))
@@ -131,12 +140,21 @@ class CallerContextNoopRetryTests(unittest.TestCase):
     def tearDown(self):
         tokenratio.reset()
 
-    def _upstream(self):
+    def _upstream(self, *, expect_chat=True):
         transport = MemoryTransport()
-        self.addCleanup(transport.assert_served)
+        self.addCleanup(transport.assert_served if expect_chat else transport.assert_closed)
         return Upstream(BACKEND.base_url, timeout_seconds=1, context_window=None,
                         capture_dir=self.captures, capture_rendered=False, engagement_level=5,
                         open_request=transport)
+
+    def _summary(self, up, tr, rlog, role=OFF):
+        # The original repeated-compactor incident is now asserted at its surviving
+        # shared caller, not resurrected through fold-only evidence selection.
+        with up._receive_open.respond_with(tr.open):
+            return loop.summarize(
+                up.chat_watched, role,
+                "Summarize the supplied historical evidence without adding facts.",
+                loop._work_log(_messages()), rlog, phase="compactor")
 
     def _satisfaction(self, up, tr, rlog, role=OFF):
         with up._receive_open.respond_with(tr.open):
@@ -161,7 +179,7 @@ class CallerContextNoopRetryTests(unittest.TestCase):
 
     def _assert_suppressed_context(self, evidence, tr, rlog):
         self.assertEqual(len(tr.posts), 1)
-        self.assertIn("x" * 60_001, evidence)  # unavailable remains the whole original evidence
+        self.assertEqual(evidence, "")  # unavailable summary cannot claim a result
         self.assertTrue(rlog.named("context.refit"))
         self.assertTrue(rlog.named("upstream.refit_no_change"))
         self.assertTrue(rlog.named("upstream.caller_retry_no_change"))
@@ -172,30 +190,51 @@ class CallerContextNoopRetryTests(unittest.TestCase):
         self.assertGreaterEqual(len(bodies), 2)  # sent initial + unsent inner/outer preflights
         self.assertTrue(all(bodykeys.CONTEXT_REFIT_NO_CHANGE not in body for body in bodies))
         self.assertEqual(json.loads(tr.posts[0]), bodies[0])
+        self.assertIn("x" * 60_001, bodies[0]["messages"][-1]["content"])
+        self.assertTrue(all(bodykeys.CONTEXT_REFIT_NO_CHANGE not in json.loads(post)
+                            for post in tr.posts))
 
-    def test_satisfaction_suppresses_only_the_typed_same_wire_outer_retry(self):
+    def test_shared_summary_suppresses_only_the_typed_same_wire_outer_retry(self):
         up, tr, rlog = self._upstream(), _Transport("context"), _Rlog("satisfaction")
-        evidence = self._satisfaction(up, tr, rlog)
+        evidence = self._summary(up, tr, rlog)
         self._assert_suppressed_context(evidence, tr, rlog)
 
-    def test_grounded_evidence_uses_the_same_shared_suppression_owner(self):
-        up, tr, rlog = self._upstream(), _Transport("context"), _Rlog("grounded")
-        evidence = self._grounded(up, tr, rlog)
-        self._assert_suppressed_context(evidence, tr, rlog)
+    def test_evidence_builders_keep_whole_source_without_entering_summary_transport(self):
+        for kind in ("satisfaction", "grounded"):
+            with self.subTest(kind=kind):
+                up = self._upstream(expect_chat=False)
+                tr, rlog = _Transport("summary"), _Rlog(kind)
+                with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+                    evidence = getattr(self, "_" + kind)(up, tr, rlog)
+                self.assertIn("x" * 60_001, evidence)
+                self.assertIn('[tool call id: "call-1"]', evidence)
+                self.assertIn('[tool result call id: "call-1"]', evidence)
+                self.assertNotIn("recovered summary", evidence)
+                self.assertEqual(tr.posts, [])
+                self.assertEqual(up._receive_open.calls, [])
+                self.assertEqual(self._captured_bodies(rlog), [])
+                self.assertFalse(rlog.named("summarize.context_retry_no_change"))
+                self.assertFalse(rlog.named("evidence.summarised"))
+
 
     def test_known_unfittable_protected_evidence_is_not_posted_again(self):
         up, tr, rlog = self._upstream(), _Transport("unfittable_context"), _Rlog("unfittable")
-        evidence = self._satisfaction(up, tr, rlog, replace(OFF, reasoning="on"))
+        evidence = self._summary(up, tr, rlog, replace(OFF, reasoning="on"))
         self.assertEqual(len(tr.posts), 1)
-        self.assertIn("x" * 60_001, evidence)
-        self.assertNotIn("recovered summary", evidence)
+        self.assertEqual(evidence, "")
+        self.assertIn("x" * 60_001, self._captured_bodies(rlog)[0]["messages"][-1]["content"])
         self.assertTrue(rlog.named("context.refit"))
         self.assertTrue(any(event["over_budget"] for event in rlog.named("context.floor")))
         self.assertEqual(len(self._captured_bodies(rlog)), 1)
+        self.assertTrue(tr.template_requests)
+        self.assertEqual([event["error"] for event in rlog.named("summarize.error")], [
+            "Input cannot fit the context window without losing protected input",
+            "Input cannot fit the context window without losing protected input",
+        ])
 
     def test_changed_forced_off_final_wire_after_context_still_posts_and_recovers(self):
         up, tr, rlog = self._upstream(), _Transport("context_then_summary"), _Rlog("changed")
-        evidence = self._satisfaction(up, tr, rlog, replace(OFF, reasoning="on"))
+        evidence = self._summary(up, tr, rlog, replace(OFF, reasoning="on"))
         self.assertEqual(len(tr.posts), 2)
         self.assertNotEqual(tr.posts[0], tr.posts[1])
         self.assertTrue(rlog.named("context.refit"))
@@ -258,7 +297,7 @@ class CallerContextNoopRetryTests(unittest.TestCase):
         for mode in ("empty_then_summary", "transient_then_summary", "other_400_then_summary"):
             with self.subTest(mode=mode):
                 up, tr, rlog = self._upstream(), _Transport(mode), _Rlog(mode)
-                evidence = self._satisfaction(up, tr, rlog)
+                evidence = self._summary(up, tr, rlog)
                 self.assertEqual(len(tr.posts), 2)
                 self.assertEqual(tr.posts[0], tr.posts[1])
                 self.assertFalse(rlog.named("upstream.caller_retry_no_change"))
@@ -267,15 +306,43 @@ class CallerContextNoopRetryTests(unittest.TestCase):
     def test_typed_hint_is_single_retry_lifetime_not_cross_invocation_state(self):
         up = self._upstream()
         first, first_log = _Transport("context"), _Rlog("first")
-        first_evidence = self._satisfaction(up, first, first_log)
+        first_evidence = self._summary(up, first, first_log)
         self._assert_suppressed_context(first_evidence, first, first_log)
 
         second, second_log = _Transport("summary"), _Rlog("second")
-        second_evidence = self._satisfaction(up, second, second_log)
+        second_evidence = self._summary(up, second, second_log)
         self.assertEqual(len(second.posts), 1)
         self.assertFalse(second_log.named("upstream.caller_retry_no_change"))
         self.assertIn("recovered summary", second_evidence)
 
+
+    def test_fold_only_owner_retains_distinct_results_and_exact_raw_provenance(self):
+        # The old tail clip lost the first action; the removed summary writer
+        # could replace distinct results. Only identical repetitions may fold.
+        block = '$ shell {"command":"inspect"}\n  -> ' + 'EXACT result 雪\n' * 4000
+        distinct = '$ shell {"command":"check"}\n  -> FAIL distinct result 7\n'
+        raw = "\n".join([block] * 3 + [distinct])
+        calls, rlog = [], _Rlog("fold-only-owner")
+        def forbidden(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise AssertionError("evidence selection attempted inference")
+        value = evidencesummary.Input(raw, forbidden, forbidden, OFF, rlog)
+        first = evidencesummary.select(value)
+        second = evidencesummary.select(value)
+        self.assertEqual(calls, [])
+        self.assertIsNot(first, second)
+        self.assertEqual(first.raw, raw)
+        self.assertEqual(first.folded, first.selected)
+        self.assertEqual(first.selected.count(block), 1)
+        self.assertIn(distinct, first.selected)
+        self.assertTrue(first.selected.startswith(block))
+        self.assertEqual(first.folded_actions, 2)
+        self.assertIs(first.selection, evidencesummary.Selection.FOLDED)
+        self.assertIsNone(first.summary)
+        accepted = evidencesummary.settle(first, first.selected)
+        self.assertIs(accepted.result, first)
+        self.assertTrue(accepted.selected_delivered)
+        self.assertFalse(evidencesummary.settle(first, distinct).selected_delivered)
 
 if __name__ == "__main__":
     unittest.main()

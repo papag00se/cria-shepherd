@@ -1,8 +1,8 @@
-"""Select labelled model-made evidence summaries; retain raw evidence separately.
+"""Select losslessly folded action evidence; final fitting belongs at the wire.
 
-Lossless action folding and summary transport/rendering remain shared. There is
+Lossless action folding remains shared; this owner performs no inference. There is
 NO semantic cache or session-owned memory in the original policy. Every execute
-owns its input/result; repeated text in another question/task is asked again.
+owns its input/result; no result is reused for another question or task.
 Settlement records only what a consumer actually selected, not judge approval.
 """
 from dataclasses import dataclass
@@ -69,19 +69,7 @@ def select(source: Input, *, enabled: bool = True) -> Result:
         source.log.emit("evidence.repeats_folded", level="info", folded=count,
                         chars_before=len(source.raw), chars_after=len(folded))
     choice = Selection.FOLDED if count else Selection.RAW
-    if len(folded) <= SUMMARY_TRIGGER_CHARS:
-        return Result(source.raw, folded, folded, choice, count)
-    role = source.compactor_role or source.role
-    ready = source.chat_fn is not None and role is not None and source.log is not None
-    text = (source.provider(source.chat_fn, role, prompts.load("evidence_summary"),
-                            folded, source.log, phase="compactor") if ready else "")
-    # Transport returns the ordinary unavailable value; do not add another retry,
-    # exception fallback, cache, character clip or latency/output cap here.
-    if not text.strip():
-        return Result(source.raw, folded, folded, choice, count)
-    source.log.emit("evidence.summarised", level="info", chars_before=len(folded), chars_after=len(text))
-    selected = prompts.render("evidence_summary_note", summary=text.strip())
-    return Result(source.raw, folded, selected, Selection.SUMMARY, count, text)
+    return Result(source.raw, folded, folded, choice, count)
 
 
 def settle(result: Result, delivered: str, *, enabled: bool = True) -> Settlement | None:
@@ -99,9 +87,9 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "evidence-summary", "judge-evidence-selection", 2, family_id="F71",
-    prompts=(dedup.REPEAT_NOTE_KEY, "evidence_summary", "evidence_summary_note"),
+    prompts=(dedup.REPEAT_NOTE_KEY,),
     state="stateless per invocation; no cache; raw/folded/selected evidence retained in immutable result",
-    services=("dedup.fold_repeated_actions", "shared-summarize-provider", "shared-labelled-summary-renderer"),
+    services=("dedup.fold_repeated_actions",),
     hooks=(Reference("cria/loop.py", "Loop._grounded_evidence"),
            Reference("cria/loop.py", "_satisfaction_evidence"),
            Reference("cria/loop.py", "_dedup_evidence"),
@@ -117,3 +105,24 @@ DEFINITION = Definition(Policy(
                  Reference("tests/test_evidence_summary_policy.py", "test_definition_replacement_is_real_selection_without_old_loop_execution"),
                  Reference("tests/test_evidence_summary_policy.py", "test_old_and_source_send_identical_requests_through_actual_shared_transport")),
     migrated=False), select, settle)
+
+
+EVIDENCE_BLOCK_CHARS = 6000
+
+
+def blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS) -> list[str]:
+    """``text`` as ordered blocks of whole lines, each about ``limit`` characters (a single longer line
+    stays whole — a line is never cut), so ``"".join(blocks) == text``. The context floor then reduces
+    the OLDEST blocks first, each reduction labelled, and the newest evidence survives."""
+    blocks: list[str] = []
+    cur: list[str] = []
+    size = 0
+    for line in (text or "").splitlines(keepends=True):
+        if cur and size + len(line) > limit:
+            blocks.append("".join(cur))
+            cur, size = [], 0
+        cur.append(line)
+        size += len(line)
+    if cur:
+        blocks.append("".join(cur))
+    return blocks

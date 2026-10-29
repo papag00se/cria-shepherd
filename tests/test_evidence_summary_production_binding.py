@@ -135,11 +135,11 @@ def test_actual_shared_provider_label_role_complete_input_and_no_cross_call_cach
         first = builder(kind, monkeypatch, history(raw_output), Log(), chat=chat, role=role)
         second = builder(kind, monkeypatch, history(raw_output), Log(), chat=chat, role=role)
     label = prompts.render("evidence_summary_note", summary="provider-authored summary 雪")
-    assert label in first and label in second and len(bodies) == 2
+    assert raw_output in first and raw_output in second and not bodies
     assert all(body["temperature"] == 0.0 for body in bodies)
     assert all(any(raw_output in m.get("content", "") for m in body["messages"]) for body in bodies)
     assert len(settlements) == 2 and settlements[0][0] is not settlements[1][0]
-    assert all(result.raw.endswith("END authoritative result") and delivered == label
+    assert all(result.raw.endswith("END authoritative result") and delivered == result.raw
                for result, delivered in settlements)
 
 

@@ -313,7 +313,7 @@ def test_source_reuses_legacy_questions_parsers_and_exact_reask_counts(replies):
             calls.append((DROP_SYSTEM, 'REQUEST:\nBuild the CLI, tests, and guide\n\nTHE STEP ABOUT TO BE DELETED:\nWrite guide\n\nTHE STEPS THAT WOULD REMAIN:\n- Write tests', {}))
         plan_text = '1. Build the CLI\n2. Write guide\n3. Write tests' if refused else '1. Build the CLI\n2. Write tests'
         calls.append((COVERAGE_SYSTEM, 'REQUEST:\nBuild the CLI, tests, and guide\n\nPLAN:\n' + plan_text, {}))
-    assert questions.calls == calls and not questions.replies and facts == [True]
+    assert full_calls(questions.calls) == calls and not questions.replies and facts == [True]
     expected = {
         'not JSON': (lp.TailStatus.ABSENT, None, (), [('Build the CLI', True, 'verified'), ('Write tests', False, None)]),
         '[]': (lp.TailStatus.EMPTY_PENDING, (), (), [('Build the CLI', True, 'verified'), ('Write tests', False, None)]),
@@ -494,3 +494,15 @@ def test_empty_confirmation_binds_actual_fact_token_not_a_source_counter():
     changed = replace(source, evidence_epoch=('later-tool-result-id', 'gate-observation-digest'))
     assert selected.settle(changed, state, result.confirmation.token, True).status is lp.TailStatus.STALE
     assert len(source.plan.items) == 2 and not mirrors and len(questions.calls) == 1
+
+
+def full_calls(calls):
+    from cria import prompts
+    result=[]
+    for system,user,kwargs in calls:
+        kwargs=dict(kwargs)
+        blocks=kwargs.pop('evidence_blocks',None)
+        if blocks is not None:
+            user=user.replace(prompts.load('composed_evidence_intro'), ''.join(blocks))
+        result.append((system,user,kwargs))
+    return result

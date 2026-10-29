@@ -2074,25 +2074,11 @@ EVIDENCE_SUMMARY_TRIGGER_CHARS = 48000
 # judge and a 17,672-token steer-diagnostic judge into a 16,384-token window with nothing the floor was
 # allowed to touch, and both failed at the wire ("Measured input cannot fit the context window without
 # losing protected input"). Blocks cut on line boundaries and re-concatenate to the original text.
-EVIDENCE_BLOCK_CHARS = 6000
+EVIDENCE_BLOCK_CHARS = evidencesummary.EVIDENCE_BLOCK_CHARS
 
 
 def _evidence_blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS) -> list[str]:
-    """``text`` as ordered blocks of whole lines, each about ``limit`` characters (a single longer line
-    stays whole — a line is never cut), so ``"".join(blocks) == text``. The context floor then reduces
-    the OLDEST blocks first, each reduction labelled, and the newest evidence survives."""
-    blocks: list[str] = []
-    cur: list[str] = []
-    size = 0
-    for line in (text or "").splitlines(keepends=True):
-        if cur and size + len(line) > limit:
-            blocks.append("".join(cur))
-            cur, size = [], 0
-        cur.append(line)
-        size += len(line)
-    if cur:
-        blocks.append("".join(cur))
-    return blocks
+    return evidencesummary.blocks(text, limit)
 
 
 def _summarised_evidence(log: str, chat_fn, role, rlog, *, _consume=None) -> str:
@@ -4382,9 +4368,9 @@ class Loop:
     def _living_input(self, sess, body, idx, rlog, trigger):
         runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
         selected = runtime.living_plan
-        def question(system, user, *, coder_tools=''):
+        def question(system, user, *, coder_tools='', evidence_blocks=None):
             return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                system, user, rlog, phase='reasoner', coder_tools=coder_tools)
+                system, user, rlog, phase='reasoner', coder_tools=coder_tools, evidence_blocks=evidence_blocks)
         services = livingplan.TailServices(
             question if self._ctx.reasoner_chat is not None and self._ctx.reasoner_role is not None else None,
             lambda: livingplan.TailFacts(self._grounded_evidence(sess, body, rlog),
@@ -4599,7 +4585,8 @@ class Loop:
         def source():
             def read(request):
                 verdict, raw = self._verdict(request.system, request.user, rlog,
-                    reasoning_off=request.reasoning_off, workspace_root=request.workspace_root)
+                    reasoning_off=request.reasoning_off, workspace_root=request.workspace_root,
+                    evidence_blocks=list(request.evidence_blocks))
                 return stepreview.StepAnswer(verdict, raw)
             def confirm(request):
                 result = _confirm_completion(request.step, request.reason, request.workspace_root,
@@ -4638,7 +4625,7 @@ class Loop:
         return Verification(result.done, result.reason, result.confirmation, result)
 
     def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool,
-                 workspace_root: str = "") -> tuple[dict | None, str]:
+                 workspace_root: str = "", evidence_blocks: list[str] | None = None) -> tuple[dict | None, str]:
         """Optional step critic adapter; retain cleaned raw text for the verifier record.
 
         F37 shares response handling, not the step question or completion authority.
@@ -4646,7 +4633,8 @@ class Loop:
         step-critic body contract; _judge_completion defaults closure to done.
         """
         return _critic_verdict(system, user, self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                               rlog, reasoning_off=reasoning_off, workspace_root=workspace_root)
+                               rlog, reasoning_off=reasoning_off, workspace_root=workspace_root,
+                               evidence_blocks=evidence_blocks)
 
     def _persist_plan(self, plan: Plan, rlog) -> None:
         """Mirror the plan markdown to cria's OWN state dir (`~/.cria/plans/<id>.md`) for human
