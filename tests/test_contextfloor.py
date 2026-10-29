@@ -234,12 +234,12 @@ class TestFits(unittest.TestCase):
         digest = [t for t in texts if isinstance(t, str) and "earlier turn(s)" in t]
         self.assertFalse(any("automated checks pass" in t for t in digest))   # never inside the rollup
 
-    def test_the_run_of_notes_includes_a_files_listing_but_not_an_ordinary_user_turn(self):
+    def test_a_task_pin_keeps_other_user_input_alongside_the_run_of_notes(self):
         from cria.contextfloor import _protected_mask
         msgs = [{"role": "system", "content": "sys"}, _u("task"),
                 _u("an ordinary earlier user turn"), _u("⟦ctx:steer⟧ s"), _u("⟦ctx:files⟧ listing"),
                 _u("⟦ctx:facts⟧ facts")]
-        self.assertEqual(_protected_mask(msgs, "task"), [True, True, False, True, True, True])
+        self.assertEqual(_protected_mask(msgs, "task"), [True, True, True, True, True, True])
 
     def test_strip_orphan_tools_prunes_a_dangling_call(self):
         # M18 (reverse): an assistant tool_call whose RESULT was dropped is a DANGLING call — strict

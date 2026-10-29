@@ -286,26 +286,31 @@ def test_unchanged_prefix_rewind_preserves_current_request_and_live_tail(profile
     assert not log.named('context.floor')[-1]['over_budget']
 
 
-def test_tail_source_becoming_current_request_also_invalidates_retained_deletion():
+def test_failed_fit_cannot_cache_deletion_of_an_earlier_caller_request():
     messages = [{'role': 'system', 'content': 'Rules'}, {'role': 'user', 'content': 'Root task'}]
     messages += [{'role': 'assistant', 'content': f'⟦ctx:facts⟧ Recorded observation {n}.'}
                  for n in range(60)]
     messages[55] = {'role': 'user', 'content': 'Earlier request: ' + 'Please check carefully. ' * 70}
     messages[61] = {'role': 'user', 'content': 'Latest request'}
-    # The rewind fits as-is; the original needs to reduce the one unprotected
-    # historical request. That request was already in the old tail, so merely
-    # tracking a single live/historical bit misses its new request protection.
+    # The rewind fits as-is. The larger input can fit only by deleting a caller
+    # request or protected facts preceding its amendment, so it must refuse.
+    # A refused fit must not cache that deletion for the later fitting request.
     window = (contextfloor._msgs_tokens(messages) + contextfloor._msgs_tokens(messages[:56])) // 2 + 1
     body = {'model': 'offline', bodykeys.OUTPUT_RESERVE: 1, 'messages': messages}
     up, log = Upstream('http://offline.invalid', context_window=window), Log('tail-request')
-    up._prep(body, False, log, safety_override=1)
+    original = copy.deepcopy(body)
+    with pytest.raises(upstream.UpstreamError, match="without losing protected input"):
+        up._prep(body, False, log, safety_override=1)
+    assert body == original
     fork = {**body, 'messages': copy.deepcopy(messages[:56])}
     fresh = json.loads(Upstream('http://offline.invalid', context_window=window)
                        ._prep(fork, False, Log('control'), safety_override=1)[0])
     reused = json.loads(up._prep(fork, False, log, safety_override=1)[0])
     assert fork['messages'][-1] in fresh['messages']
     assert fork['messages'][-1] in reused['messages']
-    assert log.named('context.prefix')[-1]['reduction_source_changed']
+    assert all(m in fresh['messages'] for m in fork['messages'] if m.get('role') == 'user')
+    assert all(m in reused['messages'] for m in fork['messages'] if m.get('role') == 'user')
+    assert not any('⟦ctx:compacted⟧' in str(m.get('content')) for m in reused['messages'])
 
 
 def test_late_result_restores_its_previously_unpaired_live_tail_call():

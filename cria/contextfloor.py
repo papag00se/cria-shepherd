@@ -480,7 +480,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
                              min(core_tokens, hard_budget), MIN_MSG_BUDGET)
         # --- Lever 4: drop oldest droppable turns until it fits. ---
         if _msgs_tokens(work) > msg_budget:
-            work, rep.turns_dropped = _drop_oldest(work, msg_budget, pinned_task)
+            work, rep.turns_dropped = _drop_oldest(work, msg_budget, pinned_task,
+                                                      sacrifice_budget=hard_budget)
         # --- Integrity: never leave a tool result orphaned from its assistant call. ---
         work, rep.orphans_removed = _strip_orphan_tools(work)
 
@@ -635,7 +636,8 @@ def ensure_tool_integrity(messages: list[dict]) -> tuple[list[dict], int]:
     out, n = [], 0
     for m in messages:
         if m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls:
-            out.append({"role": "user", "content": m.get("content") if m.get("content") is not None else ""})
+            out.append({"role": "user", "content": m.get("content") if m.get("content") is not None else "",
+                        bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE})
             n += 1
             continue
         out.append(m)
@@ -695,7 +697,7 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
 
 
 # Compatibility names share actual producer/role authority, never a second
-# text classifier. Root protection uses the same selector as session identity.
+# text classifier. Task identity does not revoke other caller instructions.
 _is_env_preamble = selfcompact.is_env_context
 _request_user = selfcompact.is_user_request
 
@@ -715,12 +717,12 @@ def _live_tail(messages: list[dict]) -> set[int]:
 
 
 def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
-    """Input that must win over output room: initial environment/task and live tail.
+    """Input that must win over output room: caller instructions and live tail.
 
-    Do not reserve against the entire historical active span: that would disable
-    compaction as history grows. Include paired calls for surviving tool results.
+    A pinned task does not revoke other received user constraints or amendments.
+    Historical work remains reducible. Include callers of surviving tool results.
     """
-    roots = set(selfcompact.root_user_indices(messages, pinned_task))
+    roots = {i for i, message in enumerate(messages) if _request_user(message)}
     last_user = _last_user(messages)
     tail = _live_tail(messages)
     keep = {i for i, m in enumerate(messages)
@@ -784,7 +786,7 @@ def _live_obligations(messages: list[dict]) -> tuple[int, ...]:
 
 def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     """True where a message must NOT be dropped: every system message, the active turn — the last
-    user message through the end of the list — and the authoritative root scope.
+    user message through the end of the list — and all received caller instructions.
 
     THE TASK USED TO BE DROPPABLE, and it was dropped. The active span is "the last user message
     onward", so the task is covered only while nothing follows it — and cria itself injects user-role
@@ -800,12 +802,12 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     plan-off path the raw task carries no marker for most of a session. This protects it structurally
     instead, with no marker and nothing added to what the model reads.
 
-    Without an exact single-message pin, the whole initial user prelude remains
-    possible task/context. A closed XML tag cannot distinguish a real request
-    from a banner. The identity/history owner makes the same preservation choice."""
+    A task pin identifies the task; it does not make another received instruction
+    disposable. Producer-owned annotations remain evidence rather than requests.
+    Identity selection remains with the existing history owner."""
     n = len(messages)
     last_user = _last_user(messages)
-    roots = set(selfcompact.root_user_indices(messages, pinned_task))
+    roots = {i for i, message in enumerate(messages) if _request_user(message)}
     active = _active_start(messages, last_user) if last_user >= 0 else -1
     prot = [i in roots for i in range(n)]
     for i, m in enumerate(messages):
@@ -913,7 +915,8 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
     return work, dropped
 
 
-def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "") -> tuple[list[dict], int]:
+def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "", *,
+                 sacrifice_budget: int | None = None) -> tuple[list[dict], int]:
     """Drop oldest droppable messages (not system, not the active turn) until the transcript fits
     the budget or nothing droppable remains — but SYNTHESIZE their durable state (the files they
     modified) into a protected note in their place, so a long overflowing session doesn't lose track
@@ -922,6 +925,7 @@ def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "") -
     The note is part of the result, so it is part of the arithmetic: stop when the survivors PLUS the
     complete note fit, not when the survivors or a digest allowance alone do."""
     prot = _protected_mask(messages, pinned_task)
+    live = _live_obligations(messages)
     keep = [True] * len(messages)
     dropped = 0
     removed = []
@@ -932,6 +936,9 @@ def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "") -
             break
         if prot[i]:
             continue
+        if (sacrifice_budget is not None and live[i] & (_LIVE_TAIL | _LIVE_PAIR)
+                and _msgs_tokens(kept + ([note] if note else [])) <= sacrifice_budget):
+            continue  # preferred headroom cannot discard current work that fits
         keep[i] = False
         dropped += 1
         removed.append(m)
@@ -1151,7 +1158,8 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     # a later mutation: compaction itself never establishes that the workspace changed.
     if digests:
         parts.append(prompts.load("compacted_history_provenance").strip())
-    return {"role": "user", "content": "\n".join(parts)}
+    return {"role": "user", "content": "\n".join(parts),
+            bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE}
 
 
 def _insert_after_leading_system(msgs: list[dict], note: dict) -> list[dict]:

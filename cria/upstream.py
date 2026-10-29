@@ -41,7 +41,7 @@ _MAX_PROPS_ATTEMPTS = 3
 # 49,152-token model trims ~83% of the real window away, silently and permanently, and the trigger is
 # as ordinary as cria restarting while llama.cpp is still loading its model.
 _PROPS_RETRY_EVERY = 50
-# Fail-fast budget for the debug-only /apply-template render (shares the single inference slot).
+# Timeout for native prompt measurement/capture (shares the upstream slot).
 _RENDER_TIMEOUT_S = 8
 _MAX_PREFIX_SESSIONS = 256
 
@@ -730,7 +730,11 @@ class Upstream:
         rendered = None
         real = None
         if (isinstance(msgs, list) and window and self._api_key is None
-                and isinstance(self._props, dict) and self._props.get("chat_template")):
+                and ((isinstance(self._props, dict) and self._props.get("chat_template"))
+                     or sent_estimate * safety > window - rep.reserve)):
+            # A configured window can leave /props uncached. Measure this exact
+            # final body before refusing an estimated overflow; unavailable
+            # native metadata grants no new admission authority.
             # Average density cannot settle THIS prompt: numeric evidence can run much
             # hotter than prose. Measure the final template before POST or capture, then
             # let the one floor refit the ORIGINAL input (never trim a trimmed copy).
@@ -999,10 +1003,9 @@ class Upstream:
                 self._base_url + "/apply-template", data=json.dumps(payload).encode("utf-8"),
                 method="POST", headers={"Content-Type": "application/json"},
             )
-            # Fail FAST: rendering is a debug nicety on the same single slot as real inference —
-            # it must never stall the actual call. When the slot is free it's ~4ms; if it can't
-            # return quickly the slot is busy, so skip (best-effort) — the JSON body is still
-            # captured and the prompt is reconstructable offline from it.
+            # Native measurement is best-effort within this endpoint timeout.
+            # Unavailability grants no admission authority; successful captures
+            # reuse the same complete rendered prompt.
             with self._ordinary_open(req, timeout=_RENDER_TIMEOUT_S) as resp:
                 result = json.loads(resp.read())
                 p = result.get("prompt") if isinstance(result, dict) else None

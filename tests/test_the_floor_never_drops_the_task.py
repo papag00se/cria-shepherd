@@ -49,15 +49,16 @@ class TheTaskSurvivesTests(unittest.TestCase):
         self.assertTrue(m[1], "the real task must be the protected one")
         self.assertTrue(m[0], "markup cannot prove this initial user context is disposable")
 
-    def test_the_session_pin_beats_an_unrecognised_plain_text_banner(self):
-        """The 2026-09-04 harness used this untagged shape; phrase guessing protected it as task."""
+    def test_the_session_pin_does_not_discard_unrecognised_plain_text_context(self):
+        """An exact task pin cannot prove that preceding user context is disposable."""
         banner = "Working environment — cwd: /tmp/ws"
         msgs = [u(banner), u(TASK), a("ok"), u("⟦ctx:steer⟧ go")]
         m = contextfloor._protected_mask(msgs, pinned_task=TASK)
-        self.assertFalse(m[0])
+        self.assertTrue(m[0])
         self.assertTrue(m[1])
         kept, _ = contextfloor._drop_oldest(msgs, 10, pinned_task=TASK)
         self.assertTrue(any((x.get("content") or "") == TASK for x in kept))
+        self.assertTrue(any((x.get("content") or "") == banner for x in kept))
 
     def test_a_transcript_with_only_an_unproven_banner_keeps_that_possible_task(self):
         msgs = [u(BANNER), a("ok"), u("⟦ctx:steer⟧ go")]
