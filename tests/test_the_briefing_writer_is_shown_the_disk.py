@@ -92,8 +92,9 @@ class TheListingIsDecisiveTests(unittest.TestCase):
             out = groundtruth.workspace_inventory(ws, flavor="briefing")
         self.assertIn("a.rs", out)
         self.assertIn("survey is complete and current", out)
-        self.assertIn("Absence from this list is not proof", out)
-        self.assertNotIn("a file not listed here does not exist", out)
+        self.assertIn("Absence from this list alone is not proof", out)
+        # complete + current settles absence, but only outside the named omitted directories
+        self.assertIn("not under one of the omitted directories or folded trees does not exist", out)
 
     def test_it_says_the_transcript_may_be_stale(self):
         import tempfile
@@ -144,8 +145,9 @@ class ThePromptTellsItWhatTheListMeansTests(unittest.TestCase):
 
     def test_absence_needs_complete_current_scope_not_merely_an_unlisted_path(self):
         """An unconditional listing rule can contradict writes after stale/partial surveys."""
-        self.assertIn("Even a survey labelled complete and current can have a filtered inventory", self.body)
-        self.assertIn("omitted or folded paths remain UNKNOWN, not absent", self.body)
+        self.assertIn("A survey labelled complete and current settles which files exist outside the directories it names as omitted", self.body)
+        self.assertIn("Files under the omitted directories or folded trees remain UNKNOWN, not absent", self.body)
+        self.assertIn("A partial or stale survey leaves unlisted files UNKNOWN", self.body)
         self.assertIn("Preserve later real tool evidence of creation, movement or deletion", self.body)
         self.assertNotIn("Never state that a file was created unless it is on that list", self.body)
         labels = prompts.load_map("workspace_inventory")

@@ -56,9 +56,10 @@ class TheOutstandingBulletCarriesTheEvidenceRuleTests(unittest.TestCase):
         """Both presence and absence need the survey's actual scope; neither an
         uncertain listing nor a filename proves contents, behavior or done work."""
         low = self.sys.lower()
-        self.assertIn("even a survey labelled complete and current can have a filtered inventory", low)
+        self.assertIn("a survey labelled complete and current settles which files exist outside the directories it names as omitted", low)
         self.assertIn("a fresh listed path supports presence only, not behavior or task completion", low)
-        self.assertIn("omitted or folded paths remain unknown, not absent", low)
+        self.assertIn("files under the omitted directories or folded trees remain unknown, not absent", low)
+        self.assertIn("a partial or stale survey leaves unlisted files unknown", low)
         self.assertIn("listed names describe what was observed then, not necessarily what exists now", low)
         self.assertIn("preserve later real tool evidence of creation, movement or deletion", low)
         self.assertIn("not contents, behavior or task completion", low)

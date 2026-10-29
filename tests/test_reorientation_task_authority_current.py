@@ -1,4 +1,4 @@
-"""Actual driver/wire task authority, independent of carried-inventory support."""
+"""Actual current driver/wire, using current carried-survey provenance only."""
 import copy
 import json
 
@@ -26,7 +26,7 @@ def test_current_task_authority_driver_and_wire(tmp_path,monkeypatch,name,task,a
     driver,sess,body=setup_driver()
     driver._ctx.reasoner_role=Role(name='reasoner',backend='local')
     sess.workspace_root=root
-    sess.handoff_origin=loop._HandoffOrigin('Earlier account','',False,continuation=SUMMARY)
+    sess.handoff_origin=loop._HandoffOrigin('Earlier account','',False,continuation=SUMMARY,inventory=LISTING,inventory_root=root)
     body['messages']=[{'role':'user','content':task},{'role':'user','content':SUMMARY}]
     if worked:body['messages'].append({'role':'assistant','content':'Earlier work.'})
     if amendment:body['messages'].append({'role':'user','content':amendment})

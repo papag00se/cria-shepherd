@@ -7,8 +7,15 @@
 # Headers describe observations, not freshness or exhaustive coverage. Filtering is
 # independent of the underlying survey's coverage and age. Parsed by prompts.load_map.
 header = WORKSPACE FILES in {{ROOT}} (names observed in the workspace survey, newest first):
-complete = The underlying survey is complete and current; this filtered inventory does not list every path.
-scope = This is a filtered inventory: build outputs (such as target/ and build/), installed dependencies, caches and internal metadata directories are omitted, and installed trees may be folded into counts. Absence from this list is not proof that a file or directory does not exist. Inspect the relevant directory before concluding it is absent.
+# THE FILTER IS NAMED, SO ABSENCE OUTSIDE IT IS DECISIVE. The scope used to say only "such as
+# target/ and build/" and "absence from this list is not proof" for EVERY path, so a complete and
+# current survey could no longer settle anything: ornith1.5_9b / Java overnight run 3 call 0062
+# briefed "plus a REVIEW.md (235 B)" over a complete survey with no REVIEW.md at the repo root, and
+# the fidelity judge (0064, same inventory) passed it — by this text, an unlisted REVIEW.md was
+# UNKNOWN. The coder found the contradiction, distrusted its own rewrite and restored the seed.
+# {{DIRS}} is rendered from the walker's own exclusion set, so the named filter is the real one.
+complete = The underlying survey is complete and current: a file that is not listed here and is not under one of the omitted directories or folded trees does not exist in the workspace, and a listed file has the listed size.
+scope = This is a filtered inventory: files under any directory named {{DIRS}}, or under an internal metadata directory, are omitted (build outputs, installed dependencies and caches); installed trees may be folded into counts; empty directories are not listed. Absence from this list alone is not proof that a file does not exist — files under the omitted directories are never shown here. Inspect the relevant directory before concluding something is absent.
 empty = WORKSPACE FILES in {{ROOT}}: none in this filtered inventory — omitted files may still exist.
 # The header states compaction ONLY when this body actually carries a compaction (a rollup, briefing,
 # continuation reframe, or context-floor digest). ornith1.5_9b / Java B2 read the unconditional clause

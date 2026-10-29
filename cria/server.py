@@ -707,6 +707,14 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     if distill is not None:
         # The empty/cut-off briefing retry re-frames the request; it must distill too.
         services = replace(services, distill=distill)
+    # The listing the writer is shown rides on the producer record: the next request's view is rebuilt
+    # from a conversation this compaction strips of every survey (`loop._reorientation_inventory`).
+    shown_inventory: list[tuple[str, str]] = []
+    def inventory(root, _render=services.inventory):
+        text = _render(root)
+        shown_inventory.append((root or "", text))
+        return text
+    services = replace(services, inventory=inventory)
     result = definition.execute(comp, body, facts, services, selected=True,
         chat_fn=provider.chat if provider is not None else None,
         role=role, rlog=rlog, settle=settle, frame_hook=definition.frame)
@@ -729,7 +737,8 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     if (settlement != [expected] or not prose_matches or not ledger_matches
             or bool(result.prose) != (result.effect is memoryhandoff.Effect.DELIVERED)):
         raise ValueError("Harness handoff settlement must match its returned result")
-    origin = _HandoffOrigin(*expected)
+    shown_root, shown_text = shown_inventory[-1] if shown_inventory else ("", "")
+    origin = _HandoffOrigin(*expected, inventory=shown_text, inventory_root=shown_root)
     def commit(retained):
         # Compared WITHOUT cria's own `⟦cria⟧` lines, which every inbound reader strips before it reads
         # the stored reply: `_finalize` appends the turn-stats footer to this text answer, and comparing

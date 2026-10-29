@@ -244,6 +244,16 @@ _INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 INSTALL_PREFIXES = frozenset({"vendor/bundle"})
 
 
+def _scope_line(labels: dict[str, str]) -> str:
+    """The inventory's filter, NAMED from the walker's own exclusion set (`_INVENTORY_EXCLUDE`).
+
+    A complete and current survey settles absence only for paths OUTSIDE what the renderer omits,
+    so the reader must be told exactly what that is — "such as target/" left every path in doubt.
+    cria's own private directory rides under "internal metadata directory" (#17)."""
+    shown = sorted(n for n in _INVENTORY_EXCLUDE if "cria" not in n.lower())
+    return prompts.fill(labels["scope"], dirs=", ".join(shown))
+
+
 def _entry_line(rel: str, size) -> str:
     """One file's line in the listing. An unknown size says so rather than printing `0 B` (#23c)."""
     return f"  {rel} ({size} B)" if size is not None else f"  {rel} (size not known)"
@@ -347,8 +357,10 @@ def files_for_a_judge(root: str | None) -> str:
 def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool = False) -> str:
     """Render the harness survey with its actual coverage and freshness.
 
-    The inventory is always filtered, independently of survey coverage and freshness;
-    omission never proves workspace absence. Preserve bounded and overtaken caveats too.
+    The inventory is always filtered, independently of survey coverage and freshness, and the
+    filter is named. Omission proves absence only under a complete, current survey and only
+    outside the named omitted directories and folded trees. Preserve bounded and overtaken
+    caveats too.
     Unknown workspace/survey returns no inventory, never an empty-workspace claim.
     Rendering neither refreshes the survey nor changes its ownership state.
     """
@@ -390,14 +402,14 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
             return ""          # nothing seen AND the survey was bounded — say nothing, not "empty"
         # Empty after filtering is not an empty workspace, for any reader.
         return (prompts.fill(labels["planner_empty" if flavor == "planner" else "empty"], root=root)
-                + "\n" + labels["scope"])
+                + "\n" + _scope_line(labels))
     entries.sort(key=lambda e: (-e[0], e[1]))
     fold_lines = [prompts.fill(labels["install_prefix"], prefix=p, count=c)
                   for _, p, c in folded]
     if flavor == "coder":
         # The post-compaction files list for the CODER (operator's design: content lives on disk +
         # in read_file range; the compacted view carries the LIST, not the bytes).
-        lines = [labels["coder_header_compacted" if compacted else "coder_header"], labels["scope"]]
+        lines = [labels["coder_header_compacted" if compacted else "coder_header"], _scope_line(labels)]
         lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
         # THE READ-FILE INSTRUCTION IS NOT THE COMPLETENESS CLAUSE. "the disk is the only current
         # version — do not reconstruct content from the summary" is true of a bounded or overtaken
@@ -407,12 +419,12 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
         return "\n".join(lines)
     if flavor == "briefing":
         # The rolling/harness writer gets the same survey scope as every other reader.
-        lines = [labels["briefing_header"], labels["scope"]]
+        lines = [labels["briefing_header"], _scope_line(labels)]
         lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
         lines.extend([labels["complete"]] if complete else caveats)
         return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root),
-             labels["scope"]]
+             _scope_line(labels)]
     lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
     lines.extend([labels["complete"]] if complete else caveats)
     return "\n".join(lines)

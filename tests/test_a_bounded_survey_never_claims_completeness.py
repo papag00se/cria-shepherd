@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import unittest
 
-from cria import groundtruth, wsview
+from cria import groundtruth, prompts, wsview
 
 
 def _surveyed(n_files: int, extra: str | None = None) -> tuple[str, wsview.View]:
@@ -65,8 +65,9 @@ class TheCompletenessClauseIsEarnedTests(unittest.TestCase):
         ws, v, token = _surveyed(3, "main.py")
         self.addCleanup(wsview.unbind, token)
         out = groundtruth.workspace_inventory(ws)
-        clause = "The underlying survey is complete and current; this filtered inventory does not list every path."
-        self.assertIn("Absence from this list is not proof", out)
+        clause = prompts.load_map("workspace_inventory")["complete"]
+        self.assertIn("Absence from this list alone is not proof", out)
+        self.assertIn("does not exist in the workspace", out)
         self.assertTrue(v.complete)
         self.assertFalse(v.may_have_changed)
         self.assertIn(clause, out)

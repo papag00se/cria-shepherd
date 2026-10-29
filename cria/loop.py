@@ -5302,7 +5302,7 @@ class Loop:
                     next((_msg_text_content(m) for m in raw if m.get("role") == "user"
                         and isinstance(origin, _HandoffOrigin)
                         and origin.matches_continuation(_msg_text_content(m))), "")),
-                lambda: workspace_inventory(sess.workspace_root or "", flavor="briefing"),
+                lambda: _reorientation_inventory(sess, raw, rlog),
                 reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
                 None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
                     self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding")))
@@ -5928,6 +5928,13 @@ class _HandoffOrigin:
     ledger: str
     dropped: bool
     continuation: str = ""
+    # The workspace survey exactly as the briefing writer was shown it, rendered in the compaction
+    # request itself. The next request's view is rebuilt from the conversation, and the compaction
+    # just removed every survey from it, so this is the only listing of the disk the handoff
+    # describes (see `_reorientation_inventory`).
+    inventory: str = ""
+    # The workspace root that listing describes: a listing never travels to another root.
+    inventory_root: str = ""
 
     def matches_summary(self, summary: str) -> bool:
         return summary == self.reply or (self.dropped and summary == self.reply.removeprefix(_PROSE_DROPPED_MARKER + "\n"))
@@ -6880,6 +6887,7 @@ def _write_path(fn: dict) -> str | None:
     if is_shell_tool_name(name):
         return _shell_write_target(fn.get("arguments") or "")
     return None
+
 
 # Extract the file a shell command writes via redirect/heredoc/`tee` — the target token after a
 # `>`/`>>` (not `/dev/…`, `&`, or a comparison) or after `tee [-a]`. Quoted spans are stripped first
@@ -9284,6 +9292,35 @@ def _read_ground_truth(sess, messages: list[dict], restored: dict | None = None)
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
 
 
+def _reorientation_inventory(sess, messages: list, rlog) -> str:
+    """The workspace listing for the post-compaction orienter.
+
+    This request's own survey when it carries one. Otherwise the survey the briefing writer was shown,
+    which cria's own hardener recorded in the compaction request — but only when that hardener produced
+    the continuation this request carries (`matches_continuation`) and the listing describes this
+    session's workspace root, so another boundary's or another root's listing is never presented as
+    this one's. The view is rebuilt per request from the conversation, and a
+    compaction removes every survey from it: the orienter's WORKSPACE INVENTORY was empty in 28 of 32
+    captured prompts. Walked on ornith1.5_9b / Java overnight run 4 (reasoner 0043): with no listing
+    it read the folded `src/  (main)` line as the whole tree, told the coder the inventory named only
+    README.md, pom.xml, data/ and target/ — not the Importer.java the session had just rewritten — and
+    to re-establish a baseline; the coder restored the seed over its rewrite."""
+    current = workspace_inventory(sess.workspace_root or "", flavor="briefing")
+    if current:
+        rlog.emit("loop.reanchor_inventory", source="current")
+        return current
+    origin = getattr(sess, "handoff_origin", None)
+    summary = next((_msg_text_content(m) for m in reversed(messages) if m.get("role") == "user"
+                    and CONTINUATION_MARKER in _msg_text_content(m)), "")
+    root = os.path.normpath(sess.workspace_root) if sess.workspace_root else ""
+    if (isinstance(origin, _HandoffOrigin) and origin.inventory and origin.matches_continuation(summary)
+            and root and os.path.normpath(origin.inventory_root or "") == root):
+        rlog.emit("loop.reanchor_inventory", source="boundary")
+        return origin.inventory
+    rlog.emit("loop.reanchor_inventory", source="none")
+    return ""
+
+
 def _surveyed_view(sess):
     root = getattr(sess, "workspace_root", None)
     view = wsview.current(root) if root else None
@@ -10785,6 +10822,7 @@ def _mutation_targets(fn: dict, workspace_root: str | None = None):
         # (with no output redirect/tee at all), or ANY file may have changed.
         return [] if dirguard.command_only_reads(text, workspace_root, no_writes=True) else _ANY_PATH
     return []
+
 
 def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | None = None,
                        skip: frozenset | set = frozenset()):

@@ -5538,16 +5538,23 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertIn(os.path.join("sub", "mod.py"), inv)
         self.assertLess(inv.index("README.md"), inv.index("mod.py"))   # newest first
         self.assertIn("survey is complete and current", inv)
-        self.assertIn("Absence from this list is not proof", inv)
-        self.assertNotIn("a file not listed here does not exist", inv)
+        self.assertIn("Absence from this list alone is not proof", inv)
+        self.assertIn("not under one of the omitted directories or folded trees does not exist", inv)
 
     def test_non_deliverable_dirs_are_pruned(self):
         from cria.loop import workspace_inventory
         with tempfile.TemporaryDirectory() as d:
             self._tree(Path(d))
             inv = workspace_inventory(d)
-        self.assertNotIn(".git", inv)
-        self.assertNotIn("__pycache__", inv)
+        # their CONTENTS are pruned; the directory names appear only in the scope line that
+        # says files under them are omitted (so their absence is never claimed)
+        self.assertNotIn("HEAD", inv)
+        self.assertNotIn("m.pyc", inv)
+        listed = [l for l in inv.splitlines() if l.startswith("  ")]
+        self.assertFalse(any(".git" in l or "__pycache__" in l for l in listed), listed)
+        scope = next(l for l in inv.splitlines() if l.startswith("This is a filtered inventory"))
+        self.assertIn(".git", scope)
+        self.assertIn("__pycache__", scope)
 
     def test_large_workspaces_are_listed_in_full(self):
         """A current complete survey lists every file without a renderer cap.
@@ -5561,8 +5568,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
         for i in range(120):
             self.assertIn(f"f{i:03d}.txt (1 B)", inv)
         self.assertIn("survey is complete and current", inv)
-        self.assertIn("Absence from this list is not proof", inv)
-        self.assertNotIn("a file not listed here does not exist", inv)
+        self.assertIn("Absence from this list alone is not proof", inv)
+        self.assertIn("not under one of the omitted directories or folded trees does not exist", inv)
         self.assertNotIn("more file", inv)
 
     def test_empty_workspace_states_the_fact(self):

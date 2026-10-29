@@ -100,7 +100,7 @@ class PlannerInventoryWordingTests(unittest.TestCase):
         out = groundtruth.workspace_inventory(d, flavor="planner")
         self.assertNotIn("judging", out)
         labels = prompts.load_map("workspace_inventory")
-        self.assertEqual(out, prompts.fill(labels["planner_empty"], root=d) + "\n" + labels["scope"])
+        self.assertEqual(out, prompts.fill(labels["planner_empty"], root=d) + "\n" + groundtruth._scope_line(labels))
         self.assertIn("none in this filtered inventory", out)
         self.assertNotIn("nothing has been built yet", out)
 

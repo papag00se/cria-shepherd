@@ -72,7 +72,8 @@ class TheEvidenceRuleAppliesBothWaysTests(unittest.TestCase):
         An omitted path in a filtered inventory is unknown, not failed work."""
         self.assertIn("A fresh listed path supports presence only, not behavior or task completion", self.body)
         self.assertIn("not contents, behavior or task completion", self.body)
-        self.assertIn("omitted or folded paths remain UNKNOWN, not absent", self.body)
+        self.assertIn("Files under the omitted directories or folded trees remain UNKNOWN, not absent", self.body)
+        self.assertIn("A partial or stale survey leaves unlisted files UNKNOWN", self.body)
         self.assertIn("Preserve later real tool evidence of creation, movement or deletion", self.body)
         # Both directions still need a real run, even with an authoritative names-only list.
         self.assertIn("check ACTUALLY RAN and passed", self.body)
