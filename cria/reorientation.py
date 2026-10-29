@@ -109,11 +109,14 @@ def _head(text: str) -> str:
     return text if len(text) <= 120 else text[:120] + "…"
 
 
-def _reason(source: ReorientationInput) -> tuple[str, str]:
-    canned = prompts.load("reanchor")
+def _reason(source: ReorientationInput) -> tuple[str | None, str]:
     facts = source.facts()
     owned_summary = (facts.historical_continuation if facts.historical_continuation
                      and facts.historical_continuation in facts.user_texts else "")
+    # An owned handoff has a governing task. If guidance cannot be authored
+    # and grounded, omit this optional steer instead of imposing inspection.
+    # Unowned callers retain their existing compatibility notice.
+    canned = None if owned_summary else prompts.load("reanchor")
     summary = owned_summary or next((s for s in reversed(facts.user_texts) if CONTINUATION_MARKER in s), "")
     if not facts.reasoner_available or not summary.strip():
         return canned, "no-summary-or-reasoner"
@@ -174,7 +177,7 @@ def reorient(source: ReorientationInput, *, enabled: bool = True) -> Reorientati
     if not enabled or not source.rewritten:
         return ReorientationResult(None, "not-selected" if not enabled else "no-rewrite", False)
     text, reason = _reason(source)
-    if reason == "task-preserved":
+    if text is None or reason == "task-preserved":
         return ReorientationResult(None, reason, False)
     message = {"role": "user", "content": prompts.render("nudge", reason=text)}
     # Optional standalone reporting happens only after successful framing.
@@ -203,5 +206,6 @@ DEFINITION = Definition(Policy(
                  Reference("tests/test_reorientation_keeps_requirements_separate_from_history.py",
                            "test_preparation_author_receives_task_separately_and_coder_keeps_it"),
                  Reference("tests/test_context_reorientation_policy.py", "test_reasoned_source_parity"),
-                 Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+                 Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
+                 Reference("tests/test_owned_reorientation_fallbacks.py", "test_owned_unusable_guidance_never_becomes_canned_inspection")),
     migrated=False), reorient)
