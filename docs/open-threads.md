@@ -21,6 +21,19 @@ The single source of truth for work that is **undecided or unbuilt right now**. 
 
 ---
 
+## Open — multipart reads and image workflow (commit `110b7870`, 2026-10-29)
+
+Built and committed: transparent multipart reads (verified pages assembled into one logical read, fitted against the complete model-visible request, unverified carriers preserved without read credit) and the same-coder image observe/reinspect workflow ([docs/image-workflow.md](image-workflow.md)). Both were validated with offline fixtures and fake backends only. Still open:
+
+- **Real-model validation** of native capacity measurement, multipart end to end, and vision (needs a vision-capable model on the RTX 3080; ornith has none).
+- **Retained-state cleanup**: nothing deletes multipart state or retained originals automatically, because cria has no trusted session-close signal or fenced lease. Inferring closure from idleness, eviction or history is forbidden; an explicit operator-run command is the only honest route.
+- **Read overflow continuation** (source-bound line/byte guidance), very long single lines, and a lossless binary read are incomplete.
+- Page reads are hash- and metadata-checked, not an atomic snapshot against a concurrent writer.
+- Image-bearing SSE buffers its internal exchanges; remote image URLs stay references.
+- **Not deployed**: the live release predates this commit.
+
+---
+
 ## Build queue
 
 ### Candidate new cria-wide languages
