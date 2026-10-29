@@ -128,10 +128,12 @@ def test_mixed_image_and_assembled_read_actual_http(tmp_path,monkeypatch,mode,re
             assert entry.settled and entry.fallback_kind is None
             assert read_events[-1]==(2,True)
         else:
-            assert all(raw in result['content'] for raw in carriers)
+            # Measured overflow omits the encoded transport pages (the coder never read them);
+            # an unknown outcome preserves them.
+            assert (all(raw in result['content'] for raw in carriers)) == (mode=='unknown')
             assert not entry.settled and entry.fallback_kind==mode
             assert True not in [accepted for _,accepted in read_events]
-            assert 'could not be established' in result['content'] if mode=='unknown' else 'fit' in result['content']
+            assert 'could not be established' in result['content'] if mode=='unknown' else 'did not fit the context window' in result['content']
             if mode=='overflow':assert compactions==[True] and len(tokenized)>=2
         assert 'cria_protected_reads' not in json.dumps(final) and '_multipart_unverified' not in json.dumps(final)
         (tmp_path/'mixed-http-capture.json').write_text(json.dumps({'kind':'offline-mixed-protected-read-image','mode':mode,'wire':posts,'native_requests':renders,'read_events':read_events,'response':output.decode()},indent=2))

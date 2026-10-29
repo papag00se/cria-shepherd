@@ -26,7 +26,7 @@ For a retained attachment, `reinspect_image` sends the original source to the sa
 
 Private producer-issued call IDs correlate exact issued actions with returned result packets. They are not authentication credentials: the operator declaration does not authenticate an arbitrary API caller or independently prove that a harness executed a read. Observations remain labelled accounts of the image bytes reported by the harness. Duplicate, changed, unregistered or unsupported result structures are explicit errors.
 
-Image token cost remains explicitly unknown when native measurement cannot establish it. No text-density estimate proves visual fit. Protected multipart reads settle only after their final full model request is measured and delivered; a prior image observation gives them no read credit. Unknown or overflow fallback preserves the received carriers without credit.
+Image token cost remains explicitly unknown when native measurement cannot establish it. No text-density estimate proves visual fit. Protected multipart reads settle only after their final full model request is measured and delivered; a prior image observation gives them no read credit. An unknown fit outcome preserves the received carriers without credit; a measured overflow withholds the encoded transport pages and tells the coder the file size and how to read it in narrower pieces, also without credit.
 
 Ordinary text SSE remains progressive, including when an image tool is offered. Image-bearing requests currently buffer their internal observation/reinspection exchanges before emitting the final completion. No physical vision or capacity validation is implied by offline handler tests.
 

@@ -54,9 +54,14 @@ def test_fit_failure_continues_once_without_claiming_read_or_guessing_guidance(s
                 messages.append({'role':'tool','tool_call_id':c['id'],'content':output})
         assert msg['content']=='seen' and len(backend.bodies)==3
         result=next(m for m in backend.bodies[-1]['messages'] if m.get('role')=='tool')
-        assert all(output in result['content'] for output in carriers)
         assert denial.read_payload(result) is None and not denial.refused(result)
         assert text not in result['content']
-        assert ('could not be established' if reason=='unknown' else 'did not fit after a compaction attempt') in result['content']
-        assert 'range' not in result['content'] and 'bytes' not in result['content']
+        if reason=='unknown':
+            assert all(output in result['content'] for output in carriers)
+            assert 'could not be established' in result['content']
+            assert 'range' not in result['content'] and 'bytes' not in result['content']
+        else:
+            # Measured overflow: the encoded transport pages are not replayed to the coder.
+            assert not any(output in result['content'] for output in carriers)
+            assert f'({len(text)} bytes)' in result['content'] and 'did not fit the context window' in result['content']
     finally: srv.shutdown();srv.server_close();t.join();log.close()

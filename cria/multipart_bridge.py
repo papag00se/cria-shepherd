@@ -572,7 +572,14 @@ class Bridge:
                             details = prompts.load_map('multipart_unverified_detail')
                             fragments = [prompts.fill(details['continuation'], output=failed.received[cid])
                                          for cid in failed.calls if cid in failed.private and cid in failed.received]
-                            if failed.fallback_kind is not None:
+                            if failed.fallback_kind == 'overflow':
+                                # Measured: the file cannot fit. The encoded pages are cria's own transport,
+                                # never something the coder read, and replaying them would cost the window
+                                # again (or overflow it a second time). Say what is known and how to go on.
+                                m['content'] = ''
+                                explanation = prompts.render('multipart_fit_overflow',
+                                                             bytes=failed.assembly.identity[0])
+                            elif failed.fallback_kind is not None:
                                 detail = prompts.load_map('multipart_fit_unavailable_detail')[failed.fallback_kind]
                                 explanation = prompts.render('multipart_fit_unavailable', detail=detail,
                                                              continuations=''.join(fragments))

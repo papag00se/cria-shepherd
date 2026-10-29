@@ -564,6 +564,10 @@ class Upstream:
                         raise ReadFitOverflow(error.measurement, guidance) from error
                     raise
                 if not isinstance(callbacks, ReadFitCallbacks) or not callable(callbacks.compact):
+                    # A route with no compaction (a plain proxied turn) still MEASURED the overflow;
+                    # reporting it as unknown told the coder a falsehood about what cria established.
+                    if isinstance(error, ReadFitOverflow):
+                        raise
                     raise ReadFitUnknown('compaction_unavailable', reads) from error
             finally:
                 _READ_FIT_SCOPE.reset(token)
