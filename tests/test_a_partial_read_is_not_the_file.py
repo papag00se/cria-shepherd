@@ -139,7 +139,7 @@ def _exchange(tmp_path, n, **args):
     comp = {"choices": [{"message": {"tool_calls": [{"id": f"b{n}", "type": "function", "function": {
         "name": "read_file", "arguments": json.dumps({"path": "Big.java", **args})}}]}}]}
     translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
-                       injected={"read_file"}, workspace_root=str(tmp_path))
+                       injected={"read_file"}, workspace_root=str(tmp_path), read_budget=9000)
     tc = comp["choices"][0]["message"]["tool_calls"][0]
     out = subprocess.run(["bash", "-c", json.loads(tc["function"]["arguments"])["cmd"]],
                          cwd=tmp_path, capture_output=True, text=True)

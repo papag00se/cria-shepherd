@@ -39,7 +39,6 @@ class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
         for name in self.STEERS:
             with self.subTest(steer=name):
                 self.assertNotIn("truncat", prompts.load(name).lower())
-
     def test_neither_steer_blames_the_harness(self):
         """#18: a claim about the harness is one cria is not positioned to make, and #17 keeps
         cria's own name out of the alternative — so the sentence is about the READ."""
@@ -48,14 +47,12 @@ class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
                 body = prompts.load(name).lower()
                 self.assertNotIn("harness", body)
                 self.assertNotIn("cria", body)
-
     def test_both_say_what_actually_happened(self):
         for name in self.STEERS:
             with self.subTest(steer=name):
                 body = prompts.load(name)
                 self.assertIn("larger than can be returned", body)
                 self.assertIn("nothing is shown", body)
-
     def test_both_still_offer_a_route_the_coder_can_take(self):
         """A refusal must name something the coder can actually change (#5b)."""
         for name in self.STEERS:
@@ -63,7 +60,6 @@ class TheReasonIsTheRefusalNotAPredictionTests(unittest.TestCase):
                 body = prompts.load(name)
                 self.assertIn("grep", body)
                 self.assertIn("{{PATH}}", body)
-
 
 class TheGapThatMadeItFalseTests(unittest.TestCase):
     def test_the_threshold_is_far_below_the_observed_cut(self):
@@ -82,7 +78,24 @@ class TheRefusalStillRefusesTests(unittest.TestCase):
     def test_a_small_read_is_untouched(self):
         """The guard is a size test in the lowered command, not a remembered flag — a file under the
         limit still cats."""
-        self.assertIn("cat ", writeproxy._read_command({"path": "small.txt"}))
+        self.assertIn("sys.stdout.buffer.write(raw)", writeproxy._read_command({"path": "small.txt"}))
+
+
+
+
+
+# These legacy refusal cases exercise a known, explicit context allowance.
+# Unknown usage and replacement of fixed caps are covered in test_shared_read_budget.
+import pytest
+from cria import filecommands as _read_policy
+
+
+@pytest.fixture(autouse=True)
+def _known_read_allowance():
+    with _read_policy.read_room_scope(9000):
+        yield
+
+
 
 
 if __name__ == "__main__":

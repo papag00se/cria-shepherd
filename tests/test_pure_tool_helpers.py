@@ -245,21 +245,26 @@ def test_spill_paths_are_explicit_and_root_rewrite_is_narrow():
     assert not filecommands._targets_cria_home('.cria/logs/a')
 
 
-def test_read_builders_preserve_quoted_paths_and_explicit_spill_guidance():
+def test_read_builders_preserve_quoted_paths_and_explicit_spill_guidance(tmp_path):
     assert filecommands._read_command({}) is None
     command = filecommands._read_command({"path": "a b"})
-    assert command.endswith("else cat 'a b'; fi")
-    assert "LC_ALL=C awk" in command
+    assert "python3 - 'a b' " in command
+    assert "else cat" not in command
+    assert "__CRIA_READ_WINDOW__" in command
     ranged = filecommands._read_command({"path": "a b", "end_line": 2})
-    assert "sed -n '1,2p' 'a b'" in ranged
+    assert "python3 - 'a b' 1 2 -1" in ranged
     assert callformats._read_command({"path": "a b", "start": "1", "end": "2"}) == ranged
     spill = filecommands._spill_read_command('a b', "caller supplied outline")
     assert "⟦ctx:denied⟧ caller supplied outline" in spill
-    assert spill.endswith("else cat 'a b'; fi")
-    assert spill.endswith("then printf %s '⟦ctx:denied⟧ caller supplied outline'; else cat 'a b'; fi")
+    assert "python3 - 'a b' " in spill
+    assert "__CRIA_RD_PY__" in spill and "else cat" not in spill
     unread = filecommands._read_in_place_of_write('a b', 'authoritative fact')
-    assert '⟦ctx:read-instead⟧' in unread and 'authoritative fact' in unread
-    assert 'cat \'a b\'' in unread
+    import subprocess
+    (tmp_path / 'a b').write_text('exact source bytes')
+    result = subprocess.run(['bash', '-c', unread], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0 and not result.stderr
+    assert '⟦ctx:read-instead⟧' in result.stdout and 'authoritative fact' in result.stdout
+    assert result.stdout.endswith('exact source bytes')
 
 
 def test_patch_and_command_shapes_are_literal():

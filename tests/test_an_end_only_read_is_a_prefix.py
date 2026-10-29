@@ -16,7 +16,9 @@ class EndOnlyReadContract(unittest.TestCase):
         self.path = pathlib.Path(self.tmp.name) / "fixture.txt"
 
     def run_read(self, **bounds):
-        command = _read_command({"path": str(self.path), **bounds})
+        from cria.filecommands import read_room_scope
+        with read_room_scope(9000):
+            command = _read_command({"path": str(self.path), **bounds})
         result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
         return result.returncode, result.stdout, result.stderr
 

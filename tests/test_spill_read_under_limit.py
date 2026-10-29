@@ -96,7 +96,7 @@ class ThroughTranslateOutboundTests(_Workspace):
     def test_a_small_spilled_file_is_HANDED_TO_THE_CODER(self):
         rel = self.spilled("search-ada-handles.txt", LARGEST_REFUSED, "a")
         comp = _read_call(rel)
-        writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
+        _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -106,16 +106,16 @@ class ThroughTranslateOutboundTests(_Workspace):
         """The sentence itself is the false fact — assert on cria's own template, not a copy."""
         rel = self.spilled("search-x.txt", SMALLEST_REFUSED)
         comp = _read_call(rel)
-        writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
+        _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         anchor = prompts.load("spill_read_steer").split("{{")[1].split("}}")[1].strip()
         self.assertTrue(anchor, "the steer template has no literal text to anchor on")
         self.assertNotIn(anchor, self.run_in_ws(_lowered(comp)).stdout)
 
     def test_an_OVERSIZED_spilled_file_is_STILL_refused_through_the_same_path(self):
-        rel = self.spilled("openapi.json", writeproxy.READ_INLINE_MAX + 1)
+        rel = self.spilled("openapi.json", writeproxy.READ_INLINE_MAX + 4)
         comp = _read_call(rel)
-        writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
+        _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
         self.assertEqual(r.returncode, 0)      # declined on size is not a failed call
@@ -128,7 +128,7 @@ class ThroughTranslateOutboundTests(_Workspace):
         same branch. It had better reach the SIZE-GATED one."""
         self.spilled("search-y.txt", 1024, "y")
         comp = _read_call("/tmp/reference/search-y.txt")
-        writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
+        _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
         r = self.run_in_ws(_lowered(comp))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -153,15 +153,15 @@ class ThroughTranslateOutboundTests(_Workspace):
     def test_a_RANGED_read_of_a_spilled_file_still_goes_to_the_ranged_reader(self):
         """The branch only claims whole reads; a range has always fallen through, and must keep
         doing so — otherwise the size gate would silently take over a second population."""
-        rel = self.spilled("openapi.json", writeproxy.READ_INLINE_MAX + 1)
+        rel = self.spilled("openapi.json", writeproxy.READ_INLINE_MAX + 4)
         comp = {"choices": [{"message": {"tool_calls": [
             {"id": "c1", "type": "function",
              "function": {"name": "read_file",
                           "arguments": json.dumps({"path": rel, "start_line": 1,
                                                    "end_line": 2})}}]}}]}
-        writeproxy.translate_outbound(comp, _SHELL_TOOL, injected={"read_file"},
+        _translate_with_read_allowance(comp, _SHELL_TOOL, injected={"read_file"},
                                       workspace_root=self.ws)
-        self.assertIn("sed -n '1,2p'", _lowered(comp))
+        self.assertIn(" 1 2 9000 ", _lowered(comp))
 
 
 class SpillReadCommandTests(_Workspace):
@@ -179,7 +179,7 @@ class SpillReadCommandTests(_Workspace):
     def test_an_OVERSIZED_spilled_file_is_still_refused(self):
         """Still refused, and now with exit 0 — see ASizeRefusalReportsNoFailureTests for why a
         non-zero exit on a read tells a small model the file is gone."""
-        rel = self.spilled("spec.json", writeproxy.READ_INLINE_MAX + 1)
+        rel = self.spilled("spec.json", writeproxy.READ_INLINE_MAX + 4)
         r = self._run(rel)
         self.assertEqual(r.returncode, 0)
         self.assertIn("large reference document", r.stdout)
@@ -195,7 +195,7 @@ class SpillReadCommandTests(_Workspace):
         hands back the wrong branch. So the test is IN the lowered command, where the filesystem
         answers at the moment of the read — the same place :func:`_read_command` puts it."""
         cmd = writeproxy._spill_read_command("./tmp/reference/a.json")
-        self.assertIn("wc -c", cmd)
+        self.assertIn("est_tokens(", cmd)
         self.assertIn(str(writeproxy.READ_INLINE_MAX), cmd)
 
 
@@ -266,7 +266,7 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
     """
 
     def test_the_whole_read_size_guard_exits_zero(self):
-        rel = self.spilled("big.json", writeproxy.READ_INLINE_MAX + 1)
+        rel = self.spilled("big.json", writeproxy.READ_INLINE_MAX + 4)
         r = self.run_in_ws(writeproxy._read_command({"path": rel}))
         self.assertEqual(r.returncode, 0)
         self.assertIn("larger than can be returned", r.stdout)  # the steer still reaches the model
@@ -296,6 +296,27 @@ class ASizeRefusalReportsNoFailureTests(_Workspace):
         ranged = self.run_in_ws(writeproxy._read_command({"path": rel, "start_line": 1,
                                                           "end_line": 1}))
         self.assertEqual(ranged.returncode, 0)
+
+
+
+
+
+# These legacy refusal cases exercise a known, explicit context allowance.
+# Unknown usage and replacement of fixed caps are covered in test_shared_read_budget.
+import pytest
+from cria import filecommands as _read_policy
+from cria.writeproxy import translate_outbound as _translate_reads
+
+
+@pytest.fixture(autouse=True)
+def _known_read_allowance():
+    with _read_policy.read_room_scope(9000):
+        yield
+
+
+def _translate_with_read_allowance(*args, **kwargs):
+    kwargs.setdefault("read_budget", 9000)
+    return _translate_reads(*args, **kwargs)
 
 
 if __name__ == "__main__":

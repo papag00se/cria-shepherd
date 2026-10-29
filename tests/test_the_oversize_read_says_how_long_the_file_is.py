@@ -42,7 +42,6 @@ class AnOversizeRefusalNamesTheLengthTests(unittest.TestCase):
         out = _read(self.big)
         self.assertIn("larger than can be returned in one read", out)
         self.assertIn("nothing is shown", out)
-
     def test_it_offers_a_first_window_the_coder_can_use(self):
         out = _read(self.big)
         self.assertIn("start_line=1", out)
@@ -53,6 +52,8 @@ class AnOversizeRefusalNamesTheLengthTests(unittest.TestCase):
 
     def test_no_placeholder_survives(self):
         self.assertNotIn("{{", _read(self.big))
+
+
 
     def test_a_small_file_still_comes_back_whole(self):
         self.assertEqual(_read(self.small), "x = 1\n")
@@ -125,6 +126,23 @@ class TheWindowItNamesIsOneItWillHonourTests(unittest.TestCase):
     def test_no_placeholder_survives_either_way(self):
         for body in ("y" * 20000, self.SHAPES["wide lines"]):
             self.assertNotIn("{{", self._window(body)[2])
+
+
+
+
+
+# These legacy refusal cases exercise a known, explicit context allowance.
+# Unknown usage and replacement of fixed caps are covered in test_shared_read_budget.
+import pytest
+from cria import filecommands as _read_policy
+
+
+@pytest.fixture(autouse=True)
+def _known_read_allowance():
+    with _read_policy.read_room_scope(9000):
+        yield
+
+
 
 
 if __name__ == "__main__":

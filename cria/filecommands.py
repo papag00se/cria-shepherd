@@ -9,16 +9,18 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import base64
+import inspect
 import json
 import os
 from pathlib import Path
 import re
-from shlex import quote as _qbash
+import textwrap
+from shlex import quote as _qbash, split as _shell_split
 
 from . import content_reduce as content_reduce_mod, denial, prompts, resultpacket
 from .privatepaths import CRIA_HOME
 from .toolargs import tool_path as _tool_path
-from .toolwire import _oversize_command, _refusal_command
+from .toolwire import _oversize_command, _refusal_command, _sentinel
 
 _WRITE_NAMES = {"write_file", "create_file"}
 
@@ -96,78 +98,63 @@ def _guarded_path(name: str, args: dict) -> str | None:
 
 READ_INLINE_MAX = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 
-# HOW MUCH ONE WHOLE READ MAY BRING BACK, sized to the coder's REMAINING context (operator design, 2026-10-28).
-#
-# The fixed bound above refused ordinary source files with plenty of room left. ornith1.5_9b / Java overnight run 1: 54 of
-# its 135 refused coder calls were whole reads of its OWN 267-line, 9,729-byte Importer.java, and 30 of the 43 refusal
-# guards that fired would not have reached 3 without a size refusal in their window. Measured on that run's requests
-# (window 49,152, reply reserve 16,384, the request's own prompt tokens and reply): 40% of the remaining context held
-# the file whole in 50 of the 54. Across every captured large-read refusal with a known window, 110 of 136 source-file
-# refusals become whole reads; every output/data dump (55, 188 KB+) is still refused.
-#
-# Three bounds, all decided by the program that reads the file, on the bytes it actually read:
-# * FLOOR — at or under READ_INLINE_MAX a whole read returns exactly as it always has, whatever the room. A full
-#   context never makes an ordinary read refuse; this is today's behaviour, byte for byte.
-# * ROOM — above the floor, the file's bytes must fit the share of the remaining context the turn's lowering granted
-#   this read (`read_room_scope`). That share is computed where the facts are — the coder request's own measured prompt
-#   tokens, its reply, the window and reply reserve (`Loop.read_budget_bytes`) — and split between the reply's whole
-#   reads (`whole_read_rooms`). No known window, no granted room: the floor alone, i.e. the existing behaviour (#11b).
-# * HARNESS CEILING — above the floor, the RECORD the harness carries (encoded: zlib/base64/text, whichever is
-#   shortest, plus its fields) must fit INLINE_RESULT_MAX_BYTES, the one bound for anything cria hands back inline.
-#   Measured in the captures: with its default allowance the harness keeps ~10,000 bytes of a tool output (377 cut
-#   outputs retain 10,2xx bytes; none at or under 10,000 was cut). The ~20,707-token cut cited in older comments is
-#   one historical observation, not the operative threshold. A result above this would be cut in transit, so it is
-#   refused instead — never shortened.
-# Anything over a bound gets the existing exact-window steer (`large_read_steer`); nothing is ever truncated.
+# Shared context allowance, in legacy allowance units (four per estimated token, not bytes).
+# No fixed floor or encoded-record ceiling; unknown context leaves reads unbounded.
 READ_ROOM_SHARE = 0.4
 _READ_ROOM: ContextVar[int | None] = ContextVar("cria_read_room", default=None)
 
 
 def read_budget(window: int, reserve: int, prompt_tokens: int, reply_tokens: float, density: float) -> int:
-    """Bytes of file text worth READ_ROOM_SHARE of what is left of ``window`` once the reply ``reserve``, the request's
-    measured ``prompt_tokens`` and its ``reply_tokens`` (real tokens) are taken, at ``density`` real tokens per chars/4
-    estimated token (the floor's own currency). Never negative."""
+    """Scaled estimator allowance at the coder's learned token density.
+
+    Prompt and reply are real-token costs; the result is four times the text
+    estimator allowance, retaining the existing caller API without a byte cap.
+    """
     remaining = window - reserve - prompt_tokens - reply_tokens
     return max(0, int(READ_ROOM_SHARE * remaining * 4 / max(density, 1e-6)))
 
 
-def whole_read_rooms(tool_calls: list, budget: int | None, size_of=None) -> dict[int, int]:
-    """``tool index -> bytes`` granted to each WHOLE ``read_file`` in one reply, out of ``budget`` (`read_budget`).
+def whole_read_rooms(tool_calls: list, budget: int | None, size_of=None, *, read_names=None) -> dict[int, int]:
+    """Allocate one allowance across whole and ranged reads without overbooking.
 
-    The reply's reads share one budget: each read's room is the budget less what the OTHER whole reads will bring back —
-    a size the workspace view knows (``size_of(path)``) when that file fits the budget or the floor, nothing when it is
-    known to be larger (it will be refused, and its steer is a few hundred bytes), and the floor when it is unknown.
-    No budget (window or usage unknown): no rooms, so every read keeps the floor alone."""
+    Filesystem byte sizes only guide provisional grants in this legacy scaled
+    allowance API; they are never accepted as text-token measurements. Every
+    producer independently measures the actual text against its granted tokens.
+    Unknown sizes and ranges share the remaining allowance equally.
+    Execution checks the actual decoded text; no workstation files are opened here.
+    """
     if budget is None:
         return {}
-    reads: dict[int, str] = {}
+    reads = {}
     for i, tc in enumerate(tool_calls or []):
         fn = (tc or {}).get("function") or {}
-        if fn.get("name") not in _READ_NAMES:
+        if fn.get("name") not in (_READ_NAMES if read_names is None else read_names):
             continue
         try:
-            args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {})
+            args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else fn.get("arguments") or {}
         except (TypeError, ValueError):
             continue
-        if not isinstance(args, dict) or args.get("start_line") is not None or args.get("end_line") is not None:
+        if not isinstance(args, dict) or not (path := _tool_path(args)):
             continue
-        path = _tool_path(args)
-        if path:
-            reads[i] = str(path)
-    top = max(READ_INLINE_MAX, budget)
-
-    def cost(path: str) -> int:
-        size = size_of(path) if size_of is not None else None
-        if not isinstance(size, int):
-            return READ_INLINE_MAX
-        return size if size <= top else 0
-    costs = {i: cost(p) for i, p in reads.items()}
-    return {i: max(0, budget - sum(c for j, c in costs.items() if j != i)) for i in reads}
+        ranged = args.get("start_line") is not None or args.get("end_line") is not None
+        size = size_of(path) if size_of is not None and not ranged else None
+        reads[i] = size if type(size) is int and size >= 0 else None
+    remaining = max(0, budget) // 4
+    known = {i: (n + 3) // 4 for i, n in reads.items() if n is not None}
+    rooms = {}
+    if sum(known.values()) <= remaining:
+        rooms = {i: n * 4 for i, n in known.items()}
+        remaining -= sum(known.values())
+        unknown = [i for i in reads if i not in known]
+        rooms.update({i: (remaining // len(unknown)) * 4 for i in unknown})
+    else:
+        rooms = {i: (remaining // len(reads)) * 4 for i in reads}
+    return rooms
 
 
 @contextmanager
 def read_room_scope(room: int | None):
-    """Grant the whole read composed inside this scope ``room`` bytes above the floor (None: the floor alone)."""
+    """Grant a scaled estimator allowance; None means context is unknown."""
     token = _READ_ROOM.set(room)
     try:
         yield
@@ -176,99 +163,51 @@ def read_room_scope(room: int | None):
 
 
 def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
-    """A ranged read (``sed -n 'start,END p'``) with the SAME two guards a whole read needs:
-    * SIZE — a range over READ_INLINE_MAX is not handed back; the coder is told how to ask a
-      smaller question instead. Observed live: a big range was cut at ~20707 tokens and the model
-      then read line '20707' — the truncation count mistaken for a line number.
+    """Return the complete numbered range if it fits the shared text allowance.
 
-      WHAT THE REFUSAL SAYS ABOUT ITSELF. It used to say "the HARNESS would truncate it mid-way".
-      READ_INLINE_MAX is 9,000 bytes and the observed cut was ~20,707 tokens — roughly nine times
-      higher — so at the threshold where this actually fires, nothing would have been truncated by
-      anyone. That is an internal limit stated as a fact about the world, which rule 5b names in
-      those words, and it is the same defect `_spill_read_command` was fixed for one function over:
-      "cria says it about its OWN read guard, which is a claim about cria dressed as a claim about
-      the world". The refusal stands — cria genuinely will not return that much in one piece — so it
-      now says THAT, and the routes it offers are unchanged and still true.
-    * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
-    An in-range, in-size read returns exactly its content."""
-    # Through an owner, not a hand-rolled printf — and specifically the SIZE owner, which exits 0.
-    # These two guards were once switched to REFUSED_EXIT_CODE alongside the blocked-call refusals,
-    # and that was wrong for them: a non-zero exit on a read means one thing to a small model, that
-    # the path is not there, and it goes hunting for a file it is holding. The call did not fail —
-    # cria declined to hand over the bytes — so nothing claims it failed. The denied mark still
-    # rides, so cria's own readers know no content came back (operator ruling, 2026-08-12).
+    Size refusals remain successful shell commands with denied provenance;
+    missing paths retain their distinct failure, and past-EOF names the length.
+    """
     steer = _oversize_command(prompts.render("large_range_steer", path=str(path)))
     receipt = denial.active_receipt()
-    if receipt:
-        end = int(sed_end.partition(",")[2]) if sed_end.partition(",")[2].isdigit() else 0
-        past = ("(no lines in that range — %s has %%N%% lines; line %d is past the end of the file)\n" % (path, start))
-        return (f"{_read_failure_branches(q, path)}"
-                f"python3 - {q} {start} {end} {READ_INLINE_MAX} {receipt} {_qbash(past)} <<'{_RANGE_HD}'\n{_RANGE_PY}{_RANGE_HD}\n"
-                f'__cria_rd=$?\n'
-                f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {steer}; '
-                f'else {_ranged_read_shell(q, path, sed_end, start, steer)}; fi')
-    return _ranged_read_shell(q, path, sed_end, start, steer, guards=True)
+    end = int(sed_end.partition(",")[2]) if sed_end.partition(",")[2].isdigit() else 0
+    past = ("(no lines in that range — %s has %%N%% lines; line %d is past the end of the file)\n" % (path, start))
+    unavailable = _refusal_command(prompts.fill(prompts.load_map("read_failed")["unreadable"], path=path))
+    return (f"{_read_failure_branches(q, path)}"
+            f"if ! command -v python3 >/dev/null 2>&1; then {unavailable}; fi; "
+            f"python3 - {q} {start} {end} {_READ_ROOM.get() if _READ_ROOM.get() is not None else -1} {_qbash(receipt or '')} {_qbash(past)} <<'{_RANGE_HD}'\n{_read_program(_RANGE_PY)}{_RANGE_HD}\n"
+            f'__cria_rd=$?\n'
+            f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {steer}; '
+            f'else exit "$__cria_rd"; fi')
 
 
-def _ranged_read_shell(q: str, path: str, sed_end: str, start: int, steer: str, guards: bool = False) -> str:
-    """The shell window cut — the plain shape outside a lowering, and the unframed fallback when python3 is unavailable."""
-    return (
-        # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
-        # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
-        # A MISSING FILE IS NOT AN EMPTY ONE. `awk` on a nonexistent path prints nothing, `|| echo 0`
-        # makes that a zero, and the past-EOF branch then reports a file that does not exist as one
-        # with no lines in it. Walked on ada-handles_fabliq_codex_pon_1785721353 (calls 0093-0096,
-        # 0085-0088, 0263, 0268): the coder guessed a path, cria answered "has 0 lines; line 1 is past
-        # the end of the file", and its reasoning recorded the damage — "the file was empty or
-        # couldn't be found". The UNRANGED read of that same path says the file is not there, so cria
-        # held the true answer and served the false one. Ask the filesystem first.
-        #
-        # Through the SAME owner as the unranged read (_read_failure_branches), not a hand-rolled
-        # printf of bash's wording. Unmarked error text is indistinguishable from the file's contents
-        # to everything downstream: the read ledger counted exactly this shape as "261 chars read
-        # from disk" for a file nobody opened. One owner, one answer, whichever read was asked for.
-        f"{_read_failure_branches(q, path) if guards else ''}"
-        f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
-        f'if [ {start} -gt "$__n" ]; then '
-        f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '
-        # NUMBER THE LINES. The crew's read_file has always numbered them (verifytools: `f"{i}: {line}"`)
-        # and the coder's never did — the same tool name, two different views, and only the model that
-        # has to EDIT by line number got the one without them. Walked on
-        # ada-handles_mellum2_codex_poff_1785693138: the coder asked for lines 55-68 to see the line a
-        # check flagged at 63, got the text naked, counted from the top of the block, and burned 8,234
-        # reasoning tokens insisting a valid f-string was valid — then took three more calls to find
-        # one line. Numbering is why the crew never has that problem.
-        f'else __s=$(sed -n \'{sed_end}p\' {q} | awk -v s={start} \'{{printf "%d: %s\\n", s+NR-1, $0}}\'); '
-        f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then {steer}; '
-        f'else {denial.ran_command()}printf \'%s\\n\' "$__s"; fi; fi'
-    )
-
-
-# THE WHOLE-READ PRODUCER. One python3 program reads the file ONCE (no `wc` then `cat`, so the size test and the bytes
-# cannot disagree) and prints ONE typed record carrying the bytes with their length and sha-256 (`resultpacket`). Exit
-# 0 = the record was printed; 3 = over the inline limit (nothing printed: the caller's steer answers); anything else
-# (no python3, a vanished file) = nothing printed and the caller falls back to a plain `cat`, whose result carries no
-# record and is therefore UNKNOWN to every reader — never a wrong claim. python3 is already required by lowered
-# writes, edits and the survey.
-# The most a whole-read record can occupy on the wire: the codec never picks anything longer than base64 (4/3 of the
-# bytes), plus the record's own fields and a prefix's prose. The result's output allowance is raised to this where the
-# harness's schema states a token unit; where it states none, the harness's own cap is an immutable external limit.
-READ_RECORD_WIRE_MAX = READ_INLINE_MAX * 4 // 3 + 1_500
+# Ship the existing estimator with the command: the harness owns the file and
+# need not have cria installed. Size and payload come from the same read.
 _READ_HD = "__CRIA_RD_PY__"
-_READ_PY = resultpacket.ENCODER_PY + r'''
+
+
+def _text_estimator_py() -> str:
+    estimator = content_reduce_mod.est_tokens
+    return textwrap.dedent(inspect.getsource(estimator)) + f"\nest_tokens = {estimator.__name__}\n"
+
+
+def _read_program(body: str) -> str:
+    return resultpacket.ENCODER_PY + _text_estimator_py() + body
+
+
+_READ_PY = r'''
 import base64, json, os, stat, sys
-path, limit, receipt, kind, pre = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], base64.b64decode(sys.argv[5]).decode()
-room, wire = int(sys.argv[6]), int(sys.argv[7])
-most = max(limit, room)
+path, receipt, kind, pre = sys.argv[1], sys.argv[2], sys.argv[3], base64.b64decode(sys.argv[4]).decode()
+room = int(sys.argv[5])
 try:
     fd = os.open(path, os.O_RDONLY)
     with os.fdopen(fd, "rb") as f:
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             sys.exit(4)
-        raw = f.read(most + 1)
+        raw = f.read()
 except OSError:
     sys.exit(4)
-if len(raw) > most:
+if room >= 0 and (room == 0 and raw or est_tokens(raw.decode("utf-8", "replace")) > room // 4):
     sys.exit(3)
 rec = {"v": 1, "r": receipt, "k": kind}
 if pre:
@@ -276,9 +215,12 @@ if pre:
 rec["b"] = encode_body(raw)
 rec["o"] = "whole"
 line = json.dumps(rec, separators=(",", ":")) + "\n"
-if len(raw) > limit and len(line) > wire:
-    sys.exit(3)
-sys.stdout.write(line)
+if receipt:
+    sys.stdout.write(line)
+else:
+    sys.stdout.write(pre)
+    sys.stdout.flush()
+    sys.stdout.buffer.write(raw)
 sys.stdout.flush()
 '''
 
@@ -286,9 +228,9 @@ sys.stdout.flush()
 # THE RANGED-READ PRODUCER: the same read-once program shape, cutting a numbered window (`N: text`, as the crew's read_file
 # always numbered it). The window's bytes ride in the record with their length and digest and are declared `range`, so what
 # a window carried is verified — a pty cannot rewrite it and a harness cut makes it unverifiable (UNKNOWN), never a window
-# that looks complete. Exit 0 = record printed; 3 = the window is over the inline limit (the caller's steer answers).
+# that looks complete. Exit 0 = record printed; 3 = the window is over the context allowance (the caller's steer answers).
 _RANGE_HD = "__CRIA_RG_PY__"
-_RANGE_PY = resultpacket.ENCODER_PY + r'''
+_RANGE_PY = r'''
 import json, os, stat, sys
 path, start, end, limit, receipt, past = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], sys.argv[6]
 try:
@@ -303,36 +245,44 @@ lines = raw.split(b"\n")
 if lines and lines[-1] == b"":
     lines.pop()
 if start > len(lines):
-    sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran"}, separators=(",", ":")) + "\n")
+    if receipt:
+        sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran"}, separators=(",", ":")) + "\n")
     sys.stdout.write(past.replace("%N%", str(len(lines))))
     sys.exit(0)
 window = lines[start - 1:end] if end else lines[start - 1:]
 body = b"".join(b"%d: %s\n" % (start + i, ln) for i, ln in enumerate(window))
-if len(body) > limit:
+if limit >= 0 and (limit == 0 and body or est_tokens(body.decode("utf-8", "replace")) > limit // 4):
     sys.exit(3)
-sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran", "b": encode_body(body), "o": "range"}, separators=(",", ":")) + "\n")
+if receipt:
+    sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran", "b": encode_body(body), "o": "range"}, separators=(",", ":")) + "\n")
+else:
+    sys.stdout.flush()
+    sys.stdout.buffer.write(body)
 sys.stdout.flush()
 '''
 
 
 def _whole_read(q: str, over: str, *, kind: str = denial.RAN, pre: str = "", otherwise: str = "",
                 room: int | None = None) -> str:
-    """The command that returns the WHOLE of ``q`` when it fits one read, else runs ``over`` (the steer).
+    """Return a whole file or the refusal, using the shared allowance only.
 
-    Under a lowering it is the record-printing program above; outside one (no receipt: nothing to declare to) it is the
-    plain size test and `cat`. ``otherwise`` runs when the record could not be produced for a reason other than size
-    (default: a plain `cat`). ``room`` (default: the scope's grant, `read_room_scope`) admits a file above the floor
-    when its bytes fit the room AND its record fits the harness ceiling; 0 keeps the floor alone."""
+    Framed reads carry exact bytes and provenance; unframed callers get raw bytes.
+    None means unknown context, zero admits only empty files.
+    """
     receipt = denial.active_receipt()
-    if not receipt:
-        return f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; then {over}; else cat {q}; fi'
+    # Python is the harness-side reader and estimator. If unavailable, a raw
+    # cat would bypass the allowance and its stderr could earn false read credit.
+    unavailable = _refusal_command(prompts.fill(prompts.load_map("read_failed")["unreadable"],
+                                                path=_shell_split(q)[0]))
+    failed = otherwise or unavailable
     pre_b64 = base64.b64encode(pre.encode("utf-8")).decode("ascii")
     granted = _READ_ROOM.get() if room is None else room
-    return (f"python3 - {q} {READ_INLINE_MAX} {receipt} {kind} '{pre_b64}' {max(0, granted or 0)} "
-            f"{content_reduce_mod.INLINE_RESULT_MAX_BYTES} <<'{_READ_HD}'\n{_READ_PY}{_READ_HD}\n"
+    return (f"if ! command -v python3 >/dev/null 2>&1; then {unavailable}; fi; "
+            f"python3 - {q} {_qbash(receipt or '')} {kind} '{pre_b64}' {granted if granted is not None else -1} "
+            f"<<'{_READ_HD}'\n{_read_program(_READ_PY)}{_READ_HD}\n"
             f'__cria_rd=$?\n'
-            f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {over}; '
-            f'else {otherwise or "cat " + q}; fi')
+            f'if [ "$__cria_rd" -eq 0 ]; then :; elif [ "$__cria_rd" -eq 3 ]; then {{\n{over}\n}}; '
+            f'else {failed}; fi')
 
 
 def _read_failure_branches(q: str, path: str) -> str:
@@ -356,6 +306,28 @@ def _read_failure_branches(q: str, path: str) -> str:
 
 
 def _read_command(args: dict) -> str | None:
+    """Keep the read's identity when alias normalization lowers it without a receipt.
+
+    The synthetic-tool lowering supplies its own correlated sentinel. Alias
+    lowering has no result receipt, but still needs the original read identity:
+    dispatch accounting must never scan our Python input as shell writes.
+    This declaration grants no result proof or read credit.
+    """
+    command = _read_command_body(args)
+    if command is None or denial.active_receipt():
+        return command
+    original = {"path": _tool_path(args)}
+    start, end = args.get("start_line"), args.get("end_line")
+    if "start_line" not in args and type(end) is int and end > 0:
+        start = 1
+    if isinstance(start, int) and start > 0:
+        original["start_line"] = start
+        if isinstance(end, int) and end > 0:
+            original["end_line"] = end
+    return _sentinel("read_file", json.dumps(original)) + "\n" + command
+
+
+def _read_command_body(args: dict) -> str | None:
     path = _tool_path(args)
     if not path:
         return None
@@ -377,55 +349,34 @@ def _read_command(args: dict) -> str | None:
         return _ranged_read(q, str(path), f"{start},{end}", start)
     if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)
         return _ranged_read(q, str(path), f"{start},$", start)
-    # Whole read: size-check first; a file over the limit is not handed back, so the coder gets a
-    # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
-    # The pointer states the refusal, not a prediction about what some other layer would have done
-    # with the bytes — see the SIZE note in `_ranged_read`.
-    # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
-    # report success.
-    # …AND HOW LONG IT IS. The refusal tells the coder to read a line RANGE and did not say how many
-    # lines there are, so the first window is a guess — while its own sibling for a spilled document
-    # (`spill_extent`) says "It is N lines — read_file with start_line=1 end_line=F fits in one
-    # read". 420 renderings of the version without it. The shell running this knows the number, the
-    # same way `_list_command` already fills its entry count, so cria says it rather than making the
-    # coder discover it.
-    # …AND THE WINDOW IT NAMES HAS TO FIT. The first window was the literal `end_line=200`, a
-    # constant with no relationship to the file it was said about, and cria refuses a RANGE over the
-    # same byte limit — so on a file with wide lines it recommended a read it then denied. Measured
-    # on feed-pipeline-java x nemotron-elastic 0041/0042: cria said `start_line=1 end_line=200`, the
-    # coder sent exactly that, lines 1-200 are 9,457 bytes against READ_INLINE_MAX, and the window
-    # was refused as too large. The coder never asked for a big window again — it worked from 5-line
-    # grep results for the next 66 calls, on the file it had just been told to rewrite whole.
-    #
-    # EXACT, NOT PROPORTIONAL. The sibling for a spilled document (`spill_extent`) estimates the fit
-    # from an average line width because it holds the bytes and not the file; here the shell IS
-    # walking the file, so it can carry a running total and name the largest prefix that provably
-    # fits. Same one pass that already produces the line count. `LC_ALL=C` makes `length` bytes
-    # rather than characters, because the limit is bytes.
-    #
-    # AND IT COUNTS THE BYTES CRIA WILL RETURN, NOT THE ONES ON DISK. `_ranged_read` NUMBERS its
-    # output (`printf "%d: %s\n"`) and then sizes THAT against the same limit, so a window measured
-    # against the raw file overshoots by the width of every line number it is about to add — a
-    # 147-line window over 8,967 bytes of source comes back as 9,702 and is refused. That is the
-    # same defect as the constant 200, one layer down: a promise made about a different artifact
-    # than the one the promise is checked against (#12). The `length(NR) + 2` below IS the prefix,
-    # and it is exact because this clause only ever offers a window starting at line 1.
-    #
-    # AND IT ABSTAINS. A file whose FIRST line is over the limit has no window to offer, so the
-    # clause is dropped rather than filled with a number that would be refused (#11b) — the grep
-    # route beside it is still true.
+    # Refuse without clipping and recommend the largest numbered prefix that
+    # fits this same allowance. Framing never consumes the evidence budget.
     text = denial.mark(prompts.render("large_read_steer", path=str(path)))
     head, _, rest = text.partition("{{LINES}}")
     mid, _, tail = rest.partition("{{WINDOW}}")
     win_head, _, win_tail = prompts.render("large_read_window").partition("{{FITS}}")
-    # Passed through the environment, not `awk -v`, which would process backslash escapes in a path.
-    prog = ('{t += length(NR) + 2 + length($0) + 1; if (t <= %d) f = NR}\n'
-            'END {w = ""; if (f > 0) w = ENVIRON["CRIA_WH"] f ENVIRON["CRIA_WT"];\n'
-            '     printf "%%s%%s%%s%%s%%s", ENVIRON["CRIA_H"], NR, ENVIRON["CRIA_M"], w,\n'
-            '                              ENVIRON["CRIA_T"]}') % READ_INLINE_MAX
-    steer = (f"CRIA_H={_qbash(head)} CRIA_M={_qbash(mid)} CRIA_T={_qbash(tail)} "
-             f"CRIA_WH={_qbash(win_head)} CRIA_WT={_qbash(win_tail)} "
-             f"LC_ALL=C awk {_qbash(prog)} {q}")
+    # Shell-quote the text as argv; paths and prompt backslashes remain literal.
+    room = _READ_ROOM.get()
+    program = _text_estimator_py() + r"""
+import sys
+path, room, head, mid, tail, wh, wt = sys.argv[1:]
+room = int(room)
+with open(path, encoding="utf-8", errors="replace", newline="") as f:
+    lines = f.read().split("\n")
+if lines and lines[-1] == "":
+    lines.pop()
+prefix = ""
+fits = 0
+for i, line in enumerate(lines, 1):
+    prefix += "%d: %s\n" % (i, line)
+    if room < 0 or (room > 0 and est_tokens(prefix) <= room // 4):
+        fits = i
+window = wh + str(fits) + wt if fits else ""
+sys.stdout.write(head + str(len(lines)) + mid + window + tail)
+"""
+    steer = ("python3 - " + " ".join(_qbash(str(x)) for x in
+             (path, room if room is not None else -1, head, mid, tail, win_head, win_tail))
+             + " <<'__CRIA_READ_WINDOW__'\n" + program + "__CRIA_READ_WINDOW__\n")
     return (f"{_read_failure_branches(q, str(path))}"
             f"{_whole_read(q, steer)}")
 
@@ -437,7 +388,7 @@ def _read_in_place_of_write(path: str, fact: str) -> str:
     ``fact`` + the call-not-run statement + a marker line (:data:`denial.READ_INSTEAD_MARKER`, words for the model — never
     searched for) and whose body is the file's bytes with their length and sha-256, read once. Whether the write ran and
     whether the file was returned are two typed facts. A file over
-    :data:`READ_INLINE_MAX` (or unreadable) falls to the ordinary whole-read owner, whose steer to
+    the shared allowance (or unreadable) falls to the ordinary whole-read owner, whose steer to
     read it in ranges is the lossless paging path; the result then states the call was not run
     and carries no read marker, so nothing is recorded as seen until a read has actually come back."""
     q = _qbash(path)
@@ -450,13 +401,8 @@ def _read_in_place_of_write(path: str, fact: str) -> str:
     with denial.unframed():      # the prose is the record's `pre` field and the answer runs inside a branch that already printed its own record
         read = denial.mark(prompts.fill(labels["read"], fact=fact))
     not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
-    receipt = denial.active_receipt()
     with denial.unframed():
         answer = _read_command({'path': path})
-    if not receipt:                                    # outside a lowering: the plain shape, no record to declare
-        return (f'if [ -f {q} ] && [ -r {q} ] && [ "$(wc -c < {q} 2>/dev/null || echo 0)" -le {READ_INLINE_MAX} ]; '
-                f"then printf %s {_qbash(read)}; cat {q}; "
-                f"else printf %s {_qbash(not_read)}; {answer}; fi")
     # THE FILE'S BYTES RIDE INSIDE THE RECORD (a `refused` record whose `pre` is the prose and whose body is the file):
     # whether the write ran and whether the file was returned are two separate typed facts. Anything the program could
     # not return (over the limit, vanished, no python3) answers with the not-read prose and the ordinary read.
@@ -533,6 +479,6 @@ def _spill_read_command(path: str, steer: str) -> str:
     # So does the not-there branch now: it used to printf bash's own phrasing, which exits non-zero
     # but carries NO denied mark — so the ledger counted the error text as the file's contents. Same
     # owner, same mark, one statement of what happened (see _read_failure_branches).
-    # A spilled document is a reference to GREP (see _under_spill_dir), not a file to hold: it keeps the floor alone.
+    # Spilled documents share the same allowance as ordinary whole reads.
     return (f"{_read_failure_branches(q, path)}"
-            f"{_whole_read(q, _oversize_command(steer), room=0)}")
+            f"{_whole_read(q, _oversize_command(steer))}")

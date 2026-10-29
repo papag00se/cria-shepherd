@@ -28,7 +28,7 @@ import uuid
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import bodykeys, brave, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
@@ -51,7 +51,7 @@ from .callliterals import (
 from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _FileMutation, _prepare_file_mutation,
     _targets_cria_home, _guarded_path, READ_INLINE_MAX, _ranged_read, _read_failure_branches,
-    _read_command, _read_in_place_of_write, READ_RECORD_WIRE_MAX)
+    _read_command, _read_in_place_of_write)
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
     _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
@@ -1317,9 +1317,9 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     ``shrink_check`` is retained only for explicit unbound library callers; a
     bound request never consults that legacy whole-policy callback.
 
-    ``read_budget`` is the bytes of file text the coder's remaining context has room for this turn
-    (`Loop.read_budget_bytes`); the reply's whole reads share it (`filecommands.whole_read_rooms`). None (no
-    known window, no measured usage, or not the coder) keeps every whole read at the fixed floor, as before.
+    ``read_budget`` is the scaled estimator allowance for file text the coder's remaining context has room for this turn
+    (`Loop.read_budget_bytes`); the reply's whole and ranged reads share it (`filecommands.whole_read_rooms`). None (no
+    known window, no measured usage, or not the coder) leaves reads unbounded rather than inventing a fixed allowance.
     """
     injected = injected or set()
     from . import assistruntime
@@ -1334,13 +1334,34 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             continue
         rebuilt: list[dict] = []
         edit_seq = _edit_sequence(tool_calls, injected)
-        rooms = (filecommands.whole_read_rooms(tool_calls, read_budget, wsview.current(workspace_root).size)
-                 if read_budget is not None and "read_file" in injected else {})
+        # Unread-target writes may return the file instead of executing. Reserve
+        # their share too; a write that needs no read simply leaves its share unused.
+        # Early normalization may already have compiled a read alias to shell.
+        # Its leading declaration preserves the read identity, not result proof.
+        aliases = {}
+        for i, call in enumerate(tool_calls):
+            fn = call.get("function") or {}
+            if is_shell_tool_name(fn.get("name")):
+                original = original_call(_command_of(fn.get("arguments") or ""))
+                if original is not None and original.get("name") in _READ_NAMES:
+                    aliases[i] = original
+        budget_calls = [{**call, "function": aliases.get(i, call.get("function"))}
+                        for i, call in enumerate(tool_calls)]
+        read_names = (_READ_NAMES if aliases else _READ_NAMES & injected) | ((_WRITE_NAMES & injected) if unread_target else set())
+        rooms = (filecommands.whole_read_rooms(budget_calls, read_budget, wsview.current(workspace_root).size,
+                                               read_names=read_names)
+                 if read_budget is not None and read_names else {})
         if rooms and rlog is not None:
             rlog.emit("writeproxy.read_room", budget=read_budget, rooms=sorted(rooms.values()))
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
+            call_request = request
+            if ti in aliases and read_budget is not None:
+                fn = aliases[ti]
+                tc = {**tc, "function": fn}
+                name = fn.get("name")
+                call_request = replace(request, injected=request.injected | _READ_NAMES)
             args = _parse(fn.get("arguments"))
             # THE CORRELATION TOKEN FOR THIS CALL, derived once and held while its command is composed: every
             # program authored inside prints it in its typed result record, which is the first line of stdout; the
@@ -1351,11 +1372,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             declaration = denial.Declaration()      # what this call's compiler declares for its sentinel (a survey record)
             with denial.receipt_scope(receipt, declaration), filecommands.read_room_scope(rooms.get(ti)):
                 tc, args, effect = toolstages.current().outbound_call(
-                    OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
+                    OutboundCall(tc, args, call_request, edit_seq.get(ti), rlog))
                 fn = tc.get("function") or {}
                 name = fn.get("name")
                 if effect is None:
-                    effect = _lower_synthetic(OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
+                    effect = _lower_synthetic(OutboundCall(tc, args, call_request, edit_seq.get(ti), rlog))
             if isinstance(effect, dict):
                 rebuilt.append(effect)
                 if observe_lowering is not None:
@@ -1399,7 +1420,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     cmd = _seq_release(edit_seq[ti]) + cmd
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool,
                                            f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey)}\n{cmd}",
-                                           READ_RECORD_WIRE_MAX if (name in _READ_NAMES or read_in_place) else 0))
+                                           ((max(0, rooms.get(ti, 0)) * 4 + 1_500) if (name in _READ_NAMES or read_in_place) and ti in rooms else 0)))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
                     pending.lowered_arguments = rebuilt[-1]['function']['arguments']
@@ -1421,7 +1442,6 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     observe_lowering(tc, tc, None)
         choice["message"]["tool_calls"] = rebuilt
     return completion
-
 
 def _debinarized(content: str) -> str:
     """Terminal colour stripped, then binary SOUP replaced by a fact line (operator ruling: blobs have

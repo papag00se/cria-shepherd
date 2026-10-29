@@ -109,6 +109,10 @@ class ASizeRefusalExitsZeroTests(unittest.TestCase):
     def setUp(self):
         import tempfile, pathlib
         self.ws = tempfile.mkdtemp()
+        from cria.filecommands import read_room_scope
+        allowance = read_room_scope(9000)
+        allowance.__enter__()
+        self.addCleanup(allowance.__exit__, None, None, None)
         pathlib.Path(self.ws, "big.txt").write_text("x" * (READ_INLINE_MAX * 3))
         pathlib.Path(self.ws, "small.txt").write_text("hello\n")
         for i in range(600):

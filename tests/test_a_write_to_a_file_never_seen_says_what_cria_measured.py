@@ -199,7 +199,7 @@ def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed
     for _ in range(3):
         comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-        assert not write_did_run(_cmd(comp)) and "cat " in _cmd(comp)
+        assert not write_did_run(_cmd(comp)) and "sys.stdout.buffer.write(raw)" in _cmd(comp)
 
 
 def test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read(view, tmp_path):

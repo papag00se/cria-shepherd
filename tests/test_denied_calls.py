@@ -114,7 +114,8 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
         # ADVERSARIAL PAIR, run for real: the same command must refuse a big file and READ a small
         # one. The guard decides in bash at run time, which is why the mark is written into the
         # refusing branch rather than derived from anything cria can see at lowering time.
-        with tempfile.TemporaryDirectory() as d:
+        from cria.filecommands import read_room_scope
+        with read_room_scope(9000), tempfile.TemporaryDirectory() as d:
             big, small = os.path.join(d, "big.json"), os.path.join(d, "small.py")
             with open(big, "w") as fh:
                 fh.write("x" * (writeproxy.READ_INLINE_MAX + 10))
@@ -134,7 +135,8 @@ class RefusalsAreMarkedWhereTheyAreAuthoredTests(unittest.TestCase):
         self.assertEqual(rs.returncode, 0)
 
     def test_the_RANGED_read_size_guard_refuses_and_says_so(self):
-        with tempfile.TemporaryDirectory() as d:
+        from cria.filecommands import read_room_scope
+        with read_room_scope(9000), tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "spec.txt")
             with open(p, "w") as fh:
                 fh.write(("y" * 200 + "\n") * 200)          # ~40 KB over 200 lines

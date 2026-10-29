@@ -31,7 +31,7 @@ MARKER = denial.READ_INSTEAD_MARKER
 def _lower(name, args, cid="c1", root="/w", **kw):
     comp = {"choices": [{"message": {"tool_calls": [
         {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
-    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, **kw)
+    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, read_budget=9000, **kw)
     return comp["choices"][0]["message"]["tool_calls"][0]
 
 
@@ -121,7 +121,7 @@ def _read_instead(tmp_path, name, content):
     comp = {"choices": [{"message": {"tool_calls": [{"id": "w1", "type": "function", "function": {
         "name": "write_file", "arguments": json.dumps({"path": name, "content": "B"})}}]}}]}
     translate_outbound(comp, SHELL, injected={"write_file"}, workspace_root=str(tmp_path),
-                       unread_target=lambda path: f"{path} already exists on disk.")
+                       unread_target=lambda path: f"{path} already exists on disk.", read_budget=9000)
     return comp["choices"][0]["message"]["tool_calls"][0]
 
 
@@ -571,7 +571,7 @@ def test_a_whole_read_record_costs_at_most_base64_of_the_file_and_text_stays_tex
         rec = resultpacket.read_record(raw, 0, _rcpt(tc))
         assert rec is not None and rec.body == data
     assert sizes["src.py"] < filecommands.READ_INLINE_MAX                          # compressible: far under the file's size
-    assert sizes["noise.bin"] <= filecommands.READ_RECORD_WIRE_MAX                 # incompressible: bounded by base64 + fields
+    assert sizes["noise.bin"] <= (filecommands.READ_INLINE_MAX * 4 // 3 + 1500)                 # incompressible: bounded by base64 + fields
 
 
 def test_the_output_allowance_is_raised_only_through_a_schema_field_whose_name_carries_the_unit():
@@ -579,9 +579,9 @@ def test_the_output_allowance_is_raised_only_through_a_schema_field_whose_name_c
     declared = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}, "max_output_tokens": {"type": "number"}}}}
     comp = {"choices": [{"message": {"tool_calls": [{"id": "r", "type": "function", "function": {
         "name": "read_file", "arguments": json.dumps({"path": "a"})}}]}}]}
-    translate_outbound(comp, declared, injected={"read_file"}, workspace_root="/w")
+    translate_outbound(comp, declared, injected={"read_file"}, workspace_root="/w", read_budget=9000)
     args = json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-    assert args["max_output_tokens"] >= filecommands.READ_RECORD_WIRE_MAX
+    assert args["max_output_tokens"] >= (filecommands.READ_INLINE_MAX * 4 // 3 + 1500)
     plain = _lower("read_file", {"path": "a"})
     assert set(json.loads(plain["function"]["arguments"])) == {"cmd"}                # no field invented
 
@@ -654,7 +654,7 @@ def test_a_write_that_rides_a_survey_under_a_real_pty_is_still_landed_and_survey
 def _lower_with_dict_arguments(name, args, cid="d1", root="/w", **kw):
     comp = {"choices": [{"message": {"tool_calls": [
         {"id": cid, "type": "function", "function": {"name": name, "arguments": args}}]}}]}      # arguments is a DICT here
-    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, **kw)
+    translate_outbound(comp, SHELL, injected={name}, workspace_root=root, read_budget=9000, **kw)
     return comp["choices"][0]["message"]["tool_calls"][0]
 
 

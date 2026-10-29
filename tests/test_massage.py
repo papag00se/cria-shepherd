@@ -363,11 +363,11 @@ class NormalizeToolCallsTests(unittest.TestCase):
         self.assertEqual(fn["name"], "shell")
         self.assertIn("cat h.py", " ".join(json.loads(fn["arguments"])["command"]))
 
-    def test_read_file_lowered_to_sed(self):
+    def test_read_file_lowered_to_guarded_numbered_range(self):
         c = normalize_tool_calls(_completion(tool_calls=[_tc("read_file", json.dumps({"path": "h.py", "start_line": 2, "end_line": 5}))]), [_SHELL])
         fn = _first(c)["message"]["tool_calls"][0]["function"]
         self.assertEqual(fn["name"], "shell")
-        self.assertIn("sed -n '2,5p' h.py", " ".join(json.loads(fn["arguments"])["command"]))
+        self.assertIn("python3 - h.py 2 5 -1", " ".join(json.loads(fn["arguments"])["command"]))
 
     def test_aliased_read_lowers_through_the_guarded_path(self):
         # A read alias (read_file when the harness has no native one, or cat_file/view_file) must lower

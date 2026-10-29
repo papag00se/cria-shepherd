@@ -2997,13 +2997,17 @@ class Loop:
                                                delivery_receipts=delivery_receipts)
             if generation.incomplete(completion):
                 raise _IncompleteCoderTurn(completion)
+            # Call-local: auxiliary calls must not substitute another request's
+            # reserve when this retained coder reply is lowered.
+            request = getattr(rlog, "read_budget_request", None)
+            if request is None or request[0] is not completion:
+                rlog.read_budget_request = (completion, contextfloor.reserve_for(framed))
             return completion
         except UpstreamProtocolError as error:
             if delivery_receipts is not None:
                 delivery_receipts.clear()
             error.coder_turn = True
             raise
-
     def _coder_turn_impl(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog,
                          delivery_receipts=None) -> dict:
         """ONE guarded coder call — the shared core of BOTH driver halves (``_work`` multi-item and
@@ -3098,8 +3102,10 @@ class Loop:
             sess.pasted_consumed = (coder, offered_paste, self._pasted_selection(sess))
         if delivery_receipts is not None:
             delivery_receipts.append((coder, replies.remediation_receipt(coder)))
+        reserve = replies.reserve_receipt(coder)
+        if reserve is not None:
+            rlog.read_budget_request = (coder, reserve)
         return coder
-
     # -------------------------------------------------- a call cria did not run must be SAID
 
     def _refused_call_text(self, sess: PlanSession, body: dict, refused: dict) -> str:
@@ -5336,16 +5342,17 @@ class Loop:
         window = handoffdistill.window_of(self._ctx.coder_chat, rlog)
         if not window or owner is None:
             return None
-        reserve = (getattr(self._ctx.coder_role, "output_reserve", None)
-                   or contextfloor.DEFAULT_GEN_RESERVE)
+        reserve = contextfloor.reserve_for({
+            bodykeys.OUTPUT_RESERVE: getattr(self._ctx.coder_role, "output_reserve", None),
+            "max_tokens": getattr(self._ctx.coder_role, "max_tokens", None),
+        })
         loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
         return window, reserve, tokenratio.observed(loaded or "")
-
     def read_budget_bytes(self, completion: dict, rlog) -> int | None:
-        """Bytes of file text the coder's whole reads in ``completion`` may bring back: `filecommands.READ_ROOM_SHARE`
+        """Scaled estimator allowance the coder's reads in ``completion`` may bring back: `filecommands.READ_ROOM_SHARE`
         of the context left once the window's reply reserve, the coder request's MEASURED prompt (the completion's
         own ``usage.prompt_tokens``) and this reply are taken. The read's result arrives in the next request,
-        which is this prompt plus this reply plus the result. None — every read keeps the fixed floor — when the
+        which is this prompt plus this reply plus the result. None — no read allowance is invented — when the
         window is unknown/guessed or the completion carries no measured prompt size (#11b)."""
         sizing = self._coder_sizing(rlog)
         usage = (completion or {}).get("usage") or {}
@@ -5353,9 +5360,11 @@ class Loop:
         if sizing is None or not isinstance(prompt, int) or isinstance(prompt, bool) or prompt <= 0:
             return None
         window, reserve, density = sizing
+        request = getattr(rlog, "read_budget_request", None)
+        if request is not None and request[0] is completion:
+            reserve = request[1]
         reply = modelview.reply_tokens(completion) * density
         return filecommands.read_budget(window, reserve, prompt, reply, density)
-
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
         copy of the whole compaction and its own summarizer; both are gone. ``root_task`` is pinned
@@ -6832,7 +6841,7 @@ def _write_path(fn: dict) -> str | None:
     # `>` as one and reported `FILE FOLD_AT — does NOT exist on disk` to the model, naming one of
     # cria's own constants as a file (feed-pipeline-java x nemotron-elastic 1787346816). The
     # sentinel holds the call that was actually made, exactly, so ask it (#12).
-    lowered = _command_text(fn.get("arguments") or "") or ""
+    lowered = writeproxy._command_of(fn.get("arguments") or "")
     original = writeproxy.original_call(lowered)
     if original is not None:
         fn, name = original, original.get("name")
@@ -6846,7 +6855,6 @@ def _write_path(fn: dict) -> str | None:
     if is_shell_tool_name(name):
         return _shell_write_target(fn.get("arguments") or "")
     return None
-
 
 # Extract the file a shell command writes via redirect/heredoc/`tee` — the target token after a
 # `>`/`>>` (not `/dev/…`, `&`, or a comparison) or after `tee [-a]`. Quoted spans are stripped first
@@ -10718,7 +10726,7 @@ def _mutation_targets(fn: dict, workspace_root: str | None = None):
     header and Move-to, and a shell command the classifier flags as writing is resolved only when every
     redirect/`tee` target is read from it AND it holds no other mutator — otherwise it is unknown."""
     name = fn.get("name")
-    lowered = _command_text(fn.get("arguments") or "") or ""
+    lowered = writeproxy._command_of(fn.get("arguments") or "")
     original = writeproxy.original_call(lowered)
     if original is not None:
         fn, name = original, original.get("name")
@@ -10749,7 +10757,6 @@ def _mutation_targets(fn: dict, workspace_root: str | None = None):
         # (with no output redirect/tee at all), or ANY file may have changed.
         return [] if dirguard.command_only_reads(text, workspace_root, no_writes=True) else _ANY_PATH
     return []
-
 
 def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | None = None,
                        skip: frozenset | set = frozenset()):
@@ -10801,6 +10808,7 @@ class _CoderReplyReceipts:
         self._session = session
         self.latest = {}
         self.latest_remediation = ""
+        self.latest_reserve = None
         self._replies = []
 
     def chat(self, body, rlog):
@@ -10809,6 +10817,7 @@ class _CoderReplyReceipts:
         rlog.restored_on_wire = {}
         subject = body.get(bodykeys.COMPLETION_REMEDIATION, "")
         rlog.guidance_on_wire = []
+        self.latest_reserve = contextfloor.reserve_for(body)
         raw = self._chat(body, rlog)
         if self._session is not None:
             for note in getattr(rlog, 'guidance_on_wire', ()):
@@ -10822,16 +10831,20 @@ class _CoderReplyReceipts:
 
     def record(self, completion, receipt=None, *, remediation=None):
         self._replies.append((completion, dict(self.latest if receipt is None else receipt),
-                              self.latest_remediation if remediation is None else remediation))
+                              self.latest_remediation if remediation is None else remediation,
+                              self.latest_reserve))
 
     def receipt(self, completion):
-        return next((dict(receipt) for reply, receipt, _ in reversed(self._replies)
+        return next((dict(receipt) for reply, receipt, _, _ in reversed(self._replies)
                      if reply is completion), {})
 
-    def remediation_receipt(self, completion):
-        return next((subject for reply, _, subject in reversed(self._replies)
-                     if reply is completion), "")
+    def reserve_receipt(self, completion):
+        return next((reserve for reply, _, _, reserve in reversed(self._replies)
+                     if reply is completion), None)
 
+    def remediation_receipt(self, completion):
+        return next((subject for reply, _, subject, _ in reversed(self._replies)
+                     if reply is completion), "")
 
 def _generation_cut_services():
     from . import generationguards
