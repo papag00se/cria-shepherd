@@ -2006,8 +2006,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         return None
     # Root deletion is independent of external permission. Input execution is
     # judged separately below, never confused with a cat's literal stdin.
-    if level == "write":
-        return root_recursive_delete_refusal(command)
+    root_delete = root_recursive_delete_refusal(command)
+    if root_delete or level == "write":
+        return root_delete
     if _depth > 3:
         return prompts.load('external_write_unproven')
     layout = shellinput.layout(command)
@@ -2037,9 +2038,6 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         moved = _persisted_cwd_refusal(command, workspace)
         if moved:
             return moved
-    root_delete = root_recursive_delete_refusal(command)
-    if root_delete:
-        return root_delete
     # An install writes outside the workspace WITHOUT naming a path, so it must be judged before
     # the path scan — which by construction finds nothing to refuse in it.
     installing = install_refusal(command, level, workspace)
