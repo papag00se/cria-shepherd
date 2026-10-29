@@ -1004,8 +1004,9 @@ class Upstream:
             # return quickly the slot is busy, so skip (best-effort) — the JSON body is still
             # captured and the prompt is reconstructable offline from it.
             with self._ordinary_open(req, timeout=_RENDER_TIMEOUT_S) as resp:
-                p = json.loads(resp.read()).get("prompt")
-                return p if isinstance(p, str) else None
+                result = json.loads(resp.read())
+                p = result.get("prompt") if isinstance(result, dict) else None
+                return p if isinstance(p, str) and p else None
         except (urllib.error.URLError, ValueError, OSError):
             return None
 
@@ -1017,8 +1018,10 @@ class Upstream:
                 data=json.dumps({"content": prompt, "add_special": False}).encode("utf-8"),
                 method="POST", headers={"Content-Type": "application/json"})
             with self._ordinary_open(req, timeout=_RENDER_TIMEOUT_S) as resp:
-                tokens = json.loads(resp.read()).get("tokens")
-            return len(tokens) if isinstance(tokens, list) else None
+                result = json.loads(resp.read())
+                tokens = result.get("tokens") if isinstance(result, dict) else None
+            return (len(tokens) if isinstance(tokens, list) and tokens
+                    and all(type(token) is int and token >= 0 for token in tokens) else None)
         except (urllib.error.URLError, ValueError, OSError):
             return None
 
