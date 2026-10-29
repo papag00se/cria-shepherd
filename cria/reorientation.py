@@ -4,6 +4,7 @@ The author uses the shared provider transport; F49 owns its distinct name ground
 No driver policy is imported. The original task is never used as a summary.
 """
 from dataclasses import dataclass
+import json
 import re
 from typing import Callable, Protocol
 
@@ -46,6 +47,8 @@ class ReorientationFacts:
     reasoner_available: bool
     # Requirements are separate from the historical account, never evidence of work.
     original_task: str = ""
+    # Supplied by the handoff owner, not inferred from marker text.
+    historical_continuation: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,7 +112,9 @@ def _head(text: str) -> str:
 def _reason(source: ReorientationInput) -> tuple[str, str]:
     canned = prompts.load("reanchor")
     facts = source.facts()
-    summary = next((s for s in reversed(facts.user_texts) if CONTINUATION_MARKER in s), "")
+    owned_summary = (facts.historical_continuation if facts.historical_continuation
+                     and facts.historical_continuation in facts.user_texts else "")
+    summary = owned_summary or next((s for s in reversed(facts.user_texts) if CONTINUATION_MARKER in s), "")
     if not facts.reasoner_available or not summary.strip():
         return canned, "no-summary-or-reasoner"
     if DROPPED_PROSE_LEAD in summary:
@@ -123,7 +128,15 @@ def _reason(source: ReorientationInput) -> tuple[str, str]:
         task = prompts.load("reanchor_missing_task")
     author_context = prompts.render("reanchor_context", task=task, summary=summary,
                                     inventory=inventory)
-    text = source.author(AuthorRequest(prompts.load("reanchor_reasoned"), author_context))
+    system = prompts.load("reanchor_reasoned")
+    if owned_summary:
+        system = prompts.load("reanchor_task_authority")
+        author_context = prompts.render("reanchor_author_context", task=task, summary=summary,
+            inventory=inventory, user_context=json.dumps(tuple((text, text == owned_summary)
+                for text in facts.user_texts), ensure_ascii=False))
+    text = source.author(AuthorRequest(system, author_context))
+    if owned_summary and (not text or text.strip() == "KEEP_TASK"):
+        return "", "task-preserved"
     if not text:
         return canned, "empty"
     lines = len(shellshape.command_lines(text))
@@ -161,6 +174,8 @@ def reorient(source: ReorientationInput, *, enabled: bool = True) -> Reorientati
     if not enabled or not source.rewritten:
         return ReorientationResult(None, "not-selected" if not enabled else "no-rewrite", False)
     text, reason = _reason(source)
+    if reason == "task-preserved":
+        return ReorientationResult(None, reason, False)
     message = {"role": "user", "content": prompts.render("nudge", reason=text)}
     # Optional standalone reporting happens only after successful framing.
     # None leaves shared delivery acknowledgement entirely with the caller.
@@ -178,13 +193,14 @@ class Definition:
 DEFINITION = Definition(Policy(
     "history-rewrite-reorientation", "post-history-rewrite", 4, family_id="F49",
     prompts=("reanchor", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge",
-             "reanchor_name_grounding", "reanchor_candidate"),
+             "reanchor_name_grounding", "reanchor_candidate", "reanchor_task_authority", "reanchor_author_context"),
     state="optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache",
     services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider", "shared-closed-question"),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "Loop._reasoned_reanchor"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
-    regressions=(Reference("tests/test_reorientation_keeps_requirements_separate_from_history.py",
+    regressions=(Reference("tests/test_reorientation_task_authority_current.py", "test_current_task_authority_driver_and_wire"),
+                 Reference("tests/test_reorientation_keeps_requirements_separate_from_history.py",
                            "test_preparation_author_receives_task_separately_and_coder_keeps_it"),
                  Reference("tests/test_context_reorientation_policy.py", "test_reasoned_source_parity"),
                  Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),

@@ -5289,9 +5289,13 @@ class Loop:
         reoriented = False
         reorient = next(iter(runtime.bindings(reorientation.DEFINITION.policy.stage)), None)
         if reorient is not None and rewritten:
+            origin = getattr(sess, "handoff_origin", None)
             result = reorient.execute(reorientation.ReorientationInput(True,
                 lambda: reorientation.ReorientationFacts(tuple(_msg_text_content(m) for m in raw
-                    if m.get("role") == "user"), self._ctx.reasoner_role is not None, root_task),
+                    if m.get("role") == "user"), self._ctx.reasoner_role is not None, root_task,
+                    next((_msg_text_content(m) for m in raw if m.get("role") == "user"
+                        and isinstance(origin, _HandoffOrigin)
+                        and origin.matches_continuation(_msg_text_content(m))), "")),
                 lambda: workspace_inventory(sess.workspace_root or "", flavor="briefing"),
                 reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
                 None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
