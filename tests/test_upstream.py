@@ -1,14 +1,16 @@
+import copy
 import json
 import unittest
 import urllib.error
 from unittest import mock
 
-from cria import rumination
+from cria import bodykeys, rumination, tokenratio
 from cria.upstream import (
     _PROPS_RETRY_EVERY,
     _FALLBACK_WINDOW,
     _MAX_PROPS_ATTEMPTS,
     Upstream,
+    UpstreamError,
     _accumulate_tool_deltas,
     _assemble_completion,
 )
@@ -584,60 +586,138 @@ def _overflow_error(n_prompt_tokens, n_ctx):
 
 
 class OverflowRefitTests(unittest.TestCase):
-    """cria's floor budgets against a LEARNED per-model density that lags a single hot (base64/blob)
-    turn. When the server still 400s 'exceeds context', cria re-fits to the REAL token count it
-    reports and retries ITSELF — so the harness never sees the 400 (its blind same-body retries
-    can't converge fast enough)."""
+    """Preserve the hot-turn incident: a lagging learned density still gets a
+    generation HTTP 400, then one genuinely tighter changed-wire retry. Required
+    caller packets are never payment for that fit; reducible tool history is.
+    Metadata endpoints have their own replies and cannot consume generation errors.
+    """
+
+    def setUp(self):
+        self.model = "overflow-refit-regression"
+        missing = object()
+        previous = tokenratio._ratios.get(self.model, missing)
+        tokenratio._ratios[self.model] = tokenratio.DEFAULT_RATIO
+        def restore_ratio():
+            if previous is missing:
+                tokenratio._ratios.pop(self.model, None)
+            else:
+                tokenratio._ratios[self.model] = previous
+        self.addCleanup(restore_ratio)
 
     def _big_body(self):
-        # Enough messages that a tighter density visibly trims MORE of them on the refit.
-        # Distinct turns keep duplicate folding from erasing the reducible history.
-        msgs = [{"role": "user", "content": f"Turn {n}: " + "payload " * 80} for n in range(200)]
-        # These are historical requests after real work began, not 200 equally
-        # authoritative initial user packets. Preserve every original payload.
-        msgs.insert(1, {"role": "assistant", "content": "Inspected the project; work has started."})
-        return {"model": "m", "messages": msgs}
+        task = "Complete the original task without dropping its restrictions."
+        messages = [
+            {"role": "user", "content": "Keep the original local-only constraint."},
+            {"role": "user", "content": task}]
+        # Real work/history is represented in its own roles. Turning genuine
+        # user requests into annotations would evade the preservation contract.
+        for n in range(200):
+            messages.extend([
+                {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": f"read-{n}", "type": "function", "function": {
+                        "name": "read_file", "arguments": json.dumps({"path": f"observed-{n}.txt"})}}]},
+                {"role": "tool", "tool_call_id": f"read-{n}",
+                 "content": f"Observation {n}: " + "payload " * 80}])
+        messages.append({"role": "user", "content": "A later amendment: preserve all original requirements."})
+        return {"model": self.model, "messages": messages, bodykeys.PINNED_TASK: task}
+
+    def _transport(self, outcomes):
+        outcomes = iter(outcomes)
+        generations = []
+        def opening(request, **kwargs):
+            if request.full_url == "http://x/apply-template":
+                return _PropsResp({"prompt": None})  # explicitly unavailable; no fake fit authority
+            self.assertEqual(request.full_url, "http://x/v1/chat/completions")
+            self.assertEqual(request.get_method(), "POST")
+            generations.append(json.loads(request.data))
+            outcome = next(outcomes)  # any third generation is a test failure
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+        return opening, generations
+
+    def _assert_caller_input_and_pairs(self, original, generations):
+        callers = [m for m in original["messages"] if m["role"] == "user"]
+        for packet in generations:
+            self.assertEqual([m for m in packet["messages"] if m in callers], callers)
+            self.assertNotIn(bodykeys.PINNED_TASK, packet)
+            calls = {tc["id"] for m in packet["messages"] for tc in m.get("tool_calls") or []}
+            results = {m["tool_call_id"] for m in packet["messages"] if m["role"] == "tool"}
+            self.assertEqual(calls, results)
 
     def test_overflow_triggers_a_single_refit_retry_that_succeeds(self):
         up = Upstream("http://x", context_window=8192, capture_dir=None)
         good = json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}}],
                            "usage": {"prompt_tokens": 4000, "completion_tokens": 1}}).encode()
-        calls = [_overflow_error(9000, 8192), _BufResp(good)]
+        response = _BufResp(good)
+        opening, generations = self._transport([_overflow_error(9000, 8192), response])
         rlog = _Rlog()
-        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=calls) as m:
-            raw = up.chat(self._big_body(), rlog)
-        self.assertEqual(m.call_count, 2)                       # 400 → re-fit → retry, then 200
-        self.assertEqual(json.loads(raw)["choices"][0]["message"]["content"], "ok")
+        body = self._big_body()
+        original = copy.deepcopy(body)
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=opening):
+            raw = up.chat(body, rlog)
+        self.assertEqual(len(generations), 2)  # actual generation 400 -> changed refit -> success
+        self.assertEqual(raw, good)
+        self.assertTrue(response.closed)
+        self.assertEqual(body, original)
+        self._assert_caller_input_and_pairs(original, generations)
         refits = [kw for k, kw in rlog.events if k == "context.refit"]
         self.assertEqual(len(refits), 1)
-        self.assertEqual(refits[0]["real"], 9000)              # learned the server's real count
+        self.assertEqual(refits[0]["real"], 9000)
         reqs = [kw for k, kw in rlog.events if k == "upstream.request"]
         self.assertEqual([r["refit"] for r in reqs], [False, True])
-        # the retry was prepped TIGHTER against the real count → the wire body kept fewer messages
-        sent = [len(json.loads(c.args[0].data)["messages"]) for c in m.call_args_list]
-        self.assertLess(sent[1], sent[0])
+        self.assertLess(len(generations[1]["messages"]), len(generations[0]["messages"]))
+        self.assertNotEqual(generations[0], generations[1])
 
     def test_non_overflow_error_is_not_retried(self):
         up = Upstream("http://x", context_window=8192, capture_dir=None)
+        opening, generations = self._transport([urllib.error.URLError("connection refused")])
         rlog = _Rlog()
-        with mock.patch("cria.upstream.urllib.request.urlopen",
-                        side_effect=urllib.error.URLError("connection refused")) as m:
-            with self.assertRaises(Exception):
-                up.chat(self._big_body(), rlog)
-        self.assertEqual(m.call_count, 1)                       # not a refittable overflow → no retry
+        body = self._big_body()
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=opening):
+            with self.assertRaises(UpstreamError):
+                up.chat(body, rlog)
+        self.assertEqual(len(generations), 1)
+        self._assert_caller_input_and_pairs(body, generations)
         self.assertFalse([k for k, _ in rlog.events if k == "context.refit"])
 
     def test_second_overflow_is_not_retried_again(self):
-        # If the re-fit STILL overflows (should not happen, but be safe), give up — one retry only,
-        # then surface the error rather than looping.
+        # Preserve the original retry bound even when the changed second wire
+        # receives another overflow. No third request or repeated observation.
+        up = Upstream("http://x", context_window=8192, capture_dir=None)
+        errors = [_overflow_error(9000, 8192), _overflow_error(9000, 8192)]
+        opening, generations = self._transport(errors)
+        rlog = _Rlog()
+        body = self._big_body()
+        original = copy.deepcopy(body)
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=opening):
+            with self.assertRaises(UpstreamError) as caught:
+                up.chat(body, rlog)
+        self.assertEqual(len(generations), 2)
+        self.assertIs(caught.exception.__cause__, errors[1])
+        self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(body, original)
+        self._assert_caller_input_and_pairs(original, generations)
+        self.assertNotEqual(generations[0], generations[1])
+        self.assertEqual(len([k for k, _ in rlog.events if k == "context.refit"]), 1)
+        self.assertEqual([kw["refit"] for k, kw in rlog.events if k == "upstream.request"], [False, True])
+
+    def test_genuine_user_history_is_refused_before_any_generation(self):
+        # Keep the old all-user fixture as a negative: putting work between
+        # requests does not make those instructions disposable historical data.
+        body = {"model": self.model, "messages": [
+            {"role": "user", "content": f"Turn {n}: " + "payload " * 80} for n in range(200)]}
+        body["messages"].insert(1, {"role": "assistant", "content": "Inspected the project; work has started."})
+        original = copy.deepcopy(body)
+        opening, generations = self._transport([])
         up = Upstream("http://x", context_window=8192, capture_dir=None)
         rlog = _Rlog()
-        errs = [_overflow_error(9000, 8192), _overflow_error(9000, 8192)]
-        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=errs) as m:
-            with self.assertRaises(Exception):
-                up.chat(self._big_body(), rlog)
-        self.assertEqual(m.call_count, 2)                       # one refit attempt, no infinite loop
-
+        with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=opening):
+            with self.assertRaisesRegex(UpstreamError, "without losing protected input"):
+                up.chat(body, rlog)
+        self.assertEqual(generations, [])
+        self.assertEqual(body, original)
+        self.assertFalse([k for k, _ in rlog.events if k in ("context.refit", "upstream.request")])
 
 class ChatTimingTests(unittest.TestCase):
     """Non-streaming chat must time the FULL generation, not just the buffered-body read. A blocking

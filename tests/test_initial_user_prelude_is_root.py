@@ -67,13 +67,19 @@ def test_explicit_session_header_changes_identity_not_root_text_or_preservation(
     assert user(BANNER) in out and user(TASK) in out
 
 
-def test_exact_single_packet_pin_still_overrides_the_unproven_bundle():
+def test_exact_single_packet_pin_selects_identity_without_revoking_other_input():
+    # Identity still recognizes the exact task packet. That selection cannot
+    # authorize the floor to delete preceding constraints or later amendments.
     prelude = [BANNER, "earlier context " * 100, TASK]
-    out, _, report = contextfloor.fit(busy_history(prelude), None, window=1300, reserve=200,
+    messages = busy_history(prelude)
+    original = copy.deepcopy(messages)
+    assert selfcompact.root_user_indices(messages, TASK) == (3,)
+    out, _, report = contextfloor.fit(messages, None, window=1300, reserve=200,
                                       safety=1.0, pinned_task=TASK)
-    assert report.turns_dropped > 0
-    assert user(TASK) in out
-    assert user(prelude[1]) not in out  # the authoritative exact task, not lexical tags, wins
+    assert report.turns_dropped > 0 and not report.over_budget
+    callers = [m for m in messages if m["role"] == "user"]
+    assert [m for m in out if m in callers] == callers
+    assert messages == original
 
 
 def test_the_exact_combined_root_pin_keeps_each_original_packet():
