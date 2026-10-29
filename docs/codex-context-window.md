@@ -161,6 +161,12 @@ trigger as `model_auto_compact_token_limit` if set, else 90% of the window
 (`ModelInfo::auto_compact_token_limit` = `context_window * 9 / 10`), and `min(explicit,
 derived)` means an explicit trigger can only pull it lower, never past the wall.
 
+## Tool-output limits are separate from the context window
+
+In the source for installed Codex CLI 0.164.0 ([release commit `6aaac694`](https://github.com/openai/codex/tree/6aaac694803004a63c6f393d153c96d22521a6b9)), unified shell has separate collection, response and history stages. Its default direct shell `max_output_tokens` is 10,000; for these truncation policies, a token is estimated as four UTF-8 bytes, not measured with the model tokenizer. The direct response uses the smaller of that requested budget and the model's truncation policy. Metadata and truncation markers also consume space in the history budget; the normal history policy has a 20% serialization allowance. Oversized text retains its beginning and end, not its middle. The unified-exec collection buffers separately retain at most 1 MiB each; polling can collect separate chunks. See [shell constants](https://github.com/openai/codex/blob/6aaac694803004a63c6f393d153c96d22521a6b9/codex-rs/core/src/unified_exec/mod.rs), [response formatting](https://github.com/openai/codex/blob/6aaac694803004a63c6f393d153c96d22521a6b9/codex-rs/core/src/tools/context.rs), and [history truncation](https://github.com/openai/codex/blob/6aaac694803004a63c6f393d153c96d22521a6b9/codex-rs/core/src/context_manager/history.rs).
+
+These are not a universal 10 KB ceiling. The locally cached first-party model record specifies a 10,000-*token* policy, but its cache identifies client 0.163.0 and does not establish the metadata used in a 0.164.0 session. Conversely, `suite/run.py::local_codex_catalog` supplies a 10,000-*byte* policy for the restored suite's pinned Codex **0.159.3**; do not apply the 0.164.0 implementation to that version without verification. Code Mode nested calls have a different path, and its effective outer-result limit was not established. These are source/configuration findings, not an end-to-end capture of the installed binary. Harness truncation remains possible even when cria does not refuse a read; context fitting cannot recover bytes the harness already discarded.
+
 ## Suite model metadata and writable homes
 
 The restored L0 launcher also supplies `model_catalog_json` in Codex 0.159.3. Context
