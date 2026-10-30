@@ -311,3 +311,25 @@ like wins at small n in this same session and evaporated on re-running.
 One baseline sample then generated for **10 minutes and 10,940 tokens without ever emitting a tool
 call**, and only stopped because the harness timed out. That is what the rumination guard prevents on
 every one of these turns, measured by its absence.
+
+## A small-window self-compaction briefing is often rejected (PLAN / UNFAITHFUL) — pre-existing, found while scaling the caps
+
+Found 2026-10-30 replaying the captured ornith1.5_9b / Java coder history (session 01a162ad call 0061, 11,571
+est. tokens, 25 messages) through `Loop._self_compact` against real ornith1.5_9b servers at `--ctx-size` 16,384 and
+32,768 (n=8 each, 2 at temperature 0, 6 at 0.7).
+
+With the caps scaled (windowcaps) the trigger now fires on a small window; before, the 16,384-est-token trigger never
+did and the floor dropped 18 of 25 coder turns silently. Once it fires, the fail-closed lenses reject most
+briefings, and **that is not caused by the scaling**: the old caps with the same trigger pinned explicitly reject
+the same way.
+
+- 16K, scaled: 3/8 accepted; rejected: retrospective lens `PLAN` 4/8, fidelity `UNFAITHFUL` 1/8.
+- 16K, old caps, trigger pinned to 5,461: 0/8 accepted; `PLAN` 3/8, `UNFAITHFUL` 3/8, scope `NARROWS` 1/8.
+- 32K, scaled: 0/8 accepted, `PLAN` 8/8. 32K, old caps, trigger pinned to 10,922: 1/8 accepted; `PLAN` 4/8, `UNFAITHFUL` 3/8.
+- Distillation (`handoffdistill`) fired in 1 of 8 scaled 16K runs (first call only), not on every compaction: it is
+  not the cause of the `PLAN` verdicts. At 49,152 the same history is rejected by the fidelity lens in both arms
+  (identical wire bytes before/after), as in the original capture 0065.
+
+Owner to read next: the writer prompt (`selfcompact_summary`) and the retrospective lens on a writer reply that reads as
+a plan — what in the writer's briefing the lens calls `PLAN` (open the 0062/0064-style captures for a rejected one).
+Out of scope for the cap-scaling change; not chased.
