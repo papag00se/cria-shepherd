@@ -159,7 +159,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
             SourceOwner('cria/writeproxy.py', '_write_command'),
             SourceOwner('cria/writeproxy.py', '_edit_command'),
-            SourceOwner('cria/writeproxy.py', '_seq_release'),
+            SourceOwner('cria/editsequence.py', '_seq_release'),
             SourceOwner('cria/ownedfiles.py', 'ATOMIC_REPLACE_PROGRAM'),
             SourceOwner('cria/ownedfiles.py', 'DIRECTORY_PROGRAM'),
             SourceOwner('cria/editsequence.py', 'PROGRAM'),

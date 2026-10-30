@@ -1,6 +1,10 @@
 """Harness-side authenticated batch markers; no directory-prefix garbage collection."""
 from . import ownedfiles
 
+_HD_PY = "__CRIA_PY_EOF__"
+EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
+EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
+
 PROGRAM = ownedfiles.DIRECTORY_PROGRAM + r'''
 def _seq_open(turn,prefix,participants,deadline):
     return _owned_open(turn,prefix,participants,deadline)
@@ -44,3 +48,13 @@ def _seq_done(context,index):
         _owned_close(context)
 
 '''
+
+
+def _seq_release(sequence: "tuple") -> str:
+    """A refused call completes only its authenticated marker, never a name-shaped file."""
+    turn, idx, _preds, participants = sequence
+    py = (PROGRAM + '\ntry:\n'
+          + f'    _sequence=_seq_open({turn!r},{EDIT_SEQ_DIR!r},{participants!r},time.monotonic()+{EDIT_SEQ_WAIT_SECONDS!r})\n'
+          + f'    _seq_done(_sequence,{idx!r})\n'
+          + 'except (OSError,ValueError):\n    pass\n')
+    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}\n"

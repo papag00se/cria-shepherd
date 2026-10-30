@@ -15,6 +15,7 @@ from typing import Callable, Collection, Protocol
 
 from . import prompts
 from .assistcontract import Policy, Reference
+from .editsequence import _seq_release
 from .toolcontracts import EventLog, MutationDefinition, ShrinkFinding, policy_log
 from .wholefile import ClosedJudge, judge_whole_file
 
@@ -191,7 +192,6 @@ def shrinking_replacement(source: ShrinkCall, command: str) -> str:
     finding = check_write(services, path, candidate, sorted(edit_names)[0] if edit_names else '')
     if finding is None:
         return command
-    from .writeproxy import _seq_release
     result = wrap_finding(path, finding, command, _seq_release(source.sequence) if source.sequence is not None else "")
     if source.log is not None:
         event = 'writeproxy.write_removal_facts' if finding.get('land') else 'writeproxy.write_shrink_held'

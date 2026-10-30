@@ -188,7 +188,7 @@ class TheRetryIsGroundedLikeTheFirstPassTests(unittest.TestCase):
                 output, _indicator = handler._produce_completion(body, log, key)
         finally:
             wsview.unbind(token)
-        self.assertEqual(len(provider.calls), 5)  # writer, retry, three independent validators
+        self.assertEqual(len(provider.calls), 6)  # writer, retry, the file-presence lens, three independent validators
         self.assertEqual([name for name, _fields in log.events].count("route.compaction_retry"), 1)
         self.assertEqual(roots[:2], [current, current])
         inventories = []

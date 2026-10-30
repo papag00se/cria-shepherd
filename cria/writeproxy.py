@@ -32,6 +32,7 @@ from dataclasses import dataclass, replace
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import bodykeys, brave, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
+from .editsequence import EDIT_SEQ_DIR, EDIT_SEQ_WAIT_SECONDS, _HD_PY, _seq_release
 from .toolstages import EditSequence, LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
@@ -222,7 +223,6 @@ _FETCH_NAMES = {"web_fetch"}
 _SEARCH_NAMES = {"web_search", "local_web_search"}
 # Heredoc terminator — the payload rides on stdin, so there is NO arg-size limit (no chunking). Both
 # the write and edit commands are python heredocs (they share the validate-before-lower syntax check).
-_HD_PY = "__CRIA_PY_EOF__"
 # A per-write temp suffix keeps the write atomic (write temp, then mv over the target). The temp is
 # removed on ANY failure: `os.replace` onto a directory raises, and the file used to survive — measured
 # (run 0727-161325), 1,089 bytes of the model's code were left at
@@ -234,8 +234,6 @@ _HD_PY = "__CRIA_PY_EOF__"
 # A result line saying the edit ran BEFORE one or more edits the coder sent ahead of it in the same turn had
 # finished (see `_EDIT_SEQ_BLOCK`). Rendered into prose by `render_edit_echo` / `editrecovery.recover`.
 EDIT_ORDER_LATE = editrecovery.ORDER_LATE
-EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
-EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
 _TMP_SUFFIX = ownedfiles.TEMP_SUFFIX   # shared atomic resource contract; no PID-derived allocations
 _FETCH_TIMEOUT_S = 20
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
@@ -812,16 +810,6 @@ def _queued(py: str, seq: "EditSequence | None") -> str:
     return editsequence.PROGRAM + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
         dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
         participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))
-
-
-def _seq_release(sequence: EditSequence) -> str:
-    """A refused call completes only its authenticated marker, never a name-shaped file."""
-    turn, idx, _preds, participants = sequence
-    py = (editsequence.PROGRAM + '\ntry:\n'
-          + f'    _sequence=_seq_open({turn!r},{EDIT_SEQ_DIR!r},{participants!r},time.monotonic()+{EDIT_SEQ_WAIT_SECONDS!r})\n'
-          + f'    _seq_done(_sequence,{idx!r})\n'
-          + 'except (OSError,ValueError):\n    pass\n')
-    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}\n"
 
 
 def render_edit_echo(path: str, rep: "dict | None" = None) -> str:
