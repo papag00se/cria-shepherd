@@ -1,6 +1,6 @@
 # Image observation and reinspection
 
-Image viewing uses the selected coder, not a separate judge. Vision capability defaults to unknown. To opt in, merge these settings into the existing operator configuration, using the exact model identity resolved by the configured HTTP backend:
+Image viewing uses the model role that actually serves the turn, not a separate judge. That is normally the coder; the classifier sends question-class turns ("what does this image say?") to the reasoner, so declare the same `vision`/`vision_model` on `[roles.reasoner]` when it serves the same backend (a role without its own declaration never views images). Vision capability defaults to unknown. To opt in, merge these settings into the existing operator configuration, using the exact model identity resolved by the configured HTTP backend:
 
 ```toml
 [roles.coder]

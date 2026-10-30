@@ -14,7 +14,11 @@ class ConfiguredCoderVision:
 
     def resolve(self,provider,role,applied_body,rlog):
         routing=self.server.cfg.routing
-        selected_role=routing.roles.get('coder')
+        # The role that actually serves this turn: a question-class turn is served by the
+        # reasoner, not the coder, and refusing it for that reason left an image question
+        # unanswerable. Capability is still the operator's explicit per-role declaration.
+        name=getattr(role,'name',None)
+        selected_role=routing.roles.get(name) if isinstance(name,str) else None
         if role is not selected_role or selected_role is None:return None,None
         backend=routing.backends.get(selected_role.backend)
         if backend is None or backend.transport!='http':return None,None
@@ -23,7 +27,7 @@ class ConfiguredCoderVision:
         if router is None:return None,None
         # _resolve is the same authoritative owner used by Router.route; unlike
         # endpoint_for it cannot authorize via local fallback for a missing key.
-        resolved=router._resolve('coder',rlog)
+        resolved=router._resolve(name,rlog)
         if resolved is None:return None,None
         actual_provider,actual_model=resolved
         if (actual_provider is not provider or not actual_model or

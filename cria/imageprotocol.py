@@ -10,7 +10,7 @@ import copy
 import hashlib
 import json
 from dataclasses import dataclass
-from . import bodykeys,generation,prompts
+from . import bodykeys,generation,jsontext,prompts
 
 class ImageUnavailable(ValueError):
     """Explicitly unavailable viewing/retention; never a model observation."""
@@ -84,7 +84,11 @@ def parse_observation(completion,*,terminal_complete):
             out[key]=value
         return out
     try:
-        value=json.loads(message.get('content'),object_pairs_hook=unique)
+        # A real gemma4_12b observation arrived as ```json {...}``` and was refused as unreadable.
+        # Fences/<think> are framing noise jsontext already owns; the object inside stays strict
+        # (exactly the four keys, no duplicates, nothing else on the line).
+        content=message.get('content')
+        value=json.loads(jsontext.denoise(content).strip() if isinstance(content,str) else content,object_pairs_hook=unique)
     except (TypeError,ValueError) as exc:
         raise ImageUnavailable('Coder image observation was unreadable; original remains pending') from exc
     keys={'viewed','extracted_text','description','uncertainty'}
