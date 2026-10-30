@@ -1,1 +1,1 @@
-The original is a remote URL reference supplied by the user; cria did not fetch it and keeps no copy of its bytes. Reinspection asks the same model to view that URL again, so what it shows is whatever the remote host serves at that time, which may differ from what this account describes.
+The original is a remote URL reference supplied by the user; it was not fetched and no copy of its bytes is kept. Reinspection asks the same model to view that URL again, so what it shows is whatever the remote host serves at that time, which may differ from what this account describes.

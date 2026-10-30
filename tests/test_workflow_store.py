@@ -234,6 +234,6 @@ def test_remote_url_source_is_labelled_a_reference_not_a_retained_copy(rig):
  attempt=s.begin(ref,TASK,route,body)
  s.complete(attempt,delivered(attempt,route))
  text=s.render(prepared)[0]['content'][1]['text']
- assert 'remote URL reference' in text and 'did not fetch it' in text
+ assert 'remote URL reference' in text and 'was not fetched' in text
  assert 'retained privately' not in text and 'example.test' not in text and 'secret' not in text
  assert s.reinspect(ref)==remote
