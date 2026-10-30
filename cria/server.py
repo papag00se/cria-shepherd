@@ -69,7 +69,7 @@ from .statusline import StatusWriter  # noqa: F401 — re-exported for tests
 from . import statusline
 from . import toolmenu
 from .turnstats import StatsStore
-from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow
+from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow, InputOverflow
 from . import wsview, generation
 from .writeproxy import (advertise, native_search_name, needs_translation, redact_secrets,
                          represent_inbound, translate_outbound, retain_externalizations,
@@ -1809,6 +1809,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         except ImageUnavailable as e:
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(e.response_error)
+        except InputOverflow as e:
+            yield from completion_to_sse(self._overflow_completion(e, body, rlog))
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(e.response_error if generation.is_generation_error(e.response_error) else str(e))
@@ -1836,6 +1838,16 @@ class CriaHandler(BaseHTTPRequestHandler):
         raw = context.workflow.chat(provider, role, body, context, rlog)
         yield from completion_to_sse(json.loads(raw))
 
+    def _overflow_completion(self, error: InputOverflow, body: dict, rlog) -> dict:
+        """A request that cannot fit the window and has nothing droppable is ANSWERED with what was measured, not failed
+        with a bare 502 the harness can only retry: an assistant message the harness shows, in every wire shape."""
+        rlog.emit("response.input_overflow", level="warn", tokens=error.tokens, window=error.window,
+                  reserve=error.reserve, measured=error.measured)
+        return {'id': 'overflow_' + uuid.uuid4().hex, 'object': 'chat.completion', 'created': int(time.time()),
+                'model': body.get('model') or '',
+                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': error.notice()},
+                             'finish_reason': 'stop'}]}
+
     def _produce_completion(self, body: dict, rlog, sess_key: str):
         from .upstream import ReadFitUnknown, ReadFitOverflow
         workflow = getattr(self.server, 'image_workflow', None)
@@ -1846,6 +1858,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         except (ReadFitUnknown, ReadFitOverflow) as error:
             fallback = self._fit_fallback(error, sess_key, rlog)
             return self._produce_completion_once(fallback, rlog, sess_key)
+        except InputOverflow as error:
+            return self._overflow_completion(error, body, rlog), None
         finally:
             _image_current.reset(token)
 

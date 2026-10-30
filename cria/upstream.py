@@ -24,7 +24,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
-from . import bodykeys
+from . import bodykeys, prompts
 from . import (callcapture, config, contextfloor, failover, generation, indicators, massage, modelview,
                reasoning, rumination, tokenratio)
 
@@ -281,6 +281,21 @@ class ReadFitOverflow(UpstreamError):
     def __init__(self, measurement, guidance=None):
         super().__init__('Measured protected logical read cannot fit the context window')
         self.measurement, self.guidance = measurement, guidance
+
+
+class InputOverflow(UpstreamError):
+    """The request cannot fit the window and holds nothing the floor may drop. ``tokens`` is the whole request's size,
+    ``measured`` says whether the server's own tokenizer produced it (else it is the floor's estimate)."""
+
+    def __init__(self, message, tokens, window, reserve, measured):
+        super().__init__(message)
+        self.tokens, self.window, self.reserve, self.measured = int(tokens), int(window), int(reserve), measured
+
+    def notice(self) -> str:
+        """What the sender is told, in place of a bare error: the size, the room, that nothing was dropped."""
+        size = (f"measured {self.tokens:,} tokens" if self.measured else f"is estimated at about {self.tokens:,} tokens")
+        return prompts.render("input_overflow", size=size, window=f"{self.window:,}",
+                              room=f"{max(self.window - self.reserve, 0):,}")
 
 
 _READ_FIT_SCOPE = __import__('contextvars').ContextVar('protected_read_fit', default=False)
@@ -1111,7 +1126,8 @@ class Upstream:
                     if read_bindings and data == _previous_fit:
                         raise ReadFitOverflow(MeasuredReadOverflow(window, real, rep.reserve, read_bindings, data))
                     if data == _previous_fit:
-                        raise UpstreamError("Measured input cannot fit the context window without losing protected input")
+                        raise InputOverflow("Measured input cannot fit the context window without losing protected input",
+                                            real, window, rep.reserve, True)
                     tighter = max(safety, real / max(sent_estimate, 1))
                     return self._prep(body, stream, rlog, safety_override=tighter,
                                       _previous_fit=data, _wire_overhead=_wire_overhead)
@@ -1122,7 +1138,8 @@ class Upstream:
             # All protocol repairs, settlements and labels have now run. Never
             # POST or capture a request the one floor still knows cannot fit.
             if rep.over_budget or data == _previous_fit:
-                raise UpstreamError("Input cannot fit the context window without losing protected input")
+                raise InputOverflow("Input cannot fit the context window without losing protected input",
+                                    sent_estimate * safety, window, rep.reserve, False)
             # Structural wire growth is measured in the same estimate space,
             # separately from model density and the role's generation reserve.
             overhead = max(_wire_overhead, sent_estimate - fitted_estimate)
