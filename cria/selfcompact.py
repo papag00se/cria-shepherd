@@ -249,8 +249,33 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     # finished step entirely", supplies the next step in the system message, and keeps no verbatim
     # tail on purpose. That case is left exactly as it was.
     if budget_tokens > 0 and i == len(messages) and len(messages) - 1 > head_end:
-        return len(messages) - 1
-    return i
+        i = len(messages) - 1
+    return _whole_exchange_start(messages, i)
+
+
+def _whole_exchange_start(messages: list[dict], start: int) -> int:
+    """``start``, moved back to the assistant turn that issued the tool results it begins on.
+
+    A token budget does not know an exchange is one unit. A cut that landed on a RESULT folded the
+    issuing call into the rollup and shipped the result alone: the wire could only turn it into a bare
+    ``user`` message, so the coder read a file's text, a compiler transcript or "Wrote src/…/Importer.java"
+    in the user's voice with the call and its path gone (60 of 315 real self-compactions rebuilt from
+    ornith1.5_9b / Java captures; ornith-java-overnight-c7dd… call 0039 index 4). Anchored exchanges were already kept whole (:func:`_anchor_units`); this is
+    the same unit for the tail. The tail may therefore run a call longer than its budget; it never holds
+    a result without its call. An empty tail (``start == len(messages)``) has no first message to move."""
+    issuer: dict[str, int] = {}
+    for i, m in enumerate(messages):
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    issuer[tc["id"]] = i
+    while start < len(messages):
+        m = messages[start]
+        turn = issuer.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
+        if turn is None or turn >= start:
+            break
+        start = turn
+    return start
 
 
 # cria's OWN edit-recovery steer (editrecovery.EDIT_MARK — mirrored literal, a test asserts sync).
