@@ -8849,6 +8849,14 @@ def _edit_landings(messages: list[dict]):
         yield idx, tid, path, total
 
 
+def _late_landed_ids(messages: list[dict]) -> set:
+    """Ids of calls whose OWN program reported its mutation landed but ran before a same-file predecessor of its turn had finished
+    (`late`, a typed field of the producer's record — never read off wording). Their position in the history orders nothing: the
+    predecessor's completion is not attributable, so what the file holds afterwards is unestablished."""
+    return {tid for tid, m in denial.paired_results(messages).items()
+            if denial.landed(m) and denial.report(m).get("late")}
+
+
 def _file_events(messages: list[dict], key=None) -> list:
     """Every read, landed write and landed edit in ``messages``, oldest first: ``(position, id, kind, path,
     nbytes, label, partial)``. One ordered stream, because what the ledger says about a path is its NEWEST
@@ -8868,10 +8876,14 @@ def _file_events(messages: list[dict], key=None) -> list:
             raw.append((idx, "shell", tid, norm(path)))
             continue
         raw.append((idx, "read", tid, norm(path), start, end, c))
+    # A landed mutation that RAN EARLY (its program's typed `late` report: a predecessor for the same file had not finished when
+    # it started) says what its own bytes were, not what the file is: that predecessor may land after it. It is a touch of an
+    # unestablished state, like a command whose effect is unknown, never a size.
+    late = _late_landed_ids(messages)
     for idx, tid, path, nbytes, label in _write_events(messages):
-        raw.append((idx, "write", tid, norm(path), nbytes, label))
+        raw.append((idx, "shell", tid, norm(path)) if tid in late else (idx, "write", tid, norm(path), nbytes, label))
     for idx, tid, path, total in _edit_landings(messages):
-        raw.append((idx, "edit", tid, norm(path), total))
+        raw.append((idx, "shell", tid, norm(path)) if tid in late else (idx, "edit", tid, norm(path), total))
     for idx, path, n in _refused_line_counts_ordered(messages):
         raw.append((idx, "refuse", None, norm(path), n))
     for idx, tid, path in _shell_mutations(messages):

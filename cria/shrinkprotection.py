@@ -60,6 +60,7 @@ class ShrinkCall(Protocol):
     name: str
     arguments: dict
     request: ShrinkRequest
+    sequence: object | None       # the call's place in its turn's per-file queue (`toolcontracts.EditSequence`) or None
     log: EventLog | None
 
 
@@ -158,8 +159,11 @@ def check_write(services: ShrinkServices, path: str, content: str, edit_tool: st
     return {'text': text, 'bytes': raw}
 
 
-def wrap_finding(path: str, finding: ShrinkFinding, command: str) -> str:
-    """Settle against measured bytes; stale views never refuse or emit old facts."""
+def wrap_finding(path: str, finding: ShrinkFinding, command: str, release: str = "") -> str:
+    """Settle against measured bytes; stale views never refuse or emit old facts.
+
+    ``release`` is what answers the call's queue slot when the HOLD branch runs instead of the write program: that program's
+    own exit marks the call done, so a held write that skipped it would leave its successors waiting out the whole queue bound."""
     from shlex import quote as _qbash
     from .toolwire import _b64, _refusal_command
     same = ('import base64,pathlib,sys; '
@@ -170,7 +174,7 @@ def wrap_finding(path: str, finding: ShrinkFinding, command: str) -> str:
         # The measured facts ride into the write program, which reports them as the typed `rm` field of ITS OWN `landed`
         # record — only when it actually landed, only when the disk still held the measured bytes (the `same` check).
         return f'if python3 -c {_qbash(same)}; then\nexport CRIA_RM={_qbash(finding["text"])}\n{command}\nelse\n{command}\nfi'
-    return f"if python3 -c {_qbash(same)}; then\n{_refusal_command(finding['text'])}\nelse\n{command}\nfi"
+    return f"if python3 -c {_qbash(same)}; then\n{release}{_refusal_command(finding['text'])}\nelse\n{command}\nfi"
 
 
 def shrinking_replacement(source: ShrinkCall, command: str) -> str:
@@ -187,7 +191,8 @@ def shrinking_replacement(source: ShrinkCall, command: str) -> str:
     finding = check_write(services, path, candidate, sorted(edit_names)[0] if edit_names else '')
     if finding is None:
         return command
-    result = wrap_finding(path, finding, command)
+    from .writeproxy import _seq_release
+    result = wrap_finding(path, finding, command, _seq_release(source.sequence) if source.sequence is not None else "")
     if source.log is not None:
         event = 'writeproxy.write_removal_facts' if finding.get('land') else 'writeproxy.write_shrink_held'
         policy_log(source.log, DEFINITION.policy).emit(event, tool=source.name, path=path)

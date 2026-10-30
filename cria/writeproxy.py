@@ -491,6 +491,8 @@ _WRITE_PY = r'''import base64,sys,pathlib,os
 %%RECORD%%
 p=pathlib.Path(base64.b64decode('{path}').decode())
 raw=base64.b64decode('{content}')
+_late=False
+#%%SEQ%%
 _after=_v(str(p),raw)
 if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
     sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after)+_at(raw,_after))
@@ -510,11 +512,11 @@ except OSError:
 try:
     _atomic_replace(p,raw)
 except _TargetMutationUncertain as _e:
-    sys.stdout.write(_rec('uncertain')); sys.stdout.flush()
+    sys.stdout.write(_rec('uncertain', **({{'late':True}} if _late else {{}}))); sys.stdout.flush()
     sys.exit(base64.b64decode('{uncertain}').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
 # THE LANDED FACT, and the removal facts the shrink protection measured (handed in by its wrapper), are TYPED fields of the
 # record — never lines a reader has to find.
-sys.stdout.write(_rec('landed', **({{'rm':os.environ['CRIA_RM']}} if os.environ.get('CRIA_RM') else {{}})))
+sys.stdout.write(_rec('landed', **({{'rm':os.environ['CRIA_RM']}} if os.environ.get('CRIA_RM') else {{}}), **({{'late':True}} if _late else {{}})))
 '''
 
 
@@ -530,7 +532,7 @@ class WriteCommand(str):
         raise AttributeError('Write producer facts are immutable')
 
 
-def _write_command(path: str, content: str) -> str:
+def _write_command(path: str, content: str, seq: "EditSequence | None" = None) -> str:
     """Byte-exact atomic write via a python heredoc: validate-before-write (a broken write over a valid
     file is refused), then write to a temp and os.replace over the target so a partial write never
     leaves a half-written file. The content rides in the heredoc, so there is nothing to escape and
@@ -558,6 +560,7 @@ def _write_command(path: str, content: str) -> str:
                                            # identical retries, tests never landed. Name the block.
                                            parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
+    py = _queued(py, seq)
     return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
 
@@ -800,6 +803,17 @@ except (OSError,ValueError):
 '''
 
 
+def _queued(py: str, seq: "EditSequence | None") -> str:
+    """``py`` with its place in the turn's per-file queue (the ``#%%SEQ%%`` slot of an edit or whole-write program) filled in.
+    A call that has no predecessors carries none of it: the slot is a comment and the program is byte-for-byte what it was."""
+    if seq is None:
+        return py
+    turn, idx, preds, participants = seq
+    return editsequence.PROGRAM + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
+        dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
+        participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))
+
+
 def _seq_release(sequence: EditSequence) -> str:
     """A refused call completes only its authenticated marker, never a name-shaped file."""
     turn, idx, _preds, participants = sequence
@@ -869,11 +883,7 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
     py = py.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable"))))
     py = py.replace('%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown")))
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py
-    if seq is not None:
-        turn, idx, preds, participants = seq
-        py = editsequence.PROGRAM + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
-            dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
-            participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))
+    py = _queued(py, seq)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -1301,16 +1311,27 @@ def _survey_due(session: str | None, name: str) -> bool:
 
 
 def _edit_sequence(tool_calls: list, injected: set) -> dict:
-    """``{call index: (group token, index, predecessor indexes, all participant indexes)}`` for the edit calls of ONE turn that share a file
-    with an earlier edit call of the same turn. Everything else is absent: a lone edit per file runs unqueued."""
+    """``{call index: (group token, index, predecessor indexes, all participant indexes)}`` for the file-mutating calls (edits AND
+    whole-file writes) of ONE turn that share a file with an earlier such call of the same turn. Everything else is absent: a lone
+    mutation per file runs unqueued.
+
+    A WRITE QUEUES TOO. The harness runs a batch concurrently, and a whole-file write is the one call that REPLACES what its
+    predecessors produced: `write f; edit f` run edit-first anchors on the old file, and `write f=A; write f=B` run B-first leaves
+    A on disk while the coder, the ledger and every later fact say B. Each program leaves its own authenticated done-mark at exit
+    (the producer-issued, invocation-bound completion fact), so ordering is enforced where the writer runs, not inferred from where
+    the replies land."""
     by_path: dict[str, list[int]] = {}
     for i, tc in enumerate(tool_calls):
         fn = tc.get("function") or {}
-        if fn.get("name") not in _EDIT_NAMES or fn.get("name") not in injected:
+        if fn.get("name") not in (_EDIT_NAMES | _WRITE_NAMES) or fn.get("name") not in injected:
             continue
         args = _parse(fn.get("arguments"))
         path = _tool_path(args)
-        if path and isinstance(args.get("old_string"), str) and args["old_string"] and "new_string" in args:
+        if not path:
+            continue
+        queued = ((isinstance(args.get("old_string"), str) and args["old_string"] and "new_string" in args)
+                  if fn.get("name") in _EDIT_NAMES else not _prepare_file_mutation(fn.get("name"), args).error)
+        if queued:
             by_path.setdefault(os.path.normpath(str(path)), []).append(i)
     group = [ix for ix in by_path.values() if len(ix) > 1]
     if not group:
@@ -1336,7 +1357,7 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         if mutation.error:
             return ShellCommand(_file_mutation_refusal(name, mutation, request.injected, source.log))
         if name in _WRITE_NAMES:
-            command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content))
+            command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content), seq=source.sequence)
         else:
             command = _edit_command(str(mutation.path), mutation.old, mutation.new,
                 pack=request.pack, echo=request.edit_echo, seq=source.sequence)
@@ -1350,7 +1371,8 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
             finding = request.shrink_check(str(mutation.path), _repair_double_escaped(mutation.content),
                                            sorted(edits)[0] if edits else '')
             if finding:
-                command = wrap_finding(str(mutation.path), finding, command)
+                command = wrap_finding(str(mutation.path), finding, command,
+                                       _seq_release(source.sequence) if source.sequence is not None else "")
                 if source.log is not None:
                     event = 'writeproxy.write_removal_facts' if finding.get('land') else 'writeproxy.write_shrink_held'
                     source.log.emit(event, tool=name, path=str(mutation.path))

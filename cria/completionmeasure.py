@@ -52,7 +52,9 @@ def written_file_facts(messages: list[dict], services: MeasurementServices) -> l
                 continue          # a write/edit tool's bytes are a fact only when its own program said it landed
             name, args = pending[tid]
             whole = None
-            if name in services.whole_write_tools:
+            if name in services.whole_write_tools and not denial.report(message).get("late"):
+                # A write that ran before a same-file predecessor finished (its program's typed `late` report) may have been
+                # replaced after it: its own bytes are not what the file holds, so it is a touch, never a whole-file fact.
                 body = services.arguments(args).get("content")
                 whole = body if isinstance(body, str) else None
             patch_ok = name not in services.whole_write_tools and name not in services.edit_tools

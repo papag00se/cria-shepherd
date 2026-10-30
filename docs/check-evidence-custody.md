@@ -77,3 +77,34 @@ The grounded runaway-recovery notice uses both the gate's write registry and an 
 The canonical write registry records forwarded occurrences, not equal arguments or tool/target fingerprints. Its all-tool identifier counts are observed lower bounds, not proof of complete lifetime coverage. Once a collision has been observed, a read's result cannot settle a write with that identifier, and compaction or a fresh gate cannot make it unique again. Historical reconciliation is idempotent and cannot shrink the record. A gate taken before any forwarded reply has been recorded remains unknown. The mechanism assumes ordered call/result history and pair-preserving compaction; it cannot identify an unseen older dispatch's late result masquerading as the sole result of a new call after an incomplete restore. It does not reconstruct those missing events. Known ambiguity withholds the optional “no write occurred” claim; it does not replace fresh checks or block completion by itself.
 
 `tests/test_a_call_that_never_ran_does_not_defeat_the_grounded_rumination_step.py` exercises the write-observation and notice paths, including mixed refused/landed calls, later edits, identifier reuse across tool classes, and compaction. Its public `Loop.drive` lifecycle forwards a write, takes a gate, then receives the proven refusal with a generation that aborts: incoming history must settle before recovery selection, without pre-settling the registry or registering a dummy dispatch. In the selected original continuation, other unproven shell commands independently prevented grounding. Repairing refusal custody alone therefore does not establish restoration of that notice or improved coding usefulness.
+
+### Overwrite evidence: which writes have an attributable completion
+
+The earlier overwrite candidates were rejected for lacking "trustworthy invocation-correlated executor completion". For every call cria
+LOWERS (write, edit, read, fetch) that fact already exists: the program cria composed prints, at stdout offset 0 and after the mutation,
+a typed record bound to the call's receipt: `landed` (this invocation completed and changed the file), `unapplied` / `refused` (it did
+not run), `uncertain` (it may have changed it). It is producer-issued and position-declared, exactly like the multipart bridge's
+call-bound records. The consumers (`denial.landed_call_ids`, `focustrim._terminal_positions`, the read/write ledger, completion
+measurement, check supersession) already read only those records. `tests/test_overwrite_evidence_attribution.py` runs the real programs.
+
+(a) Already handled. A reply that never arrived, arrived cut, or says "still running" proves no write and orders nothing; a check whose
+evidence predates a pending, late-settling or overlapping write is withdrawn (`tests/test_a_green_check_does_not_survive_a_later_write.py`);
+only a newer run of the same check clears it; a write that returns the file to earlier bytes is an ordinary landed write — nothing holds
+or blocks a revert, and the ledger follows it; a native shell command leaves the path's state unestablished.
+
+(b) Fixed, because completion is attributable. Calls of one turn that share a file run concurrently, and only edit-after-edit was queued
+(each program leaves an authenticated done-mark at exit and its successors wait for it). A whole-file write was not: `write f=A; write f=B`
+could leave A on disk while the ledger and every later fact said B; `write f; edit f` edited the OLD file and was told it did not match.
+Whole writes now join the same per-file queue (`writeproxy._edit_sequence`, `_queued`); a shrink-protection hold releases its slot. A
+call whose predecessor never finished inside the bound still runs (never held forever) and its record declares `late`; the loop treats a
+`late` landed write or edit as a touch of an unestablished state (`loop._late_landed_ids`) and completion measurement does not use a
+`late` write's own bytes as the file's — its position in the history orders nothing, because the predecessor may land after it.
+
+(c) Not attributable without an executor that cooperates, so cria withholds instead of guessing. (1) A NATIVE shell writer (`> f`, `mv`,
+`sed -i`, a build): cria composed no record, so a closed reply (`Process exited with code 0`) and a still-running one with the same
+text cannot be told apart by any consumer — the v5 evaluation's finding, and the exec-envelope text is a compatibility grammar a program
+can print, not provenance. (2) A lowered writer whose reply has not arrived: still running, lost and cut are the same input, so the
+write is neither landed nor refused and the pending-write rules withhold. (3) A writer from an EARLIER turn that is still running when
+a later turn writes the same file: the per-turn queue cannot name it (marks are per-batch and nonce-scoped so that a retried batch can
+never see another batch's marks); ordering it needs a persistent per-call mark on the harness filesystem and its cleanup, which is new
+executor-side state rather than a consumer fix, and is not built.
