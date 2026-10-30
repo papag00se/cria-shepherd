@@ -7581,6 +7581,14 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
     return ask
 
 
+# Window held back for a compaction lens's own reply. Its answer is ONE word, and `JUDGE_MAX_TOKENS` stays its
+# cap (a smaller cap deletes verdicts — classify.py), but as the floor's reserve that cap held 16,384 of the
+# 49,152-token window back from the lens's evidence, which is the whole transcript: in 33 judge-shaped floor
+# reductions in the ornith-java campaign captures (2026-10-26..28) the fidelity lens read a "⟦ctx:compacted⟧"
+# digest in place of 53-215 evidence turns, and 21 of those 33 requests fit whole with this reserve.
+COMPACTION_VERDICT_RESERVE = 2048
+
+
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
                                   transcript_blocks: list[str], rlog, task: str = "",
                                   phase: str = "compaction-validate", system1=None,
@@ -7617,7 +7625,8 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
                            prompts.load("compaction_validate_ask"), rlog,
                            phase=f"{phase}-{lens}", max_tokens=JUDGE_MAX_TOKENS, retry_off=False,
-                           temperature=0.0, evidence_blocks=blocks)
+                           temperature=0.0, evidence_blocks=blocks,
+                           output_reserve=COMPACTION_VERDICT_RESERVE)
         answers[lens] = answer.strip()[:40]
         return answer.strip().upper() == accepted_word
 
@@ -7679,7 +7688,8 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
               max_tokens: int = SUMMARIZE_MAX_TOKENS, retry_off: bool = True, coder_tools: str = "",
               capture: list | None = None, temperature: float | None = None,
               evidence_blocks: list[str] | None = None,
-              evidence_intro: str = "composed_evidence_intro") -> str:
+              evidence_intro: str = "composed_evidence_intro",
+              output_reserve: int | None = None) -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -7725,6 +7735,11 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             r.apply(call, internal=True, rlog=rlog)
         elif reasoning_off:
             call.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+        if output_reserve is not None:
+            # The input-side window reserve, separate from the ``max_tokens`` cap (contextfloor.reserve_for):
+            # a caller whose answer is one word keeps the generous cap and stops the floor holding that
+            # cap's worth of window back from its evidence.
+            call[bodykeys.OUTPUT_RESERVE] = output_reserve
         if temperature is not None:
             # AFTER role.apply, so it wins over the role's sampling. summarize is the primitive
             # behind two very different jobs: writing prose (a briefing, a directive), where the
