@@ -35,6 +35,14 @@ Built, committed and deployed (release `c0734833-multipart-image-20261029` first
 
 ---
 
+## Lifecycle frontier (2026-10-30) — candidate not ported; its two boundary failures do not exist here
+
+The unported "lifecycle frontier" candidate (r10: per-source declaration frontier over a store-owned `workspace_authority` / persisted workspace history) was blocked by two failing boundary tests (`test_sessions_roots_and_explicit_task_generations_do_not_share_pending_calls`, `test_completed_scope_does_not_pin_unresolved_state_into_other_tasks`) and "no current lifecycle owner". Re-expressed on the current owners (`wsview.View` per request + `writeproxy.represent_inbound`, `loop.LoopStore`), both hold: **already satisfied, premise now invalid.** A pending (unreturned) native mutation withholds current bytes for the conversation that contains it and for nothing else, because the view is rebuilt from the request's own history each time; no effect ledger, task-generation nonce or per-root pending set outlives a request (`git log -S workspace_authority` finds none, ever), so there is nothing to leak across root/session/task or to pin on a DONE scope. The candidate's frontier bug (a user-only suffix re-rendering a completed native mutator charging a second global effect) cannot occur for the same reason; the real capture it was built from (session `20260816T191710-01a00d82…`, call 0358, an 8-message history whose one exec_command is cria's own XML-check + `mvn` gate probe) was replayed through current `represent_inbound` with and without a user suffix: peer reads stay current, a read after the effect stays current across the replay.
+
+The current owner of the *remediation lifecycle* is `completiondiagnosis` (`arm` / `acknowledge` / `follow_up` / `settle`, reached through `loop._settle_completion_remediation`), and it is **plan-on only**: plan-off `deliver_gap` never arms it, and planning is OFF by policy. Its one remaining gap is the candidate's retirement: `settle` releases only on cria's own `Wrote PATH` confirmation, so a missing-file remediation stays pending after the file exists by another route (a shell redirect with exit 0 leaves `completion_remediation_subject` set, measured). Not built: (1) it only affects the retired planner path, no plan-off incident exists; (2) the evidence that would retire it, "this exact path is present NOW", is a survey/whole-read fact `View` exposes only as `read()`/`isfile()` (no exact-path current-presence API exists in the current tree), and a shell exit code alone cannot distinguish a landed redirect from a silent failure, so the input is indistinguishable without that survey. If planning is ever re-enabled, the next test is the same shell-redirect case with a fresh complete survey or whole read of the subject retiring the remediation, never approving completion.
+
+---
+
 ## Build queue
 
 ### Candidate new cria-wide languages
