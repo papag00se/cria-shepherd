@@ -1,8 +1,8 @@
-You are deciding whether a completed step's claim can be checked against the FILE SYSTEM.
+You are deciding whether a request involves creating or changing files in the workspace.
 
-THE STEP:
+THE REQUEST:
 {{STEP}}
 
-Does carrying out this step produce or change anything that should now exist on disk — a file, code inside a file, a document, a directory? Reading, research, learning an API's shape, verification, or running existing checks produce nothing on disk.
+Does fulfilling this request require writing, creating, editing or deleting a file or directory? Merely reading files, viewing an image, researching, answering in chat, or running existing checks does not.
 
-Answer with exactly one word: YES (something should exist on disk) or NO (nothing should).
+Answer with exactly one word: YES (a file or directory must be written or changed) or NO (nothing is written; the answer is only given in chat).

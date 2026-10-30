@@ -49,7 +49,8 @@ from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from .imageworkflow import current as _image_current, review_view as _image_review_view
+from .imageworkflow import (current as _image_current, review_view as _image_review_view,
+                            has_observation as _image_has_observation)
 
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
@@ -1301,7 +1302,8 @@ def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = Fal
     existing input to a read/investigation step as well as a promised output. Every failure
     direction keeps the brake: no reasoner, or an unreadable answer → it runs.
 
-    Scoped to the per-step confirm on purpose. The whole-TASK satisfaction confirm keeps its brake
+    Scoped to the per-step confirm on purpose; the whole-TASK confirm consults it only when the request
+    holds an observed image (:func:`_task_confirm_applies`). Otherwise it keeps its brake
     unconditionally: a task names its deliverables as NOUNS ("script plus README"), and the brake's
     measured wins there (satisfied with no README on disk) are exactly that shape."""
     if (red_findings or "").strip() or gate_red:
@@ -1315,6 +1317,32 @@ def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = Fal
             rlog.emit("loop.confirm_skipped_no_artifact", level="info", phase=phase)
         return False
     return True   # YES, or anything unreadable → the brake runs
+
+
+def _task_confirm_applies(task: str, chat, role, rlog) -> bool:
+    """Should the whole-TASK file confirmation run on this approved task?
+
+    Unconditional (see :func:`_confirm_applies`) EXCEPT when the request holds an image occurrence with a
+    completed observation (typed store provenance, never a word in the task). The confirmation checks a
+    claim against the files with ``list_dir``/``read_file``; for a deliverable that is a statement about
+    an image nothing on disk can confirm it, and the checker refuses until the completion-check bound
+    ends the turn (16 of 16 replays, ornith1.5_9b, temperature 0 and 0.7). Whether the deliverable has a
+    file component is the deliverable-type decision, made by the same single focused question the step
+    confirm defines: does carrying out the task write or change anything on disk? A task that also asks
+    for a file answers YES and keeps the full confirmation; no reasoner, or an unreadable answer, keeps
+    the brake.
+
+    The question is asked with the reasoner's own reasoning, NOT through the reasoning-off ``ask_closed``
+    seat: measured on that seat, one word came back NO for "write fizz.py plus a README.md" (8 of 8, both
+    temperatures) and NO for "look at ./note.png, then write what it says into ./out.txt" - a skip there
+    would drop the very brake the file tasks need. With reasoning on the same questions were YES in every
+    sample, and a reading or viewing task stayed NO."""
+    if role is None or not _image_has_observation():
+        return True
+    ask = lambda question: summarize(chat, role, question, _ASK_USER_TURN, rlog,
+                                     phase="satisfaction-confirm-applies", max_tokens=JUDGE_MAX_TOKENS,
+                                     temperature=0.0, retry_off=False) or ""
+    return _confirm_applies(task, ask=ask, rlog=rlog, phase="satisfaction-confirm")
 
 
 # A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
@@ -1858,7 +1886,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                     raise ValueError("Completion approval replacement must return ApprovalResult")
                 if result.blocks:
                     return False, result.text or prompts.load(withheld), ""
-        if satisfied and workspace_root:
+        if satisfied and workspace_root and _task_confirm_applies(task, reasoner_chat, reasoner_role, rlog):
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
             # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README
             # while the listing in the judge's prompt proved its absence).

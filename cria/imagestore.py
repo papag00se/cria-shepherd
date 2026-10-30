@@ -236,6 +236,13 @@ class ImageSession:
             return tuple(binding.ref for binding in prepared.bindings
                          if self._records[binding.ref].observation is None)
 
+    def observed(self,prepared):
+        """True when this prepared request carries at least one occurrence whose completed observation is recorded."""
+        with self._lock:
+            self._active()
+            if prepared.token is not self._token:raise ImageUnavailable('Image preparation belongs to a different session')
+            return any(self._records[b.ref].observation is not None for b in prepared.bindings)
+
     def project(self,prepared,framed_messages):
         """Outbound view only, AFTER raw task/root identity and frame construction.
 

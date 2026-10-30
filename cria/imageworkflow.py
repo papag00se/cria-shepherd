@@ -20,6 +20,14 @@ def review_view(messages,rlog=None):
         if rlog is not None:rlog.emit('image.review_projection_unavailable',level='warn',error=str(exc))
         return messages
 
+def has_observation():
+    """Typed provenance: the current request holds an image occurrence with a completed, correlated observation.
+    Decided from the store's own record, never from the wording of any message."""
+    context=current.get()
+    if context is None or not context.prepared.bindings:return False
+    try:return context.session.observed(context.prepared)
+    except ImageUnavailable:return False
+
 @dataclass(frozen=True)
 class SourceImageContext:
     workflow: object
