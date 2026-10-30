@@ -1,0 +1,4 @@
+THE CODER'S CLOSING REPLY — a claim made by the coder, not evidence:
+{{CLAIM}}
+
+The task asks for a statement about an image, and the closing reply is where that statement is made. The labelled image observation in the actions above is the only evidence of what the image shows. Check what the reply says about the image against that observation: a statement the observation supports is delivered; a statement the observation contradicts, or one that adds detail it does not report, is not. The reply is evidence of nothing else.

@@ -383,6 +383,9 @@ class GuardState:
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
+    # The coder's own closing reply of a plan-off done CLAIM, held until the whole-task review consumes it
+    # (a labelled claim for the judge, only where an image observation can ground it; see judge_satisfaction).
+    closing_claim: str = ""
     # (reason,) for a satisfaction-accepted 'done', held until the gate's result decides
     # which claim the note may open with. Empty when the held text is the coder's own words.
     pending_done_parts: tuple = ()
@@ -1828,7 +1831,7 @@ class VerdictNudge(str):
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
                        workspace_root: str = "", routes: str = "",
                        gate_findings: str = "", messages: list | None = None,
-                       sess=None) -> tuple[bool, str, str]:
+                       sess=None, closing_claim: str = "") -> tuple[bool, str, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -1844,6 +1847,14 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         fresh=getattr(sess, "gate_fresh", None))
     if measured_participation and measured_participation not in evidence:
         evidence = "\n\n".join(part for part in (evidence, measured_participation) if part)
+    # THE CLOSING REPLY IS THE DELIVERABLE of a statement about an image, and the action log never holds it
+    # (the reply is the completion being judged, not yet history). It rides as a LABELLED CLAIM, and only
+    # where the request holds an image occurrence with a completed observation (typed store provenance, never
+    # message text): the observation is then the evidence the judge checks it against. With no observation
+    # nothing can ground the claim, so it stays out, exactly as every other closing reply does.
+    if (closing_claim or "").strip() and _image_has_observation():
+        evidence = "\n\n".join(part for part in (evidence, prompts.render(
+            "satisfaction_closing_claim", claim=closing_claim.strip())) if part)
     system = prompts.load("satisfaction")
     user = prompts.render("satisfaction_user", task=task,
                           evidence=evidence or "(no actions recorded yet)")
@@ -5134,6 +5145,7 @@ class Loop:
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
             if _has_tool_calls(comp):
                 return _forward_acting_coder(sess, comp)  # retained leg0 reask
+        sess.closing_claim = _completion_text(comp)
         probe = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)  # body, NOT framed
         if probe is not None:
             sess.done_probe = True
@@ -5179,7 +5191,8 @@ class Loop:
                 workspace_root=sess.workspace_root or "",
                 routes=known_routes(body.get("messages", []), sess),
                 gate_findings=getattr(sess, "last_gate_flag", "") or "",
-                messages=body.get("messages", []), sess=sess)
+                messages=body.get("messages", []), sess=sess,
+                closing_claim=(getattr(sess, "closing_claim", "") if trigger is ReviewTrigger.CLAIM else ""))
         return runtime.review(ReviewInput(trigger, getattr(getattr(sess, "plan", None), "task", ""),
             history, lambda: _gate_notes(sess), judge, VerdictNudge, rlog), sess)
 
@@ -5190,7 +5203,10 @@ class Loop:
         or "" when satisfied. Runs on EVERY green 'done' (NO once-bound): cria never lets a still-
         incomplete task exit early; the model finishes the real work on its own. Fail-CLOSED — an
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
-        review = self._review_task(sess, body, rlog, trigger=ReviewTrigger.CLAIM)
+        try:
+            review = self._review_task(sess, body, rlog, trigger=ReviewTrigger.CLAIM)
+        finally:
+            sess.closing_claim = ""   # consumed once: a later claim holds its own reply
         if review.status is ReviewStatus.UNKNOWN_TASK:
             rlog.emit("loop.done_critic", plan_off=plan_off, satisfied=False, original_task_unknown=True)
             return _unnamed_gap(sess, sess.pending_done)
