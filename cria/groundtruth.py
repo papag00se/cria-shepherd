@@ -449,6 +449,15 @@ def survey_settles_absence(inventory: str) -> bool:
         prompts.load_map("workspace_inventory")["complete"] in inventory.splitlines())
 
 
+def names_a_workspace_file(name: str) -> bool:
+    """Is ``name`` a relative, file-shaped path of the project: not a directory, not outside the workspace,
+    not under a directory the survey omits, not cria's own? The ONE gate every file-claim lens shares."""
+    rel = os.path.normpath(name.strip().strip("`'\"").rstrip(".,;:)")).replace(os.sep, "/")
+    return bool(_FILE_SHAPED.match(rel) and not rel.startswith(("/", "~", ".."))
+                and not set(rel.split("/")[:-1]) & _INVENTORY_EXCLUDE
+                and not any("cria" in part.lower() for part in rel.split("/")))
+
+
 def survey_settled_absent(inventory: str, names) -> list[str]:
     """The ``names`` a complete, current survey rendered in ``inventory`` shows to be absent.
 
@@ -466,10 +475,7 @@ def survey_settled_absent(inventory: str, names) -> list[str]:
     for name in names:
         rel = os.path.normpath(name.strip().strip("`'\"").rstrip(".,;:)")).replace(os.sep, "/")
         low = rel.lower()
-        if (not _FILE_SHAPED.match(rel) or rel.startswith(("/", "~", ".."))
-                or set(rel.split("/")[:-1]) & _INVENTORY_EXCLUDE
-                or any(low == f or low.startswith(f + "/") for f in folded)
-                or any("cria" in part.lower() for part in rel.split("/"))):
+        if not names_a_workspace_file(name) or any(low == f or low.startswith(f + "/") for f in folded):
             continue
         if low in listed or any(entry.endswith("/" + low) for entry in listed):
             continue

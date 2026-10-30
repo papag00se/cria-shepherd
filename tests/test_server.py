@@ -976,6 +976,8 @@ def _compaction_validation_verdict(system):
         return "RETROSPECTIVE"
     if "NARROWS or PRESERVES" in system:
         return "PRESERVES"
+    if "CHANGED or NOT CHANGED" in system:
+        return "NONE"        # the change-claim lens: nothing here to list
     if "UNFAITHFUL or FAITHFUL" in system:
         return "FAITHFUL"
     return None
@@ -1035,7 +1037,7 @@ class HardenCompactionReplyTests(unittest.TestCase):
 
         comp = _harden_compaction_reply(self._comp(""), {"messages": self._history()},
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
-        self.assertEqual(len(calls), 4)                             # retry, then three focused validations
+        self.assertEqual(len(calls), 5)   # retry, three focused validations and the change-claim lens
         self.assertFalse(calls[0].get("tools"))                     # still a toolless summarize
         text = comp["choices"][0]["message"]["content"]
         self.assertTrue(text.startswith("Recovered briefing."))
@@ -1107,7 +1109,7 @@ class HardenCompactionReplyTests(unittest.TestCase):
                             "finish_reason": "length"}]}
         comp = _harden_compaction_reply(cut, {"messages": self._history()},
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 5)   # retry, three validations and the change-claim lens
         self.assertTrue(comp["choices"][0]["message"]["content"].startswith("Whole briefing."))
 
     def test_a_summary_cut_off_TWICE_is_dropped_not_shipped(self):

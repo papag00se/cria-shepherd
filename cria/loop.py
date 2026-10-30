@@ -3868,6 +3868,11 @@ class Loop:
             turns = len(history) - (1 if task_fact else 0)
             return distill(evidence, turns) if distill is not None else evidence
 
+        # The write record may judge a briefing's change claims only over a span nothing earlier summarized:
+        # a prior rollup (its state or its marker) means the briefing legitimately restates what it carried.
+        whole_span = (None if sess.compact_state.summary or selfcompact.body_is_compacted(msgs)
+                      else msgs)
+
         def make_summary(mm: list[dict], *, newer_messages: list[dict]) -> str:
             history, evidence = evidence_for(mm, newer_messages=newer_messages)
             evidence = writer_evidence(history, evidence)
@@ -3879,7 +3884,7 @@ class Loop:
             if not validate_compaction_briefing(
                     chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
                     transcript_blocks=history, task=root_task, rlog=rlog,
-                    system1=self._ctx.system1):
+                    system1=self._ctx.system1, messages=whole_span):
                 return ""
             # Deterministic existence correction remains a final additive defense. The semantic
             # symbol matcher is deliberately gone: whether compiler output refutes a briefing is a
@@ -7578,7 +7583,8 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
                                   transcript_blocks: list[str], rlog, task: str = "",
-                                  phase: str = "compaction-validate", system1=None) -> bool:
+                                  phase: str = "compaction-validate", system1=None,
+                                  messages: list | None = None) -> bool:
     """Fail-closed, independent judgments before model-made session memory is injected.
 
     One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
@@ -7593,6 +7599,10 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     reasoner, whose evidence blocks the classifier cannot read. A classifier that cannot answer
     rejects the briefing: the same fail-closed exit an unreadable reasoner verdict takes, with no
     reasoner asked in its place.
+
+    ``messages`` (opt-in) are the typed messages the briefing summarizes; with them, a file the briefing
+    says was created or edited that the session's write record cannot have touched is refused
+    (`filepresence.unsupported_changes`; it abstains unless they are provably the whole span).
     """
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
@@ -7633,6 +7643,13 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         missing = filepresence.contradicted_files(summarize, chat_fn, role, briefing, files, rlog, phase)
         if missing:
             answers["files"] = "ABSENT " + ", ".join(missing)
+            accepted = False
+    # The same seam for a CHANGE claim: the model only lists what the briefing says was created/edited;
+    # the typed write record says whether anything in the session could have written it.
+    if accepted and messages is not None:
+        unwritten = filepresence.unsupported_changes(summarize, chat_fn, role, briefing, messages, rlog, phase)
+        if unwritten:
+            answers["changes"] = "UNWRITTEN " + ", ".join(unwritten)
             accepted = False
     if accepted:
         blocks = list(transcript_blocks)

@@ -54,6 +54,8 @@ class _Reasoner:
             return _reply("RETROSPECTIVE" if self.accept else "PLAN")
         if "NARROWS or PRESERVES" in system:
             return _reply("PRESERVES")
+        if "CHANGED or NOT CHANGED" in system:
+            return _reply("NONE")      # the change-claim lens: nothing here to list
         if "UNFAITHFUL or FAITHFUL" in system:
             return _reply("FAITHFUL")
         self.writer_calls += 1

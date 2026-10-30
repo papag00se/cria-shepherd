@@ -2037,6 +2037,8 @@ def _compaction_validation_verdict(system):
         return "RETROSPECTIVE"
     if "NARROWS or PRESERVES" in system:
         return "PRESERVES"
+    if "CHANGED or NOT CHANGED" in system:
+        return "NONE"        # the change-claim lens: nothing here to list
     if "UNFAITHFUL or FAITHFUL" in system:
         return "FAITHFUL"
     return None
@@ -2062,7 +2064,7 @@ class LoopSelfCompactTests(unittest.TestCase):
         big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
         out = loop._self_compact(big, sess, 1, _Rlog())
         self.assertLess(len(out), len(big))                                   # compacted
-        self.assertEqual(len(reasoner_calls), 4)                              # writer + three focused validators
+        self.assertEqual(len(reasoner_calls), 5)                              # writer + three focused validators + the change-claim lens
         self.assertTrue(any("⟦ctx:rollup⟧" in str(m.get("content")) for m in out))
 
     def test_rollup_is_grounded_by_the_real_gate_state(self):

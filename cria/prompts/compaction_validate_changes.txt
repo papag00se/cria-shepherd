@@ -1,0 +1,12 @@
+You are reading a proposed coding-session briefing. Judge one question only: for each project file the briefing names, does the briefing say that this session ALREADY created, wrote, rewrote, edited, updated or modified that file?
+
+Go through the briefing and write one line for every project file name or path it mentions, in the form
+<path exactly as the briefing spells it> | CHANGED or NOT CHANGED
+
+CHANGED means the briefing reports, as something that has already happened, that the session created, wrote, edited, updated or modified the file. Examples: "`a.py` was edited", "`b.md` was created", "wrote `c.txt`", "`d.json` now contains the new key".
+
+NOT CHANGED means anything else, including: the file is only read, inspected, listed, opened or run; it was there from the start or is unchanged; it "has not been" or "was not" edited; and everything that has not happened yet - a next step or plan ("`a.py` will be edited"), something still to do or needed ("`b.md` must still be created", "`c.txt` needs a fix"), or a file the task merely asks for ("the task requires `d.json`").
+
+Leave out anything that is not a file of this project's workspace: a downloaded library, a package-manager or dependency cache, or a location elsewhere on the machine.
+
+Write nothing but those lines.

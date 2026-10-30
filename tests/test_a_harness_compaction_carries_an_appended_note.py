@@ -61,7 +61,7 @@ def _shown(call):
 def test_the_writer_and_validators_read_the_result_without_the_note():
     provider, _session, _reply = _compact(_body(_search()))
     writer, lenses = provider.calls[0], provider.calls[1:]
-    assert len(lenses) == 3, "fixture: the briefing reached all three lenses"
+    assert len(lenses) == 4, "fixture: the briefing reached all three lenses and the change-claim lens"
     fidelity = next(c for c in lenses if "UNFAITHFUL or FAITHFUL" in c["messages"][0]["content"])
     for call in (writer, fidelity):            # the readers of the transcript
         assert "Process exited with code 1" in _shown(call), "the search's own result is evidence"

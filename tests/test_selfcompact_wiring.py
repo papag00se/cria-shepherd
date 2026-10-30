@@ -18,6 +18,8 @@ def _validation_reply(system):
         return "RETROSPECTIVE"
     if "NARROWS or PRESERVES" in system:
         return "PRESERVES"
+    if "CHANGED or NOT CHANGED" in system:
+        return "NONE"            # the change-claim lens: nothing here to list
     if "UNFAITHFUL or FAITHFUL" in system:
         return "FAITHFUL"
     return None

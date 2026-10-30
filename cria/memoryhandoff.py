@@ -76,7 +76,7 @@ class ProducerSettlement(Protocol):
 class BriefingValidator(Protocol):
     def __call__(self, chat_fn, role, briefing: str, *, files: str, checks: str,
                  transcript_blocks: list[str], rlog, task: str = "",
-                 phase: str = "compaction-validate") -> bool: ...
+                 phase: str = "compaction-validate", messages: list | None = None) -> bool: ...
 
 
 class ClosedQuestion(Protocol):
@@ -290,7 +290,8 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
         if not services.validate(chat_fn, role, text, files=writer_inventory,
                                  checks=facts.checks, transcript_blocks=transcript,
                                  task=facts.original_task, rlog=rlog,
-                                 phase="harness-compaction-validate"):
+                                 phase="harness-compaction-validate",
+                                 messages=body.get("messages", [])):
             text = ""
     if text and inventory:
         text = services.disk_truth(text, inventory, rlog)
