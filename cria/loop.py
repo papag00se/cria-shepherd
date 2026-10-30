@@ -7610,7 +7610,9 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 
     ``messages`` (opt-in) are the typed messages the briefing summarizes; with them, a file the briefing
     says was created or edited that the session's write record cannot have touched is refused
-    (`filepresence.unsupported_changes`; it abstains unless they are provably the whole span).
+    (`filepresence.unsupported_changes`; it abstains unless they are provably the whole span). The same
+    messages settle a stated success ("it compiles", "the tests pass") against the run/write order
+    (`filepresence.unsupported_builds`); ``files`` settles an exact stated byte count (`contradicted_sizes`).
     """
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
@@ -7659,6 +7661,18 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         unwritten = filepresence.unsupported_changes(summarize, chat_fn, role, briefing, messages, rlog, phase)
         if unwritten:
             answers["changes"] = "UNWRITTEN " + ", ".join(unwritten)
+            accepted = False
+    # SIZE claims on the same survey seam, BUILD-STATE claims on the same typed-record seam: the model only lists
+    # what the briefing states; the complete survey's listed sizes and the transcript's run/write order settle it.
+    if accepted:
+        wrong = filepresence.contradicted_sizes(summarize, chat_fn, role, briefing, files, rlog, phase)
+        if wrong:
+            answers["sizes"] = "SIZE " + ", ".join(f"{n} stated {c} B, survey {l} B" for n, c, l in wrong)
+            accepted = False
+    if accepted and messages is not None:
+        unbuilt = filepresence.unsupported_builds(summarize, chat_fn, role, briefing, messages, rlog, phase)
+        if unbuilt:
+            answers["build"] = "UNRUN " + unbuilt
             accepted = False
     if accepted:
         blocks = list(transcript_blocks)

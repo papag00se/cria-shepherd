@@ -1,0 +1,8 @@
+You are reading a proposed coding-session briefing. Judge one question only: for each project file the briefing names AND gives a size, what size does the briefing give as how large the file is NOW?
+
+Go through the briefing and write one line for every project file that is given a size as its present size, in the form
+<path exactly as the briefing spells it> | <the size copied exactly as the briefing words it, with any hedge word such as about, roughly, ~, over, at least>
+
+Copy the size character for character: "980 B", "11,796 bytes", "about 12 KB", "roughly 12,000 B", "~1 MB". Leave a file out when the briefing gives no size for it, when the size given is what the file had EARLIER or BEFORE a change, or when the number describes something other than that file's own size (a line count, a row count, a download size). Leave out anything that is not a file of this project's workspace: a downloaded library, a package-manager or dependency cache, or a location elsewhere on the machine.
+
+Write nothing but those lines.

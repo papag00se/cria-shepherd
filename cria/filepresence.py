@@ -17,6 +17,7 @@ nothing it did not read. A partial, overtaken or absent survey settles nothing a
 """
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 from . import groundtruth, prompts, writerecord
@@ -25,14 +26,22 @@ from . import groundtruth, prompts, writerecord
 MAX_TOKENS = 2048
 
 
-def _claimed(answer: str, briefing: str, word: str) -> list[str]:
-    """Paths the answer marks ``word`` that the briefing literally contains, in order, once each."""
+def _plain(text: str) -> str:
+    """``text`` without the markup a copy may drop or add (backticks, quotes, emphasis) and with one-space gaps."""
+    return " ".join(re.sub(r"[`\"*]", "", text).split())
+
+
+def _claimed(answer: str, briefing: str, word: str, plain: bool = False) -> list[str]:
+    """Paths the answer marks ``word`` that the briefing literally contains, in order, once each.
+
+    ``plain`` compares sentences (a copied quotation) with markup ignored; a path stays an exact match."""
     found: list[str] = []
+    haystack = _plain(briefing) if plain else briefing
     for line in answer.splitlines():
         path, bar, verdict = line.rpartition("|")
         path = path.strip().strip("`*- <>").strip("`")
         if (bar and verdict.strip().upper().rstrip(".") == word and path
-                and path in briefing and path not in found):
+                and (_plain(path) if plain else path) in haystack and path not in found):
             found.append(path)
     return found
 
@@ -75,3 +84,59 @@ def unsupported_changes(summarize, chat_fn, role, briefing: str, messages, rlog,
     record = writerecord.WriteRecord(messages)
     return [path for path in _claimed(answer, briefing, "CHANGED")
             if groundtruth.names_a_workspace_file(path) and not record.may_have_changed(path)]
+
+
+# A byte count the briefing literally states: digits (thousands separators allowed) then B / byte(s).
+_BYTES = re.compile(r"(?<![\w.,])(\d{1,3}(?:,\d{3})+|\d+)\s*(?:B|bytes?)\b")
+
+
+_EXACT_BYTES = re.compile(r"(\d{1,3}(?:,\d{3})+|\d+)\s*(?:B|bytes?)")
+
+
+def _stated_bytes(briefing: str) -> set[int]:
+    return {int(m.replace(",", "")) for m in _BYTES.findall(briefing)}
+
+
+def contradicted_sizes(summarize, chat_fn, role, briefing: str, files: str, rlog,
+                       phase: str = "compaction-validate") -> list[tuple[str, int, int]]:
+    """``(file, stated, listed)`` for each exact byte count the briefing gives a file that the complete survey contradicts.
+
+    The third lens on the same seam (the file-presence lens's sibling for SIZE claims, e.g. "`REVIEW.md` (235 B)"
+    where 235 B was another file's). The model LISTS ``path | size as worded`` for sizes the briefing states exactly as a
+    file's present size; a count the briefing does not literally state is dropped, an approximate or rounded one
+    ("about 12 KB") never reaches here, and `groundtruth.survey_size_contradicted` abstains on any file the
+    survey does not list. ``[]`` with no model call unless the survey settles and the briefing states some count."""
+    if (chat_fn is None or role is None or not groundtruth.survey_settles_absence(files)
+            or not _stated_bytes(briefing)):
+        return []
+    answer = _ask_lines(summarize, chat_fn, role, briefing, rlog, phase, "sizes")
+    stated = _stated_bytes(briefing)
+    claims = []
+    for line in answer.splitlines():
+        path, bar, size = line.rpartition("|")
+        path = path.strip().strip("`*- <>").strip("`")
+        # EXACT is a structural fact of the copied text: it is a byte count and nothing else. A hedge word, a
+        # larger unit or any other wording the model copied makes it something this lens never judges.
+        exact = _EXACT_BYTES.fullmatch(size.strip().rstrip(".").strip("`"))
+        if bar and path and path in briefing and exact and int(exact[1].replace(",", "")) in stated:
+            claims.append((path, int(exact[1].replace(",", ""))))
+    return groundtruth.survey_size_contradicted(files, claims)
+
+
+def unsupported_builds(summarize, chat_fn, role, briefing: str, messages, rlog,
+                       phase: str = "compaction-validate") -> str:
+    """Why the briefing's claim that the work compiles / passes cannot hold, or "" (supported, none, or unknown).
+
+    The change-claim lens's sibling for BUILD-STATE (docs/check-evidence-custody.md: a green check older than a
+    later write is not current). The model LISTS the sentences that state, as fact, that the code as it now
+    stands compiles, builds, runs or passes its tests; `writerecord.CheckRecord` says whether the typed record
+    leaves any run that could back them. Abstains - and asks nothing - unless ``messages`` is provably the
+    whole span; honest negatives ("has not been compiled") are never listed as claims."""
+    if chat_fn is None or role is None or not writerecord.whole_span(messages):
+        return ""
+    reason = writerecord.CheckRecord(messages).unsupported()
+    if not reason:
+        return ""
+    answer = _ask_lines(summarize, chat_fn, role, briefing, rlog, phase, "build")
+    claimed = _claimed(answer, briefing, "GREEN", plain=True)
+    return f"{claimed[0]} ({reason})" if claimed else ""

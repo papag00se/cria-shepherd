@@ -1,0 +1,10 @@
+You are reading a proposed coding-session briefing. Judge one question only: for each sentence that reports a build, compile, run, test or check result, which state of the code does the result describe, and was it a success?
+
+Go through the briefing and write one line for every sentence that reports such a result, in the form
+<the words of the briefing, copied exactly, that report it> | GREEN or EARLIER or NOT GREEN
+
+GREEN means the briefing reports a success (it compiles, the build is green, the tests pass, it runs and prints the expected output) for the code AS IT NOW STANDS, after the session's own changes.
+EARLIER means the briefing reports a result for the code as it was BEFORE the session changed it ("the original compiled", "the baseline compiled and its tests passed", "before my edits the build was green"), or for some earlier moment that later changes overtook.
+NOT GREEN means anything else: it was NOT compiled, run or tested; the result is unknown or was not available; a failure or red result ("the build is red", "3 tests fail"); a plan, a next step or something still to do; a requirement the task states ("the tests must pass", "it should compile").
+
+Write nothing but those lines.

@@ -389,4 +389,4 @@ def test_accepted_whitespace_payload_is_returned_and_authenticated_without_norma
     assert output["choices"][0]["message"]["content"].encode() == raw_prose.encode()
     assert session.handoff_origin.reply.encode() == raw_prose.encode()
     assert session.handoff_origin.ledger == "" and session.handoff_origin.dropped is False
-    assert len(provider.calls) == 5  # writer, three-lens validation and the change-claim lens
+    assert len(provider.calls) == 6  # writer, three-lens validation, the change-claim lens and the build-state lens

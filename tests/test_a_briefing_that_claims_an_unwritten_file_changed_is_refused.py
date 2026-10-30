@@ -152,6 +152,8 @@ def _validate(messages, changes_reply=REPLY, briefing=POM_CLAIM, survey=SURVEY):
               prompts.load("compaction_validate_scope"): "PRESERVES",
               prompts.load("compaction_validate_files"): "NONE",
               prompts.load("compaction_validate_changes"): changes_reply,
+              prompts.load("compaction_validate_sizes"): "NONE",
+              prompts.load("compaction_validate_build"): "NONE",
               prompts.load("compaction_validate"): "FAITHFUL"}
 
     def chat(body, log):

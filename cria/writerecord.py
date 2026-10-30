@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 import re
 
-from . import denial, probegate, selfcompact, shelltool, toolargs
+from . import denial, probegate, resultnotes, selfcompact, shelltool, toolargs
 
 _PATCH_TARGET = re.compile(r"\*\*\* (?:Add|Update|Delete) File: ([^\n]+)|\*\*\* Move to: ([^\n]+)")
 _COMMAND_FIELDS = shelltool._CMD_FIELDS + ("script",)
@@ -145,3 +145,84 @@ class WriteRecord:
         base = _norm(path)
         return (self.anywhere or base in self.names
                 or any(base in command for command in self.commands))
+
+
+class CheckRecord:
+    """What the transcript shows about RUNNING the code, in order, for judging a briefing's build-state claim.
+
+    ornith1.5_9b writers brief "the code compiles" / "the tests pass" over work whose newest check was red,
+    older than a later edit, or never run (docs/check-evidence-custody.md: a green older than a later write is
+    not current). The same one-sidedness as :class:`WriteRecord`: a claim is ``unsupported`` only when the
+    typed record PROVES nothing can back it, and every uncertainty abstains (``""``) - an honest "has not been
+    compiled" is never put to this record at all, the lens does not list it.
+
+    Three event kinds, in invocation order:
+
+    * an EXECUTION - any shell call, cria's own gate, or a tool this module cannot classify (it might run
+      anything). Unrefused calls only. Its state is ``red``/``green`` ONLY when its paired result carries a
+      runner's own summary line (`probegate.runner_and_tally`, the owner `loop._checks_superseded_by_coder_run`
+      reads) AND an exec-envelope exit status agreeing with it; every other run - a bare `mvn compile`, a
+      pipeline whose status is a filter's, a log `cat` - is ``unknown``;
+    * a LANDED change - a write-class call whose own program typed it `landed` (`denial.landed_call_ids`);
+    * a MAYBE - a write to a named file with no such proof (a native tool, a pending call): it proves no change
+      and forbids saying that nothing was written;
+    * everything that only reads is inert. A shell mutator is an execution, never a landed change.
+    """
+
+    def __init__(self, messages):
+        msgs = [m for m in (messages or []) if isinstance(m, dict)]
+        self.typed = any(m.get("tool_calls") for m in msgs)
+        refused = denial.unlanded_call_ids(msgs)
+        landed = denial.landed_call_ids(msgs)
+        gate = probegate.gate_call_ids(msgs)
+        paired = denial.paired_results(msgs)
+        self.events: list[tuple[str, str]] = []
+        for m in msgs:
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                name, cid = fn.get("name"), tc.get("id")
+                if cid in refused:
+                    continue
+                if cid in gate or shelltool.is_shell_tool_name(name):
+                    self.events.append(("exec", "unknown" if cid in gate else self._state(paired.get(cid))))
+                elif cid in landed:
+                    self.events.append(("change", ""))
+                elif shelltool.is_write_tool_name(name) and shelltool.is_file_tool_name(name) \
+                        and _targets(name, fn.get("arguments")):
+                    self.events.append(("maybe", ""))          # a write that proves neither way
+                elif not (shelltool.is_read_tool_name(name) and shelltool.is_file_tool_name(name)):
+                    self.events.append(("exec", "unknown"))    # a tool nothing here can classify may run anything
+
+    @staticmethod
+    def _state(result) -> str:
+        text = result.get("content", result.get("output")) if isinstance(result, dict) else None
+        if not isinstance(text, str):
+            return "unknown"
+        envelope = resultnotes.exec_envelope(text)
+        _runner, tally = probegate.runner_and_tally(text)
+        if envelope is None or envelope.exit_code is None or not tally:
+            return "unknown"
+        failed, _, passed = tally.partition("/")
+        if tally.endswith("/OK") and envelope.exit_code == 0:
+            return "green"
+        if failed.endswith("f") and failed[:-1].isdigit() and passed.endswith("p") and passed[:-1].isdigit():
+            if int(failed[:-1]) > 0 and envelope.exit_code != 0:
+                return "red"
+            if int(failed[:-1]) == 0 and int(passed[:-1]) > 0 and envelope.exit_code == 0:
+                return "green"
+        return "unknown"
+
+    def unsupported(self) -> str:
+        """Why NO current success can be claimed for the code as the transcript leaves it, or "" (supported or unknown)."""
+        if not self.typed:
+            return ""
+        runs = [i for i, (kind, _) in enumerate(self.events) if kind == "exec"]
+        if not runs:
+            return "no check ran"
+        last_run = runs[-1]
+        after = self.events[last_run + 1:]
+        if any(kind == "change" for kind, _ in after):
+            return "a write landed after the last run"
+        if self.events[last_run][1] == "red" and not any(kind == "maybe" for kind, _ in after):
+            return "the newest run failed"
+        return ""

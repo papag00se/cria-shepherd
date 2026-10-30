@@ -449,6 +449,30 @@ def survey_settles_absence(inventory: str) -> bool:
         prompts.load_map("workspace_inventory")["complete"] in inventory.splitlines())
 
 
+_LISTED_SIZE = re.compile(r"^  (\S.*?) \((\d+) B\)", re.M)
+
+
+def survey_size_contradicted(inventory: str, claims) -> list[tuple[str, int, int]]:
+    """``(name, claimed, listed)`` for each exact ``(name, bytes)`` claim a complete, current survey contradicts.
+
+    The renderer's own clause says "a listed file has the listed size", so a survey that carries it
+    settles a size exactly as it settles absence. Everything else is UNKNOWN and returns nothing: a
+    name the survey does not list (absence is `survey_settled_absent`'s question), a listed size that
+    is not known, or a base name that more than one listed file answers to."""
+    if not survey_settles_absence(inventory):
+        return []
+    sizes = {path.lower(): int(size) for path, size in _LISTED_SIZE.findall(inventory)}
+    out = []
+    for name, claimed in claims:
+        rel = os.path.normpath(name.strip().strip("`'\"").rstrip(".,;:)")).replace(os.sep, "/").lower()
+        if not names_a_workspace_file(name):
+            continue
+        hits = [rel] if rel in sizes else [p for p in sizes if p.endswith("/" + rel)]
+        if len(hits) == 1 and sizes[hits[0]] != claimed:
+            out.append((name, claimed, sizes[hits[0]]))
+    return out
+
+
 def names_a_workspace_file(name: str) -> bool:
     """Is ``name`` a relative, file-shaped path of the project: not a directory, not outside the workspace,
     not under a directory the survey omits, not cria's own? The ONE gate every file-claim lens shares."""

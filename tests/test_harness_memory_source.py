@@ -70,6 +70,8 @@ class Provider:
             text = "FAITHFUL" if self.verdict else "UNFAITHFUL"
         elif "CHANGED or NOT CHANGED" in system:
             text = "NONE"                    # the change-claim lens: this history makes no claim to list
+        elif "GREEN or EARLIER or NOT GREEN" in system:
+            text = "NONE"                    # the build-state lens: nothing to list either
         else:
             if self.broken:
                 raise RuntimeError("unavailable")
@@ -99,7 +101,7 @@ def test_source_matches_server(initial, finish, retry, verdict, broken):
     candidate = retry if needs_retry else initial
     accepted = bool(candidate) and verdict and not broken
     expected_prose = candidate if accepted else ""
-    expected_calls = (int(needs_retry) + (4 if accepted else 1 if candidate and not broken else 0))
+    expected_calls = (int(needs_retry) + (5 if accepted else 1 if candidate and not broken else 0))
     assert len(provider.calls) == expected_calls
     assert actual.effect is (Effect.DELIVERED if accepted else Effect.WITHHELD)
     assert actual.prose == expected_prose
@@ -128,7 +130,8 @@ def test_source_matches_server(initial, finish, retry, verdict, broken):
         if accepted:
             assert "Implement all original deliverables" in str(lenses[1]["messages"])
             assert "CHANGED or NOT CHANGED" in lenses[2]["messages"][0]["content"]   # the change-claim lens
-            assert "Wrote a.py" in str(lenses[3]["messages"])
+            assert "GREEN or EARLIER or NOT GREEN" in lenses[3]["messages"][0]["content"]   # the build-state lens
+            assert "Wrote a.py" in str(lenses[4]["messages"])
             assert "Summarize with next steps" not in str(lenses)
     assert [name for name, _fields in events] == expected_names
     if needs_retry:
@@ -280,19 +283,20 @@ def test_pseudo_call_or_cut_retry_is_withheld_instead_of_becoming_harness_memory
 @pytest.mark.parametrize("reject_lens,answer,expected_calls", [
     ("retrospective", "UNDECIDABLE", 1),
     ("scope", "NARROWS", 2),
-    ("fidelity", "UNFAITHFUL", 4),     # retrospective, scope, the change-claim lens, fidelity
+    ("fidelity", "UNFAITHFUL", 5),     # retrospective, scope, the change-claim and build-state lenses, fidelity
 ])
 def test_each_independent_lens_can_withhold_without_changing_original_task(reject_lens, answer, expected_calls):
     calls = []
     systems = {prompts.load("compaction_validate_retrospective"): "retrospective",
                prompts.load("compaction_validate_scope"): "scope",
                prompts.load("compaction_validate_changes"): "changes",
+               prompts.load("compaction_validate_build"): "build",
                prompts.load("compaction_validate"): "fidelity"}
     def chat(body, log):
         calls.append(copy.deepcopy(body))
         lens = next(name for prompt, name in systems.items() if body["messages"][0]["content"].startswith(prompt))
         positive = {"retrospective": "RETROSPECTIVE", "scope": "PRESERVES", "changes": "NONE",
-                    "fidelity": "FAITHFUL"}
+                    "build": "NONE", "fidelity": "FAITHFUL"}
         return json.dumps(completion(answer if lens == reject_lens else positive[lens]))
     result = memory.harden(completion("Claimed work"), {"messages": history()},
                            memory.SessionFacts(original_task="Implement all original deliverables"),
@@ -361,7 +365,7 @@ def test_retained_prose_authority_matches_exact_unchanged_completion_bytes(prose
     assert memory.completion_text(result.completion).encode() == prose.encode()
     assert result.prose.encode() == prose.encode()
     assert settled == [(prose, "", False)]
-    assert len(provider.calls) == 4     # three lenses and the change-claim lens
+    assert len(provider.calls) == 5     # three lenses, the change-claim lens and the build-state lens
 
 
 def test_retained_prose_authority_matches_exact_successful_retry_bytes():
@@ -376,4 +380,4 @@ def test_retained_prose_authority_matches_exact_successful_retry_bytes():
     assert memory.completion_text(result.completion).encode() == prose.encode()
     assert result.prose.encode() == prose.encode()
     assert settled == [(prose, "", False)]
-    assert len(provider.calls) == 5     # writer retry, three lenses and the change-claim lens
+    assert len(provider.calls) == 6     # writer retry, three lenses, the change-claim lens and the build-state lens

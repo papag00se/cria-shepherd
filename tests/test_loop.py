@@ -2039,6 +2039,8 @@ def _compaction_validation_verdict(system):
         return "PRESERVES"
     if "CHANGED or NOT CHANGED" in system:
         return "NONE"        # the change-claim lens: nothing here to list
+    if "GREEN or EARLIER or NOT GREEN" in system:
+        return "NONE"      # the build-state lens: nothing here to list
     if "UNFAITHFUL or FAITHFUL" in system:
         return "FAITHFUL"
     return None

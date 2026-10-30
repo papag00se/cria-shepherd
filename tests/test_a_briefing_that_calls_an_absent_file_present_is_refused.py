@@ -77,6 +77,8 @@ def _validate(survey, files_reply, fidelity="FAITHFUL", briefing=CLAIM):
     lenses = {prompts.load("compaction_validate_retrospective"): "RETROSPECTIVE",
               prompts.load("compaction_validate_scope"): "PRESERVES",
               prompts.load("compaction_validate_files"): files_reply,
+              prompts.load("compaction_validate_sizes"): "NONE",
+              prompts.load("compaction_validate_build"): "NONE",
               prompts.load("compaction_validate"): fidelity}
 
     def chat(body, log):
