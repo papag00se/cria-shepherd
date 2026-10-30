@@ -1,0 +1,10 @@
+# The measured shape of a read that was not delivered, and the next step -- generated per request from the tool menu the reader holds.
+# `narrow` is the original wording for a file a line range CAN narrow; it must stay word-for-word what multipart_fit_overflow carried.
+# A route is named ONLY when the menu holds the tool that runs it (`{{SHELL}}` is that tool's name); with no such tool the facts stand alone.
+narrow = Read the file in narrower pieces instead (a line range on a read tool, `sed -n 'START,ENDp'`, `grep -n`, `head` or `tail`) and continue.
+facts_file = Measured: {{PATH}} is {{SIZE}} bytes in {{LINES}} line(s); line {{LONGEST_LINE}}, the longest, is {{LONGEST}} bytes.
+facts_window = Measured: the requested lines of {{PATH}} are {{SIZE}} bytes in {{LINES}} line(s); line {{LONGEST_LINE}}, the longest, is {{LONGEST}} bytes.
+long_line_shell = A line range, `grep -n`, `sed -n` and `head -n` all return whole lines, so none of them returns less than that line. To read part of a line, count bytes through {{SHELL}} instead, for example `sed -n '{{LINE}}p' {{QPATH}} | head -c 4000` (the first 4000 bytes of line {{LINE}}), `sed -n '{{LINE}}p' {{QPATH}} | tail -c 4000` (its last 4000), `tail -c +10001 {{QPATH}} | head -c 4000` (4000 bytes from byte offset 10000) or `grep -o -E '.{0,80}WORD.{0,80}' {{QPATH}}` (80 characters around each match of WORD; replace WORD with the text you are after).
+long_line_none = A line range returns whole lines, so it cannot return less than that line, and no tool you hold reads part of a line.
+binary_shell = Reading it as text again cannot succeed. To look at its bytes, run a byte-oriented command through {{SHELL}}, for example `od -A d -t x1z -N 256 {{QPATH}}` (the first 256 bytes in hex, printable characters beside them) or `wc -c < {{QPATH}}` (its size).
+binary_none = Reading it as text again cannot succeed, and no tool you hold reads bytes.

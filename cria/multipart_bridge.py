@@ -12,9 +12,9 @@ import uuid
 from dataclasses import asdict
 from contextlib import contextmanager
 import fcntl
-from . import bodykeys, filecommands, prompts, resultnotes, resultpacket
+from . import bodykeys, filecommands, prompts, readshape, resultnotes, resultpacket
 from .multipart import MultipartRead, InvalidPage, BridgeError, UnverifiedCarrier, _pairs
-from .multipart_reconstruct import verify_original
+from .multipart_reconstruct import BinaryBody, verify_original
 
 
 @dataclass
@@ -295,7 +295,7 @@ class Bridge:
                         or entry.fallback_kind not in (None,'unknown','overflow')
                         or (entry.failure_id is None and (entry.failure_kind is not None or entry.failure_code is not None))
                         or (entry.failure_id is not None and (entry.failure_id not in entry.received
-                            or entry.failure_kind not in ('running','cut','nonzero','unknown','invalid')))):
+                            or entry.failure_kind not in ('running','cut','nonzero','unknown','invalid','binary')))):
                     raise ValueError('invalid lifecycle or failure status')
                 if ((entry.calls and next(iter(entry.calls)) != spec.call_id)
                         or (not entry.calls and (entry.received or entry.private or entry.pending != spec.call_id or entry.offered))
@@ -314,7 +314,7 @@ class Bridge:
                             raise ValueError('missing prior page')
                         continue
                     content=entry.received[cid]; env=resultnotes.exec_envelope(content)
-                    if cid == entry.failure_id:
+                    if cid == entry.failure_id and entry.failure_kind != 'binary':
                         if cid != entry.pending or cid != next(reversed(entry.calls)):
                             raise ValueError('misplaced failed result')
                         if entry.failure_kind == 'running' and not (env and env.running):
@@ -332,7 +332,15 @@ class Bridge:
                         content=content[env.record_start:]
                     assembly.accept(content.encode('utf-8'))
                 if assembly._complete:
-                    entry.result=verify_original(assembly,spec.receipt).stdout
+                    try:
+                        entry.result=verify_original(assembly,spec.receipt).stdout
+                    except BinaryBody:
+                        # The last page is a verified page; the body it completes is the binary fact.
+                        if entry.failure_kind != 'binary': raise
+                    else:
+                        if entry.failure_kind == 'binary': raise ValueError('binary status not declared')
+                elif entry.failure_kind == 'binary':
+                    raise ValueError('binary status not declared')
                 if entry.fallback_kind is not None and (entry.result is None or entry.settled):
                     raise ValueError('invalid fit fallback state')
                 if spec.call_id in restored: raise ValueError('duplicate logical call')
@@ -441,7 +449,19 @@ class Bridge:
             self.last_delivery.pop(session, None)
             self._save(session)
 
-    def incoming(self, session, messages):
+    @staticmethod
+    def _overflow_next(entry, menu):
+        """The sentence after "Do not repeat the whole-file read": the measured shape of what was read, from the
+        verified bytes themselves (never a re-count of anything the coder said), and the route the menu holds."""
+        record = resultpacket.read_record(entry.result, 0, entry.spec.receipt)
+        shape = None
+        if record is not None and record.body is not None:
+            ranged = bool(entry.spec.start_line or entry.spec.end_line)
+            shape = readshape.measure(record.body, numbered=ranged, first=entry.spec.start_line or 1)
+        return readshape.overflow_next(shape, entry.spec.path, menu,
+                                       window=bool(entry.spec.start_line or entry.spec.end_line))
+
+    def incoming(self, session, messages, tools=None):
         """Return (projected history, private continuation calls), or identity.
 
         Only exact locally registered and paired calls are accepted. No payload
@@ -529,6 +549,11 @@ class Bridge:
                 if complete:
                     try:
                         e.result = verify_original(e.assembly, e.spec.receipt).stdout
+                    except BinaryBody:
+                        # Verified end to end, and the body is not text: a typed fact about the FILE, not a
+                        # failed transport -- its pages are not replayed to the coder (they are encoded).
+                        e.failure_id, e.failure_kind = e.pending, 'binary'
+                        e.failure_code = None
                     except InvalidPage:
                         e.failure_id, e.failure_kind = e.pending, 'invalid'
                         e.failure_code = None
@@ -572,13 +597,21 @@ class Bridge:
                             details = prompts.load_map('multipart_unverified_detail')
                             fragments = [prompts.fill(details['continuation'], output=failed.received[cid])
                                          for cid in failed.calls if cid in failed.private and cid in failed.received]
-                            if failed.fallback_kind == 'overflow':
+                            if failed.failure_kind == 'binary':
+                                # Verified end to end and not text. The encoded pages are transport, not the
+                                # file, and replaying them costs the whole window (a 100 KB blob measured
+                                # 142,264 tokens against a 49,152-token window: the session was dead). Say
+                                # the measured fact and the byte-oriented route the menu holds.
+                                m['content'] = ''
+                                explanation = readshape.binary_note(failed.assembly.identity[0], failed.spec.path, tools)
+                            elif failed.fallback_kind == 'overflow':
                                 # Measured: the file cannot fit. The encoded pages are cria's own transport,
                                 # never something the coder read, and replaying them would cost the window
                                 # again (or overflow it a second time). Say what is known and how to go on.
                                 m['content'] = ''
                                 explanation = prompts.render('multipart_fit_overflow',
-                                                             bytes=failed.assembly.identity[0])
+                                                             bytes=failed.assembly.identity[0],
+                                                             next=self._overflow_next(failed, tools))
                             elif failed.fallback_kind is not None:
                                 detail = prompts.load_map('multipart_fit_unavailable_detail')[failed.fallback_kind]
                                 explanation = prompts.render('multipart_fit_unavailable', detail=detail,

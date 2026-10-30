@@ -1,0 +1,1 @@
+⟦ctx:read-not-delivered⟧ The read was verified, but {{PATH}} ({{SIZE}} bytes) is not valid UTF-8 text, so none of it can be returned as a text read: no content was delivered and none of it counts as read. The transport pages that carried it are omitted because they are encoded pages, not file content.{{ROUTE}}

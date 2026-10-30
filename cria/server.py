@@ -1086,7 +1086,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 resolved = self.server.multipart_bridge.resolve_anonymous(body.get('messages') or [])
                 self._multipart_guard_session = resolved or sess_key
                 sess_key = resolved or 'anon:' + uuid.uuid4().hex
-            messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, body.get('messages') or [])
+            messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, body.get('messages') or [], tools=body.get('tools'))
         except BridgeError as exc:
             # The registry cannot authorize any reconstruction. Preserve the
             # exact carriers and mark their provenance before any proof owner
@@ -1160,7 +1160,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         try:
             self.server.multipart_bridge.withhold_for_fit(sess_key, ids, kind)
             fallback = copy.deepcopy(self._multipart_original_body)
-            messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, fallback.get('messages') or [])
+            messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, fallback.get('messages') or [], tools=fallback.get('tools'))
             from .multipart_bridge import ResultFact
             if calls or any(not isinstance(f, ResultFact) for f in facts):
                 raise BridgeError('fit fallback is not settled')
