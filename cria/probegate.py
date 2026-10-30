@@ -417,6 +417,10 @@ class GatePlan:
     transport_data: bytearray = field(default_factory=bytearray)
     transport_complete: bool = False
     transport_error: str = ""
+    # When the HARNESS's own page reader reported the failure (the `error` envelope), the last line of what it said,
+    # exactly as it said it — the line a traceback ends with names the exception. Empty for every failure cria itself
+    # diagnosed (a cut page, a bad hash): those are cria's words about the stream, not the tool's.
+    transport_reported: str = ""
     # C28: the cria-side wall-clock this plan was composed at, and the deadline (in seconds from
     # there) past which a still-"running" transport becomes terminal UNKNOWN rather than being
     # retried forever. `plan_gate` sets `transport_deadline_s` from the plan's own probe timeouts;
@@ -479,6 +483,7 @@ class GateOutcome:
     participation: participation.ParticipationReport | None = None
     transport_pending: bool = False  # more checked pages are required before parsing
     transport_unknown: bool = False  # transport ended incomplete/invalid; never a clean result
+    transport_reported: str = ""  # the harness's own last line about why (see GatePlan.transport_reported)
     scope_unknown: bool = False  # original source identity or owned auxiliary closure not established
 
 
@@ -655,6 +660,9 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
             detail = base64.b64decode(fields["error"], validate=True).decode("utf-8", "replace")
         except Exception:  # noqa: BLE001 — an unreadable error is still a transport failure
             detail = "harness-side page reader failed"
+        else:
+            lines = [ln.strip() for ln in detail.splitlines() if ln.strip()]
+            plan.transport_reported = lines[-1] if lines else ""
         return fail_transport(plan, detail)
     declared = {"bounds"} & set(fields)
     if set(fields) - declared not in ({"path", "offset", "total", "sha256", "data"},
@@ -2250,7 +2258,7 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                     # it contributes no result at all, and the newest gate below is untouched.
                     c = None
                 else:
-                    c = prompts.load("probe_transport_unknown")
+                    c = transport_unknown_text(transport_state.transport_reported)
                 if c is None or _is_no_signal_check(c):
                     if tid:
                         drop_ids.add(tid)
@@ -2504,6 +2512,13 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     return removed
 
 
+def transport_unknown_text(reported: str = "") -> str:
+    """The notice for a check whose evidence did not arrive. When the harness said why, its own last line rides along
+    verbatim (selected from what it printed, never paraphrased) so the coder can act on the real cause."""
+    base = prompts.load("probe_transport_unknown")
+    return f"{base}\n{prompts.render('probe_transport_reported', reported=reported)}" if reported else base
+
+
 def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
     state = ingest_transport(plan, result_text)
@@ -2516,7 +2531,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         if rlog is not None:
             rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
                       received=len(plan.transport_data), total=plan.transport_total)
-        return GateOutcome(ran=False, transport_unknown=True)
+        return GateOutcome(ran=False, transport_unknown=True, transport_reported=plan.transport_reported)
     if state != "complete":
         # "legacy": bytes that never arrived as a completed, verified transport (an old raw result, hand-made text). They
         # declare no boundary, so they establish no section, no cleanup report and no survey: UNKNOWN, never a pass.

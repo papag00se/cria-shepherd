@@ -23,6 +23,9 @@ from .shelltool import find_shell_tool, shell_args, with_time_budget, tool_decla
 
 GATE_EVERY_CODER_TURNS = 15
 MAX_PROBE_REISSUES = 2
+# THE ONE BOUND on completion retries (the loop re-exports it): a task the coder genuinely cannot finish still ends.
+# It bounds the whole-task critic's rejections AND the same unknown check notice, shown unchanged over and over.
+MAX_COMPLETION_CHECKS = 4
 
 
 class Log(Protocol):
@@ -46,6 +49,8 @@ class State(Protocol):
     last_gate_red: bool
     last_gate_participation: participation.ParticipationReport | None
     last_gate_testless: bool
+    gate_unknown_streak: int
+    gate_unknown_sig: str
     last_gate_skipped: int
     tests_passed_high: dict[str, int]
     last_regression: tuple[str, int, int] | None
@@ -300,12 +305,27 @@ def reissue(source: Input, state: State, services: ProbeServices, evidence: Evid
                   pending_kind=PendingKind.REISSUE)
 
 
+def _count_unknown(state: State, outcome: probegate.GateOutcome) -> None:
+    """Consecutive check readings whose evidence did not arrive, for the SAME stated reason. The reason is the harness's
+    own last line, less this gate's private token (a per-gate random name, otherwise every reading differs). Any reading
+    that is not unknown ends the run, so a transient loss never accumulates."""
+    if not outcome.transport_unknown:
+        state.gate_unknown_streak, state.gate_unknown_sig = 0, ""
+        return
+    plan = state.gate_plan
+    token = plan.transport_id if plan is not None else ""
+    sig = outcome.transport_reported.replace(token, "") if token else outcome.transport_reported
+    state.gate_unknown_streak = state.gate_unknown_streak + 1 if sig == state.gate_unknown_sig else 1
+    state.gate_unknown_sig = sig
+
+
 def record(source: Input, state: State, outcome: probegate.GateOutcome, findings: str,
            evidence: EvidenceServices) -> None:
     """Single shared check-state settlement; F44 progress bookkeeping stays shared."""
     state.last_gate_ran = bool(outcome.ran)
     state.last_gate_participation = outcome.participation
     state.gate_replan_required = bool(outcome.replan_after_survey)
+    _count_unknown(state, outcome)
     if outcome.transport_unknown:
         state.gate_fresh = False
         return
@@ -387,7 +407,16 @@ def completion_result(source: Input, state: State, evidence: EvidenceServices) -
     findings = evidence.error(outcome)
     record(source, state, outcome, findings, evidence)
     if outcome.transport_unknown:
-        return Result(Status.OBSERVED, text=prompts.load("probe_transport_unknown"), outcome=outcome)
+        if state.gate_unknown_streak > MAX_COMPLETION_CHECKS:
+            # The same notice has now been delivered MAX_COMPLETION_CHECKS times with nothing changing: the veto has
+            # told the coder everything it can, and repeating it only keeps the task from ever ending. Same bounded
+            # exit as the whole-task critic (the critic, if any, still judges); said, not silent.
+            _event(source, "loop.done_unverified", level="warn", checks=state.gate_unknown_streak,
+                   why="check evidence unknown, repeatedly, for the same reported reason",
+                   reported=outcome.transport_reported)
+            return Result(Status.SILENT, outcome=outcome)
+        return Result(Status.OBSERVED, text=probegate.transport_unknown_text(outcome.transport_reported),
+                      outcome=outcome)
     if not outcome.ran:
         _event(source, "loop.gate", plan_off=True, blocked=False, gate_ran=False,
                replan_after_survey=bool(outcome.replan_after_survey))
@@ -457,7 +486,7 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "repository-check-lifecycle", "repository-checks", 4, family_id="F40", triggers=(("periodic", 5),),
-    prompts=("periodic_gate", "probe_transport_unknown", "tests_regressed",
+    prompts=("periodic_gate", "probe_transport_unknown", "probe_transport_reported", "tests_regressed",
              "checks_completed", "checks_completed_section", "checks_no_output",
              "checks_artifacts_removed", "checks_cleanup_failed", "checks_cleanup_unknown", "checks_original_scope"),
     state="existing task/session probe id/plan, helper readiness, periodic flags/cadence/replan/reissue counters, check mirror and per-command passing highs; fresh session on a new task",

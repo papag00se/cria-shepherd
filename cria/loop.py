@@ -399,6 +399,9 @@ class GuardState:
     # and the session exited 3/4 with ZERO gates run — pytest would have printed "5 failed". A session
     # must not end on judgment alone while cria never even ATTEMPTED the repo's checks.
     gate_fresh: bool = False
+    # Consecutive check readings that came back UNKNOWN for the same stated reason (see repositorychecks._count_unknown).
+    gate_unknown_streak: int = 0
+    gate_unknown_sig: str = ""
     # A gate planned before the workspace survey can return only that survey.  Once it lands, probe
     # discovery has new facts and completion must wait for one newly planned gate.  Separate from
     # ``gate_fresh`` so an already-surveyed project with no applicable probe keeps the bounded
@@ -610,7 +613,7 @@ GATE_EVERY_CODER_TURNS = repositorychecks.GATE_EVERY_CODER_TURNS
 # When it says not-done, re-open with ONE corrective step and re-drive. Bounded so a task the coder
 # genuinely can't finish still completes rather than looping forever (the plan-off path relies on the
 # harness stopping; cria DRIVES the plan loop, so it must bound the retries itself).
-MAX_COMPLETION_CHECKS = 4
+MAX_COMPLETION_CHECKS = repositorychecks.MAX_COMPLETION_CHECKS
 _COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this before finishing: "
 
 # Periodic SATISFACTION check (plan-off): a long session can finish the work but never STOP — the coder
@@ -7887,7 +7890,7 @@ def gate_error_text(outcome) -> str:
     is reserved for the case where nothing was.
     """
     if getattr(outcome, "transport_unknown", False):
-        return prompts.load("probe_transport_unknown")
+        return probegate.transport_unknown_text(getattr(outcome, "transport_reported", ""))
     if not outcome.ran:
         return ""
     findings = proberun.completion_block_nudge(outcome.report)
