@@ -108,6 +108,7 @@ def test_the_fidelity_judge_holds_the_decisive_inventory_and_the_rule():
     seen = []
     verdicts = {prompts.load("compaction_validate_retrospective"): "RETROSPECTIVE",
                 prompts.load("compaction_validate_scope"): "PRESERVES",
+                prompts.load("compaction_validate_files"): "",   # the file lens has its own test file
                 prompts.load("compaction_validate"): "FAITHFUL"}
 
     def chat(body, log):

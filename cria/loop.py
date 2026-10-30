@@ -60,7 +60,7 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
-from . import contextrestoration, ledgercopies, preamblepolicy, reorientation, steppreparation, system1wiring
+from . import contextrestoration, filepresence, ledgercopies, preamblepolicy, reorientation, steppreparation, system1wiring
 from .toolstages import policy_log
 from .modulestate import ModuleInput, ModuleState
 from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
@@ -7581,6 +7581,13 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     if accepted and task_fact:
         accepted = judge("scope", prompts.load("compaction_validate_scope"),
                          [task_fact, candidate], "PRESERVES")
+    # A file the briefing calls present while a COMPLETE survey lists none such is a fact check, not a
+    # reading of the transcript: the fidelity verdict below held the incident's claim and passed it.
+    if accepted:
+        missing = filepresence.contradicted_files(summarize, chat_fn, role, briefing, files, rlog, phase)
+        if missing:
+            answers["files"] = "ABSENT " + ", ".join(missing)
+            accepted = False
     if accepted:
         blocks = list(transcript_blocks)
         if task_fact and task_fact not in blocks:

@@ -430,6 +430,53 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
     return "\n".join(lines)
 
 
+# --- reading a rendered survey back: which named files does it SETTLE as absent? -----------------
+#
+# The inventory is rendered text by the time a judge holds it, so the question "is this file
+# really not there?" is answered from that text and nothing else: the same lines the reader
+# saw. A name is settled absent only when the text carries the renderer's own completeness
+# clause (a bounded or overtaken survey never does), the name is a relative file-shaped path,
+# it is not listed, and it is not under a directory the renderer omits or folds. Everything
+# else is UNKNOWN and stays so (principle 11b: a mechanism may only speak about what it reached).
+
+_LISTED_LINE = re.compile(r"^  (\S.*?) \((?:\d+ B|size not known)\)", re.M)
+_FILE_SHAPED = re.compile(r"^[\w@+-][\w@+.\-/]*\.[A-Za-z][A-Za-z0-9]{0,7}$")
+
+
+def survey_settles_absence(inventory: str) -> bool:
+    """True iff this rendered survey carries the renderer's own complete-and-current clause."""
+    return bool(inventory) and (
+        prompts.load_map("workspace_inventory")["complete"] in inventory.splitlines())
+
+
+def survey_settled_absent(inventory: str, names) -> list[str]:
+    """The ``names`` a complete, current survey rendered in ``inventory`` shows to be absent.
+
+    Deterministic ground truth only. ``names`` are spellings a reader gathered (never judged
+    here); each is returned, as given, iff the survey settles that it does not exist."""
+    if not survey_settles_absence(inventory):
+        return []
+    labels = prompts.load_map("workspace_inventory")
+    listed = {m.lower() for m in _LISTED_LINE.findall(inventory)}
+    template = re.escape(labels["install_prefix"].strip())
+    fold = re.compile(template.replace(re.escape("{{PREFIX}}"), r"(\S+)")
+                      .replace(re.escape("{{COUNT}}"), r"\d+"))
+    folded = tuple(p.strip("/").lower() for p in fold.findall(inventory))
+    out = []
+    for name in names:
+        rel = os.path.normpath(name.strip().strip("`'\"").rstrip(".,;:)")).replace(os.sep, "/")
+        low = rel.lower()
+        if (not _FILE_SHAPED.match(rel) or rel.startswith(("/", "~", ".."))
+                or set(rel.split("/")[:-1]) & _INVENTORY_EXCLUDE
+                or any(low == f or low.startswith(f + "/") for f in folded)
+                or any("cria" in part.lower() for part in rel.split("/"))):
+            continue
+        if low in listed or any(entry.endswith("/" + low) for entry in listed):
+            continue
+        out.append(name)
+    return out
+
+
 # --- the RESEARCH ledger, rendered for a judge ------------------------------------------------
 #
 # Lives here, not in loop.py, for the same reason workspace_inventory does: loop imports planner, so

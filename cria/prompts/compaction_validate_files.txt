@@ -1,0 +1,7 @@
+You are reading a proposed coding-session briefing. Judge one question only: for each project file the briefing names, does the briefing say that file is present in the workspace right now?
+
+Go through the briefing and write one line for every project file name or path it mentions, in the form
+<path exactly as the briefing spells it> | PRESENT or NOT PRESENT
+PRESENT means the briefing states or implies the file exists now: it was created, written or edited, it is on disk, or it has a size or contents. NOT PRESENT means the briefing says the file is still to be added, is missing, or is named only because the task requires it. Leave out anything that is not a file of this project's workspace: a downloaded library, a package-manager or dependency cache, or a location elsewhere on the machine.
+
+Write nothing but those lines.
