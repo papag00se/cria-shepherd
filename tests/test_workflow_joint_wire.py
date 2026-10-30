@@ -73,3 +73,24 @@ def test_unknown_route_cannot_send_original_or_publish_observation(tmp_path):
  body={'model':'fixture','messages':[{'role':'user','content':[IMAGE]}]}
  with pytest.raises(ImageUnavailable):up.chat(body,Log())
  assert not sent
+
+def test_harness_tool_controls_do_not_change_the_role_signature_of_the_toolless_observation():
+ # Codex sends parallel_tool_calls with every request; the observation request drops it with the tools.
+ role=config.Role(name='coder',backend='fixture',reasoning='auto',temperature=0.2)
+ source={'model':'fixture','messages':[{'role':'user','content':[IMAGE]}],'tools':[{'type':'function','function':{'name':'x'}}],
+         'tool_choice':'auto','parallel_tool_calls':True,'response_format':{'type':'text'},'reasoning_effort':'none'}
+ role.apply(source);upstream.record_applied_coder_role(source,role)
+ route=CoderRoute(object(),'fixture',upstream.coder_role_signature(source),True)
+ from cria.imageprotocol import observation_request
+ request=observation_request(source,route,TASK,IMAGE)
+ role.apply(request);upstream.record_applied_coder_role(request,role)
+ assert upstream.coder_role_signature(request)==route.role_signature
+
+def test_wire_reasoning_convention_rewrite_does_not_change_the_role_signature():
+ # Upstream._prep rewrites reasoning_effort into chat_template_kwargs in place before dispatch validation.
+ asked={'model':'fixture','messages':[],'temperature':0.2,'reasoning_effort':'none'}
+ rewritten={'model':'fixture','messages':[],'temperature':0.2,'chat_template_kwargs':{'enable_thinking':False}}
+ assert upstream.coder_role_signature(asked)==upstream.coder_role_signature(rewritten)
+ assert upstream.coder_role_signature(asked)!=upstream.coder_role_signature({**rewritten,'chat_template_kwargs':{'enable_thinking':True}})
+ assert upstream.coder_role_signature({**asked,'reasoning_effort':'high'})==upstream.coder_role_signature(
+     {**rewritten,'chat_template_kwargs':{'enable_thinking':True}})

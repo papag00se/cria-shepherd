@@ -8,6 +8,18 @@ from .imageobserver import ObservationCallbacks
 
 current = ContextVar('source_image_context', default=None)
 
+def review_view(messages,rlog=None):
+    """The request's messages as an auxiliary reader (judge, critic, summarizer) should see them: every
+    observed image packet replaced by its labelled observation, exactly as the coder's own view is. Raw
+    pixels are never rendered as evidence text, and without the observation a judge cannot verify what the
+    coder reported seeing."""
+    context=current.get()
+    if context is None or not context.prepared.bindings:return messages
+    try:return context.session.project(context.prepared,messages)
+    except ImageUnavailable as exc:
+        if rlog is not None:rlog.emit('image.review_projection_unavailable',level='warn',error=str(exc))
+        return messages
+
 @dataclass(frozen=True)
 class SourceImageContext:
     workflow: object

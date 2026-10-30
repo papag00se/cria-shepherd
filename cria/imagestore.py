@@ -43,6 +43,12 @@ class Attempt:
     route: CoderRoute
     request: dict
 
+def _remote(part):
+    """True when the retained image part is an http(s) URL reference rather than inline bytes."""
+    value=part.get('image_url') if isinstance(part,dict) else None
+    url=value.get('url') if isinstance(value,dict) else value
+    return isinstance(url,str) and url.lower().startswith(('http://','https://'))
+
 @dataclass(frozen=True)
 class FreshWorkspaceRead:
     ref: str
@@ -213,11 +219,11 @@ class ImageSession:
                 part=out[binding.message]['content'][binding.part]
                 if digest(part)!=binding.source_digest or record.source_digest!=binding.source_digest or record.task_scope!=digest(prepared.task):
                     raise ImageUnavailable('Image source occurrence or task changed during preparation')
-                self._load(record)  # a published reference must still have its retained source
+                part=self._load(record)  # a published reference must still have its retained source
                 if record.observation is None:continue
                 obs=record.observation
                 source=(prompts.render('image_source_workspace',path=record.workspace_path) if record.workspace_path
-                        else prompts.load('image_source_attachment'))
+                        else prompts.load('image_source_remote' if _remote(part) else 'image_source_attachment'))
                 text=prompts.render('image_observation',ref=record.ref,model=record.observed_model,
                      task_scope=record.task_scope,extracted=obs.extracted_text,description=obs.description,
                      uncertainty=obs.uncertainty,source=source)

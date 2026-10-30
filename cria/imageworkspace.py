@@ -102,7 +102,7 @@ class ImageWorkspace:
                 if len(issuers)!=1 or len(results)!=1 or issuers[0][0]>=results[0][0] or issuers[0][1]!=record['call']:
                     raise ImageUnavailable('Workspace image read correlation changed or is ambiguous')
                 i,result=results[0]
-                if not has_images(result):raise ImageUnavailable('Harness image read returned no supported image; original retained')
+                if not has_images(result):continue  # the harness's own words (a refusal, a missing file) reach the coder as written
                 fingerprint=digest({k:v for k,v in result.items() if k not in bodykeys.ALL})
                 if record['result_digest'] not in (None,fingerprint):
                     raise ImageUnavailable('Previously received workspace image result changed; request a fresh read')

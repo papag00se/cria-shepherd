@@ -388,9 +388,22 @@ def record_applied_coder_role(body, role):
 
 
 def coder_role_signature(body):
-    excluded = {'messages', 'tools', 'tool_choice', 'model', 'stream', 'stream_options',
-                'metadata', 'user', 'store'} | set(bodykeys.ALL)
+    # Tool/response-shape controls are not role controls: the observation request drops them with the tools.
+    excluded = {'messages', 'tools', 'tool_choice', 'parallel_tool_calls', 'response_format', 'model', 'stream',
+                'stream_options', 'metadata', 'user', 'store'} | set(bodykeys.ALL)
     settings = {k: v for k, v in body.items() if k not in excluded}
+    # The wire boundary may rewrite the reasoning convention in place (_reconcile_reasoning_convention:
+    # reasoning_effort <-> chat_template_kwargs.enable_thinking). The signature names what the body
+    # ASKS for, not which dialect carries it, so both spellings reduce to one thinking flag.
+    if 'reasoning_effort' in settings:
+        settings['thinking_intent'] = settings.pop('reasoning_effort') not in ('none', 'minimal', None)
+    ctk = settings.get('chat_template_kwargs')
+    if isinstance(ctk, dict) and 'enable_thinking' in ctk:
+        rest = {k: v for k, v in ctk.items() if k != 'enable_thinking'}
+        settings['thinking_intent'] = bool(ctk['enable_thinking'])
+        settings.pop('chat_template_kwargs')
+        if rest:
+            settings['chat_template_kwargs'] = rest
     settings['output_reserve_intent'] = body.get(bodykeys.OUTPUT_RESERVE)
     settings['merge_turns_intent'] = body.get(bodykeys.MERGE_TURNS, False)
     intent = body.get(bodykeys.CODER_ROLE_INTENT)

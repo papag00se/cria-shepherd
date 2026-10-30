@@ -225,3 +225,15 @@ def test_pending_late_projection_preserves_packets_and_missing_image_errors(rig)
  assert result==framed and result[1] is framed[1] and s.pending(prepared)==(ref,)
  with pytest.raises(ImageUnavailable):s.project(prepared,[framed[0],framed[-1]])
  with pytest.raises(ImageUnavailable):s.project(prepared,framed+[messages[0]])
+
+def test_remote_url_source_is_labelled_a_reference_not_a_retained_copy(rig):
+ _,s,route,_,_,_,body,_=rig
+ remote={'type':'image_url','image_url':{'url':'https://example.test/a.png?sig=secret'}}
+ messages=[{'role':'user','content':[{'type':'text','text':TASK},remote]}]
+ prepared=s.prepare(messages,TASK);ref=prepared.bindings[0].ref
+ attempt=s.begin(ref,TASK,route,body)
+ s.complete(attempt,delivered(attempt,route))
+ text=s.render(prepared)[0]['content'][1]['text']
+ assert 'remote URL reference' in text and 'did not fetch it' in text
+ assert 'retained privately' not in text and 'example.test' not in text and 'secret' not in text
+ assert s.reinspect(ref)==remote

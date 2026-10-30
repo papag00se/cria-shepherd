@@ -68,3 +68,13 @@ def test_malformed_native_path_arguments_are_typed_unavailable(setup,args):
  s,w,_=setup;c=action('view_image',{'path':PATH})
  c['choices'][0]['message']['tool_calls'][0]['function']['arguments']=args
  with pytest.raises(ImageUnavailable):w.register(s,c,[TOOL])
+
+@pytest.mark.parametrize('words',['view_image is not allowed because you do not support image inputs',
+                                  [{'type':'text','text':'No such file: ./note.png'}]])
+def test_harness_text_failure_of_an_issued_read_passes_through_instead_of_failing_the_request(setup,words):
+ s,w,history=setup
+ history[-1]['content']=copy.deepcopy(words)
+ assert w.resolve(s,history)=={}
+ assert history[-1]['content']==words
+ prepared=s.prepare(history,'Look',workspace_sources={})
+ assert not prepared.bindings

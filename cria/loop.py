@@ -49,7 +49,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from .imageworkflow import current as _image_current
+from .imageworkflow import current as _image_current, review_view as _image_review_view
 
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
@@ -5634,6 +5634,7 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     # not run: pytest only runs tests named test_*.py or *_test.py"; 0 of 8 reasoner-side ones did.
     # cria then asked those reasoners what the coder should do next and got "implement the API
     # calls" — the rename the coder had just decided on was dropped and never came back.
+    messages = _image_review_view(messages, rlog)
     automatic = probegate.gate_call_ids(messages)
     scrubbed = list(probegate.clean_gate_results(
         _reasoner_session(messages), gate_plan, linked_only=True))
@@ -5667,7 +5668,8 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
                     lines.append(prompts.fill(receipt_labels["call"],
                                               call_id=json.dumps(tc["id"], ensure_ascii=False)))
         elif role == "tool":
-            c = str(m.get("content") or "")
+            # Packet parts are read as text: an observed image is its labelled observation, never a repr of pixels.
+            c = (_msg_text_content(m) if isinstance(m.get("content"), list) else str(m.get("content") or ""))
             if c and not _is_cria_scaffolding(
                     c, automatic=m.get("tool_call_id") in automatic, keep_checks=keep_checks):
                 if m.get("tool_call_id"):
