@@ -21,16 +21,17 @@ The single source of truth for work that is **undecided or unbuilt right now**. 
 
 ---
 
-## Open — multipart reads and image workflow (commit `110b7870`, 2026-10-29)
+## Open — multipart reads and image workflow (2026-10-29)
 
-Built and committed: transparent multipart reads (verified pages assembled into one logical read, fitted against the complete model-visible request, unverified carriers preserved without read credit) and the same-coder image observe/reinspect workflow ([docs/image-workflow.md](image-workflow.md)). Both were validated with offline fixtures and fake backends only. Still open:
+Built, committed and deployed (release `c0734833-multipart-image-20261029` first, redeployed from later HEADs; rollback = remove the newest `99zzz…-multipart-image*.conf` drop-in, `sudo systemctl daemon-reload && sudo systemctl restart cria.service`): transparent multipart reads (verified pages assembled into one logical read, fitted against the complete model-visible request, unverified carriers preserved without read credit) and the same-coder image observe/reinspect workflow ([docs/image-workflow.md](image-workflow.md)). Validated against real inference on the RTX 3080: native measurement equalled the server's own count in 45 of 45 checks; multipart reads of 12 KB to 150 KB through a real PTY and a real sandboxed Codex; real `gemma4_12b` vision on Chat and Responses, workspace `view_image`, remote URL references, streaming. Still open:
 
-- **Real-model validation** of native capacity measurement, multipart end to end, and vision (needs a vision-capable model on the RTX 3080; ornith has none).
-- **Retained-state cleanup**: nothing deletes multipart state or retained originals automatically, because cria has no trusted session-close signal or fenced lease. Inferring closure from idleness, eviction or history is forbidden; an explicit operator-run command is the only honest route.
-- **Read overflow continuation** (source-bound line/byte guidance), very long single lines, and a lossless binary read are incomplete.
+- **Automatic retained-state cleanup**: none, because cria has no trusted session-close signal or fenced lease; inferring closure from idleness, eviction or history is forbidden. `python -m cria.retention` is the explicit, operator-run route (dry run by default).
+- **Binary and single-huge-line reads**: `read_file` has no byte-range argument and cria must not invent one; overflow answers state the measured size and ask for narrower pieces.
 - Page reads are hash- and metadata-checked, not an atomic snapshot against a concurrent writer.
-- Image-bearing SSE buffers its internal exchanges; remote image URLs stay references.
-- **Deployed 2026-10-29** as release `c0734833-multipart-image-20261029` (whole `cria/` tree at that commit, via drop-in `99zzzzzzzz-multipart-image.conf`). Rollback: remove that drop-in, `sudo systemctl daemon-reload && sudo systemctl restart cria.service` (returns to `34a1fcf+shrink-omission-20261029`). Real-model validation covered measurement, multipart reads and Chat/Responses images on the RTX 3080; workspace `view_image`, remote image URLs and image streaming on Responses were not run for real.
+- A multi-step task whose only deliverable is a statement about an image is still refused by the file-based confirmation check until the completion-check bound; a plain question works.
+- `suite/run.py` builds the Codex catalog with `input_modalities: ['text']`, so the stock suite catalog cannot run `view_image` at all.
+- Chat-completions system messages are always replaced by cria's own coder system (by design, unlabelled to the model); only Responses `instructions`/developer items carry the caller marker.
+- `writeproxy.rejected_payload_dropped` fires once per request while the rejected call stays in history (the audit count is inflated; nothing is lost).
 
 ---
 
