@@ -30,7 +30,7 @@ Built and committed: transparent multipart reads (verified pages assembled into 
 - **Read overflow continuation** (source-bound line/byte guidance), very long single lines, and a lossless binary read are incomplete.
 - Page reads are hash- and metadata-checked, not an atomic snapshot against a concurrent writer.
 - Image-bearing SSE buffers its internal exchanges; remote image URLs stay references.
-- **Not deployed**: the live release predates this commit.
+- **Deployed 2026-10-29** as release `c0734833-multipart-image-20261029` (whole `cria/` tree at that commit, via drop-in `99zzzzzzzz-multipart-image.conf`). Rollback: remove that drop-in, `sudo systemctl daemon-reload && sudo systemctl restart cria.service` (returns to `34a1fcf+shrink-omission-20261029`). Real-model validation covered measurement, multipart reads and Chat/Responses images on the RTX 3080; workspace `view_image`, remote image URLs and image streaming on Responses were not run for real.
 
 ---
 
