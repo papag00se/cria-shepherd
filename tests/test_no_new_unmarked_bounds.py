@@ -15,6 +15,8 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent / "cria"
 
 # file:line is deliberately NOT the key — line numbers move. The key is the expression, per file.
 _ALLOWED = {
+    ("retention.py", "name[:20]"): "operator CLI table: shortens a corrupt filename in a `list` row, never model-facing",
+    ("retention.py", "r[:6]"): "operator CLI table: the first six columns of a row tuple, not a clipped string",
     ("livingplan.py", "cleaned[i][:160]"): "an EVENT field for the operator's jsonl, not model-facing text",
     ("completionconfirmation.py", "cleaned.strip().splitlines()[1:]"): "parsing: drops a header line, keeps the rest",
     ("loop.py", "_task_key(task)[:8]"): "a short id for a filename/log, not prose",
