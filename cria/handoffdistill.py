@@ -31,14 +31,14 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import bodykeys, jsontext, prompts, selfcompact, tokenratio
+from . import bodykeys, jsontext, prompts, selfcompact, tokenratio, windowcaps
 from .content_reduce import est_tokens
 
 MARKER = "⟦ctx:extracted⟧"
 LIST_KEYS = ("files_touched", "commands_run", "errors", "accepted_fixes", "rejected_ideas",
              "constraints", "environment", "pending", "test_status", "references")
 KNOWN_KEYS = ("objective", "latest_plan") + LIST_KEYS
-EXTRACT_REPLY_TOKENS = 4096     # each extraction call's own reply room
+EXTRACT_REPLY_TOKENS = windowcaps.EXTRACT_REPLY   # each extraction call's own reply room (4,096 at the 49,152-token window)
 FRAME_TOKENS = 2560             # system instruction + intro + ask around a composed request (the
                                 # self-compaction writer's frame measures ~1.9K)
 MAX_PIECES = 24                 # bound on extra calls for one summary; the rest stays verbatim
@@ -204,6 +204,7 @@ def distill(blocks: list[str], *, history_count: int, budget: Budget,
     if budget.fits(blocks) or history_count < 2:
         return blocks
     history, facts = blocks[:history_count], blocks[history_count:]
+    extract_reply = windowcaps.resolve(EXTRACT_REPLY_TOKENS, budget.window)
     avail = budget.window - budget.reply - FRAME_TOKENS - sum(est_tokens(b) for b in facts) * budget.density
     # Keep the newest turns verbatim, up to a third of the final request's evidence room.
     cut, tail = len(history), 0.0
@@ -211,7 +212,7 @@ def distill(blocks: list[str], *, history_count: int, budget: Budget,
         cut -= 1
         tail += est_tokens(history[cut]) * budget.density
     older, recent = history[:cut], history[cut:]
-    piece = budget.window - EXTRACT_REPLY_TOKENS - 2 * FRAME_TOKENS
+    piece = budget.window - extract_reply - 2 * FRAME_TOKENS
     groups = chunk(older, max(piece, 512), budget.density)
     out, run, extracted, failed = [], [], 0, 0
     run_turns = 0
@@ -250,7 +251,8 @@ def summary_density() -> float:
 
 def binder(chat_fn: Callable, window: int | None, reply: int, apply_role: Callable[[dict], None], rlog):
     """A ``distill(blocks, history_count)`` bound to a live provider, or None without a real window."""
-    if not window or window <= reply + 2 * FRAME_TOKENS + EXTRACT_REPLY_TOKENS:
+    reply = windowcaps.resolve(reply, window)
+    if not window or window <= reply + 2 * FRAME_TOKENS + windowcaps.resolve(EXTRACT_REPLY_TOKENS, window):
         return None
     budget = Budget(window=window, reply=reply, density=summary_density())
 
@@ -259,13 +261,3 @@ def binder(chat_fn: Callable, window: int | None, reply: int, apply_role: Callab
                        chat_fn=chat_fn, apply_role=apply_role, rlog=rlog)
     return bound
 
-
-def window_of(chat_fn, rlog) -> int | None:
-    """The real window of the Upstream behind ``chat_fn`` (a bound ``Upstream.chat``), or None
-    when unknown or only guessed: without a real budget nothing can be sized."""
-    owner = getattr(chat_fn, "__self__", None) or getattr(chat_fn, "upstream", None)
-    resolve = getattr(owner, "_resolve_window", None)
-    if not callable(resolve):
-        return None
-    window = resolve(rlog)
-    return None if getattr(owner, "_window_guessed", False) else window

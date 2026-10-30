@@ -21,7 +21,7 @@ import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 
-from cria import selfcompact, tokenratio
+from cria import selfcompact, tokenratio, windowcaps
 from cria.config import Role
 from cria.loop import Loop, LoopContext, PlanSession
 from cria.plan import Plan, PlanItem
@@ -72,8 +72,8 @@ def _coder_chat(window: int):
     return chat
 
 
-def _loop(reasoner: _Reasoner, window: int) -> Loop:
-    ctx = LoopContext(planner=None, coder_chat=_coder_chat(window), reasoner_chat=reasoner,
+def _loop(reasoner: _Reasoner, window: int | None = None) -> Loop:
+    ctx = LoopContext(planner=None, coder_chat=_coder_chat(window or WINDOW), reasoner_chat=reasoner,
                       reasoner_role=Role(name="reasoner", backend="local"), runs_dir="")
     return Loop(replace(ctx, trigger_compaction=100,
                         coder_role=Role(name="coder", backend="local", output_reserve=RESERVE)))
@@ -96,9 +96,18 @@ def _session() -> PlanSession:
                                  created="2026-10-27T00:00:00+00:00", items=[PlanItem("step 1")]))
 
 
-def _fits(tokens: int) -> int:
-    """The smallest window the floor's own sizing accepts for ``tokens`` estimated tokens."""
-    return int(tokens * tokenratio.observed(MODEL)) + RESERVE + 1
+# The compaction thresholds are shares of the coder's window (windowcaps), so a fixture that wants a
+# particular amount of ROOM must not change the window — that would move the 6,000-token tail and the
+# 4,000-token band throttle the turn sizes below are written against. The coder serves the reference
+# window and the rest of its request (system frame, task, tool list) is the ``frame_tokens`` the
+# production caller already passes: ``_room(n)`` is the frame that leaves exactly ``n`` estimated tokens
+# of room for the conversation.
+WINDOW = windowcaps.REFERENCE_WINDOW
+
+
+def _room(tokens: int) -> int:
+    """``frame_tokens`` that leave ``tokens`` estimated tokens of room in the reference window."""
+    return int((WINDOW - RESERVE) / tokenratio.observed(MODEL)) - tokens
 
 
 class FloorPressureMeasuresTheCompactedView(unittest.TestCase):
@@ -113,26 +122,29 @@ class FloorPressureMeasuresTheCompactedView(unittest.TestCase):
         self.assertGreater(band, 0)
         self.assertLess(band, selfcompact.RECOMPACT_TOKENS)
 
-    def _first_compaction(self, reasoner, window):
-        loop, sess, rlog = _loop(reasoner, window), _session(), _Log()
+    def _first_compaction(self, reasoner, room):
+        loop, sess, rlog = _loop(reasoner), _session(), _Log()
+        self.frame = _room(room)
         msgs = _history()
-        view = loop._self_compact(msgs, sess, None, rlog, pinned_task="fix the importer")
+        view = loop._self_compact(msgs, sess, None, rlog, pinned_task="fix the importer",
+                                  frame_tokens=self.frame)
         return loop, sess, rlog, msgs, view
 
     def test_a_sub_band_turn_is_not_resummarized_when_the_compacted_view_fits(self):
         # Raw history ~40k est. tokens; the compacted view ~6.5k. The window holds the view only.
-        window = _fits(12_000)
+        room = 12_000
         reasoner = _Reasoner()
-        loop, sess, rlog, msgs, view = self._first_compaction(reasoner, window)
+        loop, sess, rlog, msgs, view = self._first_compaction(reasoner, room)
         self.assertEqual(reasoner.writer_calls, 1)
         self.assertTrue(sess.compact_state.summary)
-        self.assertTrue(loop._floor_would_drop(msgs, rlog), "fixture: the RAW history overflows")
-        self.assertFalse(loop._floor_would_drop(view, rlog), "fixture: the compacted view fits")
+        self.assertTrue(loop._floor_would_drop(msgs, rlog, self.frame), "fixture: the RAW history overflows")
+        self.assertFalse(loop._floor_would_drop(view, rlog, self.frame), "fixture: the compacted view fits")
 
         grown = _grow(msgs, 2, "new")
         covered = sess.compact_state.covered
         self._assert_sub_band(grown, covered)
-        out = loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer")
+        out = loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer",
+                            frame_tokens=self.frame)
 
         self.assertEqual(reasoner.writer_calls, 1,
                          "a sub-band increment must not buy another writer while the view fits")
@@ -145,40 +157,44 @@ class FloorPressureMeasuresTheCompactedView(unittest.TestCase):
 
     def test_a_compacted_view_that_genuinely_overflows_still_folds_under_pressure(self):
         # The window holds neither the raw history nor the compacted view (summary + band + tail).
-        window = _fits(5_000)
+        room = 5_000
         reasoner = _Reasoner()
-        loop, sess, rlog, msgs, view = self._first_compaction(reasoner, window)
+        loop, sess, rlog, msgs, view = self._first_compaction(reasoner, room)
         self.assertEqual(reasoner.writer_calls, 1)
-        self.assertTrue(loop._floor_would_drop(view, rlog), "fixture: the compacted view overflows")
+        self.assertTrue(loop._floor_would_drop(view, rlog, self.frame), "fixture: the compacted view overflows")
 
         grown = _grow(msgs, 2, "new")
         self._assert_sub_band(grown, sess.compact_state.covered)
-        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer")
+        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer",
+                            frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 2,
                          "an overflowing view folds before the floor drops turns")
 
     def test_rejected_briefings_still_bypass_the_throttle_once_per_rejection_run(self):
         # 1792480002 shape: every briefing rejected, so no summary exists and the view IS the raw
         # history, which overflows. Pressure must buy one throttle-bypassing attempt per run.
-        window = _fits(12_000)
+        room = 12_000
         reasoner = _Reasoner(accept=False)
-        loop, sess, rlog, msgs, view = self._first_compaction(reasoner, window)
+        loop, sess, rlog, msgs, view = self._first_compaction(reasoner, room)
         self.assertEqual(reasoner.writer_calls, 1)
         self.assertFalse(sess.compact_state.summary)
         self.assertIs(view, msgs, "a rejected briefing keeps every turn verbatim")
 
         grown = _grow(msgs, 2, "a")
         self._assert_sub_band(grown, sess.compact_state.attempted)
-        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer")
+        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer",
+                            frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 2, "pressure on the uncompacted view retries once")
 
         grown = _grow(grown, 2, "b")
-        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer")
+        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer",
+                            frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 2, "the bypass is spent until a band accumulates")
 
         reasoner.accept = True
         grown = grown + [{"role": "assistant", "content": f"band {i} " + BIG} for i in range(5)]
-        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer")
+        loop._self_compact(grown, sess, None, rlog, pinned_task="fix the importer",
+                            frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 3, "a full new band is still summarized")
         self.assertTrue(sess.compact_state.summary)
 

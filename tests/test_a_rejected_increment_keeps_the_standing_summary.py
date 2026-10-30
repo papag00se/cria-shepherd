@@ -19,7 +19,7 @@ import unittest
 
 from cria import selfcompact, tokenratio
 from tests.test_floor_pressure_measures_the_compacted_view import (
-    BIG, _Log, _Reasoner, _fits, _grow, _history, _loop, _session)
+    BIG, _Log, _Reasoner, _grow, _history, _loop, _room, _session)
 
 TASK = "fix the importer"
 
@@ -29,11 +29,14 @@ class ARejectedIncrementKeepsTheStandingSummary(unittest.TestCase):
         tokenratio.reset()
         self.addCleanup(tokenratio.reset)
 
-    def _accepted(self, window):
+    def _accepted(self, room):
+        # ``room``: estimated tokens the window leaves the conversation (see _room: the window itself is
+        # fixed, because the compaction thresholds are shares of it).
+        self.frame = _room(room)
         reasoner = _Reasoner()
-        loop, sess, rlog = _loop(reasoner, window), _session(), _Log()
+        loop, sess, rlog = _loop(reasoner), _session(), _Log()
         msgs = _history()
-        first = loop._self_compact(msgs, sess, None, rlog, pinned_task=TASK)
+        first = loop._self_compact(msgs, sess, None, rlog, pinned_task=TASK, frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 1)
         self.assertTrue(sess.compact_state.summary, "fixture: the first briefing was accepted")
         return reasoner, loop, sess, rlog, msgs, first
@@ -48,44 +51,48 @@ class ARejectedIncrementKeepsTheStandingSummary(unittest.TestCase):
         self.assertEqual(out[-len(grown[covered:]):], grown[covered:],
                          "the rejected band and the tail reach the coder verbatim")
 
-    def _run(self, window, grow):
-        reasoner, loop, sess, rlog, msgs, first = self._accepted(window)
+    def _run(self, room, grow):
+        reasoner, loop, sess, rlog, msgs, first = self._accepted(room)
         summary, covered = sess.compact_state.summary, sess.compact_state.covered
         reasoner.accept = False                       # the next increment's briefing is rejected
         grown = grow(msgs)
-        out = loop._self_compact(grown, sess, None, rlog, pinned_task=TASK)
+        out = loop._self_compact(grown, sess, None, rlog, pinned_task=TASK,
+                                    frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 2, "fixture: a new increment was attempted")
         self.assertEqual((sess.compact_state.summary, sess.compact_state.covered), (summary, covered))
         self._assert_standing_view(out, grown, covered, summary)
         # The next turn makes no attempt; its view starts exactly as the rejected turn's did.
-        after = loop._self_compact(grown, sess, None, rlog, pinned_task=TASK)
+        after = loop._self_compact(grown, sess, None, rlog, pinned_task=TASK,
+                                    frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 2)
         self.assertEqual(after, out, "the coder's view does not flip across a rejected increment")
 
     def test_a_rejected_band_increment_keeps_the_rollup(self):
         # A full new band (over RECOMPACT_TOKENS) is due; the window holds the compacted view.
-        self._run(_fits(30_000), lambda msgs: _grow(msgs, 10, "band"))
+        self._run(30_000, lambda msgs: _grow(msgs, 10, "band"))
 
     def test_a_rejected_floor_pressure_increment_keeps_the_rollup(self):
         # A sub-band increment bought only by floor pressure: the compacted view overflows (run07 shape).
-        self._run(_fits(5_000), lambda msgs: _grow(msgs, 2, "new"))
+        self._run(5_000, lambda msgs: _grow(msgs, 2, "new"))
 
     def test_without_a_standing_summary_a_rejection_still_sends_every_turn_verbatim(self):
         reasoner = _Reasoner(accept=False)
-        loop, sess, rlog = _loop(reasoner, _fits(12_000)), _session(), _Log()
+        loop, sess, rlog = _loop(reasoner), _session(), _Log()
         msgs = _history()
-        self.assertIs(loop._self_compact(msgs, sess, None, rlog, pinned_task=TASK), msgs)
+        self.assertIs(loop._self_compact(msgs, sess, None, rlog, pinned_task=TASK,
+                                         frame_tokens=_room(12_000)), msgs)
         self.assertEqual(reasoner.writer_calls, 1)
 
     def test_a_summary_whose_indices_no_longer_fit_the_history_is_not_reused_on_rejection(self):
         # The harness replaced the history (it shrank below ``covered``): the standing summary's indices
         # describe turns that are not these, so a rejected re-summary keeps the raw history.
-        reasoner, loop, sess, rlog, msgs, _first = self._accepted(_fits(30_000))
+        reasoner, loop, sess, rlog, msgs, _first = self._accepted(30_000)
         reasoner.accept = False
         shrunk = [msgs[0]] + [{"role": "user" if i % 2 else "assistant", "content": f"other {i} " + BIG}
                               for i in range(12)]
         self.assertGreater(sess.compact_state.covered, len(shrunk), "fixture: state no longer fits")
-        out = loop._self_compact(shrunk, sess, None, rlog, pinned_task=TASK)
+        out = loop._self_compact(shrunk, sess, None, rlog, pinned_task=TASK,
+                                    frame_tokens=self.frame)
         self.assertEqual(reasoner.writer_calls, 2)
         self.assertIs(out, shrunk)
 

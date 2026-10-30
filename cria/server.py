@@ -30,7 +30,7 @@ from . import imageassembly
 from . import upstream as _image_wire
 from .imageprotocol import ImageUnavailable
 
-from . import bodykeys, dirguard, handoffdistill, memoryhandoff, system1wiring
+from . import bodykeys, dirguard, handoffdistill, memoryhandoff, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify
@@ -489,7 +489,7 @@ def _handoff_distiller(provider, server, rlog):
     def apply_role(body):
         if role is not None:
             role.apply(body, internal=True, rlog=rlog)
-    return handoffdistill.binder(provider.chat, handoffdistill.window_of(provider.chat, rlog),
+    return handoffdistill.binder(provider.chat, windowcaps.window_of(provider.chat, rlog),
                                  SUMMARIZE_MAX_TOKENS, apply_role, rlog)
 
 

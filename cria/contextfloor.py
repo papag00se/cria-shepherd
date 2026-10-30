@@ -55,7 +55,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import bodykeys, imageprotocol
-from . import denial, editrecovery, prompts, selfcompact, toolargs
+from . import denial, editrecovery, prompts, selfcompact, toolargs, windowcaps
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -148,7 +148,7 @@ SAFETY_FACTOR = 1.8
 # Generation budget reserved when the request does not cap its own output. The prompt
 # must leave room for the model's reply inside the same window (llama.cpp n_ctx covers
 # prompt + generation).
-DEFAULT_GEN_RESERVE = 4096
+DEFAULT_GEN_RESERVE = windowcaps.GEN_RESERVE   # 4,096 at the 49,152-token window; reserve_for(window=) scales it
 # Lever 5 keeps this many trailing messages when forced to drop inside the protected span —
 # the active work (the newest tool call/result pairs) survives even a hard overflow.
 OVERFLOW_KEEP_TAIL = 8
@@ -1247,7 +1247,7 @@ def _strip_orphan_tools(messages: list[dict]) -> tuple[list[dict], int]:
     return out, removed
 
 
-def reserve_for(body: dict) -> int:
+def reserve_for(body: dict, window: int | None = None) -> int:
     """Generation budget to hold back from the window for this request's own reply — the
     INPUT/output split of a fixed window (llama.cpp ``n_ctx`` covers prompt + generation).
 
@@ -1259,7 +1259,9 @@ def reserve_for(body: dict) -> int:
          unset hard cap, which would leave 0 room and re-truncate immediately).
       2. ``max_tokens`` — fallback only: a request that self-caps its output at N needs exactly N
          of room, so reserve exactly that (no more — over-reserving would trim input needlessly).
-      3. ``DEFAULT_GEN_RESERVE`` — nothing specified. Note an UNSET hard cap never means 0 reserve."""
+      3. ``DEFAULT_GEN_RESERVE`` — nothing specified. Note an UNSET hard cap never means 0 reserve.
+         A window-sized Cap in any of the three is resolved against ``window`` (the model that will
+         answer); an unknown window is the Cap's reference value, i.e. the old constant."""
     def _pos_int(v) -> int:
         try:
             v = int(v)
@@ -1267,4 +1269,6 @@ def reserve_for(body: dict) -> int:
             return 0
         return v if v > 0 else 0
 
-    return _pos_int(body.get(bodykeys.OUTPUT_RESERVE)) or _pos_int(body.get("max_tokens")) or DEFAULT_GEN_RESERVE
+    return (_pos_int(windowcaps.resolve(body.get(bodykeys.OUTPUT_RESERVE), window))
+            or _pos_int(windowcaps.resolve(body.get("max_tokens"), window))
+            or windowcaps.resolve(DEFAULT_GEN_RESERVE, window))

@@ -24,7 +24,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
-from . import bodykeys, prompts
+from . import bodykeys, prompts, windowcaps
 from . import (callcapture, config, contextfloor, failover, generation, indicators, massage, modelview,
                reasoning, rumination, tokenratio)
 
@@ -577,7 +577,7 @@ class Upstream:
                     real = self._tokenize_prompt(rendered, rlog) if rendered is not None else None
                     if real is None:
                         raise ReadFitUnknown('native_measurement_unavailable', reads)
-                    reserve = contextfloor.reserve_for(current)
+                    reserve = contextfloor.reserve_for(current, window)
                     rlog.emit('context.measured', tokens=real, n_ctx=window, reserve=reserve)
                     if real + reserve > window:
                         raise ReadFitOverflow(MeasuredReadOverflow(window, real, reserve, reads, prepared[0]))
@@ -922,6 +922,11 @@ class Upstream:
                 # fitting. Unknown prose stays intact; the floor owns reduction.
                 msgs = modelview.retained_results_truth(msgs)
             window = self._resolve_window(rlog)
+            # A window-sized cap (judge/summary reply, reserve) is sized by the window of the model that
+            # ANSWERS — this Upstream's — here, at the wire, from the window this call already resolved
+            # (no second probe). An unknown or guessed window leaves the reference value: unknown is
+            # not small.
+            out = windowcaps.resolve_body(out, None if self._window_guessed else window)
             # A GUESSED WINDOW MAY NOT TRIM. `_resolve_window` returns `_FALLBACK_WINDOW` when
             # /props could not be read — an invented number, and the abort guard below already
             # refuses to act on it for exactly that reason (`not self._window_guessed`). The floor
@@ -950,7 +955,7 @@ class Upstream:
                 window = None
             repeat_ptrs_in = modelview.repeat_pointers(msgs)
             if window:
-                reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
+                reserve = contextfloor.reserve_for(body, window)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")
                 from . import capacitypolicy
                 safety = (safety_override if safety_override is not None else

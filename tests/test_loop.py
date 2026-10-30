@@ -6643,7 +6643,7 @@ class ComposedPromptBoundsTests(unittest.TestCase):
         # Historical regression: never return to the old 24,000-character tail.
         # All evidence reaches composition; only the existing floor can reduce it.
         from cria.config import Role
-        from cria.loop import _satisfaction_evidence, EVIDENCE_SUMMARY_TRIGGER_CHARS
+        from cria.loop import _satisfaction_evidence
         msgs = [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
                  "function": {"name": "exec_command",
                               "arguments": json.dumps({"command": "grep x api.json"})}}]},

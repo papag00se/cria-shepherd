@@ -72,7 +72,7 @@ from .groundtruth import workspace_inventory
 from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
                       surviving_noise_drops)
 from .searchloop import first_domain_in, normalize_search
-from . import probeclassify
+from . import probeclassify, windowcaps
 from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
                         tool_declares_time_budget, with_time_budget, writes_something)
 from .toolargs import PATH_KEYS, parse_args
@@ -1011,7 +1011,7 @@ def inspection_rounds(comp: dict) -> int:
 
 
 def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
-                      workspace_root: str = "", max_tokens: int = 8192,
+                      workspace_root: str = "", max_tokens: int = windowcaps.CRITIC_REPLY,
                       force_think_off: bool = False, transcript: list | None = None,
                       answer_now: str | None = None, answer_now_simple: str | None = None,
                       verdict_key: str = "",
@@ -1449,7 +1449,7 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
     result = definition.execute(completiondiagnosis.DiagnosisInput(
         lambda: obj, task, action_log, checks, participation_facts, original_task, phase),
         completiondiagnosis.GroundingServices(
-            lambda subject: _workspace_subject(workspace_root, subject), _evidence_blocks, _fix_text, ask, rlog))
+            lambda subject: _workspace_subject(workspace_root, subject), _blocks_of(ask), _fix_text, ask, rlog))
     return _diagnosis_nudge(result)
 
 
@@ -1520,7 +1520,7 @@ def _confirmation_services(chat, role, log, diagnosis):
             original_task=request.original_task, phase=request.phase),
             completiondiagnosis.GroundingServices(
                 lambda subject: _workspace_subject(request.workspace_root, subject),
-                _evidence_blocks, _fix_text, ask, log))
+                _blocks_of(ask), _fix_text, ask, log))
         return str(_diagnosis_nudge(result))
 
     return completionconfirmation.Services(_confirmation_facts(), inspect,
@@ -1865,7 +1865,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # into a 16k window, nothing the floor may touch, the verdict failed at the wire both passes). As
     # blocks the floor drops the OLDEST ones, each drop labelled, and the question, the task and the
     # newest actions stay. `user` (whole) remains the string the nudge's grounding checks read.
-    blocks = _evidence_blocks(evidence or "(no actions recorded yet)")
+    blocks = _evidence_blocks(evidence or "(no actions recorded yet)",
+                              window=windowcaps.window_of(reasoner_chat, rlog))
     asked = prompts.render("satisfaction_user_composed", task=task)
     if coder_tools:
         asked = asked + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
@@ -1986,10 +1987,11 @@ def _diagnosis_nudge(result) -> VerdictNudge:
 
 
 def _diagnosis_observation_services(definition, root, chat, role, log):
+    observation_ask = (_composed_closed_ask(chat, role, log, phase="deliverable-observation-requirement")
+                       if role is not None else None)
     grounding = completiondiagnosis.GroundingServices(
-        lambda subject: _workspace_subject(root, subject), _evidence_blocks, _fix_text,
-        _composed_closed_ask(chat, role, log, phase="deliverable-observation-requirement")
-        if role is not None else None, log)
+        lambda subject: _workspace_subject(root, subject), _blocks_of(observation_ask), _fix_text,
+        observation_ask, log)
     return completiondiagnosis.ObservationServices(
         inventory=lambda: workspace_inventory(root),
         judge=lambda system, user: _judge_completion(chat, role, system, user, log,
@@ -2105,13 +2107,6 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
 
-# Past this, a COMPOSED two-message prompt cannot be made to fit by the context floor: the floor's
-# lever is dropping whole oldest turns, and a two-message call has none to drop. This is where #5's
-# second exception applies — a MODEL-MADE summary, labelled as one — because the alternative that
-# used to sit here was a character clip, and the one after that is a judge call that errors out and
-# fails closed into the same re-nudge loop the clip was built for.
-EVIDENCE_SUMMARY_TRIGGER_CHARS = 48000
-
 # A closed-question judge's evidence rides as COMPOSED BLOCKS of about this many characters, never as one
 # protected message. The floor can reduce only whole unprotected turns, so evidence inside the system
 # message or the active user message is irreducible: phi4 A11 sent a 22,222-estimated-token satisfaction
@@ -2121,8 +2116,14 @@ EVIDENCE_SUMMARY_TRIGGER_CHARS = 48000
 EVIDENCE_BLOCK_CHARS = evidencesummary.EVIDENCE_BLOCK_CHARS
 
 
-def _evidence_blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS) -> list[str]:
-    return evidencesummary.blocks(text, limit)
+def _evidence_blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS, window: int | None = None) -> list[str]:
+    return evidencesummary.blocks(text, limit, window)
+
+
+def _blocks_of(ask) -> Callable[[str], list[str]]:
+    """The block-sizing function for evidence that will go to ``ask``: sized by the window of the model
+    behind it when it is a composed seat (``_composed_closed_ask``), the reference size otherwise."""
+    return getattr(ask, "evidence_blocks", _evidence_blocks)
 
 
 def _summarised_evidence(log: str, chat_fn, role, rlog, *, _consume=None) -> str:
@@ -2473,7 +2474,7 @@ class LoopContext:
     # Roll the OLD middle of a long coder view into a reasoner summary (mid-STEP transcript bloat —
     # orthogonal to `summary`, which only summarizes COMPLETED steps). [context] self_compact / trigger.
     self_compact: bool = True
-    trigger_compaction: int = 16384
+    trigger_compaction: int = windowcaps.SELFCOMPACT_TRIGGER   # an explicit [context] value is never rescaled
     # Is the planner stage ON? False = plan-off: the loop synthesizes a degenerate 1-item plan
     # (PlanSession.synthetic) and drives it through _drive_single_item — the relocated plan-off path.
     # `synthetic` means DEGENERATE, not "the planner is off": it is set from len(plan.items) == 1
@@ -3861,7 +3862,7 @@ class Loop:
                 role.apply(body, internal=True, rlog=rlog)
         # Evidence too big for one writer request is distilled in pieces (handoffdistill), not
         # dropped by the floor. The validators below still read the full transcript.
-        distill = handoffdistill.binder(chat_fn, handoffdistill.window_of(chat_fn, rlog),
+        distill = handoffdistill.binder(chat_fn, windowcaps.window_of(chat_fn, rlog),
                                         ROLLUP_MAX_TOKENS, apply_role, rlog)
 
         def writer_evidence(history, evidence):
@@ -3908,8 +3909,16 @@ class Loop:
                 return ""
             return candidate
 
+        # The thresholds are shares of the window of the model whose VIEW is being compacted (the coder's),
+        # not of whichever model writes the summary. Unknown/guessed window = the old constants; an explicit
+        # [context] trigger_compaction is an int and is never rescaled.
+        coder_window = windowcaps.window_of(self._ctx.coder_chat, rlog)
         result = selected.execute(selfcompact.RollingInput(
-            msgs, make_summary, trigger_tokens=self._ctx.trigger_compaction, force=force,
+            msgs, make_summary, force=force,
+            trigger_tokens=windowcaps.resolve(self._ctx.trigger_compaction, coder_window),
+            keep_tail_tokens=windowcaps.resolve(selfcompact.KEEP_TAIL_TOKENS, coder_window),
+            recompact_tokens=windowcaps.resolve(selfcompact.RECOMPACT_TOKENS, coder_window),
+            refold_tokens=windowcaps.resolve(selfcompact.REFOLD_TOKENS, coder_window),
             # Asked by the engine about the view it would SEND without a new summary, not about the
             # raw history in ``msgs`` (which only grows, so it read as overflow on every later turn).
             floor_pressure=lambda view: self._floor_would_drop(view, rlog, frame_tokens),
@@ -5432,13 +5441,13 @@ class Loop:
         """The coder request's real window, reply reserve and learned density (real tokens per chars/4 estimated
         token) — the floor's own currency. None when the window is unknown or only guessed."""
         owner = getattr(self._ctx.coder_chat, "upstream", None)
-        window = handoffdistill.window_of(self._ctx.coder_chat, rlog)
+        window = windowcaps.window_of(self._ctx.coder_chat, rlog)
         if not window or owner is None:
             return None
         reserve = contextfloor.reserve_for({
             bodykeys.OUTPUT_RESERVE: getattr(self._ctx.coder_role, "output_reserve", None),
             "max_tokens": getattr(self._ctx.coder_role, "max_tokens", None),
-        })
+        }, window)
         loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
         return window, reserve, tokenratio.observed(loaded or "")
 
@@ -7578,6 +7587,7 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
                           retry_off=False, evidence_blocks=evidence_blocks,
                           evidence_intro="composed_evidence_intro_system")
     ask.composes_evidence = True
+    ask.evidence_blocks = lambda text: _evidence_blocks(text, window=windowcaps.window_of(chat_fn, rlog))
     return ask
 
 
@@ -7695,7 +7705,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 # multi-paragraph briefing warrant different budgets, but both are BOUNDED; neither is ever None).
 # Named so a second caller that needs the same bound (server._harden_compaction_reply, C41) reads
 # the one number rather than copying the literal.
-SUMMARIZE_MAX_TOKENS = 8192
+SUMMARIZE_MAX_TOKENS = windowcaps.SUMMARY_REPLY   # 8,192 at the 49,152-token window; resolved at the wire
 
 
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
@@ -11296,7 +11306,7 @@ def _command_text(args) -> str | None:
 # It failed safe rather than shipping half a summary — `summarize` refuses a `finish_reason=length`
 # reply and the fold is abandoned — but the cost of that safety is that the floor then drops whole
 # turns instead, which is the more expensive loss. 31% of rollups hit it.
-ROLLUP_MAX_TOKENS = 8192
+ROLLUP_MAX_TOKENS = windowcaps.SUMMARY_REPLY   # 8,192 at the 49,152-token window; resolved at the wire
 
 CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"
 

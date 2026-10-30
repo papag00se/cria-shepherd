@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cria import contextfloor, loop, prompts, refusalledger, tokenratio, upstream, wsview
+from cria import contextfloor, loop, prompts, refusalledger, tokenratio, upstream, windowcaps, wsview
 from cria.config import Role
 
 
@@ -105,7 +105,7 @@ def test_control_packets_preserve_exact_question_and_order_through_real_wire():
             {"role": "system", "content": expected_question},
             {"role": "user", "content": prompts.load("composed_evidence_intro_system")},
             *({"role": "user", "content": block}
-              for block in loop._evidence_blocks(case["evidence"])),
+              for block in loop._evidence_blocks(case["evidence"], window=65536)),
             {"role": "user", "content": loop._ASK_USER_TURN},
         ], case["id"]
         assert sent["temperature"] == 0.0
@@ -168,11 +168,11 @@ def test_stock_stream_lifecycle_preserves_control_packets_and_role_settings():
                     refusals=prompts.load("steer_diagnostic_no_refusals"))},
                 {"role": "user", "content": prompts.load("composed_evidence_intro_system")},
                 *({"role": "user", "content": block}
-                  for block in loop._evidence_blocks(case["evidence"])),
+                  for block in loop._evidence_blocks(case["evidence"], window=65536)),
                 {"role": "user", "content": loop._ASK_USER_TURN},
             ], case["id"]
             assert {key: value for key, value in sent.items() if key != "messages"} == {
-                "model": "offline-wire-test", "max_tokens": 8192,
+                "model": "offline-wire-test", "max_tokens": windowcaps.scaled(windowcaps.SUMMARY_REPLY, 65536),
                 "temperature": 0.0, "top_p": 0.95, "top_k": 20,
                 "min_p": 0.0, "repeat_penalty": 1.0, "presence_penalty": 1.5,
                 "chat_template_kwargs": {"enable_thinking": True},
@@ -363,7 +363,7 @@ def test_real_author_branches_frame_only_their_own_request_losslessly(tmp_path, 
     envelope_start, envelope_end = prompts.load("steer_historical_author_request").split("{{REQUEST}}")
     assert framed == envelope_start + request + envelope_end
     assert interior_and_tail == ("\n\n" + inspected if tooled else "")
-    assert packet["temperature"] == 0 and packet["max_tokens"] == 8192
+    assert packet["temperature"] == 0 and packet["max_tokens"] == windowcaps.scaled(windowcaps.SUMMARY_REPLY, 65536)
     assert not any(name == "loop.steer_diagnostic_action" and fields["verdict"] != "SUPPORTED"
                    for name, fields in log.events)
 

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cria import bodykeys, denial, focustrim, massage, prompts, upstream
+from cria import bodykeys, contextfloor, denial, focustrim, massage, prompts, upstream
 
 
 PATH = "/w/src/source.txt"
@@ -69,7 +69,9 @@ def prepare(messages, window=100_000, *, level=5, merge=False, up=None):
     log = Log()
     up = up or upstream.Upstream("http://unused", context_window=window, engagement_level=level)
     body = {"model": "fixture", "messages": messages, bodykeys.PINNED_TASK: TASK,
-            bodykeys.OUTPUT_RESERVE: 0}
+            # 0 never meant "none": reserve_for reads it as unset, so these windows have always been
+            # fitted with the default reserve of the 49,152-token window (4,096), now a share of the window.
+            bodykeys.OUTPUT_RESERVE: int(contextfloor.DEFAULT_GEN_RESERVE)}
     if merge:
         body[massage.MERGE_TURNS_KEY] = True
     with patch("cria.upstream.urllib.request.urlopen", side_effect=AssertionError("network forbidden")):

@@ -92,7 +92,7 @@ class _Reasoner:
 def _loop(reasoner) -> Loop:
     def coder(body, rlog):
         return _reply("")
-    coder.upstream = SimpleNamespace(_resolve_window=lambda rlog: 10_000_000, _window_guessed=False,
+    coder.upstream = SimpleNamespace(_resolve_window=lambda rlog: 49_152, _window_guessed=False,
                                      loaded_model=lambda rlog: MODEL)
     ctx = LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner,
                       reasoner_role=Role(name="reasoner", backend="local"), runs_dir="")

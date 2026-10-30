@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import bodykeys
+from . import bodykeys, windowcaps
 from .privatepaths import CRIA_HOME
 from . import jsontext, prompts, reasoning
 
@@ -546,7 +546,10 @@ class ContextConfig:
     # preserving) instead of letting the floor drop-oldest lose it. Fires once the coder view
     # exceeds `trigger_compaction` TOKENS; stable sessions only. See selfcompact.py.
     self_compact: bool = True
-    trigger_compaction: int = 16384  # token budget above which the plan-off view is self-compacted
+    # Estimated-token size above which the plan-off view is self-compacted. The default is a window-sized
+    # Cap (16,384 at the 49,152-token window, a third of whatever window the coder really has); an explicit
+    # value here is the operator's and is never rescaled. 0 / absent = the default.
+    trigger_compaction: int = windowcaps.SELFCOMPACT_TRIGGER
     # Periodic SATISFACTION check (plan-off): the reasoner judges whether the WHOLE task is done, and
     # if so ends the session (objectively gated by the repo's checks). Starts at drive
     # `satisfaction_check_start`, then re-runs every `satisfaction_check_every` drives. Operator-tunable
@@ -693,7 +696,8 @@ class Config:
             context=ContextConfig(
                 focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
                 self_compact=bool(data.get("context", {}).get("self_compact", True)),
-                trigger_compaction=int(data.get("context", {}).get("trigger_compaction", 16384)),
+                trigger_compaction=(int(data.get("context", {}).get("trigger_compaction") or 0)
+                                    or windowcaps.SELFCOMPACT_TRIGGER),
                 satisfaction_check_start=int(data.get("context", {}).get("satisfaction_check_start", 100)),
                 satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
             ),

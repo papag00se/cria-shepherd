@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from typing import Callable, Protocol
 from datetime import datetime, timezone
 
-from . import groundtruth, massage, planner_tools, prompts, urlgrounding, wsview
+from . import groundtruth, massage, planner_tools, prompts, urlgrounding, windowcaps, wsview
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext
 from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
@@ -1564,7 +1564,7 @@ class Planner:
             # Generous output room so a verbose reasoner's plan isn't cut mid-list — a truncated
             # plan is parsed as a PARTIAL step list, silently dropping the tail work. Still bounded
             # so a model that fails to stop can't run to context-length and hang the request.
-            "max_tokens": 8192,
+            "max_tokens": windowcaps.PLAN_REPLY,
             "messages": [{"role": "system", "content": prompts.load("plan")}] + messages,
         }
         if self._role is not None:

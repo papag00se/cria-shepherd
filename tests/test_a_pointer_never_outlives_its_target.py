@@ -12,7 +12,7 @@ conversation instead and folds what survived. L0-L2 never fold at all (no contex
 import json
 import pytest
 
-from cria import config, contextfloor, modelview, prompts, upstream
+from cria import bodykeys, config, contextfloor, modelview, prompts, upstream
 
 NOTE = prompts.load("repeated_message_note").strip()
 DIAG = "cannot find symbol number 7"
@@ -44,7 +44,10 @@ def _messages():
 def _prep(msgs, window, level=config.MAX_ENGAGEMENT_LEVEL, rlog=None):
     up = upstream.Upstream("http://unused", context_window=window, engagement_level=level)
     # Match the declared density used by this fixed-window fixture's assertions.
-    raw, _est, _cap = up._prep({"model": "m", "messages": msgs}, False, rlog or _Rlog(),
+    # …and at the reply reserve they were calibrated on (the 49,152-token window's 4,096): the default is
+    # now a share of the window, which these tiny fixed windows are not about.
+    raw, _est, _cap = up._prep({"model": "m", "messages": msgs,
+                                bodykeys.OUTPUT_RESERVE: int(contextfloor.DEFAULT_GEN_RESERVE)}, False, rlog or _Rlog(),
                              safety_override=contextfloor.SAFETY_FACTOR)
     return json.loads(raw)["messages"]
 

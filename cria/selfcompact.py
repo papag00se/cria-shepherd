@@ -32,13 +32,15 @@ from typing import Callable, Protocol
 from .assistcontract import Policy, Reference
 from .memoryeffects import Effect
 
-from . import bodykeys, denial, jsontext, probegate, prompts, resultnotes, shelltool, toolargs, toolwire
+from . import bodykeys, denial, jsontext, probegate, prompts, resultnotes, shelltool, toolargs, toolwire, windowcaps
 from .content_reduce import clip, est_tokens
 
-# Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
-# code constants (they don't vary by environment).
-TRIGGER_TOKENS_DEFAULT = 16384   # start compacting a plan-off view once it exceeds this many tokens
-KEEP_TAIL_TOKENS = 6000          # keep the most recent turns verbatim, up to this many tokens
+# Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction (an explicit value is
+# never rescaled); the four window-sized ones are windowcaps.Caps: these names carry the value tuned on the
+# 49,152-token window, and the caller that drives compaction resolves them against the window of the model
+# whose view is being compacted (Loop._self_compact). An unknown window is exactly these values.
+TRIGGER_TOKENS_DEFAULT = windowcaps.SELFCOMPACT_TRIGGER   # start compacting a plan-off view once it exceeds this many tokens
+KEEP_TAIL_TOKENS = windowcaps.SELFCOMPACT_KEEP_TAIL       # keep the most recent turns verbatim, up to this many tokens
 BOUNDARY_KEEP_TAIL_TOKENS = 0    # at a verified STEP BOUNDARY keep NO verbatim tail — the completed step's raw
 #                                  turns fold ENTIRELY into the rollup. Nothing is lost: the NEXT step rides in
 #                                  the caller's authoritative system message, the original task is pinned
@@ -48,8 +50,8 @@ BOUNDARY_KEEP_TAIL_TOKENS = 0    # at a verified STEP BOUNDARY keep NO verbatim 
 #                                  (Without this, force only lowered the TRIGGER; the completed step stayed
 #                                  verbatim in the 6000-tok tail and the view GREW step over step — observed
 #                                  live: +14KB / ~350 lines between step 1 and step 2.)
-RECOMPACT_TOKENS = 4000          # re-summarize only after the unfolded band grows this much (throttle)
-REFOLD_TOKENS = 6000             # when the ACCUMULATED rolling summary itself exceeds this, fold it once
+RECOMPACT_TOKENS = windowcaps.SELFCOMPACT_RECOMPACT   # re-summarize only after the unfolded band grows this much (throttle)
+REFOLD_TOKENS = windowcaps.SELFCOMPACT_REFOLD   # when the ACCUMULATED rolling summary itself exceeds this, fold it once
 #                                  (rollup-of-a-rollup, deliberately RARE — see the refold tier in compact())
 SUMMARY_MARKER = "⟦ctx:rollup⟧"     # tags the injected summary — floor-protected + identifiable
 TASK_MARKER = "⟦ctx:task⟧"          # tags the pinned original-task header — the session's north star

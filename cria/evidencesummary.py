@@ -9,10 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol
 
-from . import dedup, prompts
+from . import dedup, prompts, windowcaps
 from .assistcontract import Policy, Reference
-
-SUMMARY_TRIGGER_CHARS = 48000
 
 
 class Log(Protocol):
@@ -107,13 +105,16 @@ DEFINITION = Definition(Policy(
     migrated=False), select, settle)
 
 
-EVIDENCE_BLOCK_CHARS = 6000
+EVIDENCE_BLOCK_CHARS = windowcaps.EVIDENCE_BLOCK   # 6,000 at the 49,152-token window
 
 
-def blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS) -> list[str]:
+def blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS, window: int | None = None) -> list[str]:
     """``text`` as ordered blocks of whole lines, each about ``limit`` characters (a single longer line
     stays whole — a line is never cut), so ``"".join(blocks) == text``. The context floor then reduces
-    the OLDEST blocks first, each reduction labelled, and the newest evidence survives."""
+    the OLDEST blocks first, each reduction labelled, and the newest evidence survives. ``window`` is the
+    real window of the model that will read the blocks: the default limit is a share of it, and an
+    unknown window is the 6,000-character reference."""
+    limit = windowcaps.resolve(limit, window)
     blocks: list[str] = []
     cur: list[str] = []
     size = 0

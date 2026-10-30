@@ -212,7 +212,10 @@ def _prep(msgs, window, rlog=None):
     up = upstream.Upstream("http://unused", context_window=window, engagement_level=config.MAX_ENGAGEMENT_LEVEL)
     # These fixed-window captures are evaluated at their declared density,
     # independently of learned observations left by other requests to model "m".
-    raw, _e, _c = up._prep({"model": "m", "messages": msgs}, False, rlog or _Rlog(),
+    # …and at the reply reserve they were calibrated on (the 49,152-token window's 4,096): the default is
+    # now a share of the window, which these tiny fixed windows are not about.
+    raw, _e, _c = up._prep({"model": "m", "messages": msgs, bodykeys.OUTPUT_RESERVE: int(cf.DEFAULT_GEN_RESERVE)},
+                         False, rlog or _Rlog(),
                          safety_override=cf.SAFETY_FACTOR)
     return json.loads(raw)["messages"]
 

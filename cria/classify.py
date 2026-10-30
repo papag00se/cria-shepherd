@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Protocol
 
-from . import prompts
+from . import prompts, windowcaps
 from .assistcontract import Policy, Reference
 from .jsontext import extract_json_object
 
@@ -55,7 +55,7 @@ _TASK_TYPES = ("coding", "reasoning", "question")
 # it, and a deleted verdict is indistinguishable from "nothing to report" — a negative diagnosis went
 # from an exact, correct answer ("resolved_address == 'goose'") to a suppressed one because the support
 # question that would have surfaced it never got to answer at all.
-JUDGE_MAX_TOKENS = 16384
+JUDGE_MAX_TOKENS = windowcaps.JUDGE_REPLY   # 16,384 at the 49,152-token window; resolved at the wire against the ANSWERING model's window
 _CACHE_CAP = 256
 _ESCALATE_AFTER = 3  # consecutive classify failures before the fallback escalates to an error log
 
