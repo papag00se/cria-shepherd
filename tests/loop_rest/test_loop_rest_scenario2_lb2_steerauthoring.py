@@ -51,6 +51,11 @@ def test_a_session_that_pinned_its_assists_cannot_be_driven_under_a_different_se
         loop.guard_canned_redirect(gs, probegate.GateOutcome(ran=False))
     with pytest.raises(ValueError, match="Invalid pilot assist runtime"):
         loop._check_pilot_runtime(loop.GuardState(), object())
+    rt5, rt4 = assistruntime.AssistRuntime.select(level=5), assistruntime.AssistRuntime.select(level=4)
+    mixed = loop.GuardState()
+    mixed.pilot_selection, mixed.pilot_binding = rt5.selected, rt4          # the selection agrees but another runtime was bound
+    with pytest.raises(ValueError, match="selection cannot change"):
+        loop._check_pilot_runtime(mixed, rt5)
     fresh = loop.GuardState()
     fresh.awaiting_probe = True
     with pytest.raises(ValueError, match="explicitly bound runtime"):                              # unbound runtime + a pending probe of unknown origin
