@@ -10,12 +10,13 @@ import random
 import stat
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from cria import denial, filecommands, wsview, writeproxy
 from cria.multipart_bridge import Bridge
-from read_multipart_helpers import HEX, isolated_home, page_through, run_call, start  # noqa: F401
+from read_multipart_helpers import HEX, SHELL, Backend, Wire, isolated_home, page_through, run_call, start  # noqa: F401
 
 NOTE = '⟦ctx:read-source-changed⟧'
 ORIGINAL = HEX.encode()
@@ -210,3 +211,40 @@ def test_snapshot_paging_keeps_every_byte_exact_and_every_page_under_the_transpo
     assert len(facts) == 1 and facts[0].exact_body == body
     message, credit = delivered(tmp_path, path, projected)
     assert denial.read_payload(message) == body.decode() and credit == body.decode()
+
+
+@pytest.mark.parametrize('api,stream', [('chat', False), ('responses', True)])
+def test_a_file_rewritten_mid_read_reaches_the_model_as_the_whole_first_read_labelled_through_the_real_server(tmp_path, api, stream):
+    """Real HTTP + CriaServer + PTY harness: a writer lands between the pages of a model's read_file. The model is shown the exact file as of
+    the first page followed by the changed-since label, with no read credit, no transport pages and no representation fallback."""
+    path = tmp_path / 'f'; path.write_bytes(ORIGINAL); backend = Backend(path); n = []
+    def harness(call):
+        n.append(call)
+        if len(n) == 3: rewrite(path)
+        return run_call(call)
+    with Wire(tmp_path, backend, api, stream) as w:
+        msg, _ = w.drive(harness)
+    (result,) = backend.tool_results()
+    assert 'seen' in msg['content'] and len(n) > 3 and result['content'].startswith(HEX + '\n\n' + NOTE)
+    assert denial.read_payload(result) is None and 'transport' not in result['content'] and 'not be verified' not in result['content']
+
+
+def test_a_page_zero_run_twice_still_snapshots_and_a_read_instead_answer_is_snapshotted_and_labelled_too(tmp_path):
+    """A harness that re-runs the first page command (a retried request) re-takes the snapshot instead of degrading to live paging; the
+    write_file-refused read-instead answer pages through the same snapshot and says so when the target changed (it keeps its prelude)."""
+    bridge, messages, path = start(tmp_path, HEX, name='twice')
+    messages[1]['content'] = run_call(messages[0]['tool_calls'][0])                   # the first run's result is lost; this run is the one used
+    bridge.incoming('s', messages)
+    assert bridge.sessions['s']['original'].assembly.snapshot[0] == 'snapshot' and len(litter(tmp_path / 'tmp')) == 1
+    page_through(bridge, messages); assert litter(tmp_path / 'tmp') == []
+    target = tmp_path / 'target.txt'; target.write_bytes(ORIGINAL)
+    tc = {'id': 'original', 'type': 'function', 'function': {'name': 'write_file', 'arguments': json.dumps({'path': str(target), 'content': 'new\n'})}}
+    completion = {'choices': [{'message': {'tool_calls': [tc]}}]}; bridge = Bridge(str(tmp_path / 'state-instead'))
+    writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None), injected={'write_file'}, workspace_root=str(tmp_path),
+        unread_target=lambda p: f'{p} already exists on disk.', multipart_command=lambda original, effect, receipt: bridge.register('s', original, effect, SHELL, receipt))
+    bridge.bind('s', completion); call = completion['choices'][0]['message']['tool_calls'][0]
+    messages = [{'role': 'assistant', 'tool_calls': [call]}, {'role': 'tool', 'tool_call_id': 'original', 'content': run_call(call)}]
+    projected, facts = read_racing(bridge, messages, lambda n: rewrite(target) if n == 2 else None)
+    message, credit = delivered(tmp_path, target, projected)
+    assert facts == () and credit is None and 'already exists on disk' in message['content'] and HEX in message['content'] and NOTE in message['content']
+    assert litter(tmp_path / 'tmp') == []

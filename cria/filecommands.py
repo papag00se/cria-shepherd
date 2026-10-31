@@ -483,6 +483,8 @@ def snapshot_take():
     try:
         meta = json.dumps({'taken': taken}).encode()
         for name, payload in (('snap', source), ('meta', meta)):
+            try: os.unlink(name, dir_fd=context['fd'])    # a re-run of the first page replaces its own earlier snapshot
+            except FileNotFoundError: pass
             descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=context['fd'])
             with os.fdopen(descriptor, 'wb') as f:
                 f.write(payload)
