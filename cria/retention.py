@@ -1,7 +1,7 @@
 """Explicit, operator-run cleanup of cria's private retained state.
 
-    python -m cria.retention list  [--home DIR] [--kind multipart|image|all] [--json]
-    python -m cria.retention prune [--home DIR] [--kind ...] [--older-than 14d]
+    python -m cria.retention list  [--home DIR] [--kind multipart|image|snapshot|all] [--tmp DIR] [--json]
+    python -m cria.retention prune [--home DIR] [--kind ...] [--tmp DIR] [--older-than 14d]
                                    [--session ID] [--apply]
 
 Nothing here runs automatically and nothing in cria imports it. cria has no trusted
@@ -25,6 +25,12 @@ or `retry_closed` (closed-seal marker outside the payload directory, removed las
 multipart state uses the bridge's own record validation and the bridge's lock file;
 the authoritative session record is deleted first, then its derived call
 associations, so an interrupted run leaves only associations that fail closed.
+
+`--kind snapshot` (never part of `all`: it scans the shared harness temp directory, `--tmp` or $TMPDIR, not cria's home) lists
+and prunes the private source snapshots a multipart read leaves behind when it is abandoned before its last page
+(`.cria-mpsnap-<token>`; a completed read removes its own). Only a directory of exactly that name shape, owned by this user,
+mode 0700, holding nothing but `.owner`, `snap` and `meta` (regular files) is ever touched. There is no signal whether such a
+read is still running, so prune needs `--older-than` (or `--session` = the token) and the operator's age is the judgment.
 """
 import argparse
 import hashlib
@@ -39,7 +45,7 @@ import fcntl
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import imagepersist, privatepaths
+from . import filecommands, imagepersist, privatepaths
 from .imagestore import ImageStore
 from .imageprotocol import ImageUnavailable
 from .multipart import InvalidPage, BridgeError, _pairs
@@ -49,6 +55,8 @@ _SHA = r'[0-9a-f]{64}'
 _MP_RECORD = re.compile(_SHA + r'\.json')
 _MP_INDEX = re.compile(r'call-(' + _SHA + r')\.json')
 _MP_TEMP = re.compile(r'\.(?:multipart|index)-[0-9a-f]{32}')
+_SNAP_DIR = re.compile(re.escape(filecommands.MULTIPART_SNAPSHOT_DIR) + r'([0-9a-f]{32})')
+_SNAP_FILES = frozenset(('.owner', 'snap', 'meta'))
 _IMG_DIR = re.compile(r'image-session-[A-Za-z0-9_-]+')
 _IMG_MARKER = re.compile(r'(image-session-[A-Za-z0-9_-]+)\.owner\.json')
 _UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
@@ -329,10 +337,64 @@ def _delete_image(root, entry, authority, *, force):
     store.release(session)
 
 
+# ------------------------------------------------------------------ snapshots
+
+def _scan_snapshots(tmp):
+    """Abandoned multipart source snapshots under the shared harness temp directory ``tmp`` (an fd): names of exactly cria's shape
+    only; one that is not a private owned directory of known files is listed refused and never touched."""
+    entries, ignored = [], []
+    for name in sorted(os.listdir(tmp)):
+        if not name.startswith(filecommands.MULTIPART_SNAPSHOT_DIR):
+            continue
+        match = _SNAP_DIR.fullmatch(name)
+        if match is None:
+            ignored.append(name)
+            continue
+        entry = Entry('snapshot', match.group(1), state='unknown', detail='private source snapshot of a multipart read (abandoned, or still running: no signal)')
+        entries.append(entry)
+        try:
+            st = os.stat(name, dir_fd=tmp, follow_symlinks=False)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) & 0o077:
+                raise ValueError('not a private directory owned by this user')
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
+            try:
+                held = os.listdir(child)
+                if set(held) - _SNAP_FILES:
+                    raise ValueError('unexpected contents: ' + ', '.join(sorted(set(held) - _SNAP_FILES)))
+                entry.mtime = st.st_mtime
+                for f in held:
+                    fst = os.stat(f, dir_fd=child, follow_symlinks=False)
+                    if not stat.S_ISREG(fst.st_mode):
+                        raise ValueError(f + ' is not a regular file')
+                    entry.size += fst.st_size
+                    entry.mtime = max(entry.mtime, fst.st_mtime)
+                    entry.names.append(name + '/' + f)
+            finally:
+                os.close(child)
+        except (OSError, ValueError) as exc:
+            entry.refused, entry.detail = True, str(exc)
+    return entries, ignored
+
+
+def _delete_snapshot(tmp, entry):
+    name = filecommands.MULTIPART_SNAPSHOT_DIR + entry.id
+    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
+    try:
+        for f in os.listdir(child):
+            if f not in _SNAP_FILES or not stat.S_ISREG(os.stat(f, dir_fd=child, follow_symlinks=False).st_mode):
+                raise OSError(f'{f}: not a snapshot file; left in place')
+            os.unlink(f, dir_fd=child)
+    finally:
+        os.close(child)
+    os.rmdir(name, dir_fd=tmp)
+
+
 # ------------------------------------------------------------------ selection
 
 def _matches_session(entry, wanted):
     digest = hashlib.sha256(wanted.encode()).hexdigest()
+    if entry.kind == 'snapshot':
+        return entry.id == wanted or (len(wanted) >= 8 and entry.id.startswith(wanted))
     if entry.kind == 'multipart':
         return entry.id == digest or (len(wanted) >= 8 and entry.id.startswith(wanted)) or entry.label == wanted
     return entry.id == wanted or entry.label == wanted
@@ -358,11 +420,28 @@ def _roots(home):
     return {'multipart': home / 'multipart', 'image': home / 'images'}
 
 
-def collect(home, kinds, *, lock_multipart=False):
+def _tmp_root(tmp):
+    return os.path.realpath(tmp or os.environ.get('TMPDIR') or '/tmp')
+
+
+def collect(home, kinds, *, lock_multipart=False, tmp=None):
     """Return (entries, ignored, held_lock_fd_or_None, notes). Caller closes the fds."""
     entries, ignored, notes, fds = [], [], [], {}
     roots = _roots(home)
     for kind in kinds:
+        if kind == 'snapshot':
+            try:
+                dirfd = os.open(_tmp_root(tmp), os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    found, ign = _scan_snapshots(dirfd)
+                    entries.extend(found)
+                    ignored.extend(f'snapshot/{n}' for n in ign)
+                    fds['snapshot'] = os.dup(dirfd)
+                finally:
+                    os.close(dirfd)
+            except OSError as exc:
+                notes.append(f'snapshot: scan failed: {exc}')
+            continue
         root = roots[kind]
         if not os.path.lexists(root):
             continue
@@ -428,7 +507,8 @@ def _parser():
     for name in ('list', 'prune'):
         p = sub.add_parser(name)
         p.add_argument('--home', default=str(privatepaths.CRIA_HOME), help='cria home (default ~/.cria)')
-        p.add_argument('--kind', choices=('multipart', 'image', 'all'), default='all')
+        p.add_argument('--kind', choices=('multipart', 'image', 'snapshot', 'all'), default='all')
+        p.add_argument('--tmp', help='harness temp directory scanned for --kind snapshot (default $TMPDIR, else /tmp)')
         if name == 'list':
             p.add_argument('--json', action='store_true')
         else:
@@ -444,7 +524,7 @@ def main(argv=None, out=None, now=None):
     now = time.time() if now is None else now
     kinds = ('multipart', 'image') if args.kind == 'all' else (args.kind,)
     if args.cmd == 'list':
-        entries, ignored, fds, notes = collect(args.home, kinds)
+        entries, ignored, fds, notes = collect(args.home, kinds, tmp=args.tmp)
         _close(fds)
         if args.json:
             json.dump({'entries': [{**{k: v for k, v in vars(e).items() if k not in ('raw', 'names')},
@@ -466,7 +546,7 @@ def main(argv=None, out=None, now=None):
     except ValueError as exc:
         out.write(f'refusing: {exc}\n')
         return 2
-    entries, ignored, fds, notes = collect(args.home, kinds, lock_multipart=args.apply)
+    entries, ignored, fds, notes = collect(args.home, kinds, lock_multipart=args.apply, tmp=args.tmp)
     code = 0
     try:
         for n in notes:
@@ -496,6 +576,8 @@ def main(argv=None, out=None, now=None):
             try:
                 if e.kind == 'multipart':
                     _delete_multipart(fds['multipart'], e)
+                elif e.kind == 'snapshot':
+                    _delete_snapshot(fds['snapshot'], e)
                 else:
                     _delete_image(str(_roots(args.home)['image']), e, authority,
                                   force=args.session is not None)
