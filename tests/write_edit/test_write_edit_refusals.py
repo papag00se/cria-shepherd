@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from cria import contextfloor, denial, focustrim, loop, prompts, writeproxy
-from write_edit_helpers import call, do, lower, represent, run, shrink_services, write_edit_workspace_view  # noqa: F401
+from cria import contextfloor, denial, focustrim, loop, prompts, writeproxy, wsview
+from write_edit_helpers import ENVELOPE, call, do, lower, represent, run, shrink_services, write_edit_workspace_view  # noqa: F401
 
 DATA = b"original token\n"
 FUSED = "<tool_call>\n</tool_call>"
@@ -93,6 +93,37 @@ def test_a_large_rejected_draft_leaves_the_argument_slot_and_rides_once_in_the_r
     (tmp_path / "notes.txt").write_text("todo\n")
     _, _, ok = do("edit_file", {"path": "notes.txt", "old_string": "todo", "new_string": BIG}, tmp_path, cid="ok")
     assert json.loads(ok[0]["tool_calls"][0]["function"]["arguments"])["new_string"] == BIG       # landed bytes are never collapsed
+
+
+def test_the_rejected_payload_audit_event_fires_once_per_rejected_call_not_once_per_request(tmp_path):
+    """The harness re-sends the whole history on every request, so a rejected call stays in it and was re-collapsed (idempotently) each
+    time — and `writeproxy.rejected_payload_dropped` fired each time too, counting requests, not rejections. A second rejected call,
+    and the same id carrying a different payload, are separate rejections; another session meeting the same call counts it itself."""
+    (tmp_path / "cart.go").write_text("package cartsvc\n\nfunc Total() int { return 0 }\n")
+    events = []
+    log = type("Log", (), {"emit": lambda self, kind, **f: events.append((kind, f))})()
+
+    def request(name, args, cid, sess):
+        tc, done, _ = do(name, args, tmp_path, cid=cid)
+        raw = ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr
+        history = [{"role": "assistant", "tool_calls": [tc]}, {"role": "tool", "tool_call_id": cid, "content": raw}]
+        token = wsview.bind(wsview.View(str(tmp_path), "we"))
+        try:
+            return writeproxy.represent_inbound(history, rlog=log, workspace_root=str(tmp_path), sess_key=sess)
+        finally:
+            wsview.unbind(token)
+
+    def drops():
+        return [f for kind, f in events if kind == "writeproxy.rejected_payload_dropped"]
+
+    first = {"path": "cart.go", "old_string": BIG, "new_string": "x"}
+    shown = [request("edit_file", first, "r1", "s1") for _ in range(3)]            # three requests, one rejected call
+    assert len(drops()) == 1 and drops()[0]["keys"] == ["old_string"] and drops()[0]["chars"] == len(BIG)
+    assert all("old_string" not in json.loads(m[0]["tool_calls"][0]["function"]["arguments"]) for m in shown)   # the collapse still happens each time
+    request("edit_file", {**first, "path": "cart.go", "new_string": "y"}, "r2", "s1")
+    request("edit_file", {**first, "old_string": BIG + "more\n"}, "r1", "s1")        # id reused, payload differs
+    request("edit_file", first, "r1", "s2")
+    assert len(drops()) == 4
 
 
 class Ledger:

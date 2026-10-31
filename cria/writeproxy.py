@@ -1303,6 +1303,24 @@ def _survey_due(session: str | None, name: str) -> bool:
     return n % SURVEY_EVERY == 0
 
 
+_REJECTIONS_SEEN: dict[str, set[tuple]] = {}
+
+
+def _first_sight_of_rejection(sess_key: str, tc: dict) -> bool:
+    """True the FIRST time this session meets a rejected call. The harness re-sends the whole history every request, so the
+    same rejected call is re-collapsed on each one (the collapse itself is idempotent and stays); only its audit event must not
+    repeat, or `writeproxy.rejected_payload_dropped` counted requests, not rejected calls. The key is the call's id AND its
+    arguments, so a reused id with a different payload is a different rejection."""
+    if len(_REJECTIONS_SEEN) > 512:
+        _REJECTIONS_SEEN.clear()
+    seen = _REJECTIONS_SEEN.setdefault(sess_key or "", set())
+    key = (tc.get("id"), hashlib.sha256(str((tc.get("function") or {}).get("arguments")).encode()).hexdigest())
+    if key in seen:
+        return False
+    seen.add(key)
+    return True
+
+
 def _edit_sequence(tool_calls: list, injected: set) -> dict:
     """``{call index: (group token, index, predecessor indexes, all participant indexes)}`` for the file-mutating calls (edits AND
     whole-file writes) of ONE turn that share a file with an earlier such call of the same turn. Everything else is absent: a lone
@@ -1931,7 +1949,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 if body_arg is not None:
                                     written[tc.get("id")] = body_arg
                             if tc.get("id") in failed_ids:
-                                draft = toolstages.current().preserve_draft(tc, _tool_path(p) or "", rlog)
+                                draft = toolstages.current().preserve_draft(
+                                    tc, _tool_path(p) or "", rlog if _first_sight_of_rejection(sess_key, tc) else None)
                                 if draft.note:
                                     rejected_notes_by_id[tc.get("id")] = draft.note
                                 tc = draft.call
