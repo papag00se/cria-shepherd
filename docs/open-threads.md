@@ -366,13 +366,20 @@ the same way.
 - *What the reasoner's retrospective lens calls `PLAN` (c):* judged sentence by sentence, the flagged lines are the
   task's own requirements restated as commands ("Fix the threading bug and re-enable parallel workers", "Make the
   importer at least 4× faster", "Decide and implement how…"), not the extracted `latest_plan`. The scope lens demands the
-  task survive; this lens refuses any imperative. Landed: one VOICE rule in the writer prompt (`selfcompact_summary`):
-  state the task as what was asked, never as orders. Same input, system1 OFF, n=8: 16K 3/8 → 6/8, 32K 1/8 → 4/8
-  accepted. System1-ON acceptance after the change was NOT re-measured, and two 16K/32K temperature-0 samples still
-  answer `PLAN` on a restated task paragraph.
-- *Next:* (1) re-measure with system1 ON and on the other four real sessions (the rule changes every writer body, at 49K
-  too); (2) the remaining `PLAN` lines are still the numbered task list — a writer that cites the task by deliverable
-  ("deliverable 2: threading, unmet") instead of quoting it may clear them; (3) the scope lens is strict on briefings
-  that say a deliverable is "done" (session 3's three `NARROWS`); (4) `valid_extraction` refusing object-shaped entries
-  wastes the cold-process extraction call at 16K — a stricter example in `compaction_extract` is the upstream change to
-  try, with a fabricated-entry control.
+  task survive; this lens refuses any imperative. A VOICE rule in the writer prompt (state the task as what was asked,
+  never as orders) lifted system1-OFF acceptance on session 01a162ad (16K 3/8 → 6/8, 32K 1/8 → 4/8) but is REVERTED:
+  system1 is the production arrangement, and re-measured with it ON (same real inputs, paired BEFORE = 73570ade prompt
+  vs AFTER = the VOICE rule, one writer sample per cell, temp 0 and 0.7) it did not help where production runs. Paired
+  accepted, all inputs (27 pairs; BEFORE 24, AFTER 23): 16K 8/8 vs 8/8, 32K 7/8 vs 6/8, 49K (:18084) 9/11 vs 9/11. Session 01a162ad alone 15/15 AFTER vs 13/15
+  BEFORE (BEFORE 32K `PLAN` ×1, 49K `UNFAITHFUL` ×1; AFTER none), but the four other real sessions
+  went 11/12 BEFORE → 8/12 AFTER (`UNWRITTEN` ×2, scope `NARROWS` ×2 — 32K and 49K on the same shipping-module input,
+  where the AFTER briefing dropped the `GB → domestic / EU → eu / others → international` mapping that BEFORE kept
+  verbatim), and the writer once leaked the rule ("The task, restated as what was asked (not as commands)"). No
+  evidence the rule helps with system1 ON; one instance of it losing a task constraint; it rewrote the 49K writer.
+  Open: the system1 retrospective classifier's own false `PLAN` rate on a numbered task list, measured directly on the
+  briefings above, is the upstream place to look.
+- *Next:* (1) the remaining `PLAN` lines are still the numbered task list — a writer that cites the task by deliverable
+  instead of quoting it, tried ONLY if measured with system1 ON on all five inputs at all three windows; (2) the scope
+  lens is strict on briefings that say a deliverable is "done" (session 3's three `NARROWS`); (3) `valid_extraction`
+  refusing object-shaped entries wastes the cold-process extraction call at 16K — a stricter example in
+  `compaction_extract` is the upstream change to try, with a fabricated-entry control.

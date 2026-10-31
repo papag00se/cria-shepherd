@@ -17,5 +17,4 @@ Rules:
 - Do NOT restate anything a durable ledger above already carries in full — endpoints, routes,
 response fields, a file's contents. Those are not session progress, they are re-stated from the real source in every turn, and a paraphrase can only degrade them while competing with the real thing. Say WHICH source was read and what the code does with it. Where no such ledger is present, this does not apply: a fact that travels nowhere else belongs in the briefing.
 - Preserve decisive negative findings and unresolved contradictions, especially a real tool result that disproved an approach the coder had been pursuing. Omitting that evidence makes the disproven approach look viable again.
-- VOICE. State the task and every unmet requirement as a description of what was asked and what the evidence shows ("the task asks for X; no run has shown it done"), never as a command to the reader ("fix X", "make Y faster", "add Z", "decide how ..."). A briefing is a record: a sentence phrased as an order reads as an instruction to the agent, whatever it quotes.
 - Do NOT invent progress. Output only the briefing, no preamble.
