@@ -1511,9 +1511,11 @@ class Upstream:
                                     reasoning.append(rc)
                                     self._stream_reasoning_to_disk(_rsink, capture_path, rc)
                                     if t_first is None:
+        t_open = time.monotonic()
                                         # A reasoning delta IS a first token. Counting only CONTENT
                                         # meant a turn that thought for four minutes and then errored
                                         # looked, in the log, like a stream that never spoke.
+        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
                                         t_first = time.monotonic()
                                         rlog.emit("upstream.first_token",
                                                   ttft_ms=round((t_first - t0) * 1000, 1),
@@ -1579,6 +1581,7 @@ class Upstream:
                     resp.close()
                 break
             except (UpstreamError, OSError) as e:  # OSError → socket read-timeout mid-response
+                open_ms=open_ms,
                 # Proven capacity no-change is terminal regardless of provider wording.
                 # Preserve the original typed exception before any transient classification.
                 if isinstance(e, (ContextRefitNoChange, CallerContextRetryNoChange)):
@@ -1666,8 +1669,10 @@ class Upstream:
                 self._resolve_window(rlog), sent_estimate, self._window_guessed, watch, lambda: terminal))
             for raw in resp:
                 wire_raw.extend(raw)
+        t_open = time.monotonic()
                 if not raw.startswith(b"data:"):
                     continue
+        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
                 payload = raw[5:].strip()
                 if not payload or payload == b"[DONE]":
                     continue
@@ -1829,7 +1834,7 @@ class Upstream:
         # down by DEDUCING the frame count from which guards did NOT fire (#12).
         rlog.emit("upstream.done", total_ms=round((t_end - t0) * 1000, 1), tokens=tokens,
                   tok_per_s=tok_s, from_usage=bool(usage), aborted=bool(aborted),
-                  frames=chunks_seen, read_chars=streamed_chars)
+                  frames=chunks_seen, read_chars=streamed_chars, open_ms=open_ms)
         return json.dumps(completion).encode("utf-8")
 
 

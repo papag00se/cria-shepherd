@@ -144,3 +144,25 @@ def test_a_server_streaming_nothing_readable_is_stopped_on_the_clock_but_real_wo
     else:
         assert abort is None
         assert rlog.first("upstream.done")["frames"] > 0
+
+
+@pytest.mark.parametrize("wire", ["chat_watched", "stream_chat"])
+def test_the_servers_wait_before_the_first_byte_is_accounted_as_open_ms(monkeypatch, wire):
+    """ornith1.5_9b / real Codex, shared :18084: a 25-token judge call logged total_ms=1302 while the turn stood still for 60 s;
+    the open (queue + prefill head) was outside every timer. It is now its own field on upstream.done."""
+    clock = Clock(0.0)
+    monkeypatch.setattr("time.monotonic", clock)
+    frames = [sse({"content": "ok"}, finish="stop"), b'data: {"usage": {"completion_tokens": 1}}\n', b"data: [DONE]\n"]
+
+    def slow_open(req, timeout=None):
+        clock.t += 60.0          # the server was busy with someone else's request
+        return Stream(frames, per_frame=lambda: None)
+
+    monkeypatch.setattr("urllib.request.urlopen", slow_open)
+    rlog = Rlog()
+    up = Upstream("http://x", context_window=49152)
+    out = getattr(up, wire)(dict(MESSAGES), rlog)
+    if wire == "stream_chat":
+        list(out)
+    done = rlog.first("upstream.done")
+    assert done["open_ms"] == 60000.0 and done["total_ms"] < 1000
