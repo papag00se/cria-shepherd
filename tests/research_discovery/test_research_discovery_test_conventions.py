@@ -92,3 +92,28 @@ def test_a_bare_dir_gets_a_test_floor_but_a_declared_runner_or_no_tests_gets_non
     assert ["rake", "test"] in rake("rake") and ["rake", "test"] not in rake("rake2")   # a declared rake target is not an invention
     assert not [c for c in proberun.select_completion_probes(str(tmp_path / "rbcfg")) if "test/**/test_*.rb" in " ".join(c.command)]
 
+
+
+MT = 'require "minitest/autorun"\nclass T < Minitest::Test\n  def test_a\n  end\nend\n'
+SPEC = 'RSpec.describe "x" do\n  it "a" do\n  end\nend\n'
+
+@pytest.mark.parametrize("name,files,floor", [
+    # no manifest: the zero-config floor stands, bare, exactly as before
+    ("no gemfile", {"lib/r.rb": "module R\nend\n", "test/test_r.rb": MT}, ["ruby", "-Ilib", "-Itest", "-e"]),
+    # a Gemfile declares the project's environment: the floor runs inside it (walked: 22 of the 23 bare-floor
+    # `cannot load such file`/bundler reds held a Gemfile whose gems only bundler can see)
+    ("gemfile", {"Gemfile": 'source "https://rubygems.org"\ngem "countries"\n', "lib/r.rb": "module R\nend\n", "test/test_r.rb": MT},
+     ["bundle", "exec", "ruby", "-Ilib", "-Itest", "-e"]),
+    # a Gemfile that declares rspec already got `bundle exec rspec`; a floor that requires test_*.rb would run
+    # none of the *_spec.rb files and call that green
+    ("gemfile with rspec", {"Gemfile": 'gem "rspec"\n', "lib/r.rb": "module R\nend\n", "spec/r_spec.rb": SPEC}, None),
+    # an unreadable/absent Gemfile is not a declaration
+    ("lockfile only", {"lib/r.rb": "module R\nend\n", "test/test_r.rb": MT, "Gemfile.lock": ""}, ["ruby", "-Ilib", "-Itest", "-e"]),
+])
+def test_the_ruby_floor_follows_the_gemfile_the_way_the_manifest_command_does(tmp_path, name, files, floor):
+    for rel, body in files.items():
+        write(tmp_path, rel, body)
+    got = [c.command[:len(floor or [])] for c in pd.test_floor_candidates(tmp_path)]
+    assert got == ([floor] if floor else [])
+    if "rspec" in files.get("Gemfile", ""):
+        assert ["bundle", "exec", "rspec"] in [c.command for c in proberun.select_completion_probes(str(tmp_path))]

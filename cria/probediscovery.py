@@ -1716,7 +1716,24 @@ def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
         paths = _language_files(root, conv)
         if paths and _has_discoverable_test(root, paths, conv):
             ecosystem = {"py": Ecosystem.Python, "rb": Ecosystem.Ruby}.get(conv.exts[0])
-            out.append(cand(ProbeKind.Test, list(conv.floor), root, 60, 90, ProbeCost.Moderate,
+            argv = list(conv.floor)
+            if ecosystem is Ecosystem.Ruby:
+                # A GEMFILE IS A MANIFEST, and the floor's own docstring says it exists for the
+                # config-free case. Where one is present the project has declared its environment, so
+                # the floor is either redundant or must run in that environment, exactly as `build_ruby`
+                # composes its own commands: a Gemfile that declares rspec already got `bundle exec
+                # rspec` (and this floor would run zero of its *_spec.rb files and call it green), and
+                # any other Gemfile puts the project's gems behind bundler, which a bare `ruby` cannot
+                # see. Measured: of the 23 shipping-rates-rb sessions whose bare floor first reported a
+                # `cannot load such file` / bundler failure, 22 held a Gemfile (the archived tree that
+                # looked like a counter-case, 1786864442, carries a Rakefile, so this floor never fires
+                # there at all). No Gemfile: the floor is unchanged and bare.
+                gemfile = read_text(root / "Gemfile")
+                if gemfile is not None:
+                    if _bundled(gemfile, "rspec"):
+                        continue
+                    argv = ["bundle", "exec", *argv]
+            out.append(cand(ProbeKind.Test, argv, root, 60, 90, ProbeCost.Moderate,
                             f"{conv.runner} auto-discovers {conv.label} (zero-config)",
                             ecosystem=ecosystem))
     return out
