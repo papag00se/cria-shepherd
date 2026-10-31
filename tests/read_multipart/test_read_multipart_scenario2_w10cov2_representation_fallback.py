@@ -3,12 +3,13 @@
 verbatim and labelled unverified with no read credit, the model is told the exact read could not be established, the bridge withholds the read,
 and the failure is logged - on both wire APIs, in the one request only."""
 import json
+import urllib.request
 
 import pytest
 
 from cria import bodykeys, denial
 from cria.server import CriaHandler
-from read_multipart_helpers import HEX, Backend, Wire, isolated_home  # noqa: F401
+from read_multipart_helpers import HEX, MENU, Backend, Wire, isolated_home  # noqa: F401
 
 
 @pytest.mark.parametrize("api,stream", [("chat", False), ("responses", True)])
@@ -35,3 +36,43 @@ def test_a_read_whose_representation_cannot_bind_continues_from_the_harness_hist
     assert HEX not in result["content"] and denial.read_payload(result) is None and not last.get(bodykeys.PROTECTED_READS)
     assert backend.tool_results()[-1]["content"].rstrip().endswith("do not assume a write did or did not run.") and "could not be verified" in backend.tool_results()[-1]["content"]
     assert [e["kind"] for e in events].count("multipart.representation_unavailable") == 1
+
+
+def test_the_private_continuation_calls_of_an_oversize_read_stream_over_chat_sse_and_the_file_still_arrives_exact(tmp_path):
+    """A streaming chat harness: cria's own paging calls are streamed as a tool_calls SSE (finish tool_calls, [DONE]) and the finished read reaches the model exact."""
+    path = tmp_path / "f"
+    path.write_text(HEX)
+    class Streaming(Backend):
+        def stream_chat(self, body, rlog=None):
+            self.bodies.append(body)
+            frames = ([{"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "original", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps({"path": str(path)})}}]}}]}, {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}]
+                      if len(self.bodies) == 1 else [{"choices": [{"delta": {"content": "seen"}}]}, {"choices": [{"delta": {}, "finish_reason": "stop"}]}])
+            for frame in frames:
+                yield b"data: " + json.dumps(frame).encode() + b"\n\n"
+            yield b"data: [DONE]\n\n"
+    backend = Streaming(path)
+    with Wire(tmp_path, backend) as w:
+        def post():
+            url = f"http://127.0.0.1:{w.srv.server_address[1]}/v1/chat/completions"
+            req = urllib.request.Request(url, json.dumps({"model": "test-model", "stream": True, "tools": MENU, "messages": w.messages}).encode(),
+                                         {"Content-Type": "application/json", "X-Cria-Session-Id": "sid"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                raw = r.read().decode()
+            assert raw.rstrip().endswith("data: [DONE]")
+            calls, text = {}, ""
+            for line in raw.splitlines():
+                if line.startswith("data: {"):
+                    frame = json.loads(line[6:])
+                    if not frame.get("choices"):
+                        continue
+                    choice = frame["choices"][0]
+                    text += choice["delta"].get("content") or ""
+                    for c in choice["delta"].get("tool_calls") or []:
+                        have = calls.setdefault(c["index"], {"id": c["id"], "type": "function", "function": {"name": "", "arguments": ""}})
+                        have["function"]["name"] += c["function"].get("name", "")
+                        have["function"]["arguments"] += c["function"].get("arguments", "")
+            return {"role": "assistant", "content": text or None, "tool_calls": list(calls.values())}
+        w.post = post
+        msg, carriers = w.drive()
+    assert msg["content"] == "seen" and len(carriers) > 3 and backend.tool_results()[0]["content"] == HEX
