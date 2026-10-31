@@ -25,12 +25,14 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
+from . import probeparse
+
 # Measures a figure is a concrete OBSERVATION in. KB/MB/%/multipliers are deliberately absent: they are
 # derived from the observation (1211931 B -> "1.2 MB"), so the literal never has to occur.
 _UNIT = (r"(?:B|bytes?|ms|s|secs?|seconds?|rows?|lines?|tests?|files?|records?|columns?|fields?|errors?|"
          r"failures?|warnings?|passed|failed|threads?)")
 _NUM = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
-_QUANTITY = re.compile(rf"(?<![\w.,])({_NUM})\s*({_UNIT})(?![\w-])")
+_QUANTITY = re.compile(rf"(?<![\w.,])(?<!\w-)({_NUM})\s*({_UNIT})(?![\w-])")
 _VERSION = re.compile(r"(?<![\w.])(\d+\.\d+\.\d+)(?![\w]|\.\w)")
 _HOST = re.compile(r"(?<![\w.])(?:https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,}|localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?"
                    r"|(localhost:\d+|\d{1,3}(?:\.\d{1,3}){3}:\d+))")
@@ -84,6 +86,44 @@ def _grounded_number(raw: str, unit: str, values: set[Decimal], decimals: list[s
     return False
 
 
+# A COUNT OF TEST OUTCOMES is not a free-floating number. Small numbers occur by chance in any long transcript
+# ("47 tests" had a 47 somewhere in 345 of 547 real transcripts, "3 failures" a 3 in 35 of 547 - the lens could
+# not tell a fabricated count from line 47 of a listing), so a count whose unit is an outcome (tests that passed
+# or failed, failures, errors) must sit on a RUNNER'S OWN SUMMARY LINE, beside its unit, in a tool result or a check
+# fact (`probeparse.is_tally_line`, the one owner of what a tally line looks like). The coder's own prose is not
+# a place a count was observed: "assistant: all 47 tests pass" must not ground the briefing's "47 failures".
+# NOT anchored: "tests" (the briefing may count the tests a file DEFINES - "test.js contains 10 tests" - which no
+# runner prints), a singular unit with a number that is not 1 ("a 404 error" is a status, not a count), and a
+# number glued to a word by a hyphen ("the line-124 failure" is a location).
+_OUTCOME_UNIT = re.compile(r"(?:passed|failed|failures?|errors?)\Z")
+_SINGULAR = ("failure", "error")
+_TURN = re.compile(r"(?m)^(?:user|assistant|tool|system): ")
+_NOT_A_TOOL_RESULT = re.compile(r"(?:user|assistant|system): ")
+
+
+def _tally_numbers(evidence: list[str], stem: str) -> set[Decimal]:
+    """Every number that sits on a runner summary line of a TOOL RESULT (or a non-transcript fact: check facts, the task)
+    that names the briefing's own unit (``stem``: the first four letters of "failures", "errors", "passed")."""
+    found: set[Decimal] = set()
+    for block in evidence:
+        for turn in _turns(block):
+            if _NOT_A_TOOL_RESULT.match(turn):
+                continue
+            for line in turn.splitlines():
+                if stem in line.lower() and probeparse.is_tally_line(line):
+                    found |= {d for m in _EVIDENCE_NUMBER.finditer(line) if (d := _dec(m.group(0).replace(",", ""))) is not None}
+    return found
+
+
+def _turns(block: str) -> list[str]:
+    """One transcript block as its turns: a block is one turn, optionally behind a scope label line; a flat text
+    (check facts, the task) is a single non-transcript turn. Split at the role prefix, never inside a result."""
+    starts = [m.start() for m in _TURN.finditer(block)]
+    if not starts:
+        return [block]
+    return [block[:starts[0]], *(block[a:b] for a, b in zip(starts, starts[1:] + [len(block)]))]
+
+
 def _hedged(briefing: str, m: re.Match) -> bool:
     before = briefing[max(0, m.start() - 24):m.start()]
     return bool(_HEDGE.search(before) or _DERIVED_AFTER.match(briefing, m.end()))
@@ -100,9 +140,20 @@ def ungrounded(briefing: str, evidence: list[str]) -> list[str]:
     values, decimals = _evidence_numbers(haystack)
     lowered = haystack.lower()
     found: list[str] = []
+    tallied: dict[str, set[Decimal]] = {}
     for m in _QUANTITY.finditer(briefing):
-        if not _hedged(briefing, m) and not _grounded_number(m.group(1), m.group(2).lower(), values, decimals):
+        if _hedged(briefing, m):
+            continue
+        unit = m.group(2).lower()
+        if not _grounded_number(m.group(1), unit, values, decimals):
             found.append(m.group(0))
+        elif _OUTCOME_UNIT.match(unit) and (unit not in _SINGULAR or m.group(1) == "1"):
+            stem = unit[:4]
+            if stem not in tallied:
+                tallied[stem] = _tally_numbers(evidence, stem)
+            value = _dec(m.group(1))
+            if value is not None and value not in tallied[stem]:
+                found.append(m.group(0))
     for m in _VERSION.finditer(briefing):
         if m.group(1).lower() not in lowered and not _hedged(briefing, m):
             found.append(m.group(1))

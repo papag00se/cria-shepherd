@@ -916,6 +916,17 @@ _DIAGNOSTIC_WORD = re.compile(r"(?i)\b(?:assert|asserted|assertion|expected|expe
                               r"|\b\w*(?:Error|Exception|Failure)\b")
 
 
+def is_tally_line(line: str) -> bool:
+    """Is ``line`` a runner's own count line (`3 failed, 44 passed`, `Tests run: 14, Failures: 1`, `5 failures`)?"""
+    return bool(_TALLY_SHAPED.search(line) or _FAILED_COUNT.search(line))
+
+
+# `_TALLY_SHAPED` knows `failures`/`passed` but not the bare words other runners print their counts with
+# (`3 failed`, `44 passing`, `Failures: 3`) nor node's TAP / spec-reporter summary (`# tests 9`, `# pass 6`, `ℹ fail 3`).
+_FAILED_COUNT = re.compile(r"(?i)\b\d+\s+(?:failed|failing|passing|total)\b|\b(?:failures?|errors?|failed|passed)\s*[:=]\s*\d+"
+                           r"|^\s*[#ℹ]\s*(?:tests|pass|fail|skipped)\s+\d+\b")
+
+
 def _with_runner_continuation(msg: str, lines: list, at: int) -> str:
     """``msg`` plus the lines indented under it — the other half of an expected/actual pair."""
     try:
