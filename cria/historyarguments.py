@@ -66,10 +66,10 @@ DEFINITION = HistoricalDefinition(
                   Reference('cria/massage.py', 'repair_history_tool_args')),
            regressions=(Reference('tests/context_wire_b/test_context_wire_b_massage.py',
                                   'test_replayed_history_args_are_always_valid_json_and_never_lose_text'),
-                        Reference('tests-before-reset-20261031:tests/test_history_argument_policy.py',
-                                  'test_final_prep_repairs_a_downstream_append_with_optional_recovery_disabled'),
-                        Reference('tests-before-reset-20261031:tests/test_history_argument_policy.py',
-                                  'test_public_compat_and_final_prep_use_the_same_replacement_raw_bytes_and_logs')),
+                        Reference('tests/context_wire_a/test_context_wire_a_arca_history_args.py',
+                                  'test_replayed_arguments_are_valid_json_at_every_level_and_recovered_only_where_the_assist_is_selected'),
+                        Reference('tests/write_edit/test_write_edit_cov_lifecycles.py',
+                                  'test_replayed_malformed_arguments_are_recovered_or_enveloped_losslessly_and_valid_ones_stay_byte_for_byte')),
            migrated=False), recover_arguments)
 
 
