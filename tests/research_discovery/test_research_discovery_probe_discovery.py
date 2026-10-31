@@ -96,7 +96,7 @@ def test_unrecognised_test_script_still_runs_but_unsafe_ones_are_refused(tmp_pat
     assert "declares a `test` script in package.json" in msg and "no command to run them was found" not in msg
 
 @pytest.mark.parametrize("name,body,admitted", [
-    ("test", "jest || true", 0), ("test", "jest; echo done", 0), ("test", "jest &", 0), ("lint", "eslint . | tee out", 0), ("lint", "eslint . || exit 0", 0),
+    ("test", "jest || true", 0), ("test", "mocha test/a.test.js || true", 0), ("test", "jest; echo done", 0), ("test", "jest &", 0), ("lint", "eslint . | tee out", 0), ("lint", "eslint . || exit 0", 0),
     ("test", "jest --ci", 1), ("lint", "tsc --noEmit && eslint .", 1), ("test", "jest --ci 2>&1", 1), ("test", "jest --coverage > out.txt 2>&1", 1),
     ("test", 'jest -t "a|b;c"', 1), ("lint", "eslint . >&2", 1)])
 def test_a_recognised_runner_whose_exit_status_is_hidden_is_not_a_check(tmp_path, name, body, admitted):

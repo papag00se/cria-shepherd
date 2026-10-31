@@ -79,14 +79,14 @@ def declared(script, files):
     ("node test/real.test.js", ["test/real.test.js"], 0, True, pt.Support.PROVEN),
     ("node --ignore test/skip.test.js test/real.test.js", ["test/skip.test.js", "test/real.test.js"], 0, None,
      pt.Support.UNKNOWN),                                                                       # operand slot is a flag
-    ("mocha test/a.test.js || true", ["test/a.test.js"], 0, None, pt.Support.UNKNOWN),         # `|| true` masks the exit
     ("node a.test.js && node b.test.js", ["a.test.js", "b.test.js"], 1, True, pt.Support.FAILED),
-], ids=["exit0", "flag-value", "or-true", "and-chain-fail"])
+], ids=["exit0", "flag-value", "and-chain-fail"])
 def test_a_declared_test_command_that_directly_runs_its_test_file_participates_without_a_tally(
         script, files, code, participated, support):
     """P23 Handles (C32): `npm test` = `node test/real.test.js` has no framework tally, so a genuinely green run stayed
     'unknown' and the completion barrier held it as unproven. Participation is credited only where the operand is
-    structurally executed and the exit code is trustworthy."""
+    structurally executed and the exit code is trustworthy. (A script whose exit is masked, `mocha … || true`, is no longer
+    a declared check at all: probediscovery withholds it, see the discovery test for hidden exit statuses.)"""
     event = pt.observe(declared(script, files), "", code)
     assert event.test.participated is participated
     assert pt.report([event]).support("test") is support
