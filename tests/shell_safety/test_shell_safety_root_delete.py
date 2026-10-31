@@ -97,3 +97,15 @@ def test_a_glued_substitution_may_expand_to_nothing_and_deep_nesting_still_gets_
                              ("echo '" + "$(echo " * n + "rm -rf /" + ")" * n + "'", False)):
         assert [bool(dirguard.root_recursive_delete_refusal(command)), bool(dirguard.command_refusal(command, "write", WS)),
                 bool(outbound(command, "write"))] == [refused] * 3
+
+
+NESTED = [   # a child shell (substitution / process substitution / backtick) bash EXECUTES; the masking reader must not hide it
+    'echo "$' + BS + '\n(rm -rf /)"', 'echo "$(echo "a # b")"; rm -rf /', 'echo "$(echo a # it\'s\nrm -rf /)"', 'echo `echo ' + BS + '$(rm -rf /)`',
+    'echo hi; "$(true)"rm -rf /', 'echo "$(printf \'%s\' "$(echo \'a)\'; rm -rf /)")"', 'cat <(echo "$' + BS + '\n(rm -rf /)")',
+]
+
+
+def test_root_deletion_inside_nested_child_shells_is_refused_before_any_other_judgement_at_every_level():
+    """4375c2a2: at external level none/read the shell reader masked the child shell and judged by unproven-write wording; root deletion must answer first, in its own words."""
+    assert [(c, lv) for c in NESTED for lv in LEVELS if dirguard.command_refusal(c, lv, WS) != dirguard.root_recursive_delete_refusal(c)
+            or not dirguard.root_recursive_delete_refusal(c)] == []

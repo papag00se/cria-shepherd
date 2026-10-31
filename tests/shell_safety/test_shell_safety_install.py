@@ -45,3 +45,11 @@ def test_installing_the_routes_own_tool_says_only_that_it_exists_and_never_also_
     said = dirguard._local_install_advice("which bundler; gem install bundler 2>&1 | tail -5")
     assert "already installed" in said and "`bundle3.2`" in said and "Gemfile" not in said and "into the project instead" not in said
     assert "Gemfile" in dirguard._local_install_advice("gem install countries")
+
+
+@pytest.mark.parametrize("command", ["mvn install", "mvn -q install", "mvn install:install-file -Dfile=x.jar"])
+def test_a_maven_goal_that_publishes_into_the_shared_repository_is_refused_but_a_build_is_not(command, box):
+    """0ea27f58: `mvn install` publishes this cell's artifact into the shared ~/.m2 for a later cell to resolve (cross-cell contamination)."""
+    box(BOX)
+    assert dirguard.install_refusal(command, "none", "/w")
+    assert dirguard.install_refusal("mvn -q test", "none", "/w") is None

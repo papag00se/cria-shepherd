@@ -43,3 +43,18 @@ def test_review_refuses_with_evidence_only_when_proven_and_stays_silent_for_unch
     assert proven and "rm -rf /" in proven and "cria" not in proven.lower()
     assert review("f.sh", "rm -?f --no-preserve-root /", None, WS, permission="write")       # POSSIBLE still refuses, without evidence
     assert review("f.sh", "rm -rf /", "rm -rf /", WS) is None and review("f.sh", "ls", None, WS) is None
+
+
+JS = 'const fs=require("fs");\n'
+WRAPPED = [   # a closed root-target call with a stable API binding stays PROVEN inside functions and conditionals
+    JS + 'function cleanup() { fs.rmSync("/", {recursive:true}); }', JS + 'if (cleanupNeeded) { fs.rmSync("/", {recursive:true}); }',
+    JS + 'const cleanup = () => { fs.rmSync("/", {recursive:true}); };',
+]
+
+
+def test_a_closed_root_target_deletion_is_proven_inside_functions_and_conditionals_not_demoted_to_possible():
+    """f97f2590: execution control lowered a closed `fs.rmSync("/")` to POSSIBLE, so a write-permission cleanup script containing it was admitted."""
+    for source in WRAPPED + ['package main\nimport "os"\nfunc cleanup() { if enabled { os.RemoveAll("/") } }', 'import shutil\ndef cleanup():\n if enabled:\n  shutil.rmtree("/")']:
+        path = "f.go" if "package main" in source else "f.py" if "shutil" in source else "f.js"
+        result = analyze(path, source, WS, "write")
+        assert result.blocked and any(f.confidence == "PROVEN" and f.rule == "root" for f in result.findings), source

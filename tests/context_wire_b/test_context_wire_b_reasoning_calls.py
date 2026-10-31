@@ -30,6 +30,8 @@ calls = lambda comp: [(t["function"]["name"], json.loads(t["function"]["argument
     (LFM % "list_dir(path='.'), read_file(path='a')", [("list_dir", {"path": "."}), ("read_file", {"path": "a"})]),
     (XML("read_file", path="a.py") + "\n" + XML("read_file", path="b.py"), [("read_file", {"path": "a.py"}), ("read_file", {"path": "b.py"})]),   # back-to-back calls are one batch (10 calls lost to single re-asks)
     (LFM % "read_file(path=('a', 'b'))", [("read_file", {"path": ["a", "b"]})]),
+    # an explicit JSON {} is parsed evidence of an empty argument object, not a missing body (ba1687a4: `if args:` dropped it)
+    ("Inspect the workspace.\n<function=list_dir>{}</function>", [("list_dir", {})]),
     # XML parameter tags are the arguments even when the payload holds an object literal (qwen35 shipping-rates-py: scored 0/4 having touched nothing)
     (XML("edit_file", path="r.py", old_string='K = {"d": 0.75}', new_string='K = {"d": 0.75, "x": 2.5}'), [("edit_file", {"path": "r.py", "old_string": 'K = {"d": 0.75}', "new_string": 'K = {"d": 0.75, "x": 2.5}'})])])
 def test_a_complete_emitted_call_in_reasoning_becomes_a_real_call_with_the_reasoning_untouched(reasoning, expected):
@@ -90,6 +92,9 @@ def test_a_nested_example_never_displaces_the_call_that_encloses_it_and_nothing_
        ('{ not json } trailing {"ok": true}', {"ok": True}), ("<think>reasoning with { a brace", None), ("no json here", None), ("", None),
        ('{"steps":["real","plan"],"steps":[1,2]}', {"steps": ["real", "plan"]}),                                          # first real value wins, not the degenerate echo
        ('{"done": false, "reason": "r", "done": true}', {"done": False, "reason": "r"}),                                  # a critic that says both has not decided; false is a value, not nothing-said
-       ('{"missing":[],"missing":["the tests"]}', {"missing": ["the tests"]})])                                          # an empty first value never shadows a real one
+       ('{"missing":[],"missing":["the tests"]}', {"missing": ["the tests"]}),
+       # 6a5f57e2: a complete PRIVATE object before a real OUTSIDE closing frame is discarded with the reasoning (any case/spacing/tag)
+       ('{"done": true, "reason": "quotes </think> as data"}</think>{"done": false, "reason": "answer"}', {"done": False, "reason": "answer"}),
+       ('{"done": true}</THINK >{"done": false}', {"done": False}), ('{"done": true}<thinking>x</thinking>{"done": false}', {"done": False})])                                          # an empty first value never shadows a real one
 def test_model_shaped_json_is_extracted_tolerantly_and_the_first_real_duplicate_wins(raw, expected):
     assert jsontext.extract_json_object(raw) == expected

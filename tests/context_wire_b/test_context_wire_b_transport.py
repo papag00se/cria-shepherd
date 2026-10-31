@@ -195,3 +195,14 @@ def test_adjacent_assistant_turns_merge_and_a_bare_assistant_is_never_sent():
     assert roles([{"role": "assistant", "tool_calls": [CALL]}, {"role": "tool", "tool_call_id": "c", "content": "ok"}, {"role": "assistant"}, {"role": "user", "content": "n"}]) == ["assistant", "tool", "user"]
     assert roles([{"role": "user", "content": "go"}, {"role": "assistant", "content": ""}, {"role": "assistant", "content": None}]) == ["user"]
     assert roles([{"role": "assistant", "content": "", "tool_calls": [CALL]}]) == ["assistant"]
+
+
+def test_the_captured_prompt_forwards_reasoning_effort_the_template_branches_on():
+    """cad448c0 (Bonsai 2 walk, 2026-09-19): `/apply-template` was not sent `reasoning_effort`, so every capture rendered the template's xhigh default while the wire said low; a walk read a live knob as dead."""
+    sent = []
+    def opening(request, **kw):
+        sent.append(json.loads(request.data))
+        return props({"prompt": "rendered"})
+    with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=opening):
+        Upstream("http://x")._render_prompt({"messages": [{"role": "user", "content": "hi"}], "reasoning_effort": "low"})
+    assert sent[0]["reasoning_effort"] == "low"
