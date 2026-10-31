@@ -70,5 +70,5 @@ DEFINITION = Definition(Policy(
     triggers=(("task", 4), ("step", 5)),
     hooks=(Reference("cria/loop.py", "Loop._work_item"),
            Reference("cria/loop.py", "Loop._gate_single_done")),
-    regressions=(Reference("tests/test_completion_redrive_policy.py", "test_step_exact_effect_and_once_per_step"),),
+    regressions=(Reference("tests/gates_completion/test_gates_completion_repochecks.py", "test_the_act_first_redrive_spends_once_per_step_and_stays_silent_when_the_coder_acted"),),
 ), execute)

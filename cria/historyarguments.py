@@ -64,11 +64,11 @@ DEFINITION = HistoricalDefinition(
            services=('common-json-literal-reader', 'complete-write-literal-reader'),
            hooks=(Reference('cria/upstream.py', 'Upstream._prep'),
                   Reference('cria/massage.py', 'repair_history_tool_args')),
-           regressions=(Reference('tests/test_history_argument_policy.py',
-                                  'test_full_history_keeps_names_ids_roles_outputs_and_literal_values'),
-                        Reference('tests/test_history_argument_policy.py',
+           regressions=(Reference('tests/context_wire_b/test_context_wire_b_massage.py',
+                                  'test_replayed_history_args_are_always_valid_json_and_never_lose_text'),
+                        Reference('tests_backup/test_history_argument_policy.py',
                                   'test_final_prep_repairs_a_downstream_append_with_optional_recovery_disabled'),
-                        Reference('tests/test_history_argument_policy.py',
+                        Reference('tests_backup/test_history_argument_policy.py',
                                   'test_public_compat_and_final_prep_use_the_same_replacement_raw_bytes_and_logs')),
            migrated=False), recover_arguments)
 

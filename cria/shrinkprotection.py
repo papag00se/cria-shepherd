@@ -206,8 +206,8 @@ DEFINITION = MutationDefinition(
            services=('live-session-state', 'surveyed-workspace-view', 'closed-whole-file-reader'),
            hooks=(Reference('cria/writeproxy.py', '_lower_synthetic'),
                   Reference('cria/server.py', 'CriaHandler._setup_translation')),
-           regressions=(Reference('tests/test_shrink_protection_policy.py', 'test_fragment_hold_and_affirmative_only_cache'),
-                        Reference('tests/test_shrink_protection_policy.py', 'test_byte_settlement_runs_stale_writes_and_only_emits_successful_current_facts')),
+           regressions=(Reference('tests_backup/test_shrink_protection_policy.py', 'test_fragment_hold_and_affirmative_only_cache'),
+                        Reference('tests_backup/test_shrink_protection_policy.py', 'test_byte_settlement_runs_stale_writes_and_only_emits_successful_current_facts')),
            migrated=False), shrinking_replacement)
 
 

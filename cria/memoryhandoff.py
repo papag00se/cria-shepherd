@@ -327,9 +327,9 @@ POLICY = Policy(
     hooks=(Reference("cria/server.py", "_recognize_compaction"),
            Reference("cria/server.py", "_compaction_body"),
            Reference("cria/server.py", "_harden_compaction_reply")),
-    regressions=(Reference("tests/test_harness_memory_source.py", "test_source_matches_server"),
-                 Reference("tests/test_harness_memory_source.py", "test_disabled_does_not_touch_evidence_judgment_or_state"),
-                 Reference("tests/test_harness_memory_boundaries.py", "test_producer_authentication_survives_real_continuation_and_final_wire")),
+    regressions=(Reference("tests_backup/test_harness_memory_source.py", "test_source_matches_server"),
+                 Reference("tests_backup/test_harness_memory_source.py", "test_disabled_does_not_touch_evidence_judgment_or_state"),
+                 Reference("tests_backup/test_harness_memory_boundaries.py", "test_producer_authentication_survives_real_continuation_and_final_wire")),
     migrated=False,
 )
 

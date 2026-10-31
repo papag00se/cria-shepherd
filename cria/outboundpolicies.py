@@ -216,20 +216,20 @@ DEFINITIONS = tuple(OutboundDefinition(Policy(id, 'outbound-call', level, family
     regressions=(regression,), migrated=False), execute)
     for id, family, level, services, prompts, regression, execute in (
     ('spill-path-correction', 'F63', 2, (), (),
-     Reference('tests/test_tool_policy_stages.py', 'test_spill_correction_changes_execution_path_not_original_call_evidence'), spill_paths),
+     Reference('tests_backup/test_tool_policy_stages.py', 'test_spill_correction_changes_execution_path_not_original_call_evidence'), spill_paths),
     ('malformed-shell-refusal', 'F01', 2, (), ('malformed_call_refusal',),
-     Reference('tests/test_writeproxy.py', 'MalformedFusedCallTests'), malformed_shell),
+     Reference('tests_backup/test_writeproxy.py', 'MalformedFusedCallTests'), malformed_shell),
     ('workspace-boundary', 'F22', 2, ('workspace-view',), (),
-     Reference('tests/test_tool_policy_stages.py', 'test_disabled_external_guard_does_not_queue_workspace_questions'), external_boundary),
+     Reference('tests_backup/test_tool_policy_stages.py', 'test_disabled_external_guard_does_not_queue_workspace_questions'), external_boundary),
     ('private-directory-protection', 'F22', 2, (), ('cria_home_refusal',),
-     Reference('tests/test_writeproxy.py', 'CriaHomeGuardTests'), private_files),
+     Reference('tests_backup/test_writeproxy.py', 'CriaHomeGuardTests'), private_files),
     ('reference-file-protection', 'F22', 2, (), ('spill_edit_refusal',),
-     Reference('tests/test_tool_policy_stages.py', 'test_spill_correction_changes_execution_path_not_original_call_evidence'), reference_files),
+     Reference('tests_backup/test_tool_policy_stages.py', 'test_spill_correction_changes_execution_path_not_original_call_evidence'), reference_files),
     ('fused-file-refusal', 'F13', 2, (), ('write_fused_content',),
-     Reference('tests/test_writeproxy.py', 'FusedContentRefusalTests'), fused_file),
+     Reference('tests_backup/test_writeproxy.py', 'FusedContentRefusalTests'), fused_file),
     ('unread-file-protection', 'F15', 5, ('whole-read-ledger',), (),
-     Reference('tests/test_a_write_to_a_file_never_seen_says_what_cria_measured.py',
-               'test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read'), unread_replacement),
+     Reference('tests/write_edit/test_write_edit_assists.py',
+               'test_the_bound_selection_decides_which_write_and_edit_assists_act'), unread_replacement),
 ))
 
 
@@ -237,7 +237,7 @@ MUTATIONS = (
     MutationDefinition(Policy('candidate-mutation-safety', 'mutation-command', 2, family_id='F28',
         services=('workspace-view', 'candidate-safety'), prompts=('cleanup_stale',),
         hooks=(Reference('cria/writeproxy.py', '_lower_synthetic'),),
-        regressions=(Reference('tests/test_cleanup_safety.py', 'test_stale_source_cannot_bypass_a_known_unsafe_finding'),),
+        regressions=(Reference('tests/write_edit/test_write_edit_outbound.py', 'test_a_write_or_edit_whose_candidate_would_delete_outside_the_workspace_is_withheld_and_a_repair_lands'),),
         migrated=False), candidate_safety),
     SHRINK_PROTECTION,
 )

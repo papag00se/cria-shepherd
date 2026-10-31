@@ -1584,10 +1584,10 @@ DEFINITION = RollingDefinition(
                      "workspace-inventory", "compaction-evidence", "three-lens-validator"),
            hooks=(Reference("cria/loop.py", "Loop._self_compact"),
                   Reference("cria/loop.py", "Loop._self_compact_single")),
-           regressions=(Reference("tests/test_context_memory_migration.py", "test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical"),
-                        Reference("tests/test_context_memory_migration.py", "test_disabled_rolling_does_not_detect_call_or_consume_force"),
-                        Reference("tests/test_context_memory_migration.py", "test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage"),
-                        Reference("tests/test_context_memory_migration.py", "test_refold_keeps_newer_grounding_separate_and_failed_refold_keeps_increment")),
+           regressions=(Reference("tests_backup/test_context_memory_migration.py", "test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical"),
+                        Reference("tests_backup/test_context_memory_migration.py", "test_disabled_rolling_does_not_detect_call_or_consume_force"),
+                        Reference("tests_backup/test_context_memory_migration.py", "test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage"),
+                        Reference("tests/compaction_handoff/test_compaction_handoff_rolling.py", "test_a_summary_past_the_refold_threshold_is_condensed_once_and_a_failed_refold_keeps_the_increment")),
            migrated=False), rolling)
 
 

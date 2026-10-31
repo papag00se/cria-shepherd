@@ -94,7 +94,7 @@ DEFINITION = GuidanceDefinition(Policy(
     services=('parsed document navigation facts', 'prompt loader'),
     state='none; invocation-local result, discard on cancel and recompute on retry',
     hooks=(Reference('cria/documentguidance.py', 'guidance'),),
-    regressions=(Reference('tests/test_document_guidance_policy.py', 'test_spill_literal'),),
+    regressions=(Reference('tests/loop_orientation/test_loop_orientation_small_owners.py', 'test_document_advice_names_the_keys_and_stays_silent_when_the_whole_document_was_inline'),),
     migrated=False,
 ))
 

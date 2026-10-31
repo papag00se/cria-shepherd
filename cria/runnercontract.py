@@ -151,9 +151,9 @@ DEFINITION = RunnerDefinition(
            hooks=(Reference('cria/loop.py', 'guard_periodic_result'),
                   Reference('cria/loop.py', 'Loop._verify_after_probe'),
                   Reference('cria/loop.py', 'Loop._drive_single_item')),
-           regressions=(Reference('tests/test_runner_contract_policy.py',
-                                  'test_complete_judgment_keeps_checker_contract_and_settles_only_exact_answers'),
-                        Reference('tests/test_runner_contract_policy.py',
+           regressions=(Reference('tests/loop_orientation/test_loop_orientation_check_judgments.py',
+                                  'test_one_judgment_per_distinct_failure_facts_and_unreadable_answers_never_settle'),
+                        Reference('tests_backup/test_runner_contract_policy.py',
                                   'test_disabled_stage_never_constructs_input_or_observes_state')),
            migrated=False),
     judge_runner_contract)

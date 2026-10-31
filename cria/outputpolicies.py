@@ -696,7 +696,7 @@ def _definition(id, family, stage, execute, regression, needs_menu=True, stream_
     regressions = (regression,)
     if stream_start is not None:
         hooks += (Reference('cria/massage.py', 'massage_stream'),)
-        regressions += (Reference('tests/test_output_selection_boundary.py',
+        regressions += (Reference('tests_backup/test_output_selection_boundary.py',
                                   'test_bound_handler_selection_overrides_legacy_library_gate'),)
     return CompletionDefinition(Policy(id, stage, default_level, family_id=family, hooks=hooks,
         regressions=regressions, migrated=False), execute, needs_menu, stream_start)
@@ -704,30 +704,30 @@ def _definition(id, family, stage, execute, regression, needs_menu=True, stream_
 
 RECOVERY = (
     _definition('text-call-recovery', 'F01', 'output-recovery', recover_text_calls,
-                Reference('tests/test_tool_policy_stages.py', 'test_recovery_replacement_and_bypass_are_used_by_public_production_entry'),
+                Reference('tests_backup/test_tool_policy_stages.py', 'test_recovery_replacement_and_bypass_are_used_by_public_production_entry'),
                 stream_start=stream_leak_position),
     _definition('reasoning-call-recovery', 'F01', 'output-recovery', recover_reasoning_tool_calls,
-                Reference('tests/test_recovered_arg_types.py', 'BothRecoveryPathsUseItTests')),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_text_recovered_arguments_get_the_declared_type_only_on_an_exact_match')),
 )
 REPAIR = (
     _definition('call-debris-repair', 'F01', 'output-repair', strip_debris_from_args,
-                Reference('tests/test_a_fused_tail_is_cut_not_refused.py', 'TheJunkIsCutTests'), False),
+                Reference('tests/context_wire_a/test_context_wire_a_recovery.py', 'test_a_call_written_as_text_is_recovered_as_the_model_wrote_it'), False),
     _definition('tool-name-normalization', 'F04', 'output-repair', normalize_tool_names,
-                Reference('tests/test_massage.py', 'NormalizeToolNamesTests')),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_a_spelling_variant_folds_to_the_advertised_name_but_a_different_name_or_ambiguity_never_does')),
     _definition('malformed-argument-repair', 'F06', 'output-repair', repair_tool_args,
-                Reference('tests/test_massage.py', 'ArgRepairTests'), False),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_repairable_argument_text_is_repaired_to_exactly_what_was_written'), False),
     _definition('shell-tool-adaptation', 'F04', 'output-repair', normalize_tool_calls,
-                Reference('tests/test_massage.py', 'NormalizeToolCallsTests')),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_calls_are_lowered_to_the_shell_the_harness_has_with_the_declared_arg_shape')),
     _definition('edit-patch-adaptation', 'F05', 'output-repair', lower_edit_file,
-                Reference('tests/test_massage.py', 'EditFileTests')),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_edit_and_add_file_lower_to_patch_or_write_only_where_the_harness_can_run_it')),
     _definition('add-file-adaptation', 'F05', 'output-repair', add_file_to_write_file,
-                Reference('tests/test_massage.py', 'AddFileTests'), False),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_edit_and_add_file_lower_to_patch_or_write_only_where_the_harness_can_run_it'), False),
     _definition('patch-normalization', 'F05', 'output-repair', normalize_apply_patch,
-                Reference('tests/test_massage.py', 'ApplyPatchTests'), False),
+                Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_apply_patch_input_is_normalized_to_the_native_envelope_without_losing_content'), False),
     _definition('reasoning-text-recovery', 'F08', 'output-repair', recover_reasoning_text,
-                Reference('tests/test_a_finished_turn_keeps_its_words.py', 'AFinishedTurnKeepsItsWordsTests'), False),
+                Reference('tests_backup/test_a_finished_turn_keeps_its_words.py', 'AFinishedTurnKeepsItsWordsTests'), False),
 )
 # Unlike apply(), the existing server's tool-free answer path is not L1-gated.
 # Preserve that applicability; changing L0 behavior is not part of this movement.
 TEXT_ANSWER = (_definition('tool-free-text-recovery', 'F08', 'text-answer', recover_text_answer,
-    Reference('tests/test_massage.py', 'CoerceTextAnswerTests'), default_level=0),)
+    Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_a_toolless_request_gets_text_back_never_a_spurious_call_or_dialect_blob'), default_level=0),)

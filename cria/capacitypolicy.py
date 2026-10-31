@@ -174,6 +174,6 @@ DEFINITION = Definition(Policy(
               "existing-no-change-recognition-and-exception-constructors"),
     hooks=(Reference("cria/capacitypolicy.py", "dispatch"),
            Reference("cria/capacitypolicy.py", "fit_density")),
-    regressions=(Reference("tests/test_capacity_policy.py", "test_literal_changed_wire"),
-                 Reference("tests/test_capacity_production_binding.py", "test_original_public_no_change")),
+    regressions=(Reference("tests/context_wire_a/test_context_wire_a_capacity.py", "test_a_rejection_is_re_fitted_at_the_measured_density_and_re_sent_once_when_the_bytes_changed"),
+                 Reference("tests/context_wire_a/test_context_wire_a_capacity.py", "test_identical_re_fit_bytes_are_never_re_sent_and_a_second_rejection_is_final")),
     migrated=False), choose_refit)

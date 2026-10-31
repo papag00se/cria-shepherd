@@ -139,7 +139,7 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "Loop._drive_single_item"),
            Reference("cria/modelview.py", "settle_restored_text"),
            Reference("cria/loop.py", "Loop._coder_turn")),
-    regressions=(Reference("tests/test_context_restoration_policy.py", "test_render_source_parity"),
-                 Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
-                 Reference("tests/test_common_context_preparation.py", "test_actual_driver_floor_delivery_earns_only_surviving_restoration_credit")),
+    regressions=(Reference("tests_backup/test_context_restoration_policy.py", "test_render_source_parity"),
+                 Reference("tests_backup/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
+                 Reference("tests_backup/test_common_context_preparation.py", "test_actual_driver_floor_delivery_earns_only_surviving_restoration_credit")),
     migrated=False), restore)

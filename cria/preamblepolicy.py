@@ -167,7 +167,7 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "_frame_for_item"),
            Reference("cria/loop.py", "_drop_harness_frame"),
            Reference("cria/server.py", "_compaction_messages")),
-    regressions=(Reference("tests/test_preamble_policy_source.py", "test_source_parity"),
-                 Reference("tests/test_preamble_policy_source.py", "test_real_coder_and_reasoner_body_parity"),
-                 Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+    regressions=(Reference("tests_backup/test_preamble_policy_source.py", "test_source_parity"),
+                 Reference("tests_backup/test_preamble_policy_source.py", "test_real_coder_and_reasoner_body_parity"),
+                 Reference("tests_backup/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
     migrated=False), reframe)

@@ -496,12 +496,12 @@ DEFINITION = Definition(Policy(
         "guard_periodic_gate", "guard_periodic_result", "guard_gate_verdict", "record_gate_state", "guard_probe_reissue",
         "passing_test_regression",
         "Loop._work_item", "Loop._verify_after_probe", "Loop._drive_single_item")),
-    regressions=tuple(Reference("tests/test_repository_check_policy.py", name) for name in (
+    regressions=tuple(Reference("tests_backup/test_repository_check_policy.py", name) for name in (
         "test_admission_matches_current_periodic_owner", "test_periodic_result_matches_current_owner",
         "test_shared_settlement_matches_current_owner", "test_task_and_step_rewrite_order",
         "test_disabled_and_replacement_do_not_touch_unselected_state")) + (
-        Reference("tests/test_historical_gate_scope_remains_bound.py",
-                  "test_real_rank4_ablation_driver_final_post_keeps_historical_cleanup_facts"),), migrated=False),
+        Reference("tests/gates_completion/test_gates_completion_litter.py",
+                  "test_a_rebuilt_history_keeps_the_original_scope_of_a_cleanup_receipt_and_a_foreign_one_authenticates_nothing"),), migrated=False),
     admit, resume, observe_acting_turn, completion_result, replan, reissue)
 DEFINITIONS = (DEFINITION,)
 

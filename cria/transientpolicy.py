@@ -143,8 +143,8 @@ TRANSIENT_RECOVERY = Definition(Policy(
     state="Caller-owned per-call attempt; reset on route change/new call; no shared cache",
     services=("parsed failure facts", "cancellation", "relative backoff sleeper"),
     hooks=(Reference("cria/transientpolicy.py", "choose"),),
-    regressions=(Reference("tests/test_transient_recovery_policy.py", "test_literal_choices"),
-                 Reference("tests/test_transient_recovery_production_binding.py", "test_original_chat_timeout_bytes")),
+    regressions=(Reference("tests/loop_orientation/test_loop_orientation_small_owners.py", "test_a_transient_failure_is_retried_routed_or_failed_by_its_kind"),
+                 Reference("tests_backup/test_transient_recovery_production_binding.py", "test_original_chat_timeout_bytes")),
 ), choose)
 DEFINITIONS = (TRANSIENT_RECOVERY,)
 

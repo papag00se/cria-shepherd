@@ -271,7 +271,7 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py","_restates_the_verdict"),Reference("cria/loop.py","judge_satisfaction"),
            Reference("cria/loop.py","Loop._verify"),Reference("cria/stepreview.py","StepServices"),
            Reference("cria/stepreview.py","review_step")),
-    regressions=tuple(Reference("tests/test_completion_confirmation_policy.py",name) for name in (
+    regressions=tuple(Reference("tests_backup/test_completion_confirmation_policy.py",name) for name in (
         "test_confirmation_matches_original_questions_results_and_counts","test_latest_attempt_rounds_do_not_carry_between_reasks",
         "test_readable_cut_and_pending_reply_necessarily_diverges_from_current_owner","test_disabled_replacement_and_explicit_step_consent")),
     migrated=False),confirm)

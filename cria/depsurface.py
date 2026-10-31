@@ -57,7 +57,7 @@ the same ``shopspring/decimal@v1.4.0`` is byte-identical wherever it was fetched
 CRIA'S OWN local cache for the EXACT resolved coordinate is either (a) absent, in which case this
 module abstains exactly as it would for a harness on a different box, or (b) present, in which case
 its content is the real API surface, regardless of which machine holds the copy.
-``tests/test_a_dependency_jar_is_readable_ground_truth.py`` already encodes the same co-location
+``tests_backup/test_a_dependency_jar_is_readable_ground_truth.py`` already encodes the same co-location
 assumption for the coder's OWN reads of these exact cache roots, including ``javap -classpath <jar>
 <class>`` explicitly.
 

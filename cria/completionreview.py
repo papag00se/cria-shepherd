@@ -116,9 +116,9 @@ DEFINITION = ReviewDefinition(
            triggers=tuple((trigger.value, trigger.level) for trigger in ReviewTrigger),
            hooks=tuple(Reference("cria/loop.py", "Loop." + name) for name in
                        ("_review_task", "_reopen_if_unsatisfied", "_periodic_satisfaction", "_done_critic_reason")),
-           regressions=(Reference("tests/test_whole_task_evaluation.py",
+           regressions=(Reference("tests_backup/test_whole_task_evaluation.py",
                                   "test_full_judge_bodies_events_and_review_state_match_through_both_real_drivers"),
-                        Reference("tests/test_whole_task_evaluation.py",
+                        Reference("tests_backup/test_whole_task_evaluation.py",
                                   "test_reactive_real_drivers_use_the_same_question_but_keep_their_release_and_retry_owners")),
            migrated=True),
     review_task)

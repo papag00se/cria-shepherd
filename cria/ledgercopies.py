@@ -58,6 +58,6 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "_elide_ledger_copies"),
            Reference("cria/loop.py", "Loop._work_item"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
-    regressions=(Reference("tests/test_ledger_copy_policy.py", "test_source_parity_and_anchor_survival"),
-                 Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+    regressions=(Reference("tests/context_wire_a/test_context_wire_a_repeats.py", "test_a_ledger_copy_elsewhere_collapses_to_a_pointer_leaving_exactly_one_authoritative_copy"),
+                 Reference("tests_backup/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
     migrated=False), elide)

@@ -530,11 +530,11 @@ RUNAWAY = RunawayDefinition(
                      "checker-read-mutation-facts", "coder-provider", "completion-reader", "human-note"),
            hooks=(Reference("cria/server.py", "CriaServer.__init__"), Reference("cria/upstream.py", "Upstream.chat_watched"),
                   Reference("cria/loop.py", "guard_rumination")),
-           regressions=(Reference("tests/test_generation_guard_policies.py", "test_stream_abort_authority"),
-                        Reference("tests/test_generation_guard_policies.py", "test_runaway_recovery_parity"),
-                        Reference("tests/test_generation_guard_policies.py", "test_clock_and_wire_timeouts_have_their_own_facts"),
-                        Reference("tests/test_generation_guard_policies.py", "test_quarantined_exhaustion_keeps_original_reply_and_event_bytes"),
-                        Reference("tests/test_generation_guard_policies.py", "test_selected_replacements_are_called_in_order_and_keep_distinct_results")), migrated=False),
+           regressions=(Reference("tests_backup/test_generation_guard_policies.py", "test_stream_abort_authority"),
+                        Reference("tests_backup/test_generation_guard_policies.py", "test_runaway_recovery_parity"),
+                        Reference("tests/loop_guards/test_loop_guards_stream.py", "test_a_clock_or_wire_silence_is_labelled_dead_stream_with_its_own_facts"),
+                        Reference("tests_backup/test_generation_guard_policies.py", "test_quarantined_exhaustion_keeps_original_reply_and_event_bytes"),
+                        Reference("tests_backup/test_generation_guard_policies.py", "test_selected_replacements_are_called_in_order_and_keep_distinct_results")), migrated=False),
     recover_runaway, Detector.from_reasoning_budget, StreamGuard)
 TRUNCATION = TruncationDefinition(
     Policy("generation-cut-output-recovery", "generation-recovery", 4, family_id="F09",
@@ -542,10 +542,10 @@ TRUNCATION = TruncationDefinition(
            state="per-call bounded retries only; final refusal appended to the caller's conversation",
            services=("tool-family-facts", "argument-path-reader", "coder-provider", "completion-reader", "human-note"),
            hooks=(Reference("cria/loop.py", "guard_truncation"),),
-           regressions=(Reference("tests/test_generation_guard_policies.py", "test_truncation_recovery_parity"),
-                        Reference("tests/test_generation_guard_policies.py", "test_disabled_recovery_still_quarantines_actions"),
-                        Reference("tests/test_generation_guard_policies.py", "test_final_cut_call_controls_wording_and_other_calls_remain_evidence"),
-                        Reference("tests/test_generation_guard_policies.py", "test_truncation_exhaustion_refuses_the_final_reply_without_synthetic_success")), migrated=False),
+           regressions=(Reference("tests_backup/test_generation_guard_policies.py", "test_truncation_recovery_parity"),
+                        Reference("tests/loop_guards/test_loop_guards_recovery.py", "test_disabled_guards_still_quarantine_cut_calls_and_never_coach"),
+                        Reference("tests_backup/test_generation_guard_policies.py", "test_final_cut_call_controls_wording_and_other_calls_remain_evidence"),
+                        Reference("tests_backup/test_generation_guard_policies.py", "test_truncation_exhaustion_refuses_the_final_reply_without_synthetic_success")), migrated=False),
     recover_truncation)
 DEFINITIONS = (RUNAWAY, TRUNCATION)
 

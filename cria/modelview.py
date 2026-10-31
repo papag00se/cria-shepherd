@@ -179,10 +179,10 @@ REPEATED_PAYLOADS = WireDefinition(
            services=("surviving-paired-tool-history",),
            hooks=(Reference("cria/upstream.py", "Upstream._prep"),
                   Reference("cria/modelview.py", "visible_tokens")),
-           regressions=(Reference("tests/test_context_memory_migration.py", "test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass"),
-                        Reference("tests/test_a_repeat_pointer_never_outlives_its_target.py", "test_the_old_order_dangles_somewhere_and_the_wire_never_does"),
-                        Reference("tests/test_context_wire_selection.py", "test_wire_uses_exact_selected_fold_without_default_fallback"),
-                        Reference("tests/test_context_wire_selection.py", "test_changed_trial_refits_original_unfolded_history_with_identical_budgets")),
+           regressions=(Reference("tests_backup/test_context_memory_migration.py", "test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass"),
+                        Reference("tests/context_wire_a/test_context_wire_a_wire.py", "test_a_repeat_pointer_never_outlives_the_copy_it_points_at_while_the_floor_trims"),
+                        Reference("tests_backup/test_context_wire_selection.py", "test_wire_uses_exact_selected_fold_without_default_fallback"),
+                        Reference("tests_backup/test_context_wire_selection.py", "test_changed_trial_refits_original_unfolded_history_with_identical_budgets")),
            migrated=False), fold_repeats)
 REPEATED_CHECKS = WireDefinition(
     Policy("wire-repeated-check-evidence", "wire-evidence-fold", 3, family_id="F69",
@@ -190,9 +190,9 @@ REPEATED_CHECKS = WireDefinition(
            services=("surviving-check-carriers",),
            hooks=(Reference("cria/upstream.py", "Upstream._prep"),
                   Reference("cria/modelview.py", "visible_tokens")),
-           regressions=(Reference("tests/test_context_memory_migration.py", "test_wire_check_runs_fold_only_when_the_later_exact_source_survives"),
-                        Reference("tests/test_c13b_the_wire_claims_are_true.py", "test_every_line_a_pointer_replaced_is_shown_in_the_body_sent"),
-                        Reference("tests/test_context_wire_selection.py", "test_changed_trial_refits_original_unfolded_history_with_identical_budgets")),
+           regressions=(Reference("tests_backup/test_context_memory_migration.py", "test_wire_check_runs_fold_only_when_the_later_exact_source_survives"),
+                        Reference("tests/context_wire_a/test_context_wire_a_wire.py", "test_a_repeat_pointer_never_outlives_the_copy_it_points_at_while_the_floor_trims"),
+                        Reference("tests_backup/test_context_wire_selection.py", "test_changed_trial_refits_original_unfolded_history_with_identical_budgets")),
            migrated=False), fold_check_runs)
 WIRE_FOLD_STAGE = (REPEATED_PAYLOADS, REPEATED_CHECKS)
 

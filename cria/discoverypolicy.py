@@ -150,7 +150,7 @@ DEFINITION = DiscoveryDefinition(Policy(
               'oversized-answer disclosure', 'observed contract renderer'),
     state='none; invocation-local observed answer, retry recomputes',
     hooks=(Reference('cria/discoverypolicy.py', 'discovery'),),
-    regressions=(Reference('tests/test_protocol_discovery_policy.py', 'test_literal_substitution'),),
+    regressions=(Reference('tests_backup/test_protocol_discovery_policy.py', 'test_literal_substitution'),),
     migrated=False,
 ))
 

@@ -593,12 +593,12 @@ DEFINITION = DiagnosisDefinition(
                   Reference("cria/loop.py", "observe_task_missing_file"), Reference("cria/loop.py", "Loop._work_item"),
                   Reference("cria/loop.py", "Loop._periodic_satisfaction"),
                   Reference("cria/loop.py", "Loop._observe_missing_file_on_done")),
-           regressions=(Reference("tests/test_completion_diagnosis_policy.py", "test_grounding_matches_current_owner"),
-                        Reference("tests/test_completion_diagnosis_policy.py", "test_remediation_lifecycle_matches_current_owner"),
-                        Reference("tests/test_completion_diagnosis_policy.py", "test_observer_composes_real_inventory_and_reuses_grounding"),
-                        Reference("tests/test_completion_diagnosis_policy.py", "test_scheduled_delivery_repeats_only_on_renewed_complete_observation"),
-                        Reference("tests/test_completion_diagnosis_policy.py", "test_scheduled_observer_owns_stamp_before_question_and_target_delivery"),
-                        Reference("tests/test_completion_diagnosis_policy.py", "test_terminal_observer_uses_only_retained_root_and_does_not_arm_or_stamp")),
+           regressions=(Reference("tests/loop_orientation/test_loop_orientation_completion_diagnosis.py", "test_a_missing_file_diagnosis_is_grounded_only_in_known_workspace_state_and_the_original_task"),
+                        Reference("tests/loop_orientation/test_loop_orientation_completion_diagnosis.py", "test_remediation_survives_inspection_gets_one_follow_up_and_ends_only_with_the_correlated_write"),
+                        Reference("tests_backup/test_completion_diagnosis_policy.py", "test_observer_composes_real_inventory_and_reuses_grounding"),
+                        Reference("tests_backup/test_completion_diagnosis_policy.py", "test_scheduled_delivery_repeats_only_on_renewed_complete_observation"),
+                        Reference("tests_backup/test_completion_diagnosis_policy.py", "test_scheduled_observer_owns_stamp_before_question_and_target_delivery"),
+                        Reference("tests_backup/test_completion_diagnosis_policy.py", "test_terminal_observer_uses_only_retained_root_and_does_not_arm_or_stamp")),
            migrated=False), ground_diagnosis, arm_remediation, acknowledge_delivery, follow_up_nonwrite, settle_remediation,
     observe_missing_file, deliver_gap, observe_scheduled, observe_terminal)
 DEFINITIONS = (DEFINITION,)
