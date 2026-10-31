@@ -38,6 +38,18 @@ def test_a_miss_is_surgical_for_a_read_file_then_a_committed_rewrite_and_a_blind
     assert "produce the corrected FULL file" not in results[4]["content"] and "g.txt" in results[4]["content"]
 
 
+def test_a_turn_of_misses_is_told_once_and_a_committed_rewrite_directive_is_recognised_as_sanctioned(tmp_path):
+    """Two misses in ONE assistant turn on a file already steered twice: the first carries the committed directive, the second only
+    refers to it (said once, not once per edit); the wheel-spin guard must then treat the coder's rewrite as ordered, not as spinning."""
+    (tmp_path / "f.txt").write_text(SRC)
+    results = converse([READ, MISS, MISS, [MISS, MISS]], tmp_path)
+    first, second = results[3]["content"], results[4]["content"]
+    assert "produce the corrected FULL file" in first and "produce the corrected FULL file" not in second and "same set of calls" in second
+    history = [{"role": "assistant", "tool_calls": []}, *results]
+    assert editrecovery.rewrite_sanctioned(history, "f.txt") and not editrecovery.rewrite_sanctioned(history[:3], "f.txt")
+    assert not editrecovery.rewrite_sanctioned(history, "g.txt")
+
+
 def test_the_surgical_hint_says_where_the_copy_first_differs_and_what_that_proves(tmp_path):
     """A snippet with no address let a coder resubmit a byte-identical old_string three times; and 'a line not shown is not in the
     file' was a false claim from a 6-line window (feed-pipeline-java / gemma4: its first 40 lines matched, its opening line was present)."""

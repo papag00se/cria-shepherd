@@ -24,6 +24,19 @@ ACCESS = [
     ("...", "kill -9 4242"), ("...", "kill 4242 && echo $(date)"), ("...", "cat <<'EOF'\nkill $(lsof -t -i :8081)\nEOF"),
     # orders-api-py / nemotron-elastic: a kill whose pid comes from a substitution took down the operator's services;
     # `outer_shell` had blanked the substitution body before the kill reader saw the `$(`.
+    # a script SAVED in the workspace then run: what it writes is judged where it runs (cria wrote it a `../out`)
+    ("RR.", "cat > tmp/script <<'EOF'\n#touch ../out\nEOF\nsh -c \"sed -i 's/^#//' tmp/script; . tmp/script\""),
+    ("RR.", "cat > tmp/script <<'EOF'\nopen('../out','w')\nEOF\npython3 tmp/script"), ("RR.", "cat > tmp/script <<'EOF'\ntouch ../out\nEOF\n./tmp/script"),
+    ("RR.", "cat <<'EOF' | python3\nopen('../out','w')\nEOF"), ("RR.", "cat <<-'A' <<B 2>> ../out\n\t/first\n\tA\n/second\nB\n"),
+    ("RR.", "(cd tmp); touch ../out"), ("R..", "cat > tmp/data <<'EOF'\ntext\nEOF\ncat /1e6"), ("RR.", "cd --"), ("RR.", "cd tmp && cat <<< hello"),
+    ("RR.", "cd <(x) ; ls"), ("RR.", "cat /etc/hosts | tee /tmp/o"), ("RR.", "cp -t ../d a"), ("RR.", "install -t ../d a"), ("RR.", "mv -t /tmp a"),
+    ("...", "cd tmp; touch ../out"), ("...", "cat <(echo x)"), ("...", ". venv/bin/activate && pip install -r requirements.txt"),
+    ("...", "function checks {\nmvn test\n}"),
+    # heredoc / quoting grammar as bash reads it: a backslash-quoted delimiter makes the body text; `$\<newline>(` still joins into a substitution
+    ("...", "cat > tmp/data <<\\EOF\n$(touch /external/example)\nEOF"), ("RR.", "cat > tmp/data <<EOF\n$\\\n(touch ../out)\nEOF"),
+    ("...", "cat > tmp/data <<EOF\n$\\\n(touch tmp/out)\nEOF"), ("RR.", "cat <<'EOF > tmp/data\ntext\nEOF"),   # unterminated quote: unproven
+    ("RR.", "echo \"$(echo $'\\'' ; rm -rf /external/victim ; echo $'\\'')\""), ("RR.", "echo `echo a # c "), ("RR.", "echo $'\\c\\\\'  > /tmp/x"),
+    ("RR.", 'echo "$( (echo a) ; touch ../out)"'), ("RR.", "Run `cat > REVIEW.md << 'EOF'` with file name"),
     ("RR.", "kill $(lsof -t -i :8081)"), ("RR.", "kill `pgrep -f node`"), ("RR.", 'echo "$(kill $(pgrep -f node))"'),
 ]
 ROOT_CASES = [   # harness-declared writable roots: READ-ONLY commands may read them; anything that could write stays refused

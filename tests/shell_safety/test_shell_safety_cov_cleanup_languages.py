@@ -11,6 +11,9 @@ PY_BLOCKED = [   # resolved mutations (python): alias, os.path/pathlib joins, te
     'import tempfile,os,shutil\nf=tempfile.NamedTemporaryFile()\nshutil.rmtree(os.path.dirname(f.name))',
     'import shutil\ndef target():\n return "/"\nshutil.rmtree(target())', 'open("/external/file", "w")', 'import io\nio.open("/external/file", mode="a")',
     'import shutil\nclass C:\n def cleanup(self):\n  shutil.rmtree("/")',
+    'import shutil\ntry:\n    shutil.rmtree("/")\nfinally:\n    pass', 'import shutil\ntry:\n    pass\nfinally:\n    shutil.rmtree("/")',
+    'import shutil\ntry:\n    x=1\nexcept OSError:\n    pass\nelse:\n    shutil.rmtree("/")', 'import shutil\nwith open("x") as f:\n    shutil.rmtree("/")',
+    'import tempfile,os,shutil\nshutil.rmtree(os.path.dirname(tempfile.mkstemp()[1]))', 'import shutil\nshutil.rmtree("/external" if x else "/other")',
 ]
 PY_NOT_BLOCKED = [   # the identity/value is not what it looks like, or the code cannot be certified to run
     'import shutil\ndef f(shutil):\n shutil.rmtree("/")', 'import shutil\nshutil=custom()\nshutil.rmtree("/")', 'import shutil\ns=shutil\nshutil.rmtree=custom\ns.rmtree("/")',
@@ -18,6 +21,8 @@ PY_NOT_BLOCKED = [   # the identity/value is not what it looks like, or the code
     'import shutil\nfor x in []:\n shutil.rmtree("/")', 'import shutil\nif False:\n shutil.rmtree("/")', 'open("/etc/hosts", "r")',
     'import os,shutil,tempfile\nd=tempfile.mkdtemp()\nfd,p=tempfile.mkstemp(dir=d)\nshutil.rmtree(os.path.dirname(p))',     # a parent the script itself owns
     'import tempfile,shutil\nwith tempfile.TemporaryDirectory() as d:\n shutil.rmtree(d)',
+    'import shutil\ntry:\n    pass\nexcept OSError:\n    shutil.rmtree("/")', 'import shutil\nx=["/external"]\nshutil.rmtree(x[0])',
+    'def f():\n return\n import shutil\n shutil.rmtree("/")', 'class Thing:\n def unlink(self): pass\nx=Thing()\nx.unlink()',
 ]
 
 @pytest.mark.parametrize('source', PY_BLOCKED)

@@ -147,14 +147,16 @@ def _survey(tree, root):
 
 
 def converse(steps, cwd, **lowering):
-    """A whole conversation of sequential tool calls (each lowered, run in bash, answered), re-presented ONCE as the coder's
-    history: ``steps`` are ``(name, args)``; returns the tool-result messages in order."""
+    """A whole conversation of tool-call turns (each lowered, run in bash, answered), re-presented ONCE as the coder's
+    history: a step is ``(name, args)`` or a LIST of them (one assistant turn of several calls); returns the tool-result messages in order."""
     msgs = []
-    for i, (name, args) in enumerate(steps):
-        tc = lower([call(name, args, f"s{i}")], injected=("write_file", "edit_file", "read_file"), **lowering)[0]
-        done = run(tc, cwd)
-        msgs += [{"role": "assistant", "tool_calls": [tc]}, {"role": "tool", "tool_call_id": f"s{i}",
-                                                              "content": ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr}]
+    for i, step in enumerate(steps):
+        tcs = lower([call(n, a, f"s{i}_{j}") for j, (n, a) in enumerate(step if isinstance(step, list) else [step])],
+                    injected=("write_file", "edit_file", "read_file"), **lowering)
+        msgs.append({"role": "assistant", "tool_calls": tcs})
+        for tc in tcs:
+            done = run(tc, cwd)
+            msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr})
     token = wsview.bind(wsview.View(str(cwd), "we"))
     try:
         shown = writeproxy.represent_inbound(msgs, workspace_root=str(cwd))

@@ -8,17 +8,21 @@ EXTERNAL = [   # a known external mutation per ecosystem resolves to an `externa
     ("f.go", 'package main\nimport "os"\nfunc main() { os.RemoveAll("/external") }'), ("f.rs", 'fn main() { std::fs::remove_dir_all("/external"); }'),
     ("F.java", 'import java.nio.file.Files;\nimport java.nio.file.Path;\nclass F { void f() { Files.delete(Path.of("/external/file")); }}'),
     ("f.php", '<?php\n$p = "/external/file";\nunlink($p);'), ("f.rb", 'require "fileutils"\nFileUtils.rm_rf "/external"'),
-    ("f.py", 'import shutil\nshutil.rmtree("/external")'),
+    ("f.py", 'import shutil\nshutil.rmtree("/external")'), ("f.cs", 'using System.IO;\nFile.Delete("/external/file");'),
+    ("f.js", 'const fs=require("fs");\nconst path=require("path");\nlet p="/external/file";\nfs.unlinkSync(path.join(path.dirname(p),"other"));'),
 ]
 BLOCKED = [   # the shared parent-of-a-temp-path rule and root deletion apply outside Python
     ("f.rb", 'require "fileutils"\nrequire "tmpdir"\nd=Dir.mktmpdir()\nFileUtils.rm_rf(File.dirname(d))'),
+    ("f.js", 'import * as disk from "node:fs"; function cleanup() { disk.rmSync("/",{recursive:true}); }'),
+    ("f.java", 'import org.apache.commons.io.FileUtils; import java.io.File; class F { void cleanup() { if (enabled) { FileUtils.deleteDirectory(new File("/")); } }}'),
     ("f.sh", "#!/bin/bash\nrm -rf /"), ("f.sh", "echo ok\nrm -?f --no-preserve-root /"),
 ]
 NOT_BLOCKED = [   # project paths, text, dynamic targets and shapes the lexical adapter cannot certify
     ("f.js", 'const fs=require("fs"); fs.unlinkSync("/workspace/owned");'), ("f.js", 'const fs=require("fs"); let p="/external"; p+=value; fs.unlinkSync(p);'),
     ("f.php", '<?php return; unlink("/external");'),
     ("f.rs", 'fn main() { println!("std::fs::remove_dir_all(\\"/\\")"); }'), ("f.java", '// Files.delete(Path.of("/external"));'),
-    ("f.cs", 'someObject.Delete("/external");'), ("f.py", 'import shutil\nshutil.rmtree("/workspace/build")'),
+    ("f.cs", 'someObject.Delete("/external");'), ("f.js", 'const fs=require("fs"); fs.unlinkSync=custom; fs.unlinkSync("/external");'),
+    ("f.rs", 'fn example() { stringify!(std::fs::remove_dir_all("/")); }'), ("f.php", '<?php\nclass Thing { function unlink() {} }\n$x = new Thing; $x->unlink("/external");'), ("f.py", 'import shutil\nshutil.rmtree("/workspace/build")'),
     ("f.sh", 'echo "never rm -rf / on a host"'), ("f.sh", "cat <<'EOF'\nrm -rf /\nEOF"), ("f.sh", "rm -rf build"),
 ]
 
