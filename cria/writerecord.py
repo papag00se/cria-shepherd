@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 import re
 
-from . import denial, probegate, resultnotes, selfcompact, shelltool, toolargs
+from . import denial, probegate, probeparse, resultnotes, selfcompact, shelltool, toolargs
 
 _PATCH_TARGET = re.compile(r"\*\*\* (?:Add|Update|Delete) File: ([^\n]+)|\*\*\* Move to: ([^\n]+)")
 _COMMAND_FIELDS = shelltool._CMD_FIELDS + ("script",)
@@ -185,7 +185,8 @@ class CheckRecord:
     * an EXECUTION - any shell call, cria's own gate, or a tool this module cannot classify (it might run
       anything). Unrefused calls only. Its state is ``red``/``green`` ONLY when its paired result carries a
       runner's own summary line (`probegate.runner_and_tally`, the owner `loop._checks_superseded_by_coder_run`
-      reads) AND an exec-envelope exit status agreeing with it; every other run - a bare `mvn compile`, a
+      reads) AND an exec-envelope exit status agreeing with it - or ``red`` when a build tool's own `BUILD FAILURE` /
+      `BUILD FAILED` verdict (`probeparse.build_verdict`) sits beside a non-zero exit status (a compile failure prints no tally); every other run - a bare `mvn compile`, a
       pipeline whose status is a filter's, a log `cat` - is ``unknown``;
     * a LANDED change - a write-class call whose own program typed it `landed` (`denial.landed_call_ids`);
     * a MAYBE - a write to a named file with no such proof (a native tool, a pending call): it proves no change
@@ -224,7 +225,13 @@ class CheckRecord:
             return "unknown"
         envelope = resultnotes.exec_envelope(text)
         _runner, tally = probegate.runner_and_tally(text)
-        if envelope is None or envelope.exit_code is None or not tally:
+        if envelope is None or envelope.exit_code is None:
+            return "unknown"
+        if not tally:
+            # A build tool's own verdict, agreeing with the exit status (a pipeline's status is a filter's:
+            # it then disagrees or is 0 and the run stays unknown).
+            if probeparse.build_verdict(text) == "failed" and envelope.exit_code != 0:
+                return "red"
             return "unknown"
         failed, _, passed = tally.partition("/")
         if tally.endswith("/OK") and envelope.exit_code == 0:

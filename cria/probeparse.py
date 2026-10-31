@@ -162,6 +162,9 @@ _TALLY_FAILED_PASSED_ERRORS = "fpe"   # groups are (failed, passed, errors); an 
 _TALLY_PASSED_FAILED = "pf"     # groups are (passed, failed)
 _TALLY_TOTAL_FAILED = "tf"      # groups are (total, failed) — passed is total - failed
 
+# Maven's log-level prefix on a line (`[INFO] `, `[ERROR] `, `[WARNING] `), with the colour codes a terminal run adds.
+_MAVEN_LEVEL = r"(?:\[(?:\x1b\[[0-9;]*m)*(?:INFO|ERROR|WARNING)(?:\x1b\[[0-9;]*m)*\]\s+)?"
+
 _TALLIES = (
     # pytest · `2 failed, 7 passed in 0.05s`  (the leading `=` is its banner)
     ("pytest", re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed"
@@ -176,8 +179,17 @@ _TALLIES = (
     # Both are named in this row's own comment as the runners it covers.
     ("jest", re.compile(r"(?im)^\s*Tests:?\s+(?:(\d+) failed,\s+)?"
                         r"(?:\d+ (?:skipped|todo),\s+)*(\d+) passed"), _TALLY_FAILED_PASSED, False),
-    # JUnit via maven-surefire / ant · `Tests run: 12, Failures: 1, Errors: 0, Skipped: 2`
-    ("junit", re.compile(r"(?im)^\s*Tests run:\s*(\d+),\s*Failures:\s*(\d+)(?:,\s*Errors:\s*(\d+))?"), _TALLY_TOTAL_FAILED, True),
+    # JUnit via maven-surefire / ant · `Tests run: 12, Failures: 1, Errors: 0, Skipped: 2`. MAVEN PREFIXES
+    # IT WITH ITS LOG LEVEL — `[INFO] Tests run: 12, ...`, `[ERROR] Tests run: 12, Failures: 1, ...`, and
+    # `[WARNING] Tests run:` when a test was skipped — so a row anchored on the bare words never recognised a
+    # Maven run (docs/open-threads.md). And surefire prints TWO kinds of line: one PER CLASS, ending
+    # `, Time elapsed: 0.024 s -- in pipeline.ImporterTest`, and the run's TOTAL; summing both counted every
+    # test twice. This row reads the totals only (one per module, summed); the per-class row below is read
+    # only when no total was printed (an output cut off before the summary).
+    ("junit", re.compile(rf"(?im)^\s*{_MAVEN_LEVEL}Tests run:\s*(\d+),\s*Failures:\s*(\d+)(?:,\s*Errors:\s*(\d+))?"
+                         rf"(?![^\n]*Time elapsed)"), _TALLY_TOTAL_FAILED, True),
+    ("junit", re.compile(rf"(?im)^\s*{_MAVEN_LEVEL}Tests run:\s*(\d+),\s*Failures:\s*(\d+)(?:,\s*Errors:\s*(\d+))?"),
+     _TALLY_TOTAL_FAILED, True),
     # gradle · `12 tests completed, 1 failed`
     ("gradle", re.compile(r"(?im)^\s*(\d+) tests? completed(?:,\s*(\d+) failed)?"), _TALLY_TOTAL_FAILED, False),
     # go test -v · one `--- PASS:` / `--- FAIL:` per test (counted below, not by a group pair)
@@ -265,6 +277,25 @@ def _tally_counts(kind: str, groups) -> "tuple[int, int] | None":
 # The interpreted runners are absent on purpose and the distinction is load-bearing: a green pytest
 # says nothing about a pyflakes finding, because an unused import fails the linter and runs fine.
 COMPILES_FIRST = frozenset({"cargo", "junit", "gradle", "dotnet", "go"})
+
+
+# A BUILD TOOL'S OWN VERDICT LINE. Maven closes every run `[INFO] BUILD SUCCESS` / `[ERROR] BUILD FAILURE`
+# and gradle `BUILD SUCCESSFUL` / `BUILD FAILED`. It is the one summary a COMPILE failure prints: across 120
+# captured Java sessions (1,356 shell runs) the coder's `mvn compile` / `mvn test` never reached a test, so no
+# `Tests run:` tally existed to read and every run stayed "unknown" (docs/open-threads.md).
+_BUILD_VERDICT = re.compile(
+    r"(?im)^\s*(?:\[(?:\x1b\[[0-9;]*m)*(?:INFO|ERROR|WARNING)(?:\x1b\[[0-9;]*m)*\]\s+)?"
+    r"BUILD (SUCCESS(?:FUL)?|FAIL(?:URE|ED))(?:\s+in\s+[\w .]+)?\s*$")
+
+
+def build_verdict(text: str) -> str:
+    """The LAST build verdict ``text`` prints: ``"failed"``, ``"passed"``, or ``""`` when no build tool closed a run.
+
+    The last one, because a script may run two builds and the newest is what the code now does."""
+    found = _BUILD_VERDICT.findall(text or "")
+    if not found:
+        return ""
+    return "passed" if found[-1].upper().startswith("SUCCESS") else "failed"
 
 
 def runner_and_tally(text: str) -> tuple[str, str]:
@@ -871,7 +902,7 @@ _JVM_FRAME = re.compile(r"^\s*at\s+[\w.$]+\(([\w$]+\.java):(\d+)\)", re.M)
 # and the line it flagged". Walked on both ruby cells of the 2026-08-22 batch.
 _TALLY_SHAPED = re.compile(r"(?i)\b\d+\s+(?:runs?|tests?|examples?|assertions?|failures?|errors?|"
                            r"skips?|skipped|pending|passed)\b|\b(?:runs?|assertions?)/s\b|"
-                           r"^\s*Finished in\b|^\s*Tests run:"
+                           r"^\s*Finished in\b|^\s*(?:\[(?:INFO|ERROR|WARNING)\]\s+)?Tests run:"
                            # …and a runner's INDEX HEADER — `  1) Error:` / `2) Failure:`. It carries
                            # the word "Error" and nothing else; the sentence naming the defect is the
                            # line under it. Without this the header wins on the word alone.
