@@ -1,7 +1,13 @@
 """Routing classification and the one-word judges: bias on doubt, one off-retry, and a cap that never deletes a verdict."""
 import json
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from threading import Barrier, Lock
+from unittest.mock import patch
 
-from cria import loop
+import pytest
+
+from cria import assistruntime, classify, loop
 from cria.classify import JUDGE_MAX_TOKENS, Classifier, latest_user_text
 from cria.config import Role
 from loop_guards_helpers import Log
@@ -135,3 +141,84 @@ def test_a_one_word_judge_keeps_the_generous_cap_so_its_verdict_is_not_deleted()
     assert loop.validate_compaction_briefing(lens, ROLE, "candidate briefing", files="", checks="",
                                              transcript_blocks=[], rlog=log, task="")
     assert all(b["max_tokens"] == JUDGE_MAX_TOKENS > 16 for b in chat.bodies + lens.bodies)
+
+
+# --- selection: the classifier obeys the bound assist root (cria.assistruntime.bound) before it reads anything ---------------
+
+def _root(*, level=1, disabled=(), replacement=None, empty=False):
+    from dataclasses import replace
+    from cria import classify
+    registry = () if empty else (classify.DEFINITION,)
+    root = assistruntime.AssistRuntime.select(level=level, disabled=disabled, registrations=registry)
+    return replace(root, ordered_stages=(replacement,)) if replacement is not None else root
+
+
+@pytest.mark.parametrize("selection", ["empty", "disabled", "level_zero", "enabled_false"])
+def test_a_classifier_the_bound_selection_leaves_out_reads_no_history_calls_no_model_and_changes_no_state(selection):
+    """An unselected classification must be silent: no task read, no provider call, no cache or streak change, no event."""
+    root = {"empty": lambda: _root(empty=True), "disabled": lambda: _root(disabled=(classify.DEFINITION.policy.id,)),
+            "level_zero": lambda: _root(level=0), "enabled_false": _root}[selection]()
+    provider, log = Provider(VERDICT), Rlog()
+    classifier = Classifier(provider)
+    classifier._consec_fail = 2
+    with assistruntime.bound(root), patch.object(classify, "latest_user_text", side_effect=AssertionError("task reader ran")):
+        assert classifier.classify(msgs("Implement the requested feature"), log, **({"enabled": False} if selection == "enabled_false" else {})) is None
+    assert not classifier._cache and classifier._consec_fail == 2 and not provider.bodies and not log.events
+
+
+@pytest.mark.parametrize("returned", [None, classify.Classification("question", "question", "selected")])
+def test_a_selected_replacement_classification_runs_instead_of_the_stock_one_even_when_it_answers_none(returned):
+    calls, log, history = [], Rlog(), msgs("Implement the requested feature")
+    selected = replace(classify.DEFINITION, execute=lambda owner, supplied, rlog, *, enabled=True: calls.append((owner, supplied, rlog, enabled)) or returned)
+    provider = Provider(VERDICT)
+    classifier = Classifier(provider)
+    with assistruntime.bound(_root(replacement=selected)), patch.object(classify, "latest_user_text", side_effect=AssertionError("stock policy ran")):
+        assert classifier.classify(history, log) is returned
+    assert calls == [(classifier, history, log, True)] and not classifier._cache and not provider.bodies and not log.events
+
+
+def test_a_nested_empty_root_silences_classification_and_the_outer_root_gets_its_cache_back():
+    provider, log = Provider(VERDICT), Rlog()
+    classifier = Classifier(provider)
+    with assistruntime.bound(_root()):
+        assert not classifier.classify(msgs("task"), log).cached
+        events = list(log.events)
+        with assistruntime.bound(_root(empty=True)), patch.object(classify, "latest_user_text", side_effect=AssertionError("read history")):
+            assert classify.selected_definition() is None and classifier.classify(msgs("task"), log) is None
+        assert log.events == events and classifier.classify(msgs("task"), log).cached
+    assert len(provider.bodies) == 1 and classify.selected_definition() is classify.DEFINITION    # unbound = the standalone default
+
+
+def test_classification_selection_is_per_thread_and_shared_instance_state_survives_concurrent_failures():
+    barrier = Barrier(4)
+
+    class Echo:
+        def chat(self, body, log):
+            return json.dumps({"choices": [{"message": {"content": json.dumps(
+                {"engagement": "task", "task_type": "coding", "reason": body["messages"][-1]["content"]})}}]}).encode()
+    classifier = Classifier(Echo())
+
+    def work(index):
+        with assistruntime.bound(_root(empty=index % 2 == 1)):
+            barrier.wait(timeout=5)
+            return classifier.classify(msgs(f"task {index}"), Rlog())
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(work, range(4)))
+    assert results[1] is results[3] is None and [results[i].reason for i in (0, 2)] == ["task 0", "task 2"]
+    assert len(classifier._cache) == 2 and classifier._consec_fail == 0
+    lock, calls = Lock(), []
+
+    class Down:
+        def chat(self, body, log):
+            with lock:
+                calls.append(1)
+            raise RuntimeError("offline")
+    failing = Classifier(Down(), bias="simple")
+
+    def fail(index):
+        with assistruntime.bound(_root()):
+            return failing.classify(msgs(f"unknown {index}"), Rlog())
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        outcomes = list(pool.map(fail, range(4)))
+    assert len(calls) == 8 and failing._consec_fail == 4 and not failing._cache      # one retry per failed call, no lost updates
+    assert all(o.disposition is classify.Disposition.DEFAULTED and o.engagement == "simple" for o in outcomes)

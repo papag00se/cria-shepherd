@@ -2089,36 +2089,34 @@ GATHER = GatherDefinition(Policy(
     state="session/task/frame negative cache and admission exhaustion; gather-local signatures, research facts and scratch; reset on task/fork",
     services=("reasoner", "workspace-view", "research-admission", "read-only-gather-tools"),
     hooks=(Reference("cria/planner.py", "Planner.plan_for"), Reference("cria/loop.py", "Loop._plan_for")),
-    regressions=(Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_off_bindings_never_detect_call_or_change_failure_memory"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_opt_in_uses_registered_gather_replacement_not_old_body"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_negative_failure_cache_is_scoped_resettable_and_fork_safe"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_pending_workspace_read_is_deferred_not_negatively_cached"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_concurrent_exchanges_do_not_share_failure_direction_or_research_facts"))), Planner._plan_for)
+    regressions=(Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_an_off_selection_never_detects_calls_the_model_or_touches_failure_memory"),
+                 Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_a_replaced_gather_is_the_only_gather_and_a_disabled_stage_does_no_work"),
+                 Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_an_unusable_outcome_is_remembered_per_session_and_frame_and_forgotten_on_reset"),
+                 Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_a_workspace_read_that_has_not_been_delivered_is_deferred_not_negatively_cached"),
+                 Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_concurrent_exchanges_do_not_share_failure_direction_or_research_facts"))), Planner._plan_for)
 COVERAGE = CoverageDefinition(Policy(
     "experimental-plan-coverage", "experimental-plan-coverage", 5, family_id="F50",
     scope="experimental", prompts=("plan_coverage", "plan_coverage_user"),
     services=("reasoner", "original-task", "candidate-steps"),
     hooks=(Reference("cria/planner.py", "Planner._missing_deliverables"),
            Reference("cria/planner.py", "revise_draft"), Reference("cria/loop.py", "reassess_remaining")),
-    regressions=(Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_real_draft_routes_coverage_readiness_and_revision_replacements"),
+    regressions=(Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_selected_replacements_run_instead_of_the_stock_stages_in_order_and_never_rewire_the_constructor"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_deletion_that_loses_a_deliverable_is_refused_per_step_and_fails_closed"))), missing_deliverables)
 READINESS = ReadinessDefinition(Policy(
     "experimental-plan-readiness", "experimental-plan-readiness", 5, family_id="F50",
     scope="experimental", prompts=("plan_test_execution_path", "plan_test_execution_path_user"),
     services=("reasoner", "workspace-package-manifest", "candidate-steps"),
     hooks=(Reference("cria/planner.py", "Planner._draft_plan"),),
-    regressions=(Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_readiness_honors_only_typed_judgments"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_readiness_unknown_manifest_and_withheld_judge_are_not_false_claims"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_readiness_refusal_never_admits_a_draft_and_exhaustion_is_bounded"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_selected_real_gather_builds_plan_and_disabled_stage_performs_no_work"))), plan_readiness)
+    regressions=(Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_readiness_honors_only_typed_judgments_and_unknown_evidence_is_never_judged"),
+                 Reference("tests/loop_planner/test_loop_planner_scenario2_pl_admission.py", "test_a_package_without_a_test_script_needs_a_stated_execution_path_or_the_plan_is_not_admitted"),
+                 Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_a_replaced_gather_is_the_only_gather_and_a_disabled_stage_does_no_work"))), plan_readiness)
 REVISION = RevisionDefinition(Policy(
     "experimental-plan-revision", "experimental-plan-revision", 5, family_id="F50",
     scope="experimental", prompts=("plan_noise_steps", "plan_drop_check", "plan_drop_check_user", "plan_step_outcome"),
     services=("reasoner", "original-task", "research-facts", "workspace-view", "selected-coverage"),
     dependencies=("experimental-plan-coverage",),
     hooks=(Reference("cria/planner.py", "Planner._plan_for"),),
-    regressions=(Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_real_draft_routes_coverage_readiness_and_revision_replacements"),
+    regressions=(Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_selected_replacements_run_instead_of_the_stock_stages_in_order_and_never_rewire_the_constructor"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_deletion_that_loses_a_deliverable_is_refused_per_step_and_fails_closed"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_revision_settles_coverage_refusal_and_accepted_deletion"),
-                 Reference("tests-before-reset-20261031:tests/test_experimental_planning_stages.py", "test_revision_without_reasoner_keeps_plan_and_reports_withheld"))), revise_draft)
+                 Reference("tests/loop_planner/test_loop_planner_arcd_selection_and_failure_memory.py", "test_a_revision_without_a_reasoner_keeps_the_plan_and_says_the_judgment_was_withheld"))), revise_draft)
 DEFINITIONS = (GATHER, COVERAGE, READINESS, REVISION)

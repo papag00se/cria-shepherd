@@ -265,6 +265,42 @@ def test_a_pending_empty_confirmation_goes_stale_when_the_work_moves_on(change):
     assert source.plan.remaining() == 1
 
 
+def test_coverage_is_asked_over_the_complete_completed_item_and_a_selected_coverage_replaces_the_stock_judgment():
+    done = "Scaffold repo layout\nRETAIN THIS EXACT COMPLETED DETAIL"
+    source, state, q, _ = tail(['["Write guide"]', "NONE", '{"missing": []}'], completed=(done,))
+    assert run_tail(source, state).status is lp.TailStatus.REPLACED
+    assert done in q.calls[2][1] and source.plan.items[0].text == done and source.plan.items[0].done
+    source, state, q, mirrors = tail(['["Write tests"]', "NONE"])
+    seen = []
+    selected = replace(planner.COVERAGE, execute=lambda ask, task, steps: seen.append((task, steps)) or ["guide"])
+    source = replace(source, services=replace(source.services, coverage=selected))
+    assert run_tail(source, state).status is lp.TailStatus.RAW_TASK and len(q.calls) == 2      # no canonical coverage question
+    assert seen == [(source.plan.task, ["Scaffold repo layout", "Write tests"])] and len(mirrors) == 1
+
+
+def test_a_failing_plan_mirror_never_loses_the_authoritative_plan():
+    source, state, _, _ = tail(['["Write guide"]', "NONE", '{"missing": []}'])
+
+    def fail(plan):
+        raise OSError("owned directory unavailable")
+    source = replace(source, services=replace(source.services, persist=fail))
+    assert run_tail(source, state).status is lp.TailStatus.REPLACED
+    assert source.plan.items[-1].text == "Write guide" and "loop.plan_persist_error" in source.log.kinds()
+
+
+def test_a_resumed_session_drops_transient_questions_and_rescue_flags_without_releasing_the_tail():
+    source, state, q, mirrors = tail(["[]"], trigger=lp.Trigger.CRITIC_STALLED)
+    source = replace(source, critic_fails=4)
+    token = run_tail(source, state).confirmation.token
+    session = loop.PlanSession(plan=source.plan, verify_replanned=True, thrash_replanned=True, critic_fails=4)
+    resumed = loop._session_from_dict(loop._session_to_dict(session))
+    assert not resumed.verify_replanned and not resumed.thrash_replanned and resumed.critic_fails == 0
+    after, fresh = replace(source, plan=resumed.plan, critic_fails=resumed.critic_fails), lp.TailState()
+    assert lp.LivingSelection.opt_in().settle(after, fresh, token, True).status is lp.TailStatus.STALE   # a token is never serialized
+    assert run_tail(after, fresh).status is lp.TailStatus.NOT_APPLICABLE
+    assert resumed.plan.remaining() == 1 and len(q.calls) == 1 and not mirrors
+
+
 @pytest.mark.parametrize("condition", ["synthetic", "plan_off", "no_question", "no_tail"])
 def test_replanning_never_applies_to_plan_off_or_a_finished_plan(condition):
     source, state, q, mirrors = tail([])

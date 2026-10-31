@@ -265,11 +265,10 @@ DEFINITION = StepDefinition(Policy(
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_passive_prior_work_survives_with_planning_off_exactly_once"),
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_presence_is_asked_anew_on_every_red_frame_and_never_becomes_an_approval"),
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_a_remediation_directive_replaces_the_step_cursor_without_running_step_policy"),
-                 Reference("tests-before-reset-20261031:tests/test_step_preparation.py", "test_visible_usage_keeps_the_original_raw_base_budget_without_step_detection"),
+                 Reference("tests/loop_main/test_loop_main_arcd_context_selection.py", "test_the_context_usage_reported_for_a_session_counts_its_prior_work_without_asking_the_step_detector"),
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_consent_to_step_preparation_must_be_explicit_and_exact"),
-                 Reference("tests-before-reset-20261031:tests/test_step_preparation.py", "test_nonplanned_or_suspended_frames_never_detect_artifacts_or_render_steps"),
-                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
-                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_disabled_step_framing_keeps_required_remediation_and_raw_task_nudge")),
+                 Reference("tests/loop_main/test_loop_main_arcd_context_selection.py", "test_an_unselected_context_stage_never_runs_its_detector_and_the_history_ships_untouched"),
+                 Reference("tests/loop_main/test_loop_main_arcd_context_selection.py", "test_a_disabled_step_framing_keeps_the_required_remediation_and_the_raw_task_nudge")),
     migrated=False), prepare_step)
 DEFINITIONS = (DEFINITION,)
 
