@@ -38,9 +38,10 @@ def pairs(n, size=600, tag="result"):
 
 
 def menu(n, desc):
+    """``desc``: a size (one unbroken run of letters) or a sentence-structured text used as is."""
     return [{"type": "function", "function": {
-        "name": f"op_{i}", "description": "D" * desc,
-        "parameters": {"type": "object", "properties": {"arg": {"type": "string", "description": "P" * desc}},
+        "name": f"op_{i}", "description": "D" * desc if isinstance(desc, int) else desc,
+        "parameters": {"type": "object", "properties": {"arg": {"type": "string", "description": "P" * desc if isinstance(desc, int) else desc}},
                        "required": ["arg"]}}} for i in range(n)]
 
 
@@ -277,7 +278,8 @@ def test_a_frame_the_eight_newest_messages_overflow_keeps_only_the_newest_call_a
     assert rep.over_budget and rep.protected_dropped == 0 and out[-2:] == msgs[-2:]    # a protected read: lever 7 does not run
 
 
-@pytest.mark.parametrize("count,desc,window,fits", [(60, 600, 20000, True), (120, 900, 49152, True), (100, 200, 512, False)])
+@pytest.mark.parametrize("count,desc,window,fits", [(60, 600, 20000, True), (120, 900, 49152, True), (100, 200, 512, False), (3, "Word " * 30 + "end. " + "tail " * 600, 4000, True)],
+                         ids=["60-tools", "120-tools-big-system", "cannot-fit", "sentence-descriptions"])
 def test_a_fat_tool_menu_is_compressed_never_deleted(count, desc, window, fits):
     """qwopus-9: 34K tokens of connector tools overflowed because the schema was irreducible. Descriptions
     shrink; every tool keeps its name/params; an impossible menu is reported, not silently crippled."""
@@ -291,6 +293,8 @@ def test_a_fat_tool_menu_is_compressed_never_deleted(count, desc, window, fits):
     assert tools == original and rep.tools_compressed == count                    # the caller's menu is untouched; every description was shortened ...
     assert all(t["function"]["description"].endswith(" […more]") and t["function"]["parameters"]["properties"]["arg"]["description"].endswith(" […more]")
                for t in new)                                                       # ... with a visible mark, on the tool and on its parameters
+    if isinstance(desc, str):                                                      # a description with a sentence is cut where the writer ended it, not mid-run
+        assert all(t["function"]["description"].endswith(" end. […more]") for t in new)
 
 
 def test_a_reserve_as_large_as_the_window_is_clamped_not_zeroing_the_prompt():
