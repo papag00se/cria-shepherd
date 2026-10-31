@@ -47,7 +47,21 @@ COVERAGE = {"navigation_only_pending", "external_artifact", "required_wire_contr
 
 
 def declarations(path: Path) -> dict[str, int]:
-    """Find declarations without importing their implementations."""
+    """Find declarations without importing their implementations.
+
+    One run reads each owner file once: the report resolves ~900 references against ~150 files, and parsing
+    (or `git show`-ing an archived file) per reference made `--check` take a minute.
+    """
+    key = str(getattr(path, "path", path))
+    if key not in _DECLARATIONS:
+        _DECLARATIONS[key] = _declarations(path)
+    return _DECLARATIONS[key]
+
+
+_DECLARATIONS: dict[str, dict[str, int]] = {}
+
+
+def _declarations(path: Path) -> dict[str, int]:
     found = {}
     def visit(node, prefix=""):
         for child in ast.iter_child_nodes(node):
