@@ -405,3 +405,14 @@ Update (2026-11): `_command_words` now also unwraps `if/then/do/while/{`, `/usr/
 ## Open — root/home delete backstop is spelling-based (2026-11)
 
 `root_recursive_delete_refusal` recognises the root by word shape (`/`, `/*`, `//`, `/.`, `/./`, `/..`, `///`) — not by resolving the path, so `rm -rf /a/..` (root by `..`), `rm -rf "$R"` with `R=/`, or a symlink to `/` are not seen. A bare `~` is now an external path at `none`/`read` (as `~/` always was); at `write` level home deletion stays the operator's choice, since the root-delete text says "filesystem root" and cria must not state a false fact. Owner if wanted: a home-delete verdict with its own prompt.
+
+## Open — coverage after wave 9: 93.4% lines / 86.9% branches overall, about 94.5% / 88% without the planner paths (2026-11)
+
+Started the wave at 92.4% / 85.0%. Dead code removed (word-deleting prose stripper in `content_reduce`, unused `editrecovery._prior_edit_steers`, the inert `preamblepolicy` and the identity-only `reframe_preamble` plumbing in `loop`/`steppreparation`) and about 860 lines of tables over the pure/low-fixture modules (probeparse, participation, shellinput, toolwire, outboundpolicies, editrecovery, filecommands, pastedfile, depsurface ledgers, cleanup analysis, webfetch find, workspace inventory, tail, reasoning, callliterals). The 95% / 90% target is NOT met. What is left, in order of size, and why it was not cheap:
+
+- `loop.py` (about 500 lines + 350 branches): almost all of it is the retired plan-on driver (`_verify_after_probe`, `_work`, `_work_item`, `_periodic_*`, `_replan_tail`, `_reopen_if_unsatisfied`); the plan-off remainder is `_drive_locked` arms that need a real `Loop` over several stubbed model turns each.
+- `server.py` (about 180 + 100): multipart fit/representation fallbacks and the Responses streaming error/heartbeat arms need the HTTP `Wire` fixture extended with a failing loop and a vanishing client.
+- `upstream._prep_protected_reads` / `_prep_wire` capacity refit (about 70 + 35), `probegate.clean_gate_results` / `ingest_transport` (about 60 + 40; needs composed `GatePlan` histories), `contextfloor` lever arms, `writeproxy` externalization/multipart arms, `system1` (a tiny fake ONNX + tokenizer), `receivecapture` HTTPS/CONNECT (a local TLS fixture).
+- Not touched because another agent owns the logic: `dirguard`, `retention`, `probeclassify`, `probediscovery`, `urlgrounding`, `returnedpolicies`.
+
+Defensive code found unreachable while mutating (candidates for deletion, not deleted): `callliterals._recover_write_args` `if end is None` (the structural-completeness gate refuses first), and the `_MUTATION_TOOLS` pre-check in `has_incomplete_tool_args` (`_content_truncated` repeats the name test). A possible real defect, not fixed: `webfetch._resolve_ref_path` cannot follow a `$ref` through an array index (`#/a/0/x` indexes a list with the string `"0"` and returns None), which JSON Pointer allows.
