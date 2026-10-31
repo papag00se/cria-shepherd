@@ -1780,7 +1780,9 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
             break
         body, nxt, total = page_from(reduced, offset, max(50, room // divisor))
         head = _head(nxt, total)
-    out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
+    # The header states the window that was really served: a cursor past the end is clamped by page_from,
+    # and printing the REQUESTED offset rendered an inverted range ("chars 99999–38959 of 38959").
+    out = f"{head}--- (chars {min(offset, total)}–{nxt} of {total}) ---\n{body}\n"
     out += client_error_note(status, body)
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '

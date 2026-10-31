@@ -144,7 +144,8 @@ def test_find_and_paging_on_prose_and_json_answer_with_the_part_asked_for(base):
     assert 'find "zzz": no match' in wf.fetch_nav(f"{base}/long.txt", find="zzz")
     assert wf.fetch_nav(f"{base}/long.txt", cursor="junk").splitlines()[2].startswith("--- (chars 0–")
     past = wf.fetch_nav(f"{base}/long.txt", cursor="c99999")   # past the end: nothing to show and no cursor to continue with
-    assert f" of {len(LONG)}) ---" in past and past.rstrip().endswith("---") and "More remains" not in past and "alpha" not in past
+    end = len(LONG)   # the window header names the clamped start, never the requested 99999 (once "chars 99999–38959 of 38959")
+    assert f"--- (chars {end}–{end} of {end}) ---" in past and past.rstrip().endswith("---") and "More remains" not in past and "alpha" not in past
     tags = wf.fetch_nav(f"{base}/data.json", find="tags")
     assert "# items > [0] > tags" in tags and "[897 more match(es); narrow your find]" in tags and "[top-level keys (2): items, meta]" in tags
     assert '# meta\n{\n  "page": 1\n}' in wf.fetch_nav(f"{base}/data.json", find="meta")
