@@ -39,6 +39,12 @@ What has real signal is the typed lenses, which ask the model only to LIST names
 
 ---
 
+## Open — a false "compiles / tests pass" sentence beside an honest negative (2026-10-31)
+
+The build-state lens (`filepresence.unsupported_builds`, labels GREEN / EARLIER / NOT GREEN, settled by code against the typed check record) refuses a false success claim 8 of 8 when it stands alone, and a specific one ("the rewritten `Importer.java` compiles cleanly and all tests pass") 7 of 8. A VAGUE one ("the code compiles cleanly and all tests pass") placed next to an honest "the rewrite has NOT been compiled" is refused only 2–4 of 8: the model lists the sentence but labels it NOT GREEN because the honest negative colours how "the code" reads. Measured on the real incident briefing (call 0062) plus the appended sentence, no check run in the transcript, n=8 per variant (2 at temperature 0, 6 at 0.7). Every variant tried that catches the vague contradiction also falsely refuses an honest briefing: a prompt telling it to label each sentence by its own words (noise-level, one regression), per-sentence labelling with the sentence alone (every sentence GREEN, 8 of 8 false refusals on the baseline), per-sentence labelling with the whole briefing (the contamination stays, 5 of 8 false GREEN on a baseline bullet), and a second "is the result dated before the changes" question (8 of 8 false refusals). The model cannot tell a qualified success claim from a contradicted one. Nothing was landed. Candidate for the owner: a grounded question asked only after the typed record already says no check ran, which was not tested.
+
+---
+
 ## Open — multipart reads and image workflow (2026-10-29)
 
 Built, committed and deployed (live as release `<short-hash>-multipart-image-20261029`, rebuilt from each HEAD; rollback = remove `99zzzzzzzz-multipart-image.conf`, `sudo systemctl daemon-reload && sudo systemctl restart cria.service`): transparent multipart reads (verified pages assembled into one logical read, fitted against the complete model-visible request, unverified carriers preserved without read credit) and the same-coder image observe/reinspect workflow ([docs/image-workflow.md](image-workflow.md)). Validated against real inference on the RTX 3080: native measurement equalled the server's own count in 45 of 45 checks; multipart reads of 12 KB to 150 KB through a real PTY and a real sandboxed Codex; real `gemma4_12b` vision on Chat and Responses, workspace `view_image`, remote URL references, streaming. Still open:
