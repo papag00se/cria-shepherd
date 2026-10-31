@@ -25,7 +25,7 @@ def ws(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "empty").mkdir()
     (tmp_path / "a.py").write_text("import os\nTODO fix\n")
-    (tmp_path / "src" / "b.py").write_text("x = 1\n# TODO later\n")
+    (tmp_path / "src" / "b.py").write_text("x = 1\n    # TODO later\n")
     (tmp_path / "blank.txt").write_text("   \n")
     (tmp_path / "blob.bin").write_bytes(b"\x00\x01\x02" * 40)
     return tmp_path

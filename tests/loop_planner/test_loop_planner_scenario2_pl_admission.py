@@ -106,3 +106,27 @@ def test_a_drafter_that_slips_into_another_tool_is_retried_in_place_and_one_that
     assert facts(rlog, "plan.final_retry") == [{"attempt": 1, "called": ["CreateNewProject"]}] and facts(rlog, "plan.final_recovered")
     plan, rlog, owner = admit(tmp_path, Drafter([{"content": "I think you should just write the code."}]))
     assert plan is None and not owner._retriable_failure and not facts(rlog, "plan.final_retry")
+
+
+@pytest.mark.parametrize("step,task,files,named", [
+    ("Use list_dir to see the layout", "", {}, "list_dir"),                                  # cria's tool menu, in nobody's ask or code
+    ("Use list_dir to see the layout", "add a list_dir helper", {}, ""),                     # the user's own word
+    ("Use list_dir to see the layout", "", {"util.py": "def list_dir(): pass\n"}, ""),       # the repo's own identifier
+    ("Use list_dir to see the layout", "", {"list_dir.py": "x = 1\n"}, ""),                  # ... or file name
+    ("Use list_dir to see the layout", "", {"a.py": "x = 1\n", "node_modules": None}, "list_dir"),   # an ignored tree grounds nothing
+    ("Write the handler", "", {}, ""),                                                       # no tool named
+])
+def test_a_step_prescribing_a_tool_name_is_flagged_only_when_neither_the_ask_nor_the_workspace_uses_the_word(tmp_path, step, task, files, named):
+    for name, body in files.items():
+        (tmp_path / name).mkdir() if body is None else (tmp_path / name).write_text(body)
+    assert planner.step_names_tool(step, task, str(tmp_path)) == named
+
+
+def test_a_workspace_file_cria_holds_no_bytes_for_cannot_show_a_word_absent_and_a_cut_off_call_fragment_is_detected(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    assert planner.step_names_tool("Use list_dir first", "", str(tmp_path)) == "list_dir"
+    monkeypatch.setattr(wsview.DirectView, "read", lambda self, path: None)
+    assert planner.step_names_tool("Use list_dir first", "", str(tmp_path)) == ""      # unknown is grounded, never a rewritten step
+    call = lambda args: {"tool_calls": [{"function": {"arguments": args}}]}
+    assert [planner._last_call_truncated(m) for m in (call('{"steps": ["a'), call('{"steps": ["a"]}'), call("{}"), call({}), {})] == \
+        [True, False, False, False, False]
