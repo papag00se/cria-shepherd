@@ -200,3 +200,33 @@ def test_the_gate_never_retires_the_marks_directory_under_a_writer_that_is_still
     proc.communicate()
     plan2, raw2, out2 = gate(tmp_path, monkeypatch)
     assert out2.unsettled_writes == [] and [s for s, _d in out2.witnessed.values()] == ["landed"]
+
+
+@pytest.mark.parametrize("restart", [False, True], ids=["same-process", "after-restart"])
+def test_a_landed_rewrite_of_the_file_is_the_remedy_so_the_dead_write_stops_holding_the_gate(tmp_path, monkeypatch, restart):
+    """ornith1.5_9b, real Codex: the first hello.py write never started (no reply, no mark); the coder wrote hello.py again (the late
+    rewrite landed, its reply came back) and re-verified, and the gate still held completion twice more on the dead call. A later landed
+    write of the SAME file supersedes it for the hold; a write to ANOTHER file does not."""
+    monkeypatch.setattr(writeproxy, "EDIT_SEQ_WAIT_SECONDS", 0.5)
+    (x,) = lowered(tmp_path, [("x", "hello.py", "AAA\n")])                                  # never started
+    (z,) = lowered(tmp_path, [("z", "other.py", "ZZZ\n")])                                  # a different file, landed: no remedy for x
+    zo = run_write(tmp_path, z)
+    represent([{"role": "assistant", "tool_calls": [x, z]}, {"role": "tool", "tool_call_id": "z", "content": ENVELOPE + zo}], tmp_path)   # z's reply arrives
+    plan, raw, out = gate(tmp_path, monkeypatch)
+    assert [p for _r, p, _s in out.unsettled_writes] == ["hello.py"]
+    (y,) = lowered(tmp_path, [("y", "hello.py", "BBB\n")])
+    yo = run_write(tmp_path, y)
+    assert json.loads(yo.splitlines()[0])["rep"]["late"] is True                         # it waited the bound for x and ran late
+    msgs = [{"role": "assistant", "tool_calls": [x]}, {"role": "assistant", "tool_calls": [z]}, {"role": "assistant", "tool_calls": [y]},
+            {"role": "tool", "tool_call_id": "z", "content": ENVELOPE + zo}, {"role": "tool", "tool_call_id": "y", "content": ENVELOPE + yo}]
+    if restart:
+        completionmarks._reset()
+        token = wsview.bind(wsview.View(str(tmp_path), "we"))
+        try:
+            writeproxy.represent_inbound(msgs, workspace_root=str(tmp_path), sess_key=SESSION)
+        finally:
+            wsview.unbind(token)
+    else:
+        represent(msgs, tmp_path)
+    plan2, raw2, out2 = gate(tmp_path, monkeypatch)
+    assert out2.unsettled_writes == [] and not probegate.gate_is_partial(out2)

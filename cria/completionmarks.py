@@ -65,12 +65,14 @@ class Entry:
 _OUTSTANDING: dict[str, dict[str, Entry]] = {}    # session -> receipt -> entry, in dispatch order
 _RELEASE: dict[str, list] = {}                    # session -> [(receipt, nonce)] whose outcome is known: marks to remove
 _GENERATION: dict[str, int] = {}
+_SUPERSEDED: dict[str, set] = {}   # session -> receipts of unresolved writes a later landed write of the same file superseded (no gate hold)
 _KNOWN: dict[str, set] = {}        # session -> {(receipt, nonce)} this process has already registered or adopted
 
 
 def _reset() -> None:
     with _LOCK:
         _KNOWN.clear()
+        _SUPERSEDED.clear()
         _OUTSTANDING.clear()
         _RELEASE.clear()
         _GENERATION.clear()
@@ -158,14 +160,20 @@ def query(session: str | None, *, release: bool = True) -> Query | None:
         if not mine and not (release and release_list):
             return None
         watch = tuple((e.receipt, e.nonce) for e in mine.values())[-MAX_OUTSTANDING:]
-        paths = tuple((e.receipt, e.path) for e in mine.values())[-MAX_OUTSTANDING:]
+        gone = _SUPERSEDED.get(session) or set()
+        paths = tuple((e.receipt, e.path) for e in mine.values() if e.receipt not in gone)[-MAX_OUTSTANDING:]
         out = tuple(release_list[:MAX_RELEASE]) if release else ()
         if release:
             del release_list[:MAX_RELEASE]
     return Query(credential(session), watch, out, paths)
 
 
-def adopt(session: str | None, declared: list, unresolved: set, root: str | None = None) -> None:
+def same_file(a: str, b: str, root: str | None = None) -> bool:
+    """Do two spellings of a target path name one file (the same normalized keys `plan` registers)?"""
+    return bool(_keys(a, root) & _keys(b, root))
+
+
+def adopt(session: str | None, declared: list, unresolved: set, root: str | None = None, superseded: frozenset = frozenset()) -> None:
     """Rebuild the registry STATELESSLY from a re-presented history (a restart forgot it): ``declared`` is
     ``[(receipt, nonce, path)]`` read from the sentinels of the lowered write/edit calls in the history, ``unresolved`` the receipts
     of those whose outcome the history does not establish. An unresolved call this process does not hold is registered (as an
@@ -185,6 +193,8 @@ def adopt(session: str | None, declared: list, unresolved: set, root: str | None
             if receipt in unresolved:
                 if receipt not in mine:
                     mine[receipt] = Entry(receipt, nonce, _keys(path, root), 0, str(path))
+                if receipt in superseded:
+                    _SUPERSEDED.setdefault(session, set()).add(receipt)
             else:
                 release.append((receipt, nonce))
         while len(mine) > MAX_OUTSTANDING:
@@ -193,9 +203,14 @@ def adopt(session: str | None, declared: list, unresolved: set, root: str | None
         del release[:-MAX_RELEASE * 4]
 
 
-def settle(receipt: str) -> None:
+def settle(receipt: str, *, landed: bool = False) -> None:
     """cria has learned this call's outcome (its record arrived, or a later program witnessed its mark): it is no longer
-    outstanding and its mark is to be removed by the next program."""
+    outstanding and its mark is to be removed by the next program.
+
+    ``landed``: the call's OWN reply proved its mutation landed. An EARLIER-turn unresolved write of the same file is then SUPERSEDED:
+    still watched and its mark still released, but it no longer holds the completion gate (`Query.paths`). The gate's notice asks the
+    coder to write the file again; a landed rewrite IS that remedy, so holding on the dead call again would only repeat the notice. A
+    writer that is merely slow and lands afterwards stays possible and is not claimed away: its mark is still read."""
     if not receipt:
         return
     with _LOCK:
@@ -203,6 +218,9 @@ def settle(receipt: str) -> None:
             entry = entries.pop(receipt, None)
             if entry is not None:
                 _RELEASE.setdefault(session, []).append((entry.receipt, entry.nonce))
+                if landed:
+                    _SUPERSEDED.setdefault(session, set()).update(
+                        e.receipt for e in entries.values() if e.generation < entry.generation and e.keys & entry.keys)
                 return
 
 
