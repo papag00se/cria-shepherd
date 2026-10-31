@@ -240,13 +240,21 @@ def _declaration(command: str, call_id=None) -> dict | None:
     """The leading declaration of a stored command, or None. With ``call_id`` a declaration that carries a receipt must
     be the one THIS call's compiler made: the receipt is recomputed from the call's own id and the declared original
     name and arguments, so a header copied from another call (stale, quoted, replayed) is rejected. The receipt is a
-    correlation token, not a secret — this only ties a declaration to the call it was composed for."""
+    correlation token, not a secret — this only ties a declaration to the call it was composed for.
+
+    A declaration WITHOUT a receipt is honoured for one name only: ``read_file``, the one lowering cria still composes
+    receipt-less (`filecommands._read_command`, the alias read that grants no proof). Any other unreceipted header is just
+    text a coder's own command carries (a heredoc, an echo, a file it writes), and honouring it re-presented that command as
+    a write/edit/list the coder never made."""
     d = _decode_sentinel(command)
     if d is None:
         return None
-    if call_id is not None and d.get("rcpt"):
-        from . import denial
-        if d["rcpt"] != denial.receipt_for(call_id, d["name"], d.get("arguments") or "{}"):
+    if call_id is not None:
+        if d.get("rcpt"):
+            from . import denial
+            if d["rcpt"] != denial.receipt_for(call_id, d["name"], d.get("arguments") or "{}"):
+                return None
+        elif d["name"] != "read_file":
             return None
     return d
 
