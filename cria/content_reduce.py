@@ -102,7 +102,7 @@ def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> st
     """:func:`content_reduce` for text a model must READ AS INSTRUCTION, never as raw evidence.
 
     Identical for structured content, but for prose it returns the text UNCHANGED rather than running
-    :func:`strip_prose_text`. The caller enforces the budget and discloses what would not fit — so the
+    the removed `strip_prose_text`. The caller enforces the budget and discloses what would not fit — so the
     outcome is "kept whole" or "stated as not summarized", never "quietly reworded".
 
     An earlier version of this cut the prose to the cap and labelled the cut. The operator rejected
@@ -151,7 +151,7 @@ def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> s
     """Reduce `content` toward roughly `cap_tokens`, dispatching on `content_type`.
     Returns the input unchanged when it already fits.
 
-    THE PROSE TIER IS GONE, from here and from the JSON walk. It ran :func:`strip_prose_text`, which
+    THE PROSE TIER IS GONE, from here and from the JSON walk. It ran the removed `strip_prose_text`, which
     deletes function words, and this module's own :func:`digest_reduce` docstring records what that
     did to a real run: cria's note "no endpoints or field names could **be read from** it" came out
     as "could read it", turning a statement that nothing was learned into a claim that something
@@ -239,19 +239,6 @@ def _dump_json(v) -> str | None:
         return json.dumps(v, separators=(",", ":"), ensure_ascii=False)
     except (ValueError, TypeError):
         return None
-
-
-def _strip_prose_nodes(v, key: str | None):
-    """Walk the tree; compress only string values that are (Signal 1) under a prose-named key
-    AND (Signal 2) sniff as natural language. Rebuilding the value (not mutating strings in
-    place) means structure cannot break. Array elements inherit the parent key, like the Rust."""
-    if isinstance(v, dict):
-        return {k: _strip_prose_nodes(val, k) for k, val in v.items()}
-    if isinstance(v, list):
-        return [_strip_prose_nodes(val, key) for val in v]
-    if isinstance(v, str):
-        return v
-    return v
 
 
 # ---------------------------------------------------------------------------
@@ -344,141 +331,10 @@ def _collapse_ws(s: str) -> str:
     return "".join(out).strip()
 
 
-# ---------------------------------------------------------------------------
-# The one guarded stripper (shared by plain text and prose JSON/YAML nodes)
-# ---------------------------------------------------------------------------
-
-def strip_prose_text(text: str) -> str:
-    """Strip only certain-junk function words; preserve any token that could carry meaning
-    (digit/uppercase/underscore/symbol) and every negation/logic word."""
-    out: list[str] = []
-    for piece in _split_keep_ws(text):
-        if piece and piece.isspace():
-            out.append(piece)
-            continue
-        lead, core, trail = _peel(piece)
-        if core and _is_strippable(core):
-            out.append(lead)
-            out.append(trail)  # drop the word, keep attached punctuation
-        else:
-            out.append(piece)
-    return _collapse_inline_spaces("".join(out))
-
-
-def _is_strippable(tok: str) -> bool:
-    """Strippable only if all-lowercase-alphabetic, a function word, and not protected.
-    Anything with a digit, uppercase, `_`, or punctuation fails isalpha/islower and is kept."""
-    if not (tok.isalpha() and tok.islower()):
-        return False
-    return not _is_protected(tok) and _is_function_word(tok)
-
-
-def _split_keep_ws(s: str) -> list[str]:
-    """Split into alternating whitespace / non-whitespace runs, preserving every character."""
-    out: list[str] = []
-    start = 0
-    in_ws: bool | None = None
-    for idx, c in enumerate(s):
-        ws = c.isspace()
-        if in_ws is None:
-            in_ws = ws
-        elif in_ws != ws:
-            out.append(s[start:idx])
-            start = idx
-            in_ws = ws
-    if start < len(s):
-        out.append(s[start:])
-    return out
-
-
-def _peel(tok: str) -> tuple[str, str, str]:
-    """Split a token into (leading punctuation, core, trailing punctuation)."""
-    lead_end = len(tok)
-    for i, c in enumerate(tok):
-        if c.isalnum():
-            lead_end = i
-            break
-    trail_start = lead_end
-    for i in range(len(tok) - 1, -1, -1):
-        if tok[i].isalnum():
-            trail_start = i + 1
-            break
-    return tok[:lead_end], tok[lead_end:trail_start], tok[trail_start:]
-
-
-def _collapse_inline_spaces(s: str) -> str:
-    out: list[str] = []
-    pending_space = False
-    for c in s:
-        if c in " \t":
-            pending_space = True
-        else:
-            if pending_space and out and out[-1] != "\n":
-                # drop a space that sits right before punctuation a stripped word left
-                if c not in ",.;:)]":
-                    out.append(" ")
-            pending_space = False
-            out.append(c)
-    return "".join(out).strip()
-
-
-# ---------------------------------------------------------------------------
-# Word lists (mirror docs/spec/content-reduce.md)
-# ---------------------------------------------------------------------------
-
-_FUNCTION_WORDS = frozenset({
-    # articles
-    "a", "an", "the",
-    # possessive determiners
-    "its", "his", "her", "their", "our", "your", "my",
-    # prepositions
-    "of", "to", "in", "on", "at", "for", "with", "from", "by", "as",
-    "into", "onto", "over", "under", "via",
-    # auxiliaries
-    "is", "are", "was", "were", "be", "been", "being", "am",
-    "do", "does", "did", "has", "have", "had",
-    # interjections / fillers
-    "oh", "ah", "um", "uh", "well",
-})
-
-# Never stripped even though alphabetic+lowercase: negations and logic words.
-_PROTECTED = frozenset({
-    "not", "no", "never", "none", "neither", "nor", "cannot",
-    "or", "and", "if", "when", "unless", "else", "then",
-})
-
-_PROSE_FIELDS = frozenset({
-    "description", "summary", "title", "comment", "doc", "documentation",
-    "details", "note", "notes", "overview", "abstract", "help", "message",
-    "text", "body", "longdescription",
-})
-
-def _is_function_word(w: str) -> bool:
-    return w in _FUNCTION_WORDS
-
-
-def _is_protected(w: str) -> bool:
-    return w in _PROTECTED
-
-
-def _is_prose_field(key: str) -> bool:
-    return key.lower() in _PROSE_FIELDS
-
-
-def _looks_like_prose(s: str) -> bool:
-    """Signal 2: dominantly letters+spaces, several words, sentence-shaped. Embedded
-    identifiers/numbers don't disqualify — only dominance by non-prose."""
-    if len(s.split()) < 4:
-        return False
-    total = max(len(s), 1)
-    proseish = sum(1 for c in s if c.isalpha() or c.isspace())
-    return proseish * 100 // total >= 75
-
-
 def _looks_like_code(s: str) -> bool:
-    """Conservative code sniff for the plain-text reduction gate. `_looks_like_prose` alone is
+    """Conservative code sniff for the plain-text reduction gate. A prose-share test alone is
     fooled by indented source — indentation inflates the whitespace ratio, so a block of Python
-    scores >75% "prose-ish" and the stripper then eats its `for`/`in`/`is`/`as`/`from`/`with`
+    scores >75% "prose-ish" and a word-deleting stripper (now removed) would eat its `for`/`in`/`is`/`as`/`from`/`with`
     keywords. Uses only STRUCTURAL signals (no per-language keyword list) so it generalizes:
     (1) a high share of lines ending in a block opener / statement terminator, or (2) a high
     density of structural symbols among the non-whitespace characters."""

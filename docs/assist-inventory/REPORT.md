@@ -700,7 +700,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/writeproxy.py:_edit_command`](../../cria/writeproxy.py#L851)
 - [`cria/writeproxy.py:_edit_sequence`](../../cria/writeproxy.py#L1293)
 - [`cria/writeproxy.py:render_edit_echo`](../../cria/writeproxy.py#L808)
-- [`cria/editrecovery.py:recover`](../../cria/editrecovery.py#L219)
+- [`cria/editrecovery.py:recover`](../../cria/editrecovery.py#L207)
 
 **Historical families:** F17.
 
@@ -834,8 +834,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests_backup/test_tool_policy_stages.py:test_spill_correction_changes_execution_path_not_original_call_evidence`](../../tests_backup/test_tool_policy_stages.py#L96).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:path_refusal`](../../cria/dirguard.py#L1814)
-- [`cria/dirguard.py:command_refusal`](../../cria/dirguard.py#L2144)
+- [`cria/dirguard.py:path_refusal`](../../cria/dirguard.py#L1874)
+- [`cria/dirguard.py:command_refusal`](../../cria/dirguard.py#L2195)
 - [`cria/outboundpolicies.py:_external_refusal`](../../cria/outboundpolicies.py#L172)
 - [`cria/filecommands.py:_targets_cria_home`](../../cria/filecommands.py#L69)
 - [`cria/privatepaths.py:CRIA_HOME`](../../cria/privatepaths.py#L5)
@@ -862,7 +862,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:root_recursive_delete_refusal`](../../cria/dirguard.py#L2054)
+- [`cria/dirguard.py:root_recursive_delete_refusal`](../../cria/dirguard.py#L2123)
 - [`cria/cleanupsafety.py:analyze`](../../cria/cleanupsafety.py#L12)
 
 **Historical families:** F23.

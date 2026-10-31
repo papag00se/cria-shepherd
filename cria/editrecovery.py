@@ -108,28 +108,16 @@ def _is_grounded_in(prior_msgs: list, path: str) -> bool:
     return False
 
 
-def _prior_edit_steers(prior_msgs: list, path: str) -> int:
-    """How many times this module has steered edits on ``path`` SINCE the coder last wrote it
-    successfully — the clock that decides when to escalate to a whole-file rewrite.
-
-    Counting a file's LIFETIME misses instead was a trap. Once a file crossed the threshold it stayed
-    in forced-rewrite mode for the rest of the session, however well the model did afterwards — and a
-    whole-file rewrite asks a small model to retype thousands of characters from memory, which is the
-    one thing it is worst at. Measured in g18 (gemma4, ada-handles): 4 edit steers on test_resolve.py
-    with 7 SUCCESSFUL writes interleaved, 5 of them after the threshold. cria kept ordering a ~2,000
-    character retype, and one of those retypes silently reverted a one-character fix the model had
-    already made — so it spent the rest of the run chasing a NameError that cria had reintroduced.
-    A successful write is the model proving it can pin this file's text; the clock starts over.
-
-    Stateless — reconstructed from the messages, so it survives a cria restart."""
-    tag = _tag(path)
-    return sum(1 for m in prior_msgs[_wrote_since(prior_msgs, path):]
-               if isinstance(m, dict) and denial.unlanded(m) and tag in str(m.get("content") or ""))
-
-
 def _steer_counts(prior_msgs: list, path: str) -> tuple[int, int]:
     """``(steers from EARLIER turns, steers already given in THIS turn's results)`` for ``path`` since its
-    last successful write. A turn is the run of messages after the last assistant message."""
+    last successful write. A turn is the run of messages after the last assistant message.
+
+    The clock is SINCE the last successful write, never the file's lifetime: counting lifetime misses
+    left a file in forced-rewrite mode for the rest of the session however well the coder did after,
+    and a whole-file rewrite asks a small model to retype thousands of characters from memory (g18,
+    gemma4, ada-handles: 7 successful writes interleaved with 4 steers, a retype silently reverted a
+    one-character fix). A successful write proves the coder can pin this file's text. Stateless:
+    reconstructed from the messages, so it survives a restart."""
     tag = _tag(path)
     start = _wrote_since(prior_msgs, path)
     # no assistant message at all = no turn to speak of: every steer is from "earlier"
