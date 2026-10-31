@@ -258,3 +258,17 @@ def test_an_old_continuations_retention_promise_is_quoted_history_not_live_autho
     assert OLD_AUTHORITY not in framing and summary in account and "call_x" not in live
     assert sum(m["content"].count(OLD_AUTHORITY) for m in sent) == authority_copies
     assert any(m["content"].startswith("⟦ctx:inventory⟧") and OLD_AUTHORITY in m["content"] and "call_x" in m["content"] for m in sent)
+
+
+def test_the_deorphan_event_says_which_direction_a_repair_went_wrec():
+    """A result whose call was folded is kept as user text; a call with no result is pruned. The one event counted both as
+    `count`, so the census of in-flight calls (the pruned direction, which names nothing to the model) could not be taken."""
+    call = {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"},
+            {"role": "tool", "tool_call_id": "gone", "content": "⟦ctx:checks⟧ old result"},
+            {"role": "assistant", "content": "", "tool_calls": [call]},
+            {"role": "user", "content": "next"}]
+    rlog = Rlog()
+    sent = prep(msgs, rlog=rlog)["messages"]
+    assert rlog.named("context.deorphaned") == [{"reshape": "deorphan", "count": 2, "pruned_calls": 1, "level": "info"}]
+    assert not any(m.get("tool_calls") for m in sent) and "old result" in text(sent)

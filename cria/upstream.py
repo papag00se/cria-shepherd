@@ -1022,10 +1022,14 @@ class Upstream:
             # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
             # the request is OVER budget, so a fitting request ships the orphan. Convert it to `user` here,
             # on every request, so no orphan ever reaches the model.
+            calls_in = sum(len(m.get("tool_calls") or []) for m in msgs if m.get("role") == "assistant")
             msgs, deorphaned = (contextfloor.ensure_tool_integrity(msgs) if self._tool_call_fixes
                                 else (msgs, 0))
             if deorphaned:
-                rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
+                # `pruned_calls` = tool calls that had NO result and left the wire (the other direction); the
+                # remainder of `count` is results whose call was folded, kept as user text. Two sources, one count.
+                pruned = calls_in - sum(len(m.get("tool_calls") or []) for m in msgs if m.get("role") == "assistant")
+                rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, pruned_calls=pruned, level="info")
             # Settle any legacy inventory to its stable reference before final folds. Native paired
             # messages establish availability; a changing list must not rewrite an earlier handoff.
             if self._context_fixes:       # L0-L2 send what they were given (no context surgery)
