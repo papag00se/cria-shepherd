@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from cria import wsview, writeproxy
+from cria import completionmarks, wsview, writeproxy
 
 SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
 ENVELOPE = "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code {rc}\nOriginal token count: 9\nOutput:\n"
@@ -16,6 +16,7 @@ ENVELOPE = "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code {rc}\
 def write_edit_workspace_view():
     """Every test answers workspace questions from this machine's disk (production fills the view from a harness survey)."""
     token = wsview.bind(wsview.DirectView())
+    completionmarks._reset()          # the registry of unfinished calls is process memory: one test's never-answered write is not another's
     yield
     wsview.unbind(token)
 

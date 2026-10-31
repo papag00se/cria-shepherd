@@ -2,7 +2,9 @@
 
 TEMP_SUFFIX = '.tmp-partial'
 
-ATOMIC_REPLACE_PROGRAM = r'''import errno,fcntl,os,stat,tempfile
+ATOMIC_REPLACE_PROGRAM = r'''import errno,fcntl,hashlib,os,stat,tempfile
+
+_LANDED_SHA=''   # the sha256 of the bytes the LAST successful `_write_through` put on its file (the completion mark reads it)
 
 class _TargetMutationUncertain(OSError):
     pass
@@ -60,11 +62,13 @@ def _write_through(path, data, preserve=False):
     # stays a link, the file it names changes); a file with more than one hard link is rewritten IN PLACE (replacing it
     # would split the names); anything else is swapped atomically. Uncertainty about whether the target changed is one
     # exception type, _TargetMutationUncertain, whichever branch raised it.
+    global _LANDED_SHA
     path=os.path.realpath(os.fspath(path))
     try: links=os.stat(path).st_nlink
     except FileNotFoundError: links=1
     if links<=1:
         _atomic_replace(path,data,preserve)
+        _LANDED_SHA=hashlib.sha256(data).hexdigest()
         return
     started=False
     try:
@@ -75,6 +79,7 @@ def _write_through(path, data, preserve=False):
     except OSError as error:
         if started: raise _TargetMutationUncertain(*error.args) from error
         raise
+    _LANDED_SHA=hashlib.sha256(data).hexdigest()
 
 '''.replace('%%SUFFIX%%', TEMP_SUFFIX)
 

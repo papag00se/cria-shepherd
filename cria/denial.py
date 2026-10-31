@@ -320,7 +320,63 @@ def landed_call_ids(messages) -> set:
     return _unambiguous(messages, landed)
 
 
+def witnessed_completions(messages) -> dict:
+    """``call id -> (state, sha256)`` for calls that have NO terminal record of their own (the reply was lost, cut, "still
+    running") but whose EXECUTOR-SIDE completion mark a later lowered program read back (`completionmarks`; typed ``pm`` report of
+    that program's own paired record). ``state`` is ``landed`` / ``did_not_run`` / ``uncertain`` (the program finished - a known
+    state) or ``incomplete`` (no authentic mark when the witness looked: still running, killed or never started - known to be
+    not complete, never claimed to be any of those). Only an unambiguously paired witness counts, the witnessed call must appear
+    exactly once and BEFORE its witness, and two witnesses that disagree about a final state witness nothing. A call's own
+    terminal record always outranks a witness, so this never overrides what a reply proved."""
+    paired = paired_results(messages)
+    calls: Counter = Counter()
+    call_at: dict = {}
+    by_receipt: dict = {}
+    for pos, m in enumerate(messages or []):
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            cid, fn = (tc.get("id"), tc.get("function") or {}) if isinstance(tc, dict) else (None, {})
+            if cid:
+                calls[cid] += 1
+                call_at.setdefault(cid, pos)
+                by_receipt.setdefault(receipt_for(cid, fn.get("name"), fn.get("arguments")), set()).add(cid)
+    position = {id(m): n for n, m in enumerate(messages or [])}
+    seen: dict = {}
+    for wid, witness in paired.items():
+        marks = report(witness).get("pm")
+        if not marks:
+            continue
+        for receipt, (state, digest) in marks.items():
+            for cid in by_receipt.get(receipt, ()):
+                if cid == wid or calls[cid] != 1 or call_at[cid] > position[id(witness)]:
+                    continue
+                if proof(paired.get(cid)) in (REFUSED, UNAPPLIED, LANDED, UNCERTAIN):
+                    continue                              # its own terminal record already says what happened
+                seen.setdefault(cid, []).append((state, digest))
+    out: dict = {}
+    for cid, observed in seen.items():
+        final = {item for item in observed if item[0] != "incomplete"}
+        if len(final) == 1:
+            out[cid] = next(iter(final))
+        elif not final:
+            out[cid] = ("incomplete", "")
+    return out
+
+
+def witnessed_unlanded_ids(messages) -> set:
+    """Calls whose own executor-side mark says the program ended WITHOUT changing the file (a reply that never arrived does not matter)."""
+    return {cid for cid, (state, _digest) in witnessed_completions(messages).items() if state == "did_not_run"}
+
+
+def witnessed_completed_ids(messages) -> set:
+    """Calls whose program is known to have FINISHED (landed, did not run, or ended uncertain) though no reply proves it. The
+    write may no longer be running; nothing about WHAT it left is claimed beyond its own state."""
+    return {cid for cid, (state, _digest) in witnessed_completions(messages).items() if state != "incomplete"}
+
+
 def unlanded_call_ids(messages) -> set:
     """Ids of write-class calls cria PROVED did not change anything: its own refusal branch ran, or its edit
-    program reported the edit not applied. ONE owner for every reader that asks 'did this land?'."""
-    return _unambiguous(messages, unlanded)
+    program reported the edit not applied - or, with no reply at all, its own executor-side completion mark says it
+    ended without changing the file. ONE owner for every reader that asks 'did this land?'."""
+    return _unambiguous(messages, unlanded) | witnessed_unlanded_ids(messages)

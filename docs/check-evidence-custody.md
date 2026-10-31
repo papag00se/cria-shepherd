@@ -100,11 +100,30 @@ call whose predecessor never finished inside the bound still runs (never held fo
 `late` landed write or edit as a touch of an unestablished state (`loop._late_landed_ids`) and completion measurement does not use a
 `late` write's own bytes as the file's — its position in the history orders nothing, because the predecessor may land after it.
 
-(c) Not attributable without an executor that cooperates, so cria withholds instead of guessing. (1) A NATIVE shell writer (`> f`, `mv`,
-`sed -i`, a build): cria composed no record, so a closed reply (`Process exited with code 0`) and a still-running one with the same
-text cannot be told apart by any consumer — the v5 evaluation's finding, and the exec-envelope text is a compatibility grammar a program
-can print, not provenance. (2) A lowered writer whose reply has not arrived: still running, lost and cut are the same input, so the
-write is neither landed nor refused and the pending-write rules withhold. (3) A writer from an EARLIER turn that is still running when
-a later turn writes the same file: the per-turn queue cannot name it (marks are per-batch and nonce-scoped so that a retried batch can
-never see another batch's marks); ordering it needs a persistent per-call mark on the harness filesystem and its cleanup, which is new
-executor-side state rather than a consumer fix, and is not built.
+(c) Executor-side completion marks (`cria/completionmarks.py`) make three of the four cases a KNOWN state; the fourth stays unestablished.
+Every lowered write and edit program, under a session, leaves ONE authenticated mark for its own invocation as its last act (an `atexit`
+handler, so every exit and every refusal): `landed` with the sha256 of the bytes it put on the file, `did_not_run`, or `uncertain`. It
+lives in a private owned directory (`.cria-done-<session credential>` under the harness `TMPDIR`, certified by `ownedfiles.DIRECTORY_PROGRAM`
+like the batch markers). A mark authenticates only as a regular, single-link, mode-0600 file of this user in the certified directory
+whose content names the session credential, the call's receipt and THIS composition's nonce (a fresh one per composition, so an earlier
+attempt's mark is stale). The credential, receipt and nonce are correlation tokens, not a security boundary. The next lowered write/edit
+program reads back the marks of every call whose outcome cria has not learned; its own record carries them as the typed report `pm`
+(receipt -> `[state, sha256]`), `denial.witnessed_completions` derives the known state statelessly from the re-presented history, and
+`denial.unlanded_call_ids` (a witnessed `did_not_run` is a proven unlanded call) and `loop._note_write_results` (a witnessed finished
+write is no longer pending) consume it. A call's own terminal record always outranks a witness; a witness must name a call that appears
+once and before it; two witnesses that disagree witness nothing. Positive landing claims (`denial.landed_call_ids`, supersession, the
+ledger's bytes) still require the call's own reply: a witnessed `landed` says the program FINISHED and what it left, not where it sits in
+the history, so nothing is ordered by a witness's position.
+  (2) A lowered writer whose reply has not arrived: its mark, once a later program has read it, makes it `landed` / `did_not_run` /
+  `uncertain` (finished) or `incomplete` (no authentic mark at that moment: still running, killed or never started, which are NOT told
+  apart and are never claimed as `did_not_run`). Before any later program has run there is no witness: still unknown.
+  (3) A writer from an EARLIER turn still running when a later turn writes the same file: the later program waits (bounded by
+  `EDIT_SEQ_WAIT_SECONDS`, outside the directory lock, never forever) for the earlier writer's mark, and if the bound passes it runs and its
+  record declares `late`, which the loop already reads as an unestablished touch. The set of earlier writers is cria's in-memory registry of
+  composed-but-unresolved calls, so a cria restart forgets it and falls back to the unknown that existed before the marks.
+  (1) A NATIVE shell writer (`> f`, `mv`, `sed -i`, a build) is still unattributable: cria composed no program, so no mark exists, and a
+  finished writer and a still-running one print the same text. It stays `unestablished`; no wrapper is added to native commands.
+  Still indistinguishable, even with marks: a program killed by SIGKILL (no handler runs) versus one that never started versus one still
+  running; an unwritable marks directory (the program runs, no mark is left, the state is `incomplete`). Only the marks of calls whose
+  outcome is known are removed (by the next program, through the authenticated reader); the directory is never garbage-collected by prefix, so
+  the last marks of a session remain, bounded (`MAX_OUTSTANDING`), in a 0700 directory of the harness's own TMPDIR until it is cleared.

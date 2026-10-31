@@ -82,10 +82,12 @@ def _rec(kind, **rep):
 #   rm    the measured removal facts a landed whole-file write carries
 #   ef    the edit-fail fact report (token) of an unapplied edit
 #   st    the stored-fact of a spill / search: {operation, target, byte_count, sha256}
+#   pm    the completion marks the program READ BACK (`completionmarks`): {receipt: [state, sha256]} for every earlier call of the
+#         session whose outcome cria had not learned; state is landed / did_not_run / uncertain / incomplete (no authentic mark)
 #   fx    the fetch fact of a web_fetch (`fetchfacts.valid_report`): {url, status, observed: str; routes, catalog: [str]; shapes: [{head, route,
 #         params, body, fields}]}; `status` is what the GET answered, `observed` the protocol a successful discovery probe read ("mcp"/"graphql"), empty otherwise — two facts, never one), from the producer's own parse
 REPORT_STR = ("ev", "rm", "ef")
-REPORT_KEYS = ("ev", "late", "rm", "ef", "st", "fx")
+REPORT_KEYS = ("ev", "late", "rm", "ef", "st", "fx", "pm")
 
 _ns: dict = {}
 exec(compile(ENCODER_PY, "<cria.resultpacket.ENCODER_PY>", "exec"), _ns)
@@ -224,9 +226,28 @@ def _report(rep) -> dict | None | bool:
             return False
         if key == "fx" and not fetchfacts.valid_report(value):
             return False
+        if key == "pm" and not _valid_marks(value):
+            return False
         if key == "st" and not (isinstance(value, dict) and set(value) == {"operation", "target", "byte_count", "sha256"}
                                 and isinstance(value["operation"], str) and isinstance(value["target"], str)
                                 and isinstance(value["byte_count"], int) and not isinstance(value["byte_count"], bool)
                                 and isinstance(value["sha256"], str)):
             return False
     return rep
+
+
+def _valid_marks(value) -> bool:
+    """``{receipt: [state, sha256]}`` exactly: a 16-hex receipt, a known state, a 64-hex digest iff landed."""
+    if not isinstance(value, dict) or not value or len(value) > 64:
+        return False
+    hexdigits = set("0123456789abcdef")
+    for receipt, item in value.items():
+        if not (isinstance(receipt, str) and len(receipt) == 16 and set(receipt) <= hexdigits):
+            return False
+        if not (isinstance(item, list) and len(item) == 2 and item[0] in ("landed", "did_not_run", "uncertain", "incomplete")
+                and isinstance(item[1], str)):
+            return False
+        digest = item[1]
+        if (item[0] == "landed") != (len(digest) == 64 and set(digest) <= hexdigits) or (item[0] != "landed" and digest):
+            return False
+    return True

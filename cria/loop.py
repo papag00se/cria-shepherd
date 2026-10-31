@@ -61,7 +61,7 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
-from . import contextrestoration, filepresence, ledgercopies, preamblepolicy, reorientation, steppreparation, system1wiring
+from . import briefinggrounding, contextrestoration, filepresence, ledgercopies, preamblepolicy, reorientation, steppreparation, system1wiring
 from .toolstages import policy_log
 from .modulestate import ModuleInput, ModuleState
 from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
@@ -743,11 +743,12 @@ STEP_THRASH_REPLAN = livingplan.STEP_THRASH_REPLAN
 def _note_write_results(gs: GuardState, messages) -> None:
     """Remember which registered write calls have had a result come back (landed or failed). A result counts only
     through the ONE call/result correlation owner (`denial.paired_results`): an orphan, a result that precedes its
-    call, a second result or a reused id answers nothing. The raw set is sticky; whether an id still counts is
-    decided at use (`writeobservation.answered_ids`)."""
+    call, a second result or a reused id answers nothing. A call with no reply at all also counts once its own executor-side
+    completion mark was read back as final (`denial.witnessed_completed_ids`): its program is finished, so it is no longer a
+    pending write. The raw set is sticky; whether an id still counts is decided at use (`writeobservation.answered_ids`)."""
     answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
     registered = set(getattr(gs, "write_call_ids", None) or [])
-    answered |= registered & set(denial.paired_results(messages or []))
+    answered |= registered & (set(denial.paired_results(messages or [])) | denial.witnessed_completed_ids(messages or []))
 
 
 def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
@@ -7664,6 +7665,17 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     candidate = prompts.render("compaction_candidate", briefing=briefing.strip())
     answers: dict[str, str] = {}
 
+    # No model in this one: every concrete figure the briefing states is looked up, literally, in the evidence the
+    # writer read. A figure found nowhere was not read from anything (briefinggrounding); it refuses before a model
+    # is asked anything. It replaced the whole-briefing fidelity verdict (docs/open-threads.md, 2026-11-02).
+    unread = briefinggrounding.ungrounded(briefing, [*transcript_blocks, files, checks, task])
+    if unread:
+        answers["figures"] = "UNGROUNDED " + ", ".join(unread[:8])
+        if rlog is not None:
+            rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
+                      accepted=False, answers=answers)
+        return False
+
     def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
         answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
                            prompts.load("compaction_validate_ask"), rlog,
@@ -7715,16 +7727,6 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         if unbuilt:
             answers["build"] = "UNRUN " + unbuilt
             accepted = False
-    if accepted:
-        blocks = list(transcript_blocks)
-        if task_fact and task_fact not in blocks:
-            blocks.append(task_fact)
-        blocks.append(candidate)
-        blocks.append(prompts.render("compaction_files_fact", files=files.strip()) if files.strip()
-                      else prompts.render("compaction_no_fact", kind="FILESYSTEM INVENTORY"))
-        blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
-                      else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
-        accepted = judge("fidelity", prompts.load("compaction_validate"), blocks, "FAITHFUL")
     if rlog is not None:
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
                   level="info" if accepted else "warn", accepted=accepted, answers=answers)

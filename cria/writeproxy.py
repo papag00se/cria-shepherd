@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass, replace
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import bodykeys, brave, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
+from . import bodykeys, brave, completionmarks, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
 from .editsequence import EDIT_SEQ_DIR, EDIT_SEQ_WAIT_SECONDS, _HD_PY, _seq_release
 from .toolstages import EditSequence, LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
@@ -501,6 +501,7 @@ p=pathlib.Path(base64.b64decode('{path}').decode())
 raw=base64.b64decode('{content}')
 _late=False
 #%%SEQ%%
+#%%XSEQ%%
 _after=_v(str(p),raw)
 if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
     sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after)+_at(raw,_after))
@@ -534,7 +535,7 @@ class WriteCommand(str):
         raise AttributeError('Write producer facts are immutable')
 
 
-def _write_command(path: str, content: str, seq: "EditSequence | None" = None) -> str:
+def _write_command(path: str, content: str, seq: "EditSequence | None" = None, marks: "completionmarks.Plan | None" = None) -> str:
     """Byte-exact atomic write via a python heredoc: validate-before-write (a broken write over a valid
     file is refused), then write to a temp and os.replace over the target so a partial write never
     leaves a half-written file. The content rides in the heredoc, so there is nothing to escape and
@@ -560,10 +561,10 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None) -
                                            # FileExistsError traceback — cause invisible, three
                                            # identical retries, tests never landed. Name the block.
                                            parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
-    py = py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
+    py = py.replace("%%RECORD%%", _record_block(marks))
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("write_unwritable")))).replace(
         '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
-    py = _queued(py, seq)
+    py = _queued(py, seq, marks)
     return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
 
@@ -592,6 +593,7 @@ new=base64.b64decode('{new}').decode()
 # the directory, so it leaves nothing in the user's tree; it is released when this process exits.
 _late=False
 #%%SEQ%%
+#%%XSEQ%%
 _lk=_lock_directory(rp)
 s=rp.read_text()
 def _fail(mode,**kw):
@@ -794,13 +796,24 @@ except (OSError,ValueError):
 '''
 
 
-def _queued(py: str, seq: "EditSequence | None") -> str:
-    """``py`` with its place in the turn's per-file queue (the ``#%%SEQ%%`` slot of an edit or whole-write program) filled in.
-    A call that has no predecessors carries none of it: the slot is a comment and the program is byte-for-byte what it was."""
+def _record_block(marks: "completionmarks.Plan | None") -> str:
+    """The program's record builder, and - under a session - the completion mark that outlives its reply (`completionmarks`)."""
+    receipt = denial.active_receipt()
+    block = resultpacket.RECORD_PY.replace("%%RCPT%%", receipt)
+    return block + completionmarks.head(marks, receipt) if marks is not None and receipt else block
+
+
+def _queued(py: str, seq: "EditSequence | None", marks: "completionmarks.Plan | None" = None) -> str:
+    """``py`` with its place in the turn's per-file queue (the ``#%%SEQ%%`` slot of an edit or whole-write program) filled in,
+    and - when it carries completion marks - the wait for an EARLIER turn's writer of the same file (the ``#%%XSEQ%%`` slot).
+    A call that has neither carries none of it: the slots are comments and the program is byte-for-byte what it was."""
+    if marks is not None:
+        py = py.replace("#%%XSEQ%%\n", completionmarks.wait(marks, EDIT_SEQ_WAIT_SECONDS))
     if seq is None:
-        return py
+        return completionmarks.directory_program() + py if marks is not None else py
     turn, idx, preds, participants = seq
-    return editsequence.PROGRAM + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
+    head = editsequence.PROGRAM + (completionmarks.FUNCTIONS if marks is not None else "")
+    return head + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
         dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
         participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))
 
@@ -849,7 +862,7 @@ def render_edit_echo(path: str, rep: "dict | None" = None) -> str:
 
 
 def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False,
-                  seq: EditSequence | None = None) -> str:
+                  seq: EditSequence | None = None, marks: "completionmarks.Plan | None" = None) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
                                      zprefix=editrecovery.PACKED_PREFIX) if echo else ""),
@@ -860,10 +873,10 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                                           packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
-    py = py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
+    py = py.replace("%%RECORD%%", _record_block(marks))
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable")))).replace(
         '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
-    py = _queued(py, seq)
+    py = _queued(py, seq, marks)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -1336,11 +1349,12 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         mutation = _prepare_file_mutation(name, args)
         if mutation.error:
             return ShellCommand(_file_mutation_refusal(name, mutation, request.injected, source.log))
+        marks = completionmarks.plan(request.session, denial.active_receipt(), str(mutation.path), request.workspace_root)
         if name in _WRITE_NAMES:
-            command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content), seq=source.sequence)
+            command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content), seq=source.sequence, marks=marks)
         else:
             command = _edit_command(str(mutation.path), mutation.old, mutation.new,
-                pack=request.pack, echo=request.edit_echo, seq=source.sequence)
+                pack=request.pack, echo=request.edit_echo, seq=source.sequence, marks=marks)
         command = toolstages.current().mutation_command(source, command)
         # Explicit, unbound library callback compatibility only. Production uses
         # typed factual services; a bound selection never falls back to a whole
@@ -1397,6 +1411,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     """
     injected = injected or set()
     from . import assistruntime
+    completionmarks.begin_turn(session)
     request = LoweringRequest(frozenset(injected), brave_key, native_search, session, workspace_root,
         external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
         externalization_owner, assistruntime.current().externalization, observe_externalization,
@@ -1662,6 +1677,15 @@ class _Proof(NamedTuple):
     pre: str = ""             # exact producer-authored prelude, not inferred from file text
 
 
+def _learn_completions(token: str, rep: "dict | None") -> None:
+    """cria's own record for ``token`` arrived: that call's outcome is known, and so is every call whose completion mark the
+    record's program read back as final (`completionmarks`); their marks on the harness are released by the next program."""
+    completionmarks.settle(token)
+    for receipt, (state, _digest) in ((rep or {}).get("pm") or {}).items():
+        if state != "incomplete":
+            completionmarks.settle(receipt)
+
+
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
     result after it) and whose STORED command declared a receipt in cria's sentinel.
@@ -1694,6 +1718,7 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             first = resultpacket.read_record(content, off, token)
             if first is None:
                 continue
+            _learn_completions(token, first.rep)
             at, survey = first.end, ""
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
                 at = second.end
