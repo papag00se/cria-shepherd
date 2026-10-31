@@ -25,7 +25,8 @@ def test_session_keys_are_stable_sid_when_the_harness_names_one_else_a_task_hash
     assert session_key({"X-Cria-Session-Id": "abc"}, first) == session_key({"X-Cria-Session-Id": "abc"}, other) == "sid:abc"
     key = session_key({}, first)
     assert key.startswith("task:") and key == session_key(None, first + work + [user("continue")])
-    assert key != session_key({}, other) and session_key({}, []) == "task:none"
+    assert key != session_key({}, other) and session_key({}, []) == "task:none" and session_key(None, []) == "task:none"
+    assert session_key({"X-Cria-Session-Id": ""}, first) == key   # an empty header names nothing
     assert _stable_session("sid:abc") and not _stable_session(key)
 
 
@@ -46,6 +47,9 @@ def test_the_announced_workspace_is_carried_as_a_name_and_remembered_for_the_ses
     assert server._session_cwd("s1", [user("continue")]) == foreign
     assert server._session_cwd("s1", env("/b")) == "/b"
     assert server._session_cwd("s2", env(".")) is None and server._session_cwd("s3", [user("hi")]) is None
+    # a root learned from somewhere other than <cwd> is recorded under the same key; '.' is never remembered
+    assert server._remember_session_cwd("s4", ".") == "." and server._session_cwd("s4", []) is None
+    assert server._remember_session_cwd("s4", "/w2") == "/w2" and server._session_cwd("s4", []) == "/w2"
 
 
 TOOLS = [{"type": "function", "function": {"name": "exec_command", "parameters": {"type": "object"}}}]

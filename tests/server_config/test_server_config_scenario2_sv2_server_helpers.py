@@ -1,11 +1,9 @@
-"""Server-side helpers on their real inputs: which web calls the conversation still shows (refused ones never ran), the workspace remembered per session
-(never cria's own '.'), the ⟦cria⟧ line placement in completions, the proxy body's persona stripping and the Responses session identity."""
+"""Server-side helpers on their real inputs: which web calls the conversation still shows (refused ones never ran), the ⟦cria⟧ line placement in completions, the proxy body's persona stripping and the Responses session identity."""
 import json
 
 import pytest
 
 from cria import responses, server
-from cria.loop import session_key
 
 
 def call(cid, name, **args):
@@ -48,18 +46,6 @@ def test_assist_notes_lead_the_content_as_their_own_line(existing, line, expecte
     assert created["choices"][0]["message"]["content"] == "stats"
 
 
-def test_the_session_workspace_is_remembered_across_a_compaction_turn_and_never_cria_own_dir():
-    """The first turn advertises <cwd>; the later summary turn does not and must still resolve to it; '.' is refused; an unknown session stays None."""
-    ad = [{"role": "user", "content": "<environment_context><cwd>/work/app</cwd></environment_context> build it"}]
-    assert server._session_cwd("sid:cwd-test", ad) == "/work/app"
-    assert server._session_cwd("sid:cwd-test", [{"role": "user", "content": "summarize"}]) == "/work/app"
-    dot = [{"role": "user", "content": "<environment_context><cwd>.</cwd></environment_context>"}]
-    assert server._session_cwd("sid:cwd-dot", dot) is None
-    assert server._session_cwd("sid:cwd-never", []) is None
-    assert server._remember_session_cwd("sid:cwd-never", ".") == "." and server._session_cwd("sid:cwd-never", []) is None
-    assert server._remember_session_cwd("sid:cwd-never", "/w2") == "/w2" and server._session_cwd("sid:cwd-never", []) == "/w2"
-
-
 def test_the_proxy_body_drops_the_harness_persona_but_keeps_caller_instructions():
     """An aux call keeps only user turns and caller-authority system text; a body with nothing to strip is the same object; a non-list messages passes through."""
     from cria import bodykeys
@@ -70,26 +56,6 @@ def test_the_proxy_body_drops_the_harness_persona_but_keeps_caller_instructions(
     assert stripped["messages"] == [caller, user] and stripped["model"] == "m"
     clean = {"messages": [user]}
     assert server._proxy_body(clean) is clean and server._proxy_body({"messages": "x"} ) == {"messages": "x"}
-
-
-class Headers(dict):
-    pass
-
-
-@pytest.mark.parametrize("headers, messages, key", [
-    ({"X-Cria-Session-Id": "abc"}, [], "sid:abc"),
-    ({"X-Cria-Session-Id": ""}, [{"role": "user", "content": "task one"}], None),
-    (None, [], "task:none"),
-])
-def test_session_identity_prefers_the_header_and_otherwise_keys_on_the_task_root(headers, messages, key):
-    """Header wins; an empty header falls back to the task root (stable across a changed later turn, different for a different task); nothing at all is task:none."""
-    got = session_key(headers, messages)
-    if key is not None:
-        assert got == key
-        return
-    assert got.startswith("task:") and got != "task:none"
-    longer = messages + [{"role": "assistant", "content": "ok"}, {"role": "user", "content": "follow-up"}]
-    assert session_key(headers, longer) == got and session_key(headers, [{"role": "user", "content": "task two"}]) != got
 
 
 def test_responses_session_identity_is_the_prompt_cache_key():
