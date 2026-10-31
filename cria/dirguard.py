@@ -656,6 +656,7 @@ def _segment_is_text_search(command: str, segments, pos: int) -> bool:
 
 
 _PREFIX_WORDS = {"sudo", "env", "command", "builtin", "nohup", "time", "exec", "nice", "xargs"}
+_SHELL_RESERVED_LEAD = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _DEST_LAST = {"cp", "ln", "install", "rsync"}
 _ALL_OPERANDS = {"mv", "rm", "rmdir", "touch", "mkdir", "tee", "unlink", "shred"}
@@ -723,12 +724,33 @@ def _shell_words(command: str) -> list[str] | None:
     return None if tokens is None else [word for word, _, _ in tokens]
 
 
+def _is_prefix_word(word: str) -> bool:
+    """A transparent prefix command, spelled bare or by its system path (`/usr/bin/env`)."""
+    return word in _PREFIX_WORDS or (os.path.basename(word) in _PREFIX_WORDS
+                                    and os.path.dirname(word) in _SYSTEM_PROGRAM_DIRS)
+
+
 def _command_words(words: list[str]) -> list[str]:
-    while words and (re.match(r"^\w+=", words[0]) or words[0] in _PREFIX_WORDS):
-        prefix = words[0] in _PREFIX_WORDS
-        words = words[1:]
-        while prefix and words and words[0].startswith("-"):
+    """The command a segment really runs. Prefix words and assignments (`builtin`, `command`, `time`,
+    `env`, `/usr/bin/env`, `VAR=`), leading shell reserved words (`then`, `do`, `{`, `!` …) and bash's
+    `function NAME` lead can follow one another in any order, so each is skipped repeatedly until the
+    argv stops changing. A finite grammar fact about where the command word sits — not a judgment about
+    which program is invoked: what a function, a sourced script or `eval` does later is out of scope.
+    The ONE owner: a write target, a saved-script consumer and a directory change inside `if …; then
+    CMD; fi` or `{ CMD; }` are the same command as outside it."""
+    while words:
+        if words[0] in _SHELL_RESERVED_LEAD:
             words = words[1:]
+        elif words[0] == "function" and len(words) > 1:
+            words = words[2:]
+        elif re.match(r"^\w+=", words[0]):
+            words = words[1:]
+        elif _is_prefix_word(words[0]):
+            words = words[1:]
+            while words and words[0].startswith("-"):
+                words = words[1:]
+        else:
+            break
     return words
 
 
@@ -748,6 +770,16 @@ def _follow_cd(words: list[str], cur: str | None) -> str | None:
     if cur is not None:
         return os.path.normpath(os.path.join(cur, tgt))
     return None
+
+
+# Stream editors that hand saved bytes on (possibly edited): custody follows them like a reader, but they are not
+# in `_READERS` (that is the read-proof allow-list; `sed -i`/`w`/`e` and awk's `system` can write or run).
+_BYTE_FILTERS = frozenset({"sed", "awk", "gawk", "mawk", "tac", "nl", "fold", "uniq"})
+
+
+def _passes_bytes(words: list[str], workspace: str | None) -> bool:
+    """Does this command hand its input on as output, so saved bytes stay in custody through it?"""
+    return os.path.basename(words[0]) in _BYTE_FILTERS or _segment_reads([os.path.basename(words[0]), *words[1:]], workspace)
 
 
 def _input_commands(shell: str, *, unwrap: bool = True):
@@ -829,7 +861,7 @@ def _route_input(commands, shell, index, workspace, cwd, *, sources=()):
             return i, outputs, 'unknown', False  # a redirected pipeline loses custody
         if cmd in _SHELLS or cmd in ('.', 'source'):
             return i, outputs, 'shell', exact
-        if not _segment_reads([cmd, *words[1:]], workspace):
+        if not _passes_bytes(words, workspace):
             return i, outputs, 'unknown', False
         args = words[1:]
         if cmd not in ('cat', 'tee') or (cmd == 'cat' and any(
@@ -841,6 +873,35 @@ def _route_input(commands, shell, index, workspace, cwd, *, sources=()):
                 or i + 1 >= len(commands)):
             return i, outputs, 'data', exact
         i += 1
+
+
+def _substitution_execution(child, source, words, targets, cwd, workspace, depth, *, opaque=False):
+    """Follow saved bytes through one command substitution of the command whose argv is ``words``.
+    Besides what the child itself runs, its OUTPUT is the program text of a command that executes its
+    argument (`sh -c "$(cat tmp/script)"`, `eval "$(cat tmp/script)"`): the saved bytes run there. A
+    stricter reading than bash (any substitution of such a command, not only the script argument) errs
+    toward judging the saved body, never toward admitting it unseen."""
+    text = child.text(source)
+    execution = _saved_scope_execution(text, targets, cwd, workspace, depth, opaque=opaque)
+    if execution and execution.kind != 'data':
+        return execution
+    if not words or not (os.path.basename(words[0]) == 'eval' or (
+            os.path.basename(words[0]) in _SHELLS and _segment_write_targets(words)[1])):
+        return execution
+    layout = shellinput.layout(text)
+    substitutions, undecidable = shellinput.expansions(layout.shell, shell=True)
+    commands = None if layout.error or undecidable else _input_commands(
+        shellinput.outer_shell(layout.shell, substitutions))
+    if commands is None:
+        return _InputExecution('unknown', cwd, False)
+    for _s, _e, inner, _out, inputs in commands:
+        if not inner or not _passes_bytes(inner, workspace):
+            continue
+        paths = _input_sources(inner, inputs)
+        uncertain = any(_input_path(p, cwd) is None for p in paths)
+        if uncertain or any(_input_path(p, cwd) in targets for p in paths):
+            return _InputExecution('shell', cwd, not uncertain and not opaque)
+    return execution
 
 
 def _saved_scope_execution(script, targets, cwd, workspace, depth, *, opaque=False):
@@ -864,8 +925,8 @@ def _saved_scope_execution(script, targets, cwd, workspace, depth, *, opaque=Fal
             if not start <= child.start <= end:
                 continue
             cur = _cwd_before(commands, shell, child.start, cwd)
-            execution = _saved_scope_execution(child.text(layout.source), known, cur,
-                                               workspace, depth + 1, opaque=opaque)
+            execution = _substitution_execution(child, layout.source, args, known, cur,
+                                                workspace, depth + 1, opaque=opaque)
             if not execution:
                 continue
             if execution.kind != 'data':
@@ -955,8 +1016,7 @@ def _saved_input_execution(commands, shell, index, targets, cwd, workspace, dept
         return execution
     if not words:
         return None
-    cmd = os.path.basename(words[0])
-    if not _segment_reads([cmd, *words[1:]], workspace):
+    if not _passes_bytes(words, workspace):
         return None
     # A reader can supply the saved bytes by filename OR retained stdin source.
     paths = _input_sources(words, inputs)
@@ -1022,9 +1082,9 @@ def _input_refusal(layout, shell, substitutions, level, workspace, roots, cwd, d
                 for child in substitutions:
                     if not start <= child.start <= end:
                         continue
-                    execution = _saved_scope_execution(child.text(layout.source), targets,
-                                                       later_cwd, workspace, depth + 1,
-                                                       opaque=unknown_origin)
+                    execution = _substitution_execution(child, layout.source, words, targets,
+                                                        later_cwd, workspace, depth + 1,
+                                                        opaque=unknown_origin)
                     if execution:
                         exact = exact and execution.exact
                         if execution.kind != 'data':
@@ -2080,24 +2140,6 @@ def root_recursive_delete_refusal(command: str) -> str | None:
 # symlink inside the project is lexically internal (the same lexical rule as every write target here). `builtin` dispatches like `command`; `pushd +N`, `popd` and an operand
 # starting `-` (`cd -P`, `cd --`, `cd -`) use state this module cannot see, so they are unplaceable.
 _CWD_COMMANDS = ("cd", "pushd", "popd")
-_SHELL_RESERVED_LEAD = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
-
-
-def _command_argv(words: list[str]) -> list[str]:
-    """The command a segment really runs. Prefix words and assignments (`builtin`, `command`, `time`,
-    `env`, `VAR=`), leading shell reserved words (`then`, `do`, `{`, `!` …) and bash's `function NAME`
-    lead can follow one another in any order, so each is skipped repeatedly until the argv stops
-    changing. A finite grammar fact about where the command word sits — not a judgment about which
-    program is invoked: what a function, a sourced script or `eval` does later is out of scope."""
-    while True:
-        before = words
-        while words and words[0] in _SHELL_RESERVED_LEAD:
-            words = words[1:]
-        if words[:1] == ["function"] and len(words) > 1:
-            words = words[2:]
-        words = _command_words(words)
-        if words == before:
-            return words
 
 
 def _unparsed_names_a_cwd_command(shell: str) -> bool:
@@ -2107,7 +2149,7 @@ def _unparsed_names_a_cwd_command(shell: str) -> bool:
         spans = _shell_tokens(shell[start:end])
         if spans is None:
             continue
-        words = _command_argv([w for w, _, _ in spans if not (w and set(w) <= _PUNCT)])
+        words = _command_words([w for w, _, _ in spans if not (w and set(w) <= _PUNCT)])
         if words[:1] and words[0] in _CWD_COMMANDS:
             return True
     return False
@@ -2121,7 +2163,7 @@ def _persisted_cwd_refusal(shell: str, workspace: str | None) -> str | None:
         return prompts.load("external_write_unproven") if _unparsed_names_a_cwd_command(shell) else None
     cur = os.path.normpath(os.path.expanduser(workspace)) if workspace else None
     for _start, _end, words, _outputs, _inputs in commands:
-        words = _command_argv(words)
+        words = _command_words(words)
         if words[:1] and words[0] in _CWD_COMMANDS:
             cur = _follow_cd(words, cur)
             # No known workspace means no known project to stay inside: a recognised directory change

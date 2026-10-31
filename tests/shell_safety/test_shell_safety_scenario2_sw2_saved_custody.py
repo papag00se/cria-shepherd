@@ -1,6 +1,6 @@
 """Second-pass dirguard scenarios: a script SAVED by one command and run by another (every shell spelling of "run these bytes"),
 the root-delete glob/option arms, and the write-target helpers. Real bash is the oracle for the saved scripts: refused rows
-really escape the workspace, admitted rows really write inside it. Strict xfails pin refusals the guard still misses."""
+really escape the workspace, admitted rows really write inside it. """
 import subprocess
 
 import pytest
@@ -51,16 +51,31 @@ def test_saved_bytes_that_write_inside_the_project_are_admitted_and_really_do(tm
     assert not (tmp_path / "outside").exists() and ((ws / "tmp/output").exists() or (ws / "outside").exists()) and refused == [False, False]
 
 
-# Real fail-open holes (bash really escapes, the guard says nothing): strict so fixing one flips it to a failure to un-mark.
-HOLES = ['sh -c "$(cat tmp/script)"', "sed 's/x/y/' tmp/script | sh", 'if true; then sh tmp/script; fi', 'for i in 1; do sh tmp/script; done',
-         '/usr/bin/env sh tmp/script', 'sh -c "$(cat tmp/script)" extra']
+# Formerly fail-open: the saved bytes run through a command substitution handed to a shell (or eval), a filter pipe, a
+# compound body, or a prefix command spelled by its system path. `{ sh tmp/script; }` / `while` are the same compound bodies.
+FORMERLY_HOLES = ['sh -c "$(cat tmp/script)"', "sed 's/x/y/' tmp/script | sh", 'if true; then sh tmp/script; fi', 'for i in 1; do sh tmp/script; done',
+                  '/usr/bin/env sh tmp/script', 'sh -c "$(cat tmp/script)" extra', 'eval "$(cat tmp/script)"', '{ sh tmp/script; }',
+                  'while true; do sh tmp/script; break; done', 'sudo /usr/bin/env sh tmp/script', 'if true; then x=1; sh -c "$(sed 1q tmp/script)"; fi']
 
 
-@pytest.mark.xfail(strict=True, reason="saved script run through sh -c \"$(cat)\", a filter pipe, a compound body or /usr/bin/env is not followed")
-@pytest.mark.parametrize("consumer", HOLES)
-def test_saved_script_runs_the_guard_does_not_follow_yet(tmp_path, consumer):
+@pytest.mark.parametrize("consumer", FORMERLY_HOLES)
+def test_saved_script_runs_through_substitution_filter_compound_or_system_env_are_followed(tmp_path, consumer):
     ws, refused = run(tmp_path, saved(BAD, consumer))
     assert (tmp_path / "outside").read_text() == "proof" and refused == [True, True]
+
+
+@pytest.mark.parametrize("consumer", ['sh -c "$(cat tmp/script)"', 'if true; then sh tmp/script; fi', 'eval "$(cat tmp/script)"',
+                                      '/usr/bin/env sh tmp/script', 'if true; then sh -c "$(cat tmp/script)"; fi'])
+def test_those_same_runs_of_a_project_local_script_stay_admitted_and_really_write_inside(tmp_path, consumer):
+    ws, refused = run(tmp_path, saved(GOOD, consumer))
+    assert not (tmp_path / "outside").exists() and (ws / "tmp/output").exists() and refused == [False, False]
+
+
+@pytest.mark.parametrize("command", ["if true; then printf x > ../outside; fi", "{ printf x > ../outside; }", "for i in 1; do touch ../outside; done",
+                                     "/usr/bin/env touch ../outside", "while true; do rm -f ../outside; touch ../outside; break; done"])
+def test_a_write_inside_a_compound_body_or_behind_a_system_path_prefix_is_judged_like_a_bare_one(tmp_path, command):
+    ws, refused = run(tmp_path, command)
+    assert (tmp_path / "outside").exists() and refused == [True, True]
 
 
 UNPROVEN = ["cat <<EOF | sh\nprintf proof > tmp/$UNSET\nEOF", "cat <<EOF | sh\nprintf proof > ../outside $(printf x\nEOF", "cat <<EOF | sh\n$UNSET tmp/x\nEOF",
