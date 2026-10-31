@@ -67,7 +67,8 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
         # A real default Config: `_setup_translation` reads the engagement level (the tool layer
         # is level 2) and the tool-menu flags, so a double without one is an object that cannot
         # exist in production. The subject here is workspace-root adoption, at the full level.
-        handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore()})()
+        handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore(),
+                                 "_endpoint_for": lambda self, role: None})()
         body = {"messages": [
             {"role": "user", "content": "build the shipping module"},
             {"role": "assistant", "tool_calls": [{"id": "t1", "type": "function", "function": {
@@ -101,7 +102,8 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
         cmd = sentinel + "\nls -la"
         handler = srv.CriaHandler.__new__(srv.CriaHandler)
         handler.headers = {}
-        handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore()})()
+        handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore(),
+                                 "_endpoint_for": lambda self, role: None})()
         body = {"messages": [
             {"role": "user", "content": "<environment_context><cwd>/announced/ws</cwd>"
                                         "</environment_context>"},

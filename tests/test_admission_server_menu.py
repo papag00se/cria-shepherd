@@ -36,7 +36,7 @@ def test_real_advertisement_then_selected_menu_stages(monkeypatch, focus, instru
     handler = server.CriaHandler.__new__(server.CriaHandler)
     handler.server = SimpleNamespace(cfg=SimpleNamespace(
         routing=SimpleNamespace(simple_tools=True), tools=SimpleNamespace(focus=focus, cheatsheet=instruction)), loop=None,
-        loop_store=LoopStore())
+        loop_store=LoopStore(), _endpoint_for=lambda role: None)
     handler._workspace_root = '/offline-workspace'
     handler._bind_workspace_view = Mock()
     monkeypatch.setattr(server.brave, 'api_key', lambda: None)

@@ -109,7 +109,8 @@ def test_server_hands_the_declared_roots_to_translate_outbound(monkeypatch):
     h = srv.CriaHandler.__new__(srv.CriaHandler)
     h.headers = {}
     from cria.multipart_bridge import Bridge
-    h.server = type("S", (), {"cfg": Config(), "loop_store": LoopStore(), "multipart_bridge": Bridge()})()
+    h.server = type("S", (), {"cfg": Config(), "loop_store": LoopStore(), "multipart_bridge": Bridge(),
+                           "_endpoint_for": lambda self, role: None})()
     body = {"messages": MSGS, "tools": []}
 
     class R:

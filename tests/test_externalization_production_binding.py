@@ -587,7 +587,7 @@ def _fake_handler(store, runtime):
     stats = SimpleNamespace(calls=0, observe=lambda *a: None)
     handler.server = SimpleNamespace(loop_store=store, loop=None, cfg=cfg, pilot_runtime=runtime,
                                     stats_store=SimpleNamespace(get=lambda key: stats),
-                                    multipart_bridge=Bridge())
+                                    multipart_bridge=Bridge(), _endpoint_for=lambda role: None)
     handler.headers = {'X-Cria-Session-Id': 'externalization-before'}
     handler._shell_tool = {'name': 'exec_command', 'schema': {'type': 'object',
         'properties': {'cmd': {'type': 'string'}}, 'required': ['cmd']}}
