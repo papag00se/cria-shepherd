@@ -70,7 +70,7 @@ def test_prompts_carry_no_task_vocabulary():
     assert [f"{n}:{i}" for n, i, ln in LINES if TASK_WORDS.search(ln)] == []
 
 MESSAGE_HINTS = ("MULTIPART_UNVERIFIED CALLER_INSTRUCTIONS CALLER_PERSONA CALLER_SPAN RESTORED_FILES PAYLOAD_BOUNDARY "
-                 "ANNOTATION_SOURCE RESULT_OUTCOME READ_OBSERVATION RESULT_REPORT").split()
+                 "ANNOTATION_SOURCE RESULT_OUTCOME READ_OBSERVATION RESULT_REPORT SUPERSEDED_WRITES").split()
 
 def test_no_internal_body_key_reaches_the_wire():
     """`bodykeys.ALL` is the wire's one lever (once inert: a new key would have shipped): the REAL `_prep` strips body keys and
