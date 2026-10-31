@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from cria import contextfloor, denial, focustrim, loop, prompts, writeproxy, wsview
+from cria import assistruntime, contextfloor, denial, focustrim, loop, prompts, writeproxy, wsview
 from write_edit_helpers import ENVELOPE, call, do, lower, represent, run, shrink_services, write_edit_workspace_view  # noqa: F401
 
 DATA = b"original token\n"
@@ -93,6 +93,19 @@ def test_a_large_rejected_draft_leaves_the_argument_slot_and_rides_once_in_the_r
     (tmp_path / "notes.txt").write_text("todo\n")
     _, _, ok = do("edit_file", {"path": "notes.txt", "old_string": "todo", "new_string": BIG}, tmp_path, cid="ok")
     assert json.loads(ok[0]["tool_calls"][0]["function"]["arguments"])["new_string"] == BIG       # landed bytes are never collapsed
+
+
+def test_deselecting_the_rejected_draft_assist_leaves_the_payload_in_the_call_and_adds_nothing_to_the_refusal(tmp_path):
+    """The switch controls BOTH halves (payload movement and the refusal's copy): off, the history is the harness's own, byte for byte."""
+    (tmp_path / "cart.go").write_text("package cartsvc\n\nfunc Total() int { return 0 }\n")
+    runs = {}
+    for label, disabled in {"off": ("rejected-draft-provenance",), "on": ()}.items():
+        with assistruntime.bound(assistruntime.AssistRuntime.select(level=5, disabled=disabled)):
+            runs[label] = do("edit_file", {"path": "cart.go", "old_string": BIG, "new_string": "x"}, tmp_path)[2]
+    off, on = runs["off"], runs["on"]
+    assert json.loads(off[0]["tool_calls"][0]["function"]["arguments"])["old_string"] == BIG
+    assert "old_string" not in json.loads(on[0]["tool_calls"][0]["function"]["arguments"]) and on[1]["content"].count(BIG) == 1
+    assert BIG not in off[1]["content"] and on[1]["content"].startswith(off[1]["content"] + "\n\n")   # on = the same refusal + the one copy
 
 
 def test_the_rejected_payload_audit_event_fires_once_per_rejected_call_not_once_per_request(tmp_path):

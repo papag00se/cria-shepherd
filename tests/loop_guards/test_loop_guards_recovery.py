@@ -144,6 +144,39 @@ def test_truncation_recovery_retries_with_the_true_reason_then_refuses_the_cut_c
         assert "cria" not in body["messages"][-1]["content"].lower()
 
 
+OTHER = '{"path":"other.txt","old_string":"old","new_string":"new"}'
+
+
+@pytest.mark.parametrize("name,args,small_pieces", [
+    ("write_file", '{"path":"x","content":"cut', True),                 # a whole-file write cut mid-content: the build-in-pieces advice is TRUE here
+    ("edit_file", '{"path":"x","old_string":"old","new_string":"cut', False),
+    ("exec_command", '{"cmd":"cut', False)])                            # ...and false for every other cut call
+def test_the_final_cut_call_chooses_the_wording_and_the_other_calls_in_the_reply_are_named_as_withheld(name, args, small_pieces):
+    """C14 D1 (a COMPLETE 1.4K edit_file was told its whole-file write was cut): the retry notice describes the call that was actually cut, and a
+    complete call beside it is said to be withheld and NOT run - it must not silently vanish from the coder's picture of the repo."""
+    first = reply("", finish="length", tool_calls=[
+        {"id": "a", "type": "function", "function": {"name": "edit_file", "arguments": OTHER}},
+        {"id": "b", "type": "function", "function": {"name": name, "arguments": args}}])
+    chat = Chat(reply("next answer"))
+    out = loop.guard_truncation(first, BODY(), chat, Log())
+    notice = last_user(chat)[0]
+    assert "`edit_file` on `other.txt`" in notice and f"({len(OTHER)} characters, arguments complete)" in notice and "NOT run" in notice
+    assert ("SMALL pieces" in notice) is small_pieces and "cria" not in notice.lower()
+    if not small_pieces:
+        assert f"`{name}`" in notice and f"({len(args)} characters, arguments cut off at the limit)" in notice
+    assert not out["choices"][0]["message"].get("tool_calls")      # the retry answered in prose: nothing from the cut reply ran
+
+
+def test_when_several_calls_are_cut_the_last_one_chooses_the_notice():
+    """The output limit ends the LAST call; an earlier malformed one must not decide which advice the coder reads."""
+    first = reply("", finish="length", tool_calls=[
+        {"id": "a", "type": "function", "function": {"name": "edit_file", "arguments": '{"path":"first.txt","old_string":"o","new_string":"cut'}},
+        {"id": "b", "type": "function", "function": {"name": "write_file", "arguments": '{"path":"last.txt","content":"cut'}}])
+    chat = Chat(reply("next answer"))
+    loop.guard_truncation(first, BODY(), chat, Log())
+    assert "SMALL pieces" in last_user(chat)[0] and "`last.txt`" in last_user(chat)[0]
+
+
 def test_a_protocol_error_from_the_retry_is_not_recovered_or_downgraded():
     from cria import upstream
     calls = []
