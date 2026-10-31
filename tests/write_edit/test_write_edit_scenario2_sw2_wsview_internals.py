@@ -1,16 +1,19 @@
 """wsview second pass: a survey's malformed records (a bad record is no record, never a false fact), the view of a workspace nobody
 surveyed, overlapping tool observations that arrive out of order, the session body cache's bounds (files, bytes, sessions), the pending
 question queue, and the disk-backed view's missing-path answers. Real survey program over a real tree where one is needed."""
+import base64
 import contextvars
+import hashlib
 import os
 import subprocess
+import zlib
 
 import pytest
 
 from cria import wsview
 
 SESS = "sw2"
-OPEN, CLOSE = "___CRIA_SURVEY_BEGIN___", wsview.SURVEY_CLOSE
+OPEN, CLOSE = wsview.SURVEY_OPEN, wsview.SURVEY_CLOSE
 
 
 def sec(name):
@@ -31,7 +34,6 @@ def _clean_caches():
 
 
 def b64(text):
-    import base64
     return base64.b64encode(text.encode()).decode()
 
 
@@ -168,3 +170,30 @@ def test_the_disk_view_answers_absent_paths_as_unknown_and_finds_versioned_progr
     assert wsview.current().root == d.root
     wsview.unbind(token)
     assert wsview.current("/x").isfile("/x") is None
+
+
+def packed(text, raw=None, *, n=None, sha=None, wrap=None):
+    """The compressed survey transport the harness prints, built independently of the reader: header, one base64(zlib) line, close marker."""
+    raw = text.encode() if raw is None else raw
+    body = wrap(zlib.compress(raw)) if wrap else base64.b64encode(zlib.compress(raw)).decode()
+    return f"{OPEN}\n{wsview.SURVEY_PACKED} {len(text.encode()) if n is None else n} {sha or hashlib.sha256(text.encode()).hexdigest()}\n{body}\n{CLOSE}"
+
+
+def test_a_packed_survey_is_accepted_only_whole_and_every_corruption_stays_unknown():
+    plain = survey("/ws", ["F\t1\t4\tgood.txt"], [f"@{b64('good.txt')}", b64("abcd")])
+    text = plain + "\n"
+    blobless = survey("/ws", ["F\t1\t4\tgood.txt"], [f"@{b64('good.txt')}", "BLOBLINE"]) + "\n"
+    # zero-prefixed record: the raw bytes of a blob body, base64'd back by the reader into the blob line
+    head, tail = blobless.split("BLOBLINE\n")
+    with_record = head.encode() + b"\x00" + str(len(b"abcd")).encode() + b"\nabcd\n" + tail.encode()
+    expected_text = head + base64.b64encode(b"abcd").decode() + "\n" + tail
+    v = wsview.View("/ws", SESS)
+    assert wsview.apply_survey(v, wsview.strip_survey("before\n" + packed(text) + "\nafter")[1]) and v.read("good.txt") == "abcd"
+    v = wsview.View("/ws", SESS)
+    assert wsview.apply_survey(v, wsview.strip_survey(packed(expected_text, with_record))[1]) and v.read("good.txt") == "abcd"
+    corrupt = [packed(text, sha="0" * 64), packed(text, n=5), packed(text, wrap=lambda z: "!!" + base64.b64encode(z).decode()),
+               packed(text, wrap=lambda z: base64.b64encode(z[:-6]).decode()), packed("no open line\n" + text),
+               packed(expected_text, with_record.replace(b"\nabcd\n", b"\nabcdX\n", 1)), packed(text, raw=b"\x00zz\n")]
+    for block in corrupt:
+        v = wsview.View("/ws", SESS)
+        assert not wsview.apply_survey(v, wsview.strip_survey(block)[1]) and not v.surveyed
