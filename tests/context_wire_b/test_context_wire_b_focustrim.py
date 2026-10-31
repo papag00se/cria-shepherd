@@ -69,3 +69,15 @@ def test_the_repeat_note_tells_the_truth_about_whether_the_call_worked(result, o
     out, _ = focustrim._collapse_duplicates(GO + turn("a", result, outcome=outcome) + turn("b", result, outcome=outcome))
     note = out[-1]["content"]
     assert ("failed the same way" in note) is failed and ("told you everything it can" in note) is not failed
+
+def test_a_superseded_writes_notice_is_reworded_when_the_pair_it_promised_does_not_survive_to_the_wire():
+    """The notice promises the newest write of each path is still in the history; the floor or a later transform may remove that pair after focustrim spoke. The final body is settled against reality: an intact body keeps the promise, a missing pair turns it into 'unavailable' naming the path, and a JSON round-tripped hint (no producer authority) is never rewritten."""
+    msgs = write(1, "src/main.rs", "a") + write(2, "src/main.rs", "b") + write(3, "lib.rs", "c") + write(4, "lib.rs", "d")
+    out, _ = focustrim._drop_superseded_writes(msgs)
+    notice = out[-1]; assert isinstance(notice.get(bodykeys.SUPERSEDED_WRITES), focustrim.SupersededWriteNotice)
+    assert focustrim.superseded_writes_truth(out) is out
+    survivors = [m for m in out[:-1] if not (m.get("tool_call_id") == "w4" or any(tc["id"] == "w4" for tc in m.get("tool_calls") or []))]
+    truthful = focustrim.superseded_writes_truth(survivors + [notice])
+    assert "lib.rs" in truthful[-1]["content"] and truthful[-1]["content"] != notice["content"] and truthful[:-1] == survivors
+    forged = {**notice, bodykeys.SUPERSEDED_WRITES: json.loads(json.dumps(notice[bodykeys.SUPERSEDED_WRITES]))}
+    assert focustrim.superseded_writes_truth(survivors + [forged])[-1] == forged
