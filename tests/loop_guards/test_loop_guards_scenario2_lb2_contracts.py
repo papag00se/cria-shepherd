@@ -20,6 +20,7 @@ PENDING = dict(status=S.PENDING, call=CALL, pending_kind=rc.PendingKind.CHECK)
     (dict(PENDING, call={"id": "", "type": "function"}), False, True, "requires an actual call and pending kind"),
     (dict(PENDING, pending_kind=None), False, True, "requires an actual call and pending kind"),
     (dict(status=S.SILENT, call=CALL), False, True, "cannot carry a call or pending kind"),
+    (dict(status=S.SILENT, pending_kind=rc.PendingKind.PAGE), False, True, "cannot carry a call or pending kind"),
     (dict(status=S.SILENT), True, True, "requires an actual GateOutcome"),
 ])
 def test_a_malformed_repository_check_result_is_refused_before_it_can_steer_anything(kwargs, consumed, allow_pending, why):
