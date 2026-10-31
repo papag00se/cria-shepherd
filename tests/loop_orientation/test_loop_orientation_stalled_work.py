@@ -120,8 +120,9 @@ def test_an_on_track_answer_delivers_nothing_but_no_answer_keeps_the_facts(trigg
     silent, _ = settle(twin, author_service([], text=""))
     assert silent.steer.author_status is sw.Status.WITHHELD and "exact checker bytes" in silent.steer.text
     assert not silent.steer.authored
-    unread, _ = settle(third, None, truth="")                       # an unreadable probe is never read as clean
-    assert unread.status is sw.Status.STEER and not unread.steer.grounded
+    unread, recorded = settle(third, None, truth="")                # an unreadable probe is never read as clean
+    assert unread.status is sw.Status.STEER and not unread.steer.grounded and recorded == ["recorded"]
+    assert unread.steer.author_status is sw.Status.NO_OP and third.pending_probe is None and third.last_delivered is None
 
 def test_unchanged_checks_get_one_second_look_then_come_back_verbatim_not_re_diagnosed():
     state, calls = sw.State(), []
@@ -148,6 +149,8 @@ def test_pending_steer_suspends_detection_and_only_the_exact_delivery_acknowledg
     out = sw.admit(sw.AdmissionInput(lambda: None, Log(), lambda: (3, ACTION)), state)
     boom = sw.ObservationInput(lambda: pytest.fail("pending intervention measured again"), Log())
     assert sw.observe(boom, state).status is sw.Status.PENDING
+    copied = sw.ObservationInput(boom.measure, Log(), offered_steer=replace(out.steer))   # an equal copy is not the offered object
+    assert sw.observe(copied, state).status is sw.Status.PENDING and state.action_seq == 0
     assert sw.acknowledge(state, replace(out.steer)).status is sw.Status.NO_OP and state.last_delivered is None
     facts = sw.ObservationFacts((sw.ForwardedCall("first", None),), 0, "", sequence_start=100)
     offered = sw.ObservationInput(lambda: facts, Log(), offered_steer=out.steer)   # first compliance is observed...
@@ -165,6 +168,22 @@ def test_a_stale_ticket_touches_nothing_and_a_step_advance_keeps_the_check_autho
     assert sw.reset_step(state).status is sw.Status.RESET
     assert not (state.recent_writes or state.spin_due or state.redirect_due)
     assert (state.steered_checks_text, state.repeat_count, state.blocked_fired_seq) == ("current", 4, 10)
+
+def test_a_deselected_assist_leaves_pending_effects_state_and_services_untouched():
+    """Every stage called with the assist off answers NOT_SELECTED without reading a service, however much is pending."""
+    def forbidden(*args):
+        pytest.fail("a deselected stage touched a service")
+    log, ticket = Log(), sw.PendingProbe(sw.Trigger.REFUSAL, {"id": "p"})
+    steer = sw.Steer("already pending", "refusal guard", sw.Trigger.REFUSAL)
+    state = sw.State(pending_probe=ticket, pending_steer=steer, repeat_count=4)
+    before = copy.deepcopy(state)
+    outputs = [sw.observe(sw.ObservationInput(forbidden, log), state, enabled=False),
+               sw.admit(sw.AdmissionInput(forbidden, log, forbidden), state, enabled=False),
+               sw.settle(sw.ReturnedProbeInput(ticket, forbidden, forbidden, None, log), state, enabled=False),
+               sw.progress(sw.ProgressInput("truth", 2, None, log), state, enabled=False),
+               sw.acknowledge(state, steer, enabled=False), sw.reset_step(state, enabled=False)]
+    assert all(out.status is sw.Status.NOT_SELECTED for out in outputs)
+    assert state == before and not log.events and state.pending_probe is ticket and state.pending_steer is steer
 
 HEADER = "[GROUND TRUTH — the repo own checks fail] " + "shared diagnostic framing " * 8
 

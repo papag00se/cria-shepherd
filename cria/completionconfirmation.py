@@ -271,9 +271,11 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py","_restates_the_verdict"),Reference("cria/loop.py","judge_satisfaction"),
            Reference("cria/loop.py","Loop._verify"),Reference("cria/stepreview.py","StepServices"),
            Reference("cria/stepreview.py","review_step")),
-    regressions=tuple(Reference("tests-before-reset-20261031:tests/test_completion_confirmation_policy.py",name) for name in (
-        "test_confirmation_matches_original_questions_results_and_counts","test_latest_attempt_rounds_do_not_carry_between_reasks",
-        "test_readable_cut_and_pending_reply_necessarily_diverges_from_current_owner","test_disabled_replacement_and_explicit_step_consent")),
+    regressions=(Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_the_confirmer_confirms_only_after_looking_and_a_restated_or_unlooked_answer_is_asked_again_once"),
+                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_a_balanced_positive_in_a_cut_or_unanswered_reply_never_confirms"),
+                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_a_claimed_artifact_in_an_empty_workspace_is_absent_without_asking_and_an_unsurveyed_one_is_unchecked"),
+                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_no_private_reasoning_or_diagnosis_rescues_an_unreadable_confirmation"),
+                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_confirmation_runs_at_its_level_and_step_authority_needs_explicit_consent")),
     migrated=False),confirm)
 DEFINITIONS = (DEFINITION,)
 

@@ -68,3 +68,39 @@ def test_an_end_to_end_requirement_is_judged_on_the_executed_test_source():
         questions = Questions("E2E_REQUIRED", verdict)
         result = ca.test_participation(ca.ParticipationInput(TASK, lambda: pt.report([event]), questions))
         assert result.status is status and questions.phases == ["test-e2e-requirement", "test-e2e-participation"], verdict
+
+def measuring(root, view):
+    """The exact-form source's measurement services over the real loop adapters and one workspace view."""
+    from cria import completionmeasure as cm, shelltool
+    return cm.MeasurementServices(
+        frozenset(loop._WRITE_TOOLS), frozenset(loop.writeproxy_names), frozenset(loop.writeproxy._EDIT_NAMES),
+        loop.denial.unlanded_call_ids, shelltool.writes_something, loop.writeproxy._command_of, loop._args_of,
+        loop._path_of_args, lambda a, b: loop._same_workspace_path(a, b, root), lambda: view)
+
+def landed(name, args, tid):
+    return [{"role": "assistant", "tool_calls": [{"id": tid, "function": {"name": name, "arguments": json.dumps(args)}}]},
+            {"role": "tool", "tool_call_id": tid, "content": "ok", "cria_result_outcome": "landed"}]
+
+def test_the_current_disk_bytes_outrank_what_was_written_until_a_later_edit_or_stale_view_silences_them(tmp_path):
+    """The measured counts a refusal quotes are the CURRENT file's: the surveyed disk wins over the written payload, a later
+    native edit makes the survey stale for that file (silence, never the old bytes), and a view known to be stale never lends
+    its 'on disk' label to bytes that were only written."""
+    import subprocess
+    from cria import wsview
+    (tmp_path / "out.txt").write_bytes("雪\r\n".encode())
+    view = wsview.View(str(tmp_path), "approval")
+
+    def survey():                                     # the harness runs cria's own survey block; the view ingests its reply
+        shown = subprocess.run(["bash", "-lc", wsview.survey_command("approval", cd=str(tmp_path))], capture_output=True, text=True).stdout
+        assert wsview.apply_survey(view, wsview.strip_survey(shown)[1])
+    survey()
+    adapters, write = measuring(str(tmp_path), view), landed("write_file", {"path": "out.txt", "content": "old"}, "w")
+    assert ca.EXACT_FORM.measure(write, adapters) == [filefacts.FileFact("out.txt", b"old", False)]   # bytes not yet delivered: as written
+    survey()                                          # ...the first measurement asked for them; the next survey brings them
+    facts = ca.EXACT_FORM.measure(write, adapters)
+    assert facts == [filefacts.FileFact("out.txt", "雪\r\n".encode(), True)]                  # disk bytes, not "old"
+    assert filefacts.parse(filefacts.render(facts)) == [("out.txt", 5, True)]
+    edit = landed("edit_file", {"path": "out.txt", "old_string": "雪", "new_string": "ice"}, "e")
+    assert ca.EXACT_FORM.measure(write + edit, adapters) == []                                # the survey predates this edit
+    view.note_a_mutator_ran()
+    assert ca.EXACT_FORM.measure(write, adapters) == [filefacts.FileFact("out.txt", b"old", False)]   # stale view: written, not "on disk"

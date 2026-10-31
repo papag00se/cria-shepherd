@@ -116,9 +116,11 @@ DEFINITION = ReviewDefinition(
            triggers=tuple((trigger.value, trigger.level) for trigger in ReviewTrigger),
            hooks=tuple(Reference("cria/loop.py", "Loop." + name) for name in
                        ("_review_task", "_reopen_if_unsatisfied", "_periodic_satisfaction", "_done_critic_reason")),
-           regressions=(Reference("tests-before-reset-20261031:tests/test_whole_task_evaluation.py",
-                                  "test_full_judge_bodies_events_and_review_state_match_through_both_real_drivers"),
-                        Reference("tests-before-reset-20261031:tests/test_whole_task_evaluation.py",
-                                  "test_reactive_real_drivers_use_the_same_question_but_keep_their_release_and_retry_owners")),
+           regressions=(Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_a_negative_verdict_invalidates_held_success_and_a_later_true_releases_it_without_inventing_any"),
+                        Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_a_claim_without_a_known_task_is_unaskable_gathers_nothing_and_clears_held_success"),
+                        Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_every_review_event_names_its_trigger_and_scheduled_reviews_belong_to_the_higher_level"),
+                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge"),
+                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_repos_checks_pass"),
+                        Reference("tests/gates_completion/test_gates_completion_arcb_review_evidence.py", "test_a_summary_is_labelled_by_the_hardener_record_that_produced_it")),
            migrated=True),
     review_task)

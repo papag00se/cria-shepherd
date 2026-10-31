@@ -25,10 +25,11 @@ def fresh_state():
 class Flow:
     def __init__(self, root, judged=SAYS_MISSING):
         self.root, self.log, self.state, self.judged, self.fingerprint, self.judge_calls = root, Log(), fresh_state(), judged, "survey-1", 0
-        self.asked = []
+        self.asked, self.judged_users = [], []
 
     def judge(self, system, user):
         self.judge_calls += 1
+        self.judged_users.append(user)
         if isinstance(self.judged, Exception):
             raise self.judged
         return self.judged
@@ -56,6 +57,7 @@ def test_a_missing_deliverable_is_observed_armed_survives_shell_inspection_and_s
     run = flow.scheduled(drive=4)
     assert run.diagnosis.status is G.GROUNDED and run.delivery.status is R.DELIVERED and flow.judge_calls == 1
     assert (flow.state.completion_remediation_subject, flow.state.steer_source) == ("REPORT.md", "deliverable observation")
+    assert flow.state.deliverable_observation_last_drive == 4 and "inventory: src/cart.py" in flow.judged_users[0]   # stamped before the question
     assert "REPORT.md" in flow.state.nudge_reason and flow.state.last_gap_subject == "REPORT.md"
     assert flow.scheduled(drive=9).diagnosis.status is G.NOT_APPLICABLE and flow.judge_calls == 1          # armed: observer stays out
     assert [n for n, _ in flow.log.events if n.startswith("loop.satisfaction")] == ["loop.satisfaction_gap_named"]
@@ -100,8 +102,13 @@ def test_the_terminal_observer_is_silent_or_withheld_never_a_verdict(tmp_path, j
 
 def test_a_found_absence_at_done_is_returned_with_its_event(tmp_path):
     flow = Flow(tmp_path)
+    flow.state.deliverable_observation_last_drive = 7
+    before = dict(vars(flow.state))
     out = cd.observe_terminal(lambda: TASK, True, flow.services())
     assert out.status is G.GROUNDED and out.subject == "REPORT.md" and flow.state.nudge_reason == ""
+    assert vars(flow.state) == before and flow.judge_calls == 1       # the terminal observer neither arms nor stamps the cadence
+    assert TASK in flow.judged_users[0] and "inventory: src/cart.py" in flow.judged_users[0]   # it reads the retained root and the real inventory
+    assert len(flow.asked) == 1                                         # and reuses the one grounding question
     assert [e for e in flow.log.events if e[0] == "loop.done_gap_observed"][0][1]["subject"] == "REPORT.md"
     assert cd.observe_terminal(lambda: "", True, flow.services()).status is G.NOT_APPLICABLE
 

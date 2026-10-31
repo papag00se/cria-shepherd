@@ -366,11 +366,11 @@ DEFINITION = StepDefinition(Policy(
            Reference("cria/loop.py", "Loop._periodic_step_check"),
            Reference("cria/loop.py", "Loop._periodic_observation_after_probe")),
     regressions=(Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_an_unreadable_verdict_gets_one_reasoning_off_retry_and_a_positive_retry_fails_closed"),
-                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_probe_settlement_preserves_step_not_task_authority"),
+                 Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_red_repo_gate_renudges_with_the_checker_text_and_is_not_counted_as_a_critic_stall"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_pending_or_periodic_probe_never_reaches_the_critic"),
-                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_shared_reader_rejects_truncation_and_uses_step_key"),
+                 Reference("tests/loop_rest/test_loop_rest_judge_protocol.py", "test_a_cut_off_unclosed_or_failed_answer_never_approves"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_scheduled_positive_never_advances_without_its_own_observed_confirmation"),
-                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_observation_discards_positive_and_rejudges_fresh_facts")),
+                 Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_an_unobserved_positive_is_discarded_and_the_step_is_rejudged_on_the_fresh_observation")),
     migrated=False), review_step)
 DEFINITIONS = (DEFINITION,)
 

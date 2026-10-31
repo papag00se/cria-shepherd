@@ -609,10 +609,10 @@ DEFINITION = DiagnosisDefinition(
                         Reference("tests/loop_orientation/test_loop_orientation_completion_diagnosis.py", "test_remediation_survives_inspection_gets_one_follow_up_and_ends_only_with_the_correlated_write"),
                         Reference("tests/gates_completion/test_gates_completion_asum_remediation_present.py", "test_a_shell_redirect_retires_the_remediation_only_when_a_fresh_survey_lists_the_exact_file"),
                         Reference("tests/loop_planner/test_loop_planner_asum_remediation_retirement.py", "test_a_shell_redirect_retires_a_plan_on_remediation_only_through_a_fresh_survey_of_the_exact_file"),
-                        Reference("tests-before-reset-20261031:tests/test_completion_diagnosis_policy.py", "test_observer_composes_real_inventory_and_reuses_grounding"),
-                        Reference("tests-before-reset-20261031:tests/test_completion_diagnosis_policy.py", "test_scheduled_delivery_repeats_only_on_renewed_complete_observation"),
-                        Reference("tests-before-reset-20261031:tests/test_completion_diagnosis_policy.py", "test_scheduled_observer_owns_stamp_before_question_and_target_delivery"),
-                        Reference("tests-before-reset-20261031:tests/test_completion_diagnosis_policy.py", "test_terminal_observer_uses_only_retained_root_and_does_not_arm_or_stamp")),
+                        Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_a_missing_deliverable_is_observed_armed_survives_shell_inspection_and_settles_only_on_the_write"),
+                        Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_a_scheduled_review_gap_repeats_only_when_a_fresh_survey_renewed_the_same_absence"),
+                        Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_the_scheduled_observer_is_stamped_per_attempt_even_when_it_finds_nothing"),
+                        Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_a_found_absence_at_done_is_returned_with_its_event")),
            migrated=False), ground_diagnosis, arm_remediation, acknowledge_delivery, follow_up_nonwrite, settle_remediation,
     observe_missing_file, deliver_gap, observe_scheduled, observe_terminal)
 DEFINITIONS = (DEFINITION,)

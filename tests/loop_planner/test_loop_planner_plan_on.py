@@ -354,8 +354,12 @@ def test_a_red_repo_gate_renudges_with_the_checker_text_and_is_not_counted_as_a_
     """red_gate_is_evidence_not_a_veto: a repo-wide RED gate must not stall a step the critic is judging."""
     result, _, _ = review([NOT_DONE], probe=RED)
     assert result.effect.nudge == "fix a.py:3" and result.effect.critic_failures == 0 and not result.effect.consider_critic_rescue
+    assert result.effect.verify_failures == 1 and result.reason == "no tests yet"
     approved, _, _ = review([DONE], probe=RED)
     assert approved.effect.red_gate_advance and approved.effect.action is sr.StepAction.ADVANCE
+    unread, _, _ = review([NOT_DONE], probe=sr.ProbeEvidence(transport_unknown=True, standing_red=True))   # no reading: the critic's own reason
+    assert unread.effect.verify_failures == unread.effect.critic_failures == 1 and unread.effect.consider_critic_rescue
+    assert unread.effect.nudge == "no tests yet"
 
 
 def test_an_unreadable_verdict_gets_one_reasoning_off_retry_and_a_positive_retry_fails_closed():
@@ -375,6 +379,28 @@ def test_a_scheduled_positive_never_advances_without_its_own_observed_confirmati
     result, _, _ = review([DONE], trigger=sr.StepTrigger.SCHEDULED, confirm=confirm, workspace_root="/w")
     assert result.status is status and result.effect.action is action and result.review_done
     assert (result.status is sr.StepStatus.APPROVED) == (result.effect.action is sr.StepAction.ADVANCE)
+
+
+def test_an_unobserved_positive_is_discarded_and_the_step_is_rejudged_on_the_fresh_observation():
+    """A scheduled positive that was never observed on disk advances nothing; once the survey returns, the step is judged again
+    on the fresh facts (a second read), and a negative there keeps the coder working without counting a critic failure."""
+    judged = []
+
+    def read(request):
+        judged.append(request.user + "\n".join(request.evidence_blocks))
+        return sr.StepAnswer(DONE if len(judged) == 1 else NOT_DONE, "raw")
+    services = sr.StepServices(read, lambda v, flag, phase: v, lambda c: Confirmed(True, False), lambda d: d.verdict.get("reason", ""),
+                               lambda r: None, lambda r: "CONFIRM: " + r, lambda red: "")
+    def run(evidence, probe=sr.ProbeEvidence()):
+        return sr.review_step(sr.StepInput("Write report.md", "I finished", evidence, probe, services, Rlog(),
+                                           workspace_root="/w", original_task="task", trigger=sr.StepTrigger.SCHEDULED))
+    first = run("evidence")
+    assert first.status is sr.StepStatus.UNOBSERVED and first.effect.action is sr.StepAction.OBSERVE_WORKSPACE and not first.done
+    assert run("evidence", sr.ProbeEvidence(pending=True)).status is sr.StepStatus.PENDING_PROBE and len(judged) == 1
+    second = run("FRESH WORKSPACE OBSERVATION")
+    assert second.status is sr.StepStatus.REJECTED and not second.done and second.effect.action is sr.StepAction.KEEP_WORKING
+    assert len(judged) == 2 and "FRESH WORKSPACE OBSERVATION" in judged[1] and "FRESH WORKSPACE OBSERVATION" not in judged[0]
+    assert not second.effect.verify_failures and not second.effect.critic_failures
 
 
 def test_a_disk_confirmation_that_refuses_a_claimed_step_rejects_it():
