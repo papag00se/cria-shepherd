@@ -65,3 +65,38 @@ def test_a_harness_persona_is_reduced_only_at_its_carried_boundary_and_only_when
         assert [m["content"] for m in out[1:]] == ["task", "f" * 3200, "go"]
     elif system["role"] == "system":
         assert content == system["content"]
+
+
+def read_turn(i):
+    return [{"role": "assistant", "content": "", "tool_calls": [call(f"c{i}")]},
+            {"role": "tool", "tool_call_id": f"c{i}", "content": json.dumps({"items": [{"id": n, "name": f"n{n}", "value": "v" * 40} for n in range(60)]})}]
+
+
+def ladder_conversation():
+    chat = [{"role": "system", "content": PERSONA + " TAIL", bodykeys.CALLER_SPAN: {"start": 0, "text": PERSONA}}, {"role": "user", "content": "fix it"}]
+    for i in range(6):
+        chat += read_turn(i)
+    return chat + [{"role": "user", "content": "continue"}]
+
+
+def test_pressure_is_answered_in_lever_order_and_every_rung_is_labelled_lossless_in_what_it_protects():
+    """One conversation (a harness persona, the task, six structured reads, the live request) squeezed through shrinking windows: the persona goes FIRST, before any turn is dropped; what is
+    removed grows monotonically with pressure; at every rung the system message, the pinned task and the live request survive, dropped turns are named by a compaction note, a result that fit
+    is untouched, nothing is left over budget while history remains, and fitting a fitted request changes nothing."""
+    chat = ladder_conversation()
+    rows, previous = [], (0, 0, 0)
+    for window in (30000, 12000, 9000, 7000, 5000, 3500, 2500, 1800, 1200):
+        out, _, rep = contextfloor.fit(chat, None, window=window, reserve=300, safety=1.0, pinned_task="fix it")
+        rows.append((window, rep.caller_reduced, rep.turns_dropped))
+        assert out[0]["role"] == "system" and out[-1]["content"] == "continue" and [m["content"] for m in out].count("fix it") == 1
+        assert not rep.over_budget and contextfloor.fit(out, None, window=window, reserve=300, safety=1.0, pinned_task="fix it")[0] == out
+        gone = (rep.caller_reduced, rep.outputs_reduced, rep.turns_dropped)
+        assert all(now >= before for now, before in zip(gone, previous)), rows
+        previous = gone
+        assert any(m["content"].startswith("⟦ctx:compacted⟧") for m in out if m["role"] == "user" and isinstance(m["content"], str)) == bool(rep.turns_dropped)
+        if rep.turns_dropped:
+            assert rep.caller_reduced == 1                                     # a persona is never kept while conversation evidence is dropped
+    assert rows[0][1:] == (0, 0) and rows[1][1:] == (0, 0)                      # fits: untouched
+    first_persona = next(w for w, caller, _ in rows if caller)
+    assert all(turns == 0 for w, _, turns in rows if w >= first_persona)         # the persona went before the first dropped turn
+    assert rows[-1][2] > rows[3][2] > 0
