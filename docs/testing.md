@@ -38,4 +38,13 @@ Assist declarations in `cria/*.py` list regression tests in `regressions=` and `
 
 ## What the reset measured
 
-The rewrite was checked two ways. Each rewriter broke the code in a scratch copy and recorded how many representative defects the new tests caught (roughly 1,000 tried across the domains; every survivor was either strengthened or judged equivalent). Then recent real bug fixes were reversed one at a time against the new suite to see which regressions it would miss, and for each miss whether the old suite had caught it (a loss from the reset) or nobody ever had. The loss list became new rows; the never-tested list is in `docs/open-threads.md`.
+Size: 147 test files, about 16.6K lines (10.6% of the old 157K), 788 test definitions (8.6% of 9,188), 1,711 executed cases (about 12% of the old ~13.8K), 74 seconds (was about 11.5 minutes). The old and new totals are counted the same way (tracked `.py` files, `def test_`).
+
+Protection was checked two ways.
+
+- **Mutation:** each rewriter broke the code in a scratch copy and recorded how many representative defects the new tests caught (roughly 1,000 tried across the domains; every survivor was strengthened or judged equivalent).
+- **History replay:** 65 recent real bug fixes were reversed one at a time (scratch copies of HEAD, the fix's `cria/*.py` diff reverse-applied) and the new suite run. It caught 42 at first. Of the 28 misses compared with the old suite, the old suite had caught 25 (real losses from the reset) and 7 were never tested by either. Every loss was restored as a table row or small test except two (a planner-only log field, and a pure refactor), and the new suite then catches 19 of the 21 commits GAP2 re-examined. A replay is a sample, not a proof: new protections you add should still be seen to fail.
+
+The modules with no coverage after the cut were examined by mutation: retention, heartbeat, pasted-file recovery, the per-language cleanup analysis, returned-policy notes, review and policy modules received tests; `planner_tools` (planner is off by policy) and `preamblepolicy` (inert since `9fd01656`) were deliberately skipped.
+
+Three real source defects found while rewriting are recorded as `xfail(strict=True)` tests (a whole write replaces a symlink and prints a raw traceback in a read-only directory; a C `obj->remove(path)` is read as libc `remove`); a strict xfail goes red when the defect is fixed, which is the cue to delete the marker. Regressions in the old suite that the new one does not cover live only in `tests_backup/`: grep there before changing the assist.
