@@ -246,6 +246,8 @@ def _scan_images(dirfd, root):
                         e.raw = {'marker': marker}
                     else:
                         e.state, e.detail = 'corrupt', 'unsealed owner marker without a session directory'
+                        if isinstance(marker, dict):
+                            e.raw = {'marker': marker}      # an explicit --session can seal it and clear it
                 except (ValueError, OSError) as exc:
                     e.state, e.detail = 'corrupt', f'owner marker unreadable: {exc}'
                 entries[e.id] = e
@@ -311,9 +313,17 @@ def _delete_image(root, entry, authority, *, force):
     name = entry.id
     path = Path(root) / name
     marker = (entry.raw or {}).get('marker')
-    if not path.is_dir() or path.is_symlink():          # orphan sealed marker only
+    if not path.is_dir() or path.is_symlink():          # orphan marker: sealed, or (explicitly selected) sealed now
+        if not isinstance(marker, dict) or 'generation' not in marker:
+            raise ImageUnavailable('no generation marker: cannot use the store cleanup path')
+        closed = marker.get('closed')
+        if not (isinstance(closed, str) and closed):
+            if not force:
+                raise ImageUnavailable('unsealed owner marker without a session directory')
+            closed = uuid.uuid4().hex
+            imagepersist.seal_marker(path, marker['generation'], closed)
         descriptor = {'owner': 'session-images', 'directory': name,
-                      'generation': marker['generation'], 'closed': marker['closed']}
+                      'generation': marker['generation'], 'closed': closed}
         store.retry_closed(descriptor)
         return
     if marker is None:
