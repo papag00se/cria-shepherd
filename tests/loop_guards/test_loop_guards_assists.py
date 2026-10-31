@@ -169,3 +169,19 @@ def test_the_compaction_ask_comes_last_and_superseded_file_bodies_do_not_reach_t
 
     request = selfcompact.compaction_request([{"role": "user", "content": "write app.py"}, *write("c1", old), *write("c2", new)])
     assert old not in request and new in request
+
+
+def test_the_runtime_hands_back_the_first_applicable_periodic_judgment_and_is_silent_only_when_none_applies():
+    """The periodic-judgment loop returns the first definition that has something to say and falls through the ones that
+    do not; a runtime that discarded an applicable result would leave every check-in unsaid and nothing else failing
+    (mutation survivor: negating the NOT_APPLICABLE test in `module_judgment` was caught by no test)."""
+    from types import SimpleNamespace
+    from cria.modulestate import Judgment, ModuleResult
+
+    def definition(result):
+        return SimpleNamespace(execute=lambda source, state: result)
+    silent, steer = ModuleResult(Judgment.NOT_APPLICABLE), ModuleResult(Judgment.STEER, "Run the tests.")
+    for judgments, expected in (((silent, steer, ModuleResult(Judgment.ON_TRACK)), steer), ((silent, silent), silent),
+                                ((ModuleResult(Judgment.ON_TRACK), steer), ModuleResult(Judgment.ON_TRACK))):
+        runtime = SimpleNamespace(periodic_judgments=tuple(definition(j) for j in judgments))
+        assert AssistRuntime.module_judgment(runtime, None, None) == expected
