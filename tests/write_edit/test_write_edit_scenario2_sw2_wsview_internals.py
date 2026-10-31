@@ -161,10 +161,11 @@ def test_the_disk_view_answers_absent_paths_as_unknown_and_finds_versioned_progr
     assert (d.mtime(gone), d.read_bytes(gone), d.listdir(gone), d.scandir(gone), d.walk(gone), d.files(), d.program("")) == (None,) * 7
     assert d.program("pyx") == "pyx3.12" and d.program("pyxnoexec") == "" and d.program("zz-nothing") == ""
     assert d.read_observed_bytes(str(tool)) == b"#!/bin/sh\n" and d.mtime(str(tool)) > 0 and d.outside_kind(str(bindir)) == "d" and d.outside_kind(gone) == ""
+    ambient = wsview.current().root
     token = wsview.bind(d)
     assert wsview.current().root == d.root
     wsview.unbind(token)
-    assert not wsview.current().root
+    assert wsview.current().root == ambient
     token = wsview.bind(d)
     contextvars.copy_context().run(wsview.unbind, token)      # a token set in another context is simply ignored
     assert wsview.current().root == d.root
