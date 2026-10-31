@@ -1848,22 +1848,22 @@ class CriaHandler(BaseHTTPRequestHandler):
                 'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': error.notice()},
                              'finish_reason': 'stop'}]}
 
-    def _produce_completion(self, body: dict, rlog, sess_key: str):
+    def _produce_completion(self, body: dict, rlog, sess_key: str, progressive=None):
         from .upstream import ReadFitUnknown, ReadFitOverflow
         workflow = getattr(self.server, 'image_workflow', None)
         context = workflow.capture(sess_key, body) if workflow else None
         token = _image_current.set(context)
         try:
-            return self._produce_completion_once(body, rlog, sess_key)
+            return self._produce_completion_once(body, rlog, sess_key, progressive)
         except (ReadFitUnknown, ReadFitOverflow) as error:
             fallback = self._fit_fallback(error, sess_key, rlog)
-            return self._produce_completion_once(fallback, rlog, sess_key)
+            return self._produce_completion_once(fallback, rlog, sess_key, progressive)
         except InputOverflow as error:
             return self._overflow_completion(error, body, rlog), None
         finally:
             _image_current.reset(token)
 
-    def _produce_completion_once(self, body: dict, rlog, sess_key: str):
+    def _produce_completion_once(self, body: dict, rlog, sess_key: str, progressive=None):
         """Run the pipeline and return ``(chat-completion dict, Indicator|None)`` —
         the plan loop's completion, or a routed+massaged+lowered one. Raises
         ``UpstreamError`` on a model failure (callers turn that into a clean error).
@@ -1907,6 +1907,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         if image_context is not None:
             role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, 'role', None) else None
             raw = image_context.workflow.chat(provider, role, pbody, image_context, rlog)
+        elif progressive is not None and not compaction and hasattr(provider, "chat_watched"):
+            raw = self._chat_progressive(provider, pbody, progressive, rlog)
         else:
             raw = provider.chat(pbody, rlog)
         try:
@@ -1949,6 +1951,19 @@ class CriaHandler(BaseHTTPRequestHandler):
         if commit_handoff is not None:
             commit_handoff(out)
         return out, indic
+
+    def _chat_progressive(self, provider, pbody: dict, progressive, rlog) -> bytes:
+        """The routed call for a turn whose text may leave early: streamed from the model, text handed
+        to ``progressive`` as it arrives, the COMPLETE assembled completion returned for exactly the
+        post-processing a buffered call gets. Retrying a transient failure is the buffered call's
+        job, so a failure before any text was delivered is simply re-asked through it."""
+        try:
+            return provider.chat_watched(pbody, rlog, on_content=progressive.feed)
+        except (UpstreamError, OSError) as e:
+            if progressive.opened or isinstance(e, (BrokenPipeError, ConnectionResetError)):
+                raise
+            rlog.emit("response.progressive_reask", level="warn", error=str(e))
+            return provider.chat(pbody, rlog)
 
     def _respond_buffered(self, body: dict, rlog) -> None:
         try:
@@ -2098,8 +2113,18 @@ class CriaHandler(BaseHTTPRequestHandler):
                     status_lines.append(line)
                     hb.write(responses.status_delta(_sid, line + "\n"))
                 hb._on_beat = _beat_tick
+            # TOKEN-PROGRESSIVE TEXT, for the turns where nothing can sit in front of, or reorder, the
+            # model's own words: no cria line/item/footer of any family, and no loop or generation
+            # guard that can abort or re-ask the call (levels below DONE_REFUSALS). Everything else
+            # keeps the complete-completion-first path, so every guard that needs the whole answer runs
+            # before a word reaches the harness.
+            progressive = None
+            if not ind.decorates() and not self.server.cfg.routing.done_refusals:
+                progressive = responses.ProgressiveMessage(
+                    hb.write, lambda text: massage.stream_leak_start(text, rlog),
+                    massage.STREAM_HOLDBACK, 0)
             try:
-                comp, _indic = self._produce_completion(body, rlog, sess_key)
+                comp, _indic = self._produce_completion(body, rlog, sess_key, progressive)
             except UpstreamError as e:
                 rlog.emit("response.error", level="error", error=str(e))
                 hb.write(responses._event("response.failed",
@@ -2126,11 +2151,19 @@ class CriaHandler(BaseHTTPRequestHandler):
             banner = self._compute_banner(comp, _indic, rlog)
             show_reasoning = ind.enabled and ind.reasoning
             reasoning_transcript = ind.enabled and ind.reasoning_transcript
-            for chunk in responses.body_events(comp, resp_id, model, banner,
-                                               show_reasoning=show_reasoning,
-                                               reasoning_transcript=reasoning_transcript,
-                                               start_index=start_index, extra_items=extra_items, custom_tools=custom_tools):
-                hb.write(chunk)
+            try:
+                for chunk in responses.body_events(comp, resp_id, model, banner,
+                                                   show_reasoning=show_reasoning,
+                                                   reasoning_transcript=reasoning_transcript,
+                                                   start_index=start_index, extra_items=extra_items,
+                                                   custom_tools=custom_tools, progressive=progressive):
+                    hb.write(chunk)
+            except responses.ProgressiveDivergence as e:
+                # Words are already on the harness's screen and the finished answer no longer starts
+                # with them: end with the retryable failure rather than show two different answers.
+                rlog.emit("response.progressive_diverged", level="error", error=str(e))
+                hb.write(responses.failed_event(resp_id, f"cria could not finish the streamed answer: {e}"))
+                return
             rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats,
                       status_lines=len(status_lines))
         except (BrokenPipeError, ConnectionResetError):

@@ -11,7 +11,10 @@ dicts, so this module adapts at the HTTP edge:
 The event shapes here were validated end-to-end against Codex 0.142.5 (it rendered
 the token from exactly this sequence). Output is fake-streamed: cria produces a
 buffered completion, then this emits it as a single delta per item — Codex accepts
-that, and it sidesteps incremental chat-SSE↔Responses-SSE delta translation.
+that, and it sidesteps incremental chat-SSE↔Responses-SSE delta translation. The one
+exception is ``ProgressiveMessage`` (below): text that nothing can sit in front of is
+delivered as the model writes it, and the finished item is still built from the complete
+completion.
 """
 
 from __future__ import annotations
@@ -413,10 +416,90 @@ def _reasoning_transcript_block(reasoning: str) -> str:
     return f"{THINK_FENCE}\n{reasoning.strip(chr(10))}\n{THINK_FENCE}"
 
 
+class ProgressiveDivergence(Exception):
+    """The text already delivered is not a prefix of the completion's final text."""
+
+
+class ProgressiveMessage:
+    """Token-progressive delivery of ONE message item's text, for turns whose final text is its own
+    prefix-stable stream: nothing is ever prepended (the caller guarantees no banner, notes, status
+    or reasoning lead), and a tool-call dialect leaking into the text is cut off before it is shown.
+
+    ``feed`` is called with each text delta as the model produces it; it delivers everything except
+    a trailing hold-back (a leak marker may begin inside it) and nothing at all from the first
+    leak marker on - the same rule, detector and hold-back ``massage.massage_stream`` applies to the
+    Chat wire. Every post-processing step still runs on the COMPLETE completion afterwards; ``settle``
+    then delivers the rest of that final text and closes the item. If the final text does not start
+    with what was already shown, ``settle`` raises ``ProgressiveDivergence`` instead of showing two
+    different answers: the caller ends the stream with a retryable ``response.failed``."""
+
+    def __init__(self, emit, detect, holdback: int, index: int):
+        self._emit, self._detect, self._holdback, self.index = emit, detect, holdback, index
+        self.content = ""
+        self.sent = 0
+        self.captured = False
+        self.item_id: str | None = None
+
+    @property
+    def opened(self) -> bool:
+        return self.item_id is not None
+
+    def _send(self, text: str) -> None:
+        if self.item_id is None:
+            self.item_id = _new_id("msg")
+            self._emit(_event("response.output_item.added", {"output_index": self.index,
+                "item": {"id": self.item_id, "type": "message", "status": "in_progress", "role": "assistant", "content": []}}))
+            self._emit(_event("response.content_part.added", {"item_id": self.item_id, "output_index": self.index,
+                "content_index": 0, "part": {"type": "output_text", "text": ""}}))
+        self._emit(_event("response.output_text.delta", {"item_id": self.item_id, "output_index": self.index,
+                                                         "content_index": 0, "delta": text}))
+        self.sent += len(text)
+
+    def feed(self, delta: str) -> None:
+        self.content += delta
+        if self.captured:
+            return
+        pos = self._detect(self.content)
+        if pos >= 0:
+            self.captured = True
+            safe = pos
+        else:
+            safe = len(self.content) - self._holdback
+        if safe > self.sent:
+            self._send(self.content[self.sent:safe])
+
+    def settle(self, final_text: str | None) -> tuple[list[bytes], dict]:
+        final_text = final_text or ""
+        if not self.opened:
+            raise ProgressiveDivergence("nothing was delivered")
+        shown = self.content[:self.sent]
+        # A recovered call trims the whitespace that preceded it ("...files.\n" + call): what is on
+        # screen then ends in whitespace the final text lacks. That is the same text, not a rewrite.
+        whitespace_only_surplus = shown.startswith(final_text) and not shown[len(final_text):].strip()
+        if not (final_text.startswith(shown) or whitespace_only_surplus):
+            raise ProgressiveDivergence(
+                f"final text ({len(final_text)} chars) does not start with the {self.sent} chars already shown")
+        evs: list[bytes] = []
+        if len(final_text) > self.sent:
+            tail = final_text[self.sent:]
+            evs.append(_event("response.output_text.delta", {"item_id": self.item_id, "output_index": self.index,
+                                                             "content_index": 0, "delta": tail}))
+        done = {"id": self.item_id, "type": "message", "status": "completed", "role": "assistant",
+                "content": [{"type": "output_text", "text": final_text}]}
+        return evs + [
+            _event("response.output_text.done", {"item_id": self.item_id, "output_index": self.index,
+                                                 "content_index": 0, "text": final_text}),
+            _event("response.content_part.done", {"item_id": self.item_id, "output_index": self.index,
+                "content_index": 0, "part": {"type": "output_text", "text": final_text}}),
+            _event("response.output_item.done", {"output_index": self.index, "item": done}),
+        ], done
+
+
 def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None,
                 show_reasoning: bool = False, reasoning_transcript: bool = False,
                 start_index: int = 0, extra_items: list | None = None,
-                custom_tools: frozenset[str] = frozenset()) -> Iterator[bytes]:
+                custom_tools: frozenset[str] = frozenset(),
+                progressive: "ProgressiveMessage | None" = None) -> Iterator[bytes]:
     """Everything after `response.created`: the model's reasoning (its 'thinking', when present and
     enabled), an optional cria banner line, one message item (if any text), one function_call item
     per tool call, then `response.completed`."""
@@ -458,7 +541,13 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
         text = f"{lead}\n{text}"
     elif lead and has_tool_calls:
         text = lead  # tool-call-only turn — show the lead alongside the call, not dropped
-    if text:
+    if progressive is not None and progressive.opened:
+        # Its text already left; settle() ends it and shows only what the final completion adds.
+        # The lead is empty by the caller's contract, and a lead would break the prefix.
+        evs, done = progressive.settle(text)
+        out_items.append(done); idx += 1
+        yield from evs
+    elif text:
         evs, done = _message_item(text, idx); out_items.append(done); idx += 1
         yield from evs
     for tc in msg.get("tool_calls") or []:

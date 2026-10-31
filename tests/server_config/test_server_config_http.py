@@ -190,7 +190,7 @@ def request(mode, text="hi", **kw):
 
 
 @pytest.mark.parametrize("mode,expected", [("chat-buffered", "Hi"), ("chat-stream", "Hello world"),
-                                           ("responses-buffered", "Hi"), ("responses-stream", "Hi")])
+                                           ("responses-buffered", "Hi"), ("responses-stream", "Hello world")])
 def test_each_wire_mode_returns_content_with_its_framing_and_logs_the_turn(wire, mode, expected):
     """Chat/Responses x buffered/stream each return the upstream text in their own framing (a query string still routes)."""
     path, body = request(mode)
@@ -278,7 +278,7 @@ def test_level_zero_forwards_tools_and_history_untouched_and_logs_only_transport
 
 
 @pytest.mark.parametrize("mode,beat,text", [("chat-stream", b": cria", b"Hello world"),
-                                           ("responses-stream", b"event: response.in_progress", b'"text": "Hi"')])
+                                           ("responses-stream", b"event: response.in_progress", b'"text": "Hello world"')])
 def test_a_slow_prefill_is_kept_alive_with_heartbeats_and_the_content_still_arrives(tmp_path, mode, beat, text):
     """Idle streams get a keepalive (an SSE comment on chat; a real response.in_progress event on Responses because Codex's idle timer ignores comments)."""
     w = Wire(tmp_path, heartbeat=0.05)

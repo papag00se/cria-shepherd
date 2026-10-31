@@ -516,6 +516,13 @@ class IndicatorsConfig:
                                        # `reasoning` (live/transient); set that false if a client shows
                                        # the thinking twice.
 
+    def decorates(self) -> bool:
+        """True when any family can put a cria line, item or footer around the model's text. With
+        none of them on the message item holds the completion's own text and nothing else, so its
+        prefix is final as soon as it is known (see ``responses.ProgressiveMessage``)."""
+        return self.enabled and (self.route or self.assists or self.stats or self.connect
+                                 or self.status or self.reasoning or self.reasoning_transcript)
+
 
 @dataclass(frozen=True)
 class ToolsConfig:

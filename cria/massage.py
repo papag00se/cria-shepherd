@@ -141,6 +141,13 @@ def promote_call(completion: dict, call: dict, keep: str, tools, rlog=None, **fi
     held to the same lowering and normalisation as a native one, never exempt from it."""
     return _promote_call(completion, call, keep, tools, rlog, repair=_repair_calls, **fields)
 _HOLDBACK = 32  # keep this many trailing chars unemitted, so a leak marker start isn't leaked
+STREAM_HOLDBACK = _HOLDBACK
+
+
+def stream_leak_start(content: str, rlog=None, *, tool_call_fixes: bool | None = None) -> int:
+    """Where a leaked tool-call dialect begins in streamed text, or -1: the one rule both stream
+    wires use to decide what may be shown before the completion is whole."""
+    return toolstages.current().stream_start(content, rlog) if _tool_call_fixes_enabled(tool_call_fixes) else -1
 
 
 @dataclass
@@ -215,7 +222,7 @@ def massage_stream(chunks, model: str, tools=None, rlog=None, post=None, *, tool
         state.content += dc
         if state.captured:
             continue
-        pos = toolstages.current().stream_start(state.content, rlog) if _tool_call_fixes_enabled(tool_call_fixes) else -1
+        pos = stream_leak_start(state.content, rlog, tool_call_fixes=tool_call_fixes)
         if pos >= 0:
             if pos > state.emitted:
                 yield _sse({'content': state.content[state.emitted:pos]}, model, index=index)

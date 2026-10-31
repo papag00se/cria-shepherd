@@ -1609,7 +1609,7 @@ class Upstream:
         callcapture.capture_response(capture_path, raw, rlog)  # what the model actually answered
         return raw
 
-    def chat_watched(self, body: dict, rlog, watch=None) -> bytes:
+    def chat_watched(self, body: dict, rlog, watch=None, on_content=None) -> bytes:
         """Stream the completion from the server but RETURN a buffered ``chat.completion`` (bytes),
         so a buffered caller (the loop's coder) is unchanged. While streaming, feed the accumulating
         REASONING to ``watch(reasoning_text, est_tokens) -> dict | None``; a non-None verdict ABORTS
@@ -1695,6 +1695,8 @@ class Upstream:
                             t_first = time.monotonic()
                             rlog.emit("upstream.first_token", ttft_ms=round((t_first - t0) * 1000, 1))
                         content.append(delta["content"])
+                        if on_content is not None:
+                            on_content(delta["content"])   # early delivery of text; the caller owns safety
                     rc = delta.get("reasoning_content") or delta.get("reasoning")
                     if rc:
                         if t_first is None:
