@@ -66,3 +66,52 @@ def test_lfm2_sentinels_in_content_are_stripped_never_recovered():
     """llama.cpp's own parser owns a well-formed native call, so content carrying the sentinels is scrubbed (pairs and orphans) and nothing is invented."""
     got, content, finish, events = run("before " + LFM2('[read_file(path="a.py")]') + " after <|tool_call_end|>")
     assert got == [] and finish == "stop" and "<|tool_call" not in (content or "") and "before" in content and "after" in content
+
+
+@pytest.mark.parametrize("reply, args", [
+    ('<|tool_call>call:exec_command{cmd:[<|"|>ls<|"|>,<|"|>-l', {"cmd": ["ls", "-l"]}),                    # cut inside an array and its string
+    ('<|tool_call>call:read_file{path:<|"|>a<|"|>,start_line:}<tool_call|>', {"path": "a", "start_line": ""}),   # an empty value is an empty string, not a dropped call
+    ("<|tool_call>call:read_file{path:a.py,}<tool_call|>", {"path": "a.py"}),
+    ("<|tool_call>call:read_file{path:a.py", {"path": "a.py"}),
+    ("<|tool_call>call:read_file{path:a.py start_line:3}<tool_call|>", {"path": "a.py start_line:3"}),
+    ('<|tool_call>call:read_file{path:{},start_line:[]}<tool_call|>', {"path": {}, "start_line": []}),
+    ('<|tool_call>read_file{path:<|"|>a<|"|>}<tool_call|>', {"path": "a"}),                                 # the `call:` prefix is optional
+])
+def test_gemma_objects_keep_every_argument_that_arrived_intact(reply, args):
+    """Truncation and junk inside a Gemma call never drop the call or fabricate a value: what parsed before the break is the argument set."""
+    calls, _content, _finish, _events = run(reply)
+    assert calls == [("read_file" if "read_file" in reply else "exec_command", args)]
+
+
+@pytest.mark.parametrize("reply", ["<|tool_call>call:read_file<tool_call|>", "<|tool_call>call:read_file path:a<tool_call|>"])
+def test_a_gemma_block_without_an_argument_object_is_not_a_call(reply):
+    """No `{`: nothing to parse, so no call is made (and none invented from the name)."""
+    assert run(reply)[0] == []
+
+
+def test_fenced_blocks_bindings_and_whole_file_writes_read_the_reply_as_written():
+    """The file-writing-as-text reader: depth-aware fences (a pasted README keeps its inner fences), the binding line above each block, path tokens vs versions/URLs, and the menu's own write tool built from its own schema."""
+    from cria import callsyntax
+    reply = ("Here is `README.md`:\n```markdown\n# T\n```bash\npip i\n```\n```\n\nNow main.py\n\n```python\nprint(1)\n```\n```js\ncut")
+    blocks = callsyntax.fenced_file_blocks(reply)
+    assert [(b["lang"], b["closed"], b["binding"]) for b in blocks] == [("markdown", True, "Here is `README.md`:"), ("python", True, "Now main.py"), ("js", False, None)]
+    assert blocks[0]["lines"] == ["# T", "```bash", "pip i", "```"] and blocks[1]["lines"] == ["print(1)"]
+    assert callsyntax.binding_paths("see `a/b.py`, v1.9.0 at https://x.io/f.txt and c.md") == ["a/b.py"]
+    assert callsyntax.binding_paths("edit src/Main.java then Util.java. Also 1.9.0") == ["src/Main.java", "Util.java"]
+    assert callsyntax.binding_paths(None) == []
+    tool = lambda name, props, req: {"type": "function", "function": {"name": name, "parameters": {"type": "object", "properties": {p: {"type": t} for p, t in props.items()}, "required": req}}}
+    write = tool("write_file", {"path": "string", "content": "string"}, ["path", "content"])
+    made = callsyntax.whole_file_write_call([write], "a.py", "x=1\n")
+    assert made["id"].startswith("call_") and {k: v for k, v in made.items() if k != "id"} == {"type": "function", "function": {"name": "write_file", "arguments": '{"path": "a.py", "content": "x=1\\n"}'}}
+    for refused in (tool("write_file", {"path": "string", "content": "string", "overwrite": "boolean"}, ["path", "content"]),   # extra optional flag
+                    tool("write_file", {"path": "string", "content": "string"}, ["path"]),                                       # not exactly two required
+                    tool("write_file", {"path": "string", "mode": "string", "content": "string"}, ["path", "mode", "content"]),
+                    tool("write_file", {"path": "string", "n": "integer"}, ["path", "n"]),                                       # not both strings
+                    tool("write_file", {"path": "string", "file": "string"}, ["path", "file"]),                                  # two path aliases
+                    tool("cat", {"path": "string", "content": "string"}, ["path", "content"])):                                  # not a write tool
+        assert callsyntax.whole_file_write_call([refused], "a.py", "x") is None
+    assert callsyntax.whole_file_write_call(None, "a.py", "x") is None
+    assert callsyntax.has_call_envelope('```json\n{"name": "read_file", "arguments": {}}\n```') and not callsyntax.has_call_envelope("```json\n[1]\n```\nprose")
+    assert callsyntax.content_text([{"type": "text", "text": "a"}, "junk", {"text": None}, {"text": "b"}]) == "a  b" and callsyntax.content_text(None) == ""
+    assert callsyntax.turn_text({"content": "  ", "reasoning_content": " thought "}) == "thought" and callsyntax.turn_text({"content": "x", "reasoning": "r"}) == "x"
+    assert callsyntax.turn_text({"content": None, "reasoning": " "}) == "" and callsyntax.turn_text("not a dict") == ""
