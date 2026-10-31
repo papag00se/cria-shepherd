@@ -60,3 +60,14 @@ def found(tmp_path, files):
 ], ids=lambda v: "" if not isinstance(v, (dict, list)) else None)
 def test_a_manifest_yields_exactly_the_checks_it_declares_or_implies(tmp_path, files, expected):
     assert found(tmp_path, files) == expected
+
+
+def test_a_body_that_overruns_is_reduced_only_by_its_own_structure_and_never_by_dropping_words():
+    """digest_reduce/content_reduce arms: XML to text, indented JSON minified under the cap, an unparseable JSON body returned whole."""
+    from cria import content_reduce as cr
+    pretty = json.dumps({"rows": list(range(300))}, indent=4)
+    assert cr.digest_reduce(pretty, "application/json", 500) == json.dumps({"rows": list(range(300))}, separators=(",", ":"))
+    assert cr.content_reduce("<a><b>hello</b> <i>world</i></a>" * 40, "application/xml", 5) == cr.html_to_text("<a><b>hello</b> <i>world</i></a>" * 40)
+    broken = "{" + "x" * 400
+    assert cr.content_reduce(broken, "application/json", 5) == broken and cr.digest_reduce(broken, "application/json", 5) == broken
+    assert cr._dump_json({1, 2}) is None and cr._dump_json(float("nan")) == "NaN"
