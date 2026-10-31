@@ -26,6 +26,10 @@ def test_routes_and_urls_in_authored_text_are_grounded_by_the_evidence_not_by_no
     text = ("fetch https://api.handle.me/resolve, https://api.handle.me/handles/{other_name}, https://api.handle.me/, "
             "https://nowhere.io/a, https://holders.io/holders/{address} and `https://api.handle.me/handles` and {\"u\": \"https://api.handle.me/handles\"}")
     assert ug.ungrounded_urls(text, EV) == ["https://api.handle.me/resolve", "https://nowhere.io/a"]
+    # a backticked path template (the markdown code span's closing backtick stuck to the URL) is judged as the URL, not as `.../{address`
+    assert ug.ungrounded_urls("call `https://holders.io/holders/{address}` or `https://holders.io/holders/{addr}`.", EV) == []
+    assert ug.ungrounded_urls("call `https://holders.io/other/{address}` and (`https://api.handle.me/resolve`)", EV) == [
+        "https://holders.io/other/{address}", "https://api.handle.me/resolve"]
     assert ug.ungrounded_urls("see https://[bad/x and http://api.handle.me/handles/{h}", EV) == []
 
 

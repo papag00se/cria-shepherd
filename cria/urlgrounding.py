@@ -196,6 +196,9 @@ def ungrounded_urls(text: str, evidence: str) -> list[str]:
     for raw in URL_RE.findall(text or ""):
         # `}` is in _TRAIL so a URL inside JSON/prose ends cleanly — but stripping it off a BALANCED
         # path template re-creates the truncation this regex was just fixed to avoid.
+        # A backtick closing a markdown code span is not part of the URL: strip it BEFORE the balance test,
+        # or `https://h/x/{id}` + backtick fails it and rstrip(_TRAIL) eats the `}` as well (`/x/{id`).
+        raw = raw.rstrip("`")
         url = raw if raw.endswith("}") and raw.count("{") == raw.count("}") else raw.rstrip(_TRAIL)
         try:
             parts = urllib.parse.urlsplit(url)
