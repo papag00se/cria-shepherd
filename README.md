@@ -101,16 +101,17 @@ Enable `[logging].capture_calls = true` to record full calls. Captures include p
 
 ### Tests
 
-Run the tool-recovery, completion-gate and planning-policy tests:
-
 ```bash
 python -m pip install pytest
-python -m pytest -q tests/test_recovered_arg_types.py \
-  tests/test_completion_gate_backstop.py tests/test_planning_is_opt_in.py
+python -m pytest -q tests          # the whole suite, under a minute
+python -m pytest -q tests/shell_safety   # one domain
 ```
+
+The suite is small on purpose and organised by domain under `tests/<domain>/`. See [docs/testing.md](docs/testing.md) for what a test here must be, how the pre-reset suite is preserved in `tests_backup/`, and how to add a test.
 
 ## Documentation
 
+- [Testing](docs/testing.md): what the suite protects and the rules for changing it
 - [Configuration](cria.example.toml) and [model settings](docs/model-settings.md)
 - [Dory three-loop runtime, tuning results and qualification limits](docs/dory-runtime.md)
 - [Design principles](docs/principles.md) and [assist implementation](docs/heuristic-assists.md)
