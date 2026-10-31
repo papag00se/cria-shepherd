@@ -85,7 +85,6 @@ Built, committed and deployed (live as release `<short-hash>-multipart-image-202
 - Resolved (statement-only image tasks): the file-based confirmation is skipped when an observed image task has no file component, and the coder's closing reply reaches the satisfaction judge as a labelled claim checked against the observation (see `docs/image-workflow.md`). Still open: a closing reply is judged only for plan-off done claims; a plan-on or scheduled review does not carry it, and a non-image deliverable that is only a statement still has no reply in the judge's evidence.
 - Resolved: `suite/run.py` declares `input_modalities: ['text', 'image']` in the cell catalog exactly when the cell's cria config has `[roles.coder] vision = true`; every other cell keeps the byte-identical text-only catalog.
 - Chat-completions system messages are always replaced by cria's own coder system (by design, unlabelled to the model); only Responses `instructions`/developer items carry the caller marker.
-- `writeproxy.rejected_payload_dropped` fires once per request while the rejected call stays in history (the audit count is inflated; nothing is lost).
 
 ---
 
@@ -436,10 +435,10 @@ Started the wave at 92.4% / 85.0%. Dead code removed (word-deleting prose stripp
 
 - `loop.py` (about 500 lines + 350 branches): almost all of it is the retired plan-on driver (`_verify_after_probe`, `_work`, `_work_item`, `_periodic_*`, `_replan_tail`, `_reopen_if_unsatisfied`); the plan-off remainder is `_drive_locked` arms that need a real `Loop` over several stubbed model turns each.
 - `server.py` (about 180 + 100): multipart fit/representation fallbacks and the Responses streaming error/heartbeat arms need the HTTP `Wire` fixture extended with a failing loop and a vanishing client.
-- `upstream._prep_protected_reads` / `_prep_wire` capacity refit (about 70 + 35), `probegate.clean_gate_results` / `ingest_transport` (about 60 + 40; needs composed `GatePlan` histories), `contextfloor` lever arms, `writeproxy` externalization/multipart arms, `system1` (a tiny fake ONNX + tokenizer), `receivecapture` HTTPS/CONNECT (a local TLS fixture).
+- `upstream._prep_protected_reads` / `_prep_wire` capacity refit (about 70 + 35), `probegate.clean_gate_results` / `ingest_transport` (about 60 + 40; needs composed `GatePlan` histories), `contextfloor` lever arms, `writeproxy` externalization/multipart arms.
 - Not touched because another agent owns the logic: `dirguard`, `retention`, `probeclassify`, `probediscovery`, `urlgrounding`, `returnedpolicies`.
 
-Defensive code found unreachable while mutating (candidates for deletion, not deleted): `callliterals._recover_write_args` `if end is None` (the structural-completeness gate refuses first), and the `_MUTATION_TOOLS` pre-check in `has_incomplete_tool_args` (`_content_truncated` repeats the name test). A possible real defect, not fixed: `webfetch._resolve_ref_path` cannot follow a `$ref` through an array index (`#/a/0/x` indexes a list with the string `"0"` and returns None), which JSON Pointer allows.
+Resolved in wave 10: the `has_incomplete_tool_args` `_MUTATION_TOOLS` pre-check is deleted (redundant: `_content_truncated` owns the name test). The `callliterals._recover_write_args` `if end is None` arm was NOT unreachable and stays: the completeness scan reads `{"path":"f"content":"}` (a content key that lost its opening quote) as whole while the regex-found content value has no closing quote, and slicing to the end would write the call's tail as the file (test in `test_loop_guards_w9cov_call_literals.py`). `webfetch._resolve_ref_path` now follows a `$ref` through an array index (RFC 6901). `receivecapture` (TLS/CONNECT fixture) and `system1` (fakes plus a real hand-encoded ONNX graph, skipped without the `system1-v2` env) are covered.
 
 ## Open — Chat system carry: evidence limits and two adjacent gaps (2026-11, wave 9 agent SYS)
 
