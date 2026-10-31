@@ -81,6 +81,18 @@ def test_read_proof_per_reader_option(command, reads, reads_no_writes):
     assert dirguard.command_only_reads(command, WS, no_writes=True) is bool(reads_no_writes)
 
 
-@pytest.mark.xfail(strict=True, reason="source defect: a `>|` (clobber) write outside the workspace is admitted at level `read`, where `>` is refused")
-def test_a_clobber_redirect_outside_the_workspace_is_a_write_at_level_read():
-    assert dirguard.command_refusal("echo x > /tmp/o", "read", WS) and dirguard.command_refusal("echo x >| /tmp/o", "read", WS)
+# (command, refused at none, refused at read): every write redirect spelling is one act; data that merely contains `>|` is not a redirect.
+# Incident: `>|` (clobber) outside the workspace was admitted at `read` while `>` was refused (_WRITE_TARGET_BEFORE knew `>`/`>>` only).
+REDIRECT_TARGETS = [
+    ("echo x > /tmp/o", 1, 1), ("echo x >| /tmp/o", 1, 1), ("echo x >|/tmp/o", 1, 1), ("echo x >> /tmp/o", 1, 1), ("echo x &> /tmp/o", 1, 1),
+    ("echo x 2>| /tmp/o", 1, 1), ("cat a >| /tmp/b", 1, 1), ("cat a >| ../b", 1, 1), ('echo x >| "/tmp/o"', 1, 1),
+    ("curl http://h/x >| /tmp/o", 1, 1), ("echo x >| ./inside", 0, 0), ("echo x >| inside/f", 0, 0), ("cat /etc/hosts >| inside", 1, 0),
+    ("echo '>| /tmp/o'", 0, 0), ('echo ">| /tmp/o"', 0, 0), ("cat <<EOF\n>| /tmp/o\nEOF", 0, 0), ("cat <<'EOF'\nx >| /tmp/o\nEOF", 0, 0),
+]
+
+
+@pytest.mark.parametrize("command,at_none,at_read", REDIRECT_TARGETS)
+def test_every_write_redirect_spelling_is_judged_alike_and_only_at_write_is_it_admitted(command, at_none, at_read):
+    assert bool(dirguard.command_refusal(command, "none", WS)) is bool(at_none)
+    assert bool(dirguard.command_refusal(command, "read", WS)) is bool(at_read)
+    assert dirguard.command_refusal(command, "write", WS) is None

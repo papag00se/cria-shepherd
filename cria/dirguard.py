@@ -59,9 +59,9 @@ _NETWORK_CMD = re.compile(
     r"\b(?:https?|ftps?|wss?)://|\b(?:curl|wget|requests|urllib3?|httpx|aiohttp|http\.client|socket)\b",
     re.IGNORECASE)
 # The one external FILE access that survives the network-command exemption: an explicit write TARGET —
-# the path is preceded by a `>`/`>>` redirect or a `-o`/`-O`/`--output`/`tee` (so `curl … -o /etc/x` and
+# the path is preceded by a `>`/`>>`/`>|` redirect or a `-o`/`-O`/`--output`/`tee` (so `curl … -o /etc/x` and
 # `curl … > /tmp/y` are still caught, but a URL path in the request is not).
-_WRITE_TARGET_BEFORE = re.compile(r"(?:>>?|(?:^|\s)-[oO]|(?:^|\s)--output|(?:^|\s)tee)\s*$")
+_WRITE_TARGET_BEFORE = re.compile(r"(?:>>?\|?|(?:^|\s)-[oO]|(?:^|\s)--output|(?:^|\s)tee)\s*$")
 
 # A text-SEARCH / stream-edit tool whose QUOTED argument is a PATTERN or script, never a file path — so a
 # rooted-looking quoted term (`grep "/handles/{handle}"`, `sed "s#/api/v1#X#"`) is the search expression,
