@@ -110,3 +110,35 @@ def test_with_the_assists_off_the_wire_view_gets_no_restored_block_and_no_ledger
     assert loop._plan_off_tail(msgs, None, {"role": "user", "content": "F"})[-2:] == [msgs[-1], {"role": "user", "content": "F"}]
     block = {"role": "user", "content": "R"}
     assert loop._plan_off_tail(msgs[:1], block, {"role": "user", "content": "F"}) == [msgs[0], block, {"role": "user", "content": "F"}]
+
+
+GATE_RESULT = f"{loop.probegate.SECTION_PREFIX}probe-0{loop.probegate.SECTION_SUFFIX}\nFAILED tests/test_a.py::t - assert 1 == 2\nEXIT:1\n"
+
+
+def test_the_judge_is_shown_the_task_and_the_session_without_the_harness_frame_or_the_gate_scaffolding():
+    gate_cmd = loop.probegate._gate_sentinel(["pytest -q"]) + "\ntrue\n"
+    msgs = [{"role": "system", "content": "HARNESS FRAME"}, {"role": "user", "content": "Fix the cart total."},
+            call("g1", "exec_command", cmd=gate_cmd), {"role": "tool", "tool_call_id": "g1", "content": GATE_RESULT}]
+    task, session = loop._periodic_judgment_evidence(loop.GuardState(), {"messages": msgs})
+    assert task == "Fix the cart total." and "HARNESS FRAME" not in session
+    assert session.startswith('user: Fix the cart total.\nassistant: exec_command({"cmd": "pytest -q"})\ntool: ')
+    assert "FAILED tests/test_a.py::t" in session and loop.probegate.GATE_SENTINEL not in session
+
+
+@pytest.mark.parametrize("level", [0, 3])
+def test_without_the_repository_check_assist_a_probe_result_is_still_recorded_as_fact_and_never_forwarded(level):
+    """Required factual settlement is not optional: the result is read and recorded, the pending flags clear, and no steer is produced."""
+    body = {"messages": [{"role": "user", "content": "t"}, {"role": "tool", "tool_call_id": "p", "content": "output"}]}
+    log = type("L", (), {"events": [], "emit": lambda s, k, **kw: s.events.append(k)})()
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=level)):
+        periodic = loop.GuardState()
+        periodic.periodic_probe = periodic.awaiting_probe = True
+        periodic.probe_call_id, periodic.gate_fresh = "p", False
+        assert loop.guard_periodic_result(periodic, body, log) is None
+        assert (periodic.periodic_probe, periodic.awaiting_probe, periodic.gate_fresh) == (False, False, False)   # freshness is the clock's, not the reading's
+        verdict = loop.GuardState()
+        verdict.probe_call_id, verdict.gate_fresh = "p", False
+        assert loop.guard_gate_verdict(verdict, body, log) is None and verdict.gate_fresh is True and verdict.last_gate_ran is False
+        idle = loop.GuardState()
+        assert loop.guard_periodic_result(idle, body, log) is None and idle.gate_fresh is not True
+    assert log.events == []                                                                                    # nothing ran, so nothing is logged as a result
