@@ -32,19 +32,24 @@ File and helper names are prefixed with their domain and must be globally unique
 
 ## The pre-reset suite
 
-On 2026-10-31 the suite was rewritten at about 10% of its size (from 855 files / 157K lines / 9.2K definitions / ~13.8K collected cases to about 15K lines). The old files are preserved unchanged in `tests_backup/` and tagged `tests-before-reset-20261031`; pytest does not collect them by default. Use them as a guide to corner cases we struggled with: grep a subject there before changing it, and copy the incident into a new table row rather than the test.
+On 2026-10-31 the suite was rewritten at about 10% of its size (from 855 files / 157K lines / 9.2K definitions / ~13.8K collected cases to about 15K lines), then widened with scenario tests aimed at the lines the cut had lost (see below). The old files are preserved unchanged in `tests_backup/` and tagged `tests-before-reset-20261031`; pytest does not collect them by default. Use them as a guide to corner cases we struggled with: grep a subject there before changing it, and copy the incident into a new table row rather than the test.
 
 Assist declarations in `cria/*.py` list regression tests in `regressions=` and `SourceOwner(...)`. Where a new test covers the assist those entries point at it; where none does they point at the preserved `tests_backup/` file. An entry that points at `tests_backup/` is an assist whose regression is not protected by the live suite: write the new row when you next touch that assist, and repoint the entry.
 
 ## What the reset measured
 
-Size: 147 test files, about 16.6K lines (10.6% of the old 157K), 788 test definitions (8.6% of 9,188), 1,711 executed cases (about 12% of the old ~13.8K), 74 seconds (was about 11.5 minutes). The old and new totals are counted the same way (tracked `.py` files, `def test_`).
+**Size** (tracked `.py` under `tests/`, `def test_`): 183 files, about 20.1K lines (12.8% of the old 157K), 909 definitions (9.9% of 9,188), 2,248 executed cases (old: ~13.8K collected), about 85 seconds (old: about 11.5 minutes).
 
-Protection was checked two ways.
+**Coverage** (coverage.py 7.17 in a scratch virtualenv, `--branch --source=cria`, Python 3.14; the project itself stays stdlib-only):
 
-- **Mutation:** each rewriter broke the code in a scratch copy and recorded how many representative defects the new tests caught (roughly 1,000 tried across the domains; every survivor was strengthened or judged equivalent).
-- **History replay:** 65 recent real bug fixes were reversed one at a time (scratch copies of HEAD, the fix's `cria/*.py` diff reverse-applied) and the new suite run. It caught 42 at first. Of the 28 misses compared with the old suite, the old suite had caught 25 (real losses from the reset) and 7 were never tested by either. Every loss was restored as a table row or small test except two (a planner-only log field, and a pure refactor), and the new suite then catches 19 of the 21 commits GAP2 re-examined. A replay is a sample, not a proof: new protections you add should still be seen to fail.
+- old suite: 94.4% lines / 88.5% branches (with 94 stale failing tests whose lines still ran);
+- first rewrite (about 10%): 80.2% / 68.1%;
+- after the scenario pass: **87.0% lines / 77.3% branches**.
 
-The modules with no coverage after the cut were examined by mutation: retention, heartbeat, pasted-file recovery, the per-language cleanup analysis, returned-policy notes, review and policy modules received tests; `planner_tools` (planner is off by policy) and `preamblepolicy` (inert since `9fd01656`) were deliberately skipped.
+How to re-measure: install `coverage` in a throwaway venv, copy the working tree to a scratch directory (some tests need a git repo and a writable tmp, and two retention tests only pass in the real checkout), run `coverage run --branch --source=cria -m pytest tests`, then `coverage json`.
 
-Three real source defects found while rewriting are recorded as `xfail(strict=True)` tests (a whole write replaces a symlink and prints a raw traceback in a read-only directory; a C `obj->remove(path)` is read as libc `remove`); a strict xfail goes red when the defect is fixed, which is the cue to delete the marker. Regressions in the old suite that the new one does not cover live only in `tests_backup/`: grep there before changing the assist.
+The remaining gap is concentrated in `loop.py` (the planner paths are retired: planning is off by policy), the planner family itself, `groundedaction`, `returnedpolicies`, `system1` (needs faked ONNX), and a few fixture-hungry corners. Several modules keep their real logic as shell and Python programs inside strings that run in subprocesses; coverage cannot see those, so those modules are exercised by real PTY/bash execution instead.
+
+**Protection was checked three ways.** Mutation: each rewriter broke the code in a scratch copy and recorded how many representative defects the new tests caught (roughly 1,200 tried; survivors were strengthened or judged equivalent). History replay: 65 recent real bug fixes were reversed one at a time; of the 28 misses compared with the old suite, the old suite had caught 25 (real losses) and 7 were never tested; every loss was restored except two (a planner-only log field and a pure refactor). Coverage: the lines the old suite reached and the new one did not were mapped per module and recovered with whole-flow scenario tests (a test may drive a real multi-step flow as long as it asserts real outcomes and was seen to fail under mutation).
+
+Modules examined for having no coverage after the cut received tests; `planner_tools` (planner is off by policy) and `preamblepolicy` (inert since `9fd01656`) were deliberately skipped. Real source defects found while rewriting are recorded as `xfail(strict=True)` tests; a strict xfail goes red when the defect is fixed, which is the cue to delete the marker. Regressions in the old suite that the new one does not cover live only in `tests_backup/`: grep there before changing the assist.
