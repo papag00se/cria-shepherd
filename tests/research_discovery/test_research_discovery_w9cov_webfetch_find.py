@@ -44,4 +44,8 @@ def test_json_pointers_unescape_and_a_dangling_or_non_local_ref_resolves_to_noth
     root = {"a": {"b/c": {"x": 1}}, "t~k": 2}
     assert wf._resolve_ref_path(root, "#/a/b~1c/x") == 1 and wf._resolve_ref_path(root, "#/t~0k") == 2
     assert wf._resolve_ref_path(root, "other.json#/a") is None and wf._resolve_ref_path(root, "x/a") is None and wf._resolve_ref_path(root, "#/a/zz") is None
+    arrays = {"a": [{"x": 1}, {"x": 2}], "p": {"allOf": [{"$ref": "#/a/1"}]}}
+    assert wf._resolve_ref_path(arrays, "#/a/0/x") == 1 and wf._resolve_ref_path(arrays, "#/a/1") == {"x": 2}
+    assert [wf._resolve_ref_path(arrays, f"#/a/{i}") for i in ("2", "-", "01", "x", "-1", "\u0661")] == [None] * 6
+    assert wf._resolve_refs(arrays["p"], arrays, 3) == {"allOf": [{"x": 2}]}
     assert wf._endpoint_routes([1]) == [] and wf._endpoint_routes({"a": {"/x": 1, "/y": 2}, "servers": [{"url": "https://h/v2"}]}) == ["/v2/x", "/v2/y"]

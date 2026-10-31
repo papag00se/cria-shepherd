@@ -1969,6 +1969,10 @@ def _resolve_ref_path(root: Any, ref: str) -> Any:
     cur = root
     for part in ref[2:].split("/"):
         part = part.replace("~1", "/").replace("~0", "~")  # JSON-pointer unescape
+        if isinstance(cur, list):                       # RFC 6901: an array is indexed by a decimal with no leading zeros
+            if not (part == "0" or (part.isascii() and part.isdigit() and part[0] != "0")):
+                return None
+            part = int(part)
         try:
             cur = cur[part]
         except (KeyError, IndexError, TypeError):
