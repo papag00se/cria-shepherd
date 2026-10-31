@@ -15,6 +15,7 @@ from cria import shellinput as si
     ("cat <<E\\", True, 0),                            # trailing backslash after the operator
     ("cat <<'a b'\nx\na b\n", False, 1),
     ("cat <<\\E\nx\nE\n", False, 1),                   # \E quotes the delimiter
+    ('cat <<"E\\', True, 0),                          # a backslash that is the LAST byte inside the quote: unterminated, never an IndexError
 ])
 def test_heredoc_delimiter_words_follow_bash_quote_removal(source, error, docs):
     lay = si.layout(source)
@@ -41,6 +42,9 @@ def test_ansi_c_escape_past_the_last_code_point_stays_the_literal_text_bash_prin
     ('echo $(echo $$ x)', ['echo $$ x'], False),
     ('echo "$(echo "$(echo hi)")"', ['echo "$(echo hi)"'], False),
     ("echo $(echo $'abc", [], True),                    # an unterminated ANSI-C string: reported, never erased
+    ("echo $$#x $(rm -rf /)", ["rm -rf /"], False),     # after `$$` the word goes on: `#x` is no comment hiding the substitution
+    ("echo $$'x $(rm -rf /)'", [], False),              # after `$$` a quote is an ordinary single quote: its text is data
+    ("echo \"$(echo $'a\\'b' ; rm -rf /)\"", ["echo $'a\\'b' ; rm -rf /"], False),   # inside a double-quoted body the ANSI-C string still ends at ITS quote
 ])
 def test_command_substitution_bodies_survive_backticks_pid_and_nested_quotes(source, bodies, unterminated):
     subs, bad = si.expansions(source, shell=True)

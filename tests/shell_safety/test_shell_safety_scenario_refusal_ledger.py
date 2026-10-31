@@ -33,6 +33,12 @@ REFUSALS = (
      "elixir", "missing_hex ~> 1.0"),
 )
 
+# the comparison fields (package, version) a refusal is judged by; every other row is a bare name with no version
+PARTS = {"left-pad@99.0.0": ("left-pad", "99.0.0"), "berry-missing@npm:9.9.9": ("berry-missing", "9.9.9"), "requests==99.0": ("requests", "99.0"),
+         "example.com/acme/mod@v9.9.9": ("example.com/acme/mod", "9.9.9"), "org.example:missing:jar:9.9.9": ("org.example:missing:jar", "9.9.9"),
+         "org.example:gradle-missing:9.9.9": ("org.example:gradle-missing", "9.9.9"), "countries (= 99.0)": ("countries", "99.0"),
+         "missing_hex ~> 1.0": ("missing_hex", "~>1.0")}
+
 # (command, refusal text, success text, coordinate): a later exact success retires the refusal.
 SUPERSEDED = (
     ("bun add left-pad@1.3.0", "No matching version found for left-pad@1.3.0", "installed left-pad@1.3.0", "left-pad@1.3.0"),
@@ -68,6 +74,7 @@ def test_every_manager_keeps_its_raw_coordinate_and_provenance(text, ecosystem, 
     event = next(e for e in rl.refusal_events(text, source_id="c1") if e.raw_coordinate == coordinate)
     assert (event.ecosystem, event.source_id, event.outcome) == (ecosystem, "c1", rl.REFUSED)
     assert coordinate.split()[0] in event.evidence
+    assert (event.package, event.version) == PARTS.get(coordinate, (coordinate, ""))     # what a later success is compared against
     assert coordinate in rl.refused_names(text)
 
 

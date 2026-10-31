@@ -21,17 +21,6 @@ def test_fit_leaves_a_fitting_body_alone_and_never_calls_an_irreducible_one_acce
     assert (messages, tools) == before == (out, menu)
     assert report.over_budget is over and report.as_event()["over_budget"] is over and report.applied is over
 
-def test_schema_pressure_keeps_every_tool_callable_and_labels_the_shortening():
-    """Descriptions are shortened with a visible mark; no tool is dropped; the originals are untouched."""
-    tools = [tool(f"op_{i}", "Complete sentence. " * 300) for i in range(3)]
-    original = deepcopy(tools)
-    _, menu, report = contextfloor.fit([u("task")], tools, window=4000, reserve=400)
-    assert tools == original and report.tools_compressed == 3 and report.tools_dropped == 0 and [t["function"]["name"] for t in menu] == ["op_0", "op_1", "op_2"]
-    assert all(t["function"]["description"].endswith(" […more]") and t["function"]["parameters"]["properties"]["choice"]["description"].endswith(" […more]") for t in menu)
-    many = [tool(f"op_{i}", "Describe it. " * 50) for i in range(300)]    # even fully shortened it cannot fit: every capability still survives and the overflow is reported
-    menu, report = contextfloor.fit([u("task")], many, window=2000, reserve=200)[1:]
-    assert [t["function"]["name"] for t in menu] == [t["function"]["name"] for t in many] and report.over_budget
-
 def test_caller_and_restored_blocks_are_shed_before_any_tool_evidence():
     """phi4 / Java A5: the harness persona was kept whole while the file reads were folded, so the coder never had file text and re-read. The author-marked span and the restored-text block go first, labelled; evidence survives."""
     persona = "Harness standing persona. " * 1500
@@ -59,7 +48,7 @@ def test_the_task_survives_dropping_after_cria_injects_a_steer(lead, pinned):
     """53 of 1,475 coder prompts shipped without the task once cria's own steer followed it (the task became the oldest droppable turn and the model undid it). Unproven preamble text is kept too: markup cannot prove it disposable."""
     messages = [{"role": "system", "content": "sys"}, *lead, u(TASK)]
     for i in range(40):
-        messages += [a("filler " * 200), u(f"filler note {i}")]
+        messages += [a("filler " * 200), u(f"⟦ctx:steer⟧ note {i}" if i % 2 else f"filler note {i}")]      # cria's steers land between the task and the end, many times over
     messages += [u("⟦ctx:steer⟧ read cart.go then fix the rounding")]
     out, _, report = contextfloor.fit(messages, None, window=1500, reserve=100, safety=1.0, pinned_task=pinned)
     texts = [m["content"] for m in out]

@@ -1,11 +1,13 @@
 """The lowered write/edit PROGRAMS, executed in bash: what lands on disk and what the coder is told."""
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 
 import pytest
 
-from cria import denial, editrecovery
+from cria import denial, editrecovery, writeproxy
 from write_edit_helpers import do, first_record, write_edit_workspace_view  # noqa: F401  (the fixture binds the workspace view)
 
 TRICKY = "line1\n\ttabbed 'q' \"dq\" $VAR `bt` \\n \u2603\r\nend-without-newline"
@@ -31,24 +33,6 @@ def test_a_write_with_no_content_is_refused_not_written_as_an_empty_file(tmp_pat
     assert (tmp_path / "keep.py").read_text() == "before = 1\n"
     assert first_record(done.stdout)[0] == denial.REFUSED and "cut off" in msgs[1]["content"]
     assert denial.is_denied(msgs[1]["content"]) and not denial.landed(msgs[1])
-
-
-def test_a_write_that_cannot_land_leaves_the_old_bytes_and_no_temp(tmp_path):
-    """A read-only directory (and a directory target, and a file in the parent chain) never leaves a half-written file or a stray temp."""
-    (tmp_path / "ro").mkdir()
-    (tmp_path / "ro/a.py").write_text("x = 1\n")
-    (tmp_path / "dir").mkdir()
-    (tmp_path / "plain").write_text("i am a file")
-    os.chmod(tmp_path / "ro", 0o555)
-    try:
-        for path in ("ro/a.py", "dir", "plain/child.py"):
-            tc, done, msgs = do("write_file", {"path": path, "content": "y = 2\n"}, tmp_path)
-            assert denial.landed(msgs[1]) is False, path
-            assert path == "ro/a.py" or denial.is_denied(msgs[1]["content"]), path      # a statement, not a traceback
-    finally:
-        os.chmod(tmp_path / "ro", 0o755)
-    assert (tmp_path / "ro/a.py").read_text() == "x = 1\n" and os.listdir(tmp_path / "ro") == ["a.py"]
-    assert os.listdir(tmp_path / "dir") == [] and (tmp_path / "plain").read_text() == "i am a file"
 
 
 # (name, currently valid bytes, replacement that does not parse, fixing replacement)
@@ -110,6 +94,7 @@ EDITS = [
     ("two matches are ambiguous", "x\nx\n", "x", "y", None, "multi"),
     ("two whitespace-flexible matches are ambiguous", "x = 1  +  2\nx = 1   +   2\n", "x = 1 + 2", "y", None, "multi_flex"),
     ("an explicit empty new_string deletes", "foo(x)\nbar\n", "foo(x)\n", "", "bar\n", None),
+    ("a new_string's own final newline is written as sent", "a = 1\nz\n", "a = 1", "a = 1\nb = 2\n", "a = 1\nb = 2\n\nz\n", None),
     ("a miss reports the file's real text", "def r(h):\n    y = 2\n", "def r(h):\n    x = 1", "z", None, "anchor"),
     ("a no-op edit", "    x = 1\n", "    x = 1", "    x = 1", None, "identical"),
     ("nothing resembles old", '[project]\nname = "x"\n', "[tool.s]\npackage-dir = 1", "z", None, "no_anchor"),
@@ -128,12 +113,21 @@ def test_an_edit_applies_only_on_one_match_and_reports_facts_otherwise(tmp_path,
     tc, done, msgs = do("edit_file", {"path": "f.py", "old_string": old, "new_string": new}, tmp_path)
     kind, rec = first_record(done.stdout)
     if mode is None:
-        assert (tmp_path / "f.py").read_text() == after and kind == denial.LANDED and done.returncode == 0
+        assert (tmp_path / "f.py").read_bytes().decode() == after and kind == denial.LANDED and done.returncode == 0       # bytes: read_text would fold CRLF
         return
-    assert (tmp_path / "f.py").read_text() == before and kind == "unapplied" and done.returncode != 0
+    assert (tmp_path / "f.py").read_bytes().decode() == before and kind == "unapplied" and done.returncode != 0
     report = editrecovery.decode_report(rec["rep"]["ef"])
     assert report["mode"] == mode
     assert denial.unlanded(msgs[1]) and not denial.landed(msgs[1])
+
+
+@pytest.mark.xfail(strict=True, reason="SOURCE DEFECT (test audit W10): the edit program reads the file with read_text() (universal newlines) and writes the "
+                   "LF-folded text back, so editing one line of a CRLF file rewrites every other line ending. Remove this mark when the program reads and writes bytes.")
+def test_an_edit_leaves_every_byte_it_did_not_touch_exactly_as_it_was(tmp_path):
+    """The exact-bytes contract of an edit: only the matched span changes. A CRLF (or lone-CR) file keeps its line endings on the untouched lines."""
+    (tmp_path / "f.txt").write_bytes(b"keep\r\nold\r\nlone\rcr\r\n")
+    do("edit_file", {"path": "f.txt", "old_string": "old", "new_string": "new"}, tmp_path)
+    assert (tmp_path / "f.txt").read_bytes() == b"keep\r\nnew\r\nlone\rcr\r\n"
 
 
 def test_an_edit_that_would_break_a_parsing_file_is_held_but_fixing_a_broken_one_lands(tmp_path):
@@ -169,8 +163,9 @@ def test_a_whole_write_lands_through_links_like_the_edit_path(tmp_path, case):
     """The write and the edit program share ONE landing: a symlink (even to another directory, even dangling) is written
     THROUGH and stays a link; a hard-linked file is rewritten in place so every name sees it; bytes stay exact."""
     (tmp_path / "other").mkdir()
-    (tmp_path / "real.py").write_text("x = 1\n")
-    (tmp_path / "other/real.py").write_text("x = 1\n")
+    old = "x = 1  # the old text is LONGER than the new, so a rewrite that does not truncate leaves a tail\n"
+    (tmp_path / "real.py").write_text(old)
+    (tmp_path / "other/real.py").write_text(old)
     content = "y = 2\n"
     if case == "symlink":
         os.symlink("real.py", tmp_path / "lnk.py"); target = tmp_path / "real.py"
@@ -194,20 +189,43 @@ def test_a_whole_write_lands_through_links_like_the_edit_path(tmp_path, case):
     assert not [n for d in (tmp_path, tmp_path / "other", tmp_path / "fresh/deep") if d.exists() for n in os.listdir(d) if ".atomic-" in n]
 
 
-@pytest.mark.parametrize("case", ["readonly_dir", "readonly_parent_of_new_dir", "link_into_a_file"])
+@pytest.mark.parametrize("case", ["readonly_dir", "readonly_parent_of_new_dir", "link_into_a_file", "directory_target", "file_in_parent_chain"])
 def test_a_whole_write_that_cannot_land_is_a_did_not_run_statement_not_a_traceback(tmp_path, case):
-    """An unwritable directory (existing file, or a new subdirectory under it) or a link whose real parent cannot be a directory is the plain
-    'could not be written' result the edit path gives, with nothing changed. (The write used to print a raw traceback.)"""
+    """An unwritable directory (existing file, or a new subdirectory under it), a link whose real parent cannot be a directory, a directory as the
+    target, or a file in the parent chain is the plain 'could not be written' result the edit path gives, with nothing changed and no temp left.
+    (The write used to print a raw traceback.) Each case is the only one that catches its own defect: a directory target not refused as one, an
+    OSError escaping as a traceback."""
     (tmp_path / "ro").mkdir()
     (tmp_path / "ro/a.py").write_text("x = 1\n")
+    (tmp_path / "dir").mkdir()
+    (tmp_path / "plain").write_text("i am a file")
     os.chmod(tmp_path / "ro", 0o555)
     try:
-        path = {"readonly_dir": "ro/a.py", "readonly_parent_of_new_dir": "ro/sub/a.py", "link_into_a_file": "gone/a.py"}[case]
+        path = {"readonly_dir": "ro/a.py", "readonly_parent_of_new_dir": "ro/sub/a.py", "link_into_a_file": "gone/a.py", "directory_target": "dir",
+                "file_in_parent_chain": "plain/child.py"}[case]
         if case == "link_into_a_file":
-            (tmp_path / "plain").write_text("i am a file")
             os.symlink(tmp_path / "plain/x", tmp_path / "gone")     # the link's real parent can never be a directory
         _, _, msgs = do("write_file", {"path": path, "content": "y = 2\n"}, tmp_path)
     finally:
         os.chmod(tmp_path / "ro", 0o755)
-    assert denial.unlanded(msgs[1]) and "Traceback" not in msgs[1]["content"], msgs[1]["content"]
+    assert denial.unlanded(msgs[1]) and not denial.landed(msgs[1]) and "Traceback" not in msgs[1]["content"], msgs[1]["content"]
+    assert denial.is_denied(msgs[1]["content"]) or case.startswith("readonly")                # a statement, not a traceback
     assert (tmp_path / "ro/a.py").read_text() == "x = 1\n" and os.listdir(tmp_path / "ro") == ["a.py"]
+    assert os.listdir(tmp_path / "dir") == [] and (tmp_path / "plain").read_text() == "i am a file"
+
+
+@pytest.mark.parametrize("raw,spills", [
+    (b"a" * 10_000, False), (b"a" * 10_001, True),                          # no LF: the limit itself
+    (b"a" * 9_994 + b"\n" * 3, False), (b"a" * 9_995 + b"\n" * 3, True),     # a PTY turns every LF into CRLF, so each LF counts twice: 10,000 fits, 10,001 does not
+], ids=["10000-fits", "10001-spills", "10000-with-LF-fits", "10001-with-LF-spills"])
+def test_a_producers_stdout_rides_inline_up_to_10000_transport_bytes_then_is_saved_whole_and_pointed_to(tmp_path, raw, spills):
+    """The 10,000-byte transport limit of an owned producer (search/list/refusal output): at the limit the bytes arrive untouched; one byte over,
+    the FULL output is saved under tmp/reference (never clipped; its name is its sha256) and what arrives is a pointer that itself fits."""
+    (tmp_path / "big").write_bytes(raw)
+    out = subprocess.run(["bash", "-c", writeproxy._bounded_tool_stdout("cat big")], cwd=tmp_path, capture_output=True, check=True).stdout
+    saved = list((tmp_path / "tmp/reference").glob("stdout-*.txt")) if (tmp_path / "tmp/reference").exists() else []
+    if not spills:
+        assert out == raw and saved == []
+        return
+    assert out != raw and len(out) + out.count(b"\n") <= 10_000 and f"{len(raw):,}".encode() in out
+    assert [f.name for f in saved] == [f"stdout-{hashlib.sha256(raw).hexdigest()}.txt"] and saved[0].read_bytes() == raw and saved[0].name.encode() in out

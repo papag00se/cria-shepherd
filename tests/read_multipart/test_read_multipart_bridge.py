@@ -3,7 +3,7 @@ import copy
 import json
 import stat
 import pytest
-from cria import denial, resultpacket, toolwire, wsview, writeproxy
+from cria import denial, multipart, resultpacket, toolwire, wsview, writeproxy
 from cria.multipart_bridge import Bridge, BridgeError
 from read_multipart_helpers import HEX, isolated_home, page_through, run_call, start  # noqa: F401
 
@@ -107,3 +107,24 @@ def test_a_forged_or_client_hinted_carrier_proves_nothing_while_the_verified_ori
     native = [{'role': 'assistant', 'tool_calls': [{'id': 'n', 'type': 'function', 'function': {'name': 'exec_command', 'arguments': '{"cmd":"x"}'}}]},
               {'role': 'tool', 'tool_call_id': 'n', 'content': '\x1b[31mred\x1b[0m\n'}]
     assert writeproxy.represent_inbound(native, workspace_root=str(tmp_path))[1]['content'] == 'red\n'
+
+
+def test_a_page_record_is_accepted_at_exactly_10000_stdout_bytes_and_refused_one_byte_over(tmp_path):
+    """The page assembler reads exactly the stdout record of the transport: 10,000 bytes (its LF included) is the most a PTY-backed harness
+    returns, so a 10,001-byte record can only be a clipped or foreign one and poisons the assembly instead of being parsed."""
+    import base64, hashlib
+    data = b"page"
+    def wire(pad):
+        digest = hashlib.sha256(data).hexdigest()
+        obj = {"v": 1, "token": "t" * pad, "outcome": "read", "semantics": "whole", "source_length": 4, "source_sha256": digest, "stream_length": 4,
+               "stream_sha256": digest, "offset": 0, "length": 4, "page_sha256": digest, "data": base64.b64encode(data).decode(), "exit_code": 0,
+               "write_outcome": "not_applicable", "snapshot": {"mode": "live", "reason": None, "taken": None, "now": None}}
+        return json.dumps(obj, separators=(",", ":")).encode() + b"\n"
+    pad = 10_000 - len(wire(0))
+    assert len(wire(pad)) == 10_000 and len(wire(pad + 1)) == 10_001
+    assert multipart.MultipartRead("t" * pad, "read", "whole").accept(wire(pad)) is True
+    over = multipart.MultipartRead("t" * (pad + 1), "read", "whole")
+    with pytest.raises(multipart.InvalidPage, match="oversized"):
+        over.accept(wire(pad + 1))
+    with pytest.raises(multipart.InvalidPage, match="closed"):
+        over.accept(wire(pad))                                # the failure poisoned it: nothing after an oversized record is publishable
