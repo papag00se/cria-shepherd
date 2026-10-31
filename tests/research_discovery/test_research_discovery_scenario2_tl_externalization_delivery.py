@@ -73,3 +73,4 @@ def test_the_planners_fetch_and_search_spills_keep_their_existing_thresholds_and
     s = e.planner_search("Ada Handles!!", text, scratch="/s", inline_chars=5, remedy=lambda t: "R:" + t)
     assert s.target == "/s/search-ada-handles.txt" and s.content == text and "1. First" in s.pointer and "10. Tenth" in s.pointer and "noise" not in s.pointer
     assert e.planner_search("!!!", text, scratch="/s", inline_chars=5, remedy=str).target == "/s/search-search.txt"
+    assert e.planner_search("a" * 100, text, scratch="/s", inline_chars=5, remedy=str).target == "/s/search-" + "a" * 60 + ".txt"
