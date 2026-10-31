@@ -16,7 +16,7 @@ STEP = "Write `a.py` while documenting `README.md`."
 
 
 def services(**kw):
-    return sp.BaseServices(loop._strip_cria_file_ops, loop._msg_text_content, loop.reframe_preamble,
+    return sp.BaseServices(loop._strip_cria_file_ops, loop._msg_text_content,
                            loop._is_serialized_plan_cursor, **kw)
 
 

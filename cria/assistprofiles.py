@@ -37,7 +37,6 @@ RANK4_DISABLED = (
     "superseded-write-history",
     "wire-repeated-payloads",
     "history-rewrite-reorientation",
-    "verified-harness-preamble",
     "experimental-step-preparation",
     "task-required-test-participation",
     "exact-file-form-approval",

@@ -1,7 +1,6 @@
 ## L0 — Pure proxy
 
 - `tool-free-text-recovery` — [F08](REPORT.md#f08)
-- `verified-harness-preamble` — [F67](REPORT.md#f67)
 - `learned-capacity-refit` — [F55](REPORT.md#f55)
 - `transient-recovery` — [F58](REPORT.md#f58)
 - `automatic-protocol-discovery` — [F62](REPORT.md#f62)

@@ -18,7 +18,7 @@ from .completionreview import (ReviewDefinition, ReviewInput, ReviewResult, Revi
                                ReviewTrigger, SatisfactionState, DEFINITION as TASK_REVIEW)
 
 from . import toolstages, researchpolicies, historyarguments, classify, toolmenu, generationguards
-from . import bodykeys, selfcompact, focustrim, modelview, contextrestoration, ledgercopies, reorientation, preamblepolicy, steppreparation
+from . import bodykeys, selfcompact, focustrim, modelview, contextrestoration, ledgercopies, reorientation, steppreparation
 
 TOOL_DEFINITIONS = toolstages.defaults().definitions
 RESEARCH_DEFINITIONS = researchpolicies.DEFINITIONS
@@ -27,7 +27,7 @@ ADMISSION_DEFINITIONS = (classify.DEFINITION,) + toolmenu.DEFINITIONS
 GENERATION_DEFINITIONS = generationguards.DEFINITIONS
 CONTEXT_DEFINITIONS = ((selfcompact.DEFINITION,) + focustrim.FOCUS_STAGE + modelview.WIRE_FOLD_STAGE
                        + (contextrestoration.DEFINITION, ledgercopies.DEFINITION,
-                          reorientation.DEFINITION, preamblepolicy.DEFINITION)
+                          reorientation.DEFINITION)
                        + steppreparation.DEFINITIONS)
 DEFINITIONS = (ARGUMENTS, MODULE, TASK_REVIEW) + TOOL_DEFINITIONS + RESEARCH_DEFINITIONS + HISTORY_DEFINITIONS + ADMISSION_DEFINITIONS + GENERATION_DEFINITIONS + CONTEXT_DEFINITIONS + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION,) + planner.DEFINITIONS + (pastedfile.DEFINITION,) + livingplan.DEFINITIONS + (stepreview.DEFINITION, completedwork.DEFINITION, capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION, documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION)
 

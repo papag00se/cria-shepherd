@@ -56,7 +56,6 @@ from .assistcontract import Policy, Reference
 class BaseServices:
     scrub_history: Callable[[list[dict]], list[dict]]
     message_text: Callable[[dict], str]
-    reframe_preamble: Callable[[dict], dict]
     is_serialized_cursor: Callable[[dict], bool]
     # Legacy unbound-library default only. Production ALWAYS supplies this field:
     # selected note-only projection, or explicit None for absent instructions.
@@ -144,7 +143,7 @@ def assemble_base(source: BaseInput) -> BaseFrame:
             continue
         if id(message) in raw_roots:
             roots.append(len(history))
-        history.append(services.reframe_preamble(message))
+        history.append(message)
     # Map original root identities after role filtering, not a new selection
     # over normalized survivors. The acknowledgement follows the whole bundle.
     task_index = roots[-1] if roots else None

@@ -61,7 +61,7 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
-from . import briefinggrounding, contextrestoration, filepresence, ledgercopies, preamblepolicy, reorientation, steppreparation, system1wiring
+from . import contextrestoration, filepresence, ledgercopies, reorientation, steppreparation, system1wiring
 from .toolstages import policy_log
 from .modulestate import ModuleInput, ModuleState
 from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
@@ -743,12 +743,11 @@ STEP_THRASH_REPLAN = livingplan.STEP_THRASH_REPLAN
 def _note_write_results(gs: GuardState, messages) -> None:
     """Remember which registered write calls have had a result come back (landed or failed). A result counts only
     through the ONE call/result correlation owner (`denial.paired_results`): an orphan, a result that precedes its
-    call, a second result or a reused id answers nothing. A call with no reply at all also counts once its own executor-side
-    completion mark was read back as final (`denial.witnessed_completed_ids`): its program is finished, so it is no longer a
-    pending write. The raw set is sticky; whether an id still counts is decided at use (`writeobservation.answered_ids`)."""
+    call, a second result or a reused id answers nothing. The raw set is sticky; whether an id still counts is
+    decided at use (`writeobservation.answered_ids`)."""
     answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
     registered = set(getattr(gs, "write_call_ids", None) or [])
-    answered |= registered & (set(denial.paired_results(messages or [])) | denial.witnessed_completed_ids(messages or []))
+    answered |= registered & set(denial.paired_results(messages or []))
 
 
 def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
@@ -2620,7 +2619,7 @@ class Loop:
         with assistruntime.bound(runtime):
             base = _required_coder_base(body.get("messages", []), tools=body.get("tools"),
                 prior_work=getattr(sess, "prior_work", "") or "", gate_plan=gate_plan,
-                workspace_root=getattr(sess, "workspace_root", None), reframe=True,
+                workspace_root=getattr(sess, "workspace_root", None),
                 suspend_cursor=bool(getattr(sess, "replan_uncovered", False)))
             framed = base.messages
         return modelview.visible_tokens(framed, body.get("tools"), fold=fold, definitions=definitions)
@@ -5116,8 +5115,7 @@ class Loop:
                           completion_act_first=None) -> dict:
         """The coder answered with NO tool call (thinks it's done). Verify before ending: LEG0 (never
         acted → one act-first nudge, re-call once), then the OBJECTIVE completion gate (run the repo's
-        checks). NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd>
-        tags from ``framed``)."""
+        checks). NOTE: the gate reads cwd from the ORIGINAL body, not from ``framed``."""
         # A CALL CRIA COULD NOT FORWARD MUST NOT LEAVE THE MODEL IN SILENCE — and this path never
         # said so. The nudge landed on the multi-step branch only, so the whole plan-off column of
         # the matrix ran without it. Walked on cycle 4 cell 19 (`shipping-rates-rb x
@@ -5975,10 +5973,9 @@ def _drop_harness_frame(messages: list[dict]) -> list[dict]:
     against (a curated view once made a steer hallucinate a path). Harness-agnostic: any role the harness
     puts its agent prompt in (``system``/``developer``) is dropped.
 
-    The harness's env-context/`<INSTRUCTIONS>` USER preamble is not dropped but REFRAMED (same
-    :func:`reframe_preamble` the coder path applies), so the reasoner sees cria's clean cwd/shell/date
-    voice instead of the raw foreign XML + sandbox plumbing — the residual of the same passthrough class."""
-    return [reframe_preamble(m) for m in messages if m.get("role") not in ("system", "developer")]
+    A USER-role env-context/`<INSTRUCTIONS>` preamble is not dropped and not rewritten: user markup proves
+    no origin (a request can quote a whole environment block), so it stays as the task context it may be."""
+    return [m for m in messages if m.get("role") not in ("system", "developer")]
 
 
 # Codex's VS Code extension compacts by APPENDING this user turn (it keeps the original task as the
@@ -6122,86 +6119,11 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
     return (out, True) if reframed else (messages, False)
 
 
-def reframe_preamble(m: dict) -> dict:
-    """Re-present a harness env-context/instructions preamble in cria's OWN clean voice instead
-    of forwarding it raw (ports codex-local's extract_project_instructions). A harness like Codex
-    prepends a `# AGENTS.md instructions <INSTRUCTIONS>…</INSTRUCTIONS><environment_context>…`
-    blob — foreign tags, CRLF, sandbox/permission plumbing — which a small model reads as a
-    patchwork of another voice (and parrots). Unwrap the real content: the project instructions
-    and just the useful environment fields (cwd/shell/date), dropping the XML and the sandbox
-    noise. Only touches a recognized preamble; an unrecognized message is returned untouched, and
-    the raw form is kept if nothing could be extracted.
-
-    The instructions half is PROVENANCE-GATED — see :func:`_workspace_instructions`. cria used to
-    re-present whatever the harness sent as "Project instructions (from the repo — follow these)",
-    which is a claim about where the text came from that cria had never checked, and on the
-    six-language battery it relayed another repo's development doctrine into a bare /tmp task. Only
-    instructions cria can find in an instruction file inside the workspace the preamble names are
-    relayed; everything else is dropped. The environment fields are unaffected."""
-    definition = next(iter(assistruntime.current().bindings(preamblepolicy.DEFINITION.policy.stage)), None)
-    if definition is None:
-        return m
-    return definition.execute(preamblepolicy.PreambleInput(m, wsview.current)).message
-
-
 def _msg_text_content(m: dict) -> str:
     c = m.get("content")
     if isinstance(c, list):
         return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
     return c or ""
-
-
-def _tag_body(text: str, name: str) -> str | None:
-    """The content between ``<name>`` and ``</name>`` (first occurrence), or None."""
-    open_t, close_t = f"<{name}>", f"</{name}>"
-    lo, hi = text.find(open_t), text.find(close_t)
-    if lo == -1 or hi == -1 or hi < lo:
-        return None
-    return text[lo + len(open_t):hi]
-
-
-# The environment fields worth showing a coder — cwd/shell/date — by tag name. Sandbox /
-# permission_profile / filesystem plumbing is deliberately NOT surfaced: it's harness noise a
-# small model burns attention on (approval semantics the flow never uses).
-_ENV_FIELDS = (("cwd", "cwd"), ("shell", "shell"), ("current_date", "date"), ("timezone", "timezone"))
-
-
-# The files a harness reads project instructions out of. cria does not need to know which one THIS
-# harness used — only whether the text it was handed is present in one belonging to the workspace.
-_INSTRUCTION_FILES = ("AGENTS.md", "AGENT.md", "CLAUDE.md", "GEMINI.md", "CONVENTIONS.md",
-                      ".cursorrules", ".windsurfrules", ".github/copilot-instructions.md")
-
-
-def _squash(s: str) -> str:
-    return " ".join(s.split())
-
-
-def _workspace_instructions(cwd: str, relayed: str) -> str | None:
-    """The part of ``relayed`` that is genuinely THIS workspace's own instruction file, or None.
-
-    A harness concatenates every instruction file it can see — the operator's global one and the
-    repo's — and hands cria the blob. cria re-presents that blob as "Project instructions (from the
-    repo — follow these)", which is a claim about provenance cria never checked.
-
-    Measured on the six-language battery: that clause put THIS repo's development doctrine inside an
-    unrelated /tmp task workspace containing no such file — "Mitigations, fallbacks, and band-aids
-    are strictly prohibited. There is an upstream fix. Find it." nemotron-elastic cited it to justify
-    a destructive rewrite and talked itself past its own caution to do so ("the instruction says we
-    should not make unnecessary changes; but this is necessary"). A rule written for a long-lived
-    repo is the worst possible instruction for a weak model that has just formed a wrong theory.
-
-    So the provenance is CHECKED against the world rather than asserted (#5b): the workspace's own
-    file is read from disk and relayed only when the harness's blob actually contains it. Anything
-    else is another repo's authority and is dropped — silence over noise (#3), and the subtractive
-    direction (#1). The workspace is the ``cwd`` the preamble itself carries, so this needs no
-    plumbing and works for any harness that states one."""
-    return preamblepolicy.workspace_instructions(cwd, relayed, wsview.current).text or None
-
-
-def _reframe_preamble_text(text: str) -> str | None:
-    message = {"role": "user", "content": text}
-    framed = reframe_preamble(message)
-    return framed["content"] if framed is not message else None
 
 
 def _is_serialized_plan_cursor(message: dict) -> bool:
@@ -6270,7 +6192,7 @@ def record_coder_preframe(rlog, sess: PlanSession, item: PlanItem | None, idx: i
 
 
 def _required_coder_base(messages, *, tools=None, prior_work="", workspace_root=None,
-                         gate_plan=None, suspend_cursor=False, reframe=False, rlog=None):
+                         gate_plan=None, suspend_cursor=False, rlog=None):
     """Required source assembly with an explicit selected note-only menu adapter."""
     runtime = assistruntime.current()
     menu = toolmenu.selected_policies(runtime.definitions)
@@ -6279,7 +6201,6 @@ def _required_coder_base(messages, *, tools=None, prior_work="", workspace_root=
         return result.note if result.applied else None
     return steppreparation.assemble_base(steppreparation.BaseInput(
         messages, steppreparation.BaseServices(_strip_cria_file_ops, _msg_text_content,
-            lambda message: reframe_preamble(message) if reframe and runtime.engagement_level >= 4 else message,
             _is_serialized_plan_cursor, menu_note=menu_note),
         tools, prior_work, workspace_root, gate_plan, suspend_cursor))
 
@@ -6292,7 +6213,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     """
     runtime = assistruntime.current()
     base = _required_coder_base(messages, tools=tools, prior_work=prior_work,
-        workspace_root=workspace_root, gate_plan=gate_plan, reframe=True,
+        workspace_root=workspace_root, gate_plan=gate_plan,
         suspend_cursor=remediation or suppress_plan_cursor)
     if remediation and not synthetic:
         return steppreparation.with_directive(base, prompts.load("completion_remediation"),
@@ -7665,17 +7586,6 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     candidate = prompts.render("compaction_candidate", briefing=briefing.strip())
     answers: dict[str, str] = {}
 
-    # No model in this one: every concrete figure the briefing states is looked up, literally, in the evidence the
-    # writer read. A figure found nowhere was not read from anything (briefinggrounding); it refuses before a model
-    # is asked anything. It replaced the whole-briefing fidelity verdict (docs/open-threads.md, 2026-11-02).
-    unread = briefinggrounding.ungrounded(briefing, [*transcript_blocks, files, checks, task])
-    if unread:
-        answers["figures"] = "UNGROUNDED " + ", ".join(unread[:8])
-        if rlog is not None:
-            rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
-                      accepted=False, answers=answers)
-        return False
-
     def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
         answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
                            prompts.load("compaction_validate_ask"), rlog,
@@ -7727,6 +7637,16 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         if unbuilt:
             answers["build"] = "UNRUN " + unbuilt
             accepted = False
+    if accepted:
+        blocks = list(transcript_blocks)
+        if task_fact and task_fact not in blocks:
+            blocks.append(task_fact)
+        blocks.append(candidate)
+        blocks.append(prompts.render("compaction_files_fact", files=files.strip()) if files.strip()
+                      else prompts.render("compaction_no_fact", kind="FILESYSTEM INVENTORY"))
+        blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
+                      else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
+        accepted = judge("fidelity", prompts.load("compaction_validate"), blocks, "FAITHFUL")
     if rlog is not None:
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
                   level="info" if accepted else "warn", accepted=accepted, answers=answers)

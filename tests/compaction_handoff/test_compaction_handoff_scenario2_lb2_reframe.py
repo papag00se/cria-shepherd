@@ -47,9 +47,6 @@ def test_an_empty_workspace_inverts_the_reframe_and_a_boundary_less_marker_line_
 
 
 def test_small_preamble_and_step_helpers(tmp_path):
-    assert loop._tag_body("<cwd>/w</cwd><cwd>x</cwd>", "cwd") == "/w" and loop._tag_body("<cwd>/w", "cwd") is None
-    assert loop._tag_body("</cwd>a<cwd>", "cwd") is None and loop._tag_body("none", "cwd") is None
-    assert loop._squash("  a \n b\t c ") == "a b c"
     assert loop._msg_text_content({"content": [{"text": "a"}, {"text": "b"}, "junk"]}) == "a b"
     assert loop._caller_span_hint(-1, "p") == {}
     hint = list(loop._caller_span_hint(5, "persona").values())[0]
@@ -62,4 +59,3 @@ def test_small_preamble_and_step_helpers(tmp_path):
     finally:
         wsview.unbind(token)
     assert got == ["a.py"]
-    assert loop._reframe_preamble_text("just a user message") is None

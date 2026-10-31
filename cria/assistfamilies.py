@@ -878,10 +878,8 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/contextfloor.py', '_protected_mask'),
             SourceOwner('cria/contextfloor.py', '_reduce_caller_spans'),
             SourceOwner('cria/contextfloor.py', '_compress_tools'),
-            SourceOwner('cria/preamblepolicy.py', 'reframe'),
             SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/loop.py', '_frame_for_item'),
-            SourceOwner('cria/loop.py', 'reframe_preamble'),
         ),
     ),
     AssistFamily(

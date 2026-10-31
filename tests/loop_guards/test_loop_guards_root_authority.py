@@ -68,7 +68,7 @@ def test_a_known_producer_annotation_is_not_a_request_but_a_string_lookalike_is(
 
 
 def base(messages):
-    services = sp.BaseServices(loop._strip_cria_file_ops, loop._msg_text_content, loop.reframe_preamble,
+    services = sp.BaseServices(loop._strip_cria_file_ops, loop._msg_text_content,
                                loop._is_serialized_plan_cursor, menu_note=None)
     return sp.assemble_base(sp.BaseInput(messages, services))
 
@@ -98,7 +98,7 @@ def test_the_step_acknowledgement_follows_the_entire_initial_prelude_and_survive
     messages = [{"role": "developer", "content": "configured constraint"}, user(BANNER), user(TASK),
                 {"role": "assistant", "content": "older work " * 1000}]
     root, _ = loop._history_root(messages)
-    plain = sp.BaseServices(lambda h: h, lambda m: m["content"], lambda m: m, lambda m: False, menu_note=None)
+    plain = sp.BaseServices(lambda h: h, lambda m: m["content"], lambda m: False, menu_note=None)
     framed = sp.with_directive(sp.assemble_base(sp.BaseInput(messages, plain)), "active step", "understood")
     ack = {"role": "assistant", "content": "understood"}
     assert framed.count(ack) == 1 and framed.index(user(BANNER)) < framed.index(user(TASK)) < framed.index(ack)
