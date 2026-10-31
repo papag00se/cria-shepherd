@@ -149,3 +149,78 @@ def test_find_and_paging_on_prose_and_json_answer_with_the_part_asked_for(base):
     assert '# meta\n{\n  "page": 1\n}' in wf.fetch_nav(f"{base}/data.json", find="meta")
     assert "[8 more match(es)" in wf.fetch_nav(f"{base}/data.json", find="n77") and "Available top-level keys: items, meta." in wf.fetch_nav(f"{base}/data.json", find="zzz")
     assert "[structured doc — top-level keys: items, meta]" in wf.fetch_nav(f"{base}/data.json")
+
+
+def test_a_swagger2_spec_yields_base_pathed_shapes_with_optional_marks_and_disclosed_caps():
+    props = {"id": {"type": "integer", "example": "2026-08-18T00:00:00Z-and-then-a-very-long-example"}, "a-b": {"type": "string"},
+             "nl\u2028x": {"type": "string"}, "arr": {"type": "array", "items": {"type": "string"}}, "untyped": {},
+             "nest": {"type": "object", "properties": {"deep": {"type": "object", "properties": {"z": {"type": "string"}}}, "k": {"type": "string", "example": 5}}},
+             "bare_obj": {"type": "object"}, "ref": {"$ref": "#/definitions/Sub"}}
+    ok = lambda schema: {"get": {"responses": {"200": {"schema": schema}}}}
+    spec = {"swagger": "2.0", "basePath": "/v1/", "paths": {
+        "/users/{id}": {"get": {"parameters": [{"$ref": "#/parameters/Id"}, {"name": "q", "in": "query"}, "junk", {"$ref": "#/parameters/Nope"},
+                                               {"in": "path"}, {"name": "slug", "in": "path", "schema": {"example": "abc"}}],
+                                "responses": {"200": {"schema": {"$ref": "#/definitions/User"}}}}},
+        "/users/{id}/posts": ok({"$ref": "#/definitions/User"}),                       # a sub-path of a shaped resource collapses
+        "/viaref": {"get": {"responses": {"default": {"$ref": "#/responses/R"}}}}, "/nothing": {"get": {"responses": {"200": {"description": "ok"}}}},
+        "/strange": "notadict", "/put": {"post": None, "put": {"responses": {"201": {"content": {"x": 1, "application/json": {"schema": {"$ref": "#/definitions/Sub"}}}}}}},
+        **{f"/p{i}": ok({"$ref": "#/definitions/Sub"}) for i in range(14)}},
+        "parameters": {"Id": {"name": "id", "in": "path", "description": "The id\nof user"}},
+        "responses": {"R": {"schema": {"$ref": "#/definitions/Sub"}}},
+        "definitions": {"User": {"type": "object", "required": ["id"], "properties": props}, "Sub": {"type": "object", "properties": {"s": {"type": "string"}}}}}
+    shapes = wf._endpoint_response_shapes(spec, 12, 12)
+    assert [s.head for s in shapes[:3]] == ["GET /v1/users/{id}", "GET /v1/viaref", "PUT /v1/put"] and len(shapes) == 13
+    assert shapes[0].params == ("{id} = The id of user", "{slug} = e.g. abc") and shapes[1].fields == ("s",)
+    assert shapes[-1].head == "…+more endpoints have shapes not shown here — web_fetch find=\"<path>\" for one"
+    assert shapes[0].body == """```ts
+{
+  id: number;    // e.g. 2026-08-18T00:0…mple
+  "a-b"?: string;
+  "nl\\u2028x"?: string;
+  arr?: unknown[];
+  untyped?: unknown;
+  nest?: {
+    deep?: object;
+    k?: string;  // e.g. 5
+  };
+  bare_obj?: object;
+  ref?: {
+    s?: string;
+  };
+}
+```"""
+    assert wf._endpoint_response_shapes(spec, 1, 3)[0].body.endswith("  // …+5 more field(s)\n}\n```")
+    assert (wf._base_path({"servers": [{"url": "/api"}]}), wf._base_path({"servers": [{"url": "https://h.com"}]}), wf._base_path({"basePath": "/"})) == ("/api", "", "")
+    assert wf._base_path([]) == "" and wf._ref_map([]) == {} and wf._endpoint_response_shapes({"paths": []}) == [] and wf._endpoint_response_shapes([]) == []
+
+
+def test_the_spill_helpers_tell_the_coder_what_is_on_disk_and_never_guess(base, monkeypatch):
+    monkeypatch.setattr(wf, "SPILL_CONTENT_MAX", 5000)
+    for path in ("/long.txt", "/data.json", "/min.html"):
+        wf.fetch_nav(f"{base}{path}")
+    wf._cache_put("https://x.org/m.js", 200, "application/javascript", "function a(){var s='};';return 1;}" * 400, None, False)
+    wf._cache_put("https://x.org/m.xml", 200, "application/xml", "<a><b>x</b></a>" * 800, None, False)
+    wf._cache_put("https://x.org/page.go", 200, "text/html", "<html><body>" + "<div class='a'>word</div>" * 400 + "</body></html>", None, False)
+    wf._cache_put("https://x.org/oneline", 200, "text/plain", "w" * 10000, None, False)
+    js = wf.oversized_spill("https://x.org/m.js")
+    assert js[1] == "./tmp/reference/x.org_m.js.txt" and js[2].startswith("function a(){\nvar s='};';\nreturn 1;\n}\nfunction a(){")   # string-aware break
+    assert wf.oversized_spill("https://x.org/m.xml")[2].startswith("<a>\n<b>x</b>\n</a>\n<a>")
+    assert wf.oversized_spill(f"{base}/nope-not-cached") is None and wf.spill_path_for(f"{base}/nope-not-cached") == ""
+    page = wf.oversized_spill("https://x.org/page.go")
+    assert "It is HTML. This is the web PAGE at that address, not the file's own text" in page[3]
+    target = wf._spill_name("https://x.org/page.go")
+    assert wf.format_for_spill_path(target) == "HTML" and wf.page_not_file_for_spill_path(target) and wf.spill_path_for("https://x.org/page.go") == target
+    assert wf.format_for_spill_path(wf._spill_name(f"{base}/data.json")) == "JSON" and not wf.page_not_file_for_spill_path(wf._spill_name(f"{base}/data.json"))
+    assert wf.format_for_spill_path("") == "" and wf.page_not_file_for_spill_path("./") is False and wf.outline_for_spill_path("") == ""
+    assert wf.format_for_spill_path("./tmp/reference/none.txt") == "" and wf.page_not_file_for_spill_path("./tmp/reference/none.txt") is False
+    outline = wf.outline_for_spill_path("tmp/reference/" + wf._spill_name(f"{base}/data.json").rsplit("/", 1)[1])
+    assert outline.startswith("[top-level keys (2): items, meta]") and wf.outline_for_spill_path(wf._spill_name("https://x.org/m.js")) == ""
+    hint = wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 2000)
+    assert hint.startswith("It is 526 lines — read_file with start_line=1 end_line=") and wf.spill_reading_hint("./tmp/reference/none.txt", 2000) == ""
+    assert wf.spill_reading_hint(wf._spill_name("https://x.org/oneline"), 2000) == "" and wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 5) == ""
+    assert wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 10**7) == ""
+    assert wf.spill_extent_of("https://nowhere/x").startswith("there (the file's own last line says")
+    assert wf.spill_extent_of("https://x.org/m.js") == wf.spill_extent_of(f"{base}/data.json") == "as much of it as one step can carry (the file itself says where it stops)"
+    assert wf.outline_for_url("https://nowhere/x") == "" and wf.stdout_spill_pointer("./tmp/x", 5000).count("5,000 chars") == 1
+    target, pointer = wf.search_spill("a b c")
+    assert target.startswith("./tmp/reference/search-a_b_c-") and target in pointer and wf.search_spill_name("a b c" + "x" * 80) != wf.search_spill_name("a b c" + "x" * 81)
