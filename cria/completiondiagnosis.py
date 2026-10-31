@@ -325,6 +325,11 @@ class RemediationServices:
     same_path: Callable[[str, str], bool]
     command_text: Callable[[object], str | None]
     log: Log | None = None
+    # Whether the exact subject is a file NOW by a fact the harness gathered after the last possible
+    # mutator (a complete current survey listing it, or a current whole-file body). The route the
+    # remediation's own `Wrote PATH` cannot cover: the file arrived by a shell redirect. Absent =
+    # that route stays closed, as before.
+    subject_present: Callable[[str], bool] | None = None
 
 
 def arm_remediation(state: RemediationState, subject: str, reason: str) -> RemediationResult:
@@ -412,13 +417,20 @@ def settle_remediation(state: RemediationState, messages: list[dict], services: 
     subject = getattr(state, "completion_remediation_subject", "")
     if not subject:
         return RemediationResult(RemediationStatus.NOT_APPLICABLE)
+    how = "written"
     if not observed_successful_write(messages, subject, services):
-        return RemediationResult(RemediationStatus.PENDING, subject, state.completion_remediation_reason)
+        # Retiring the remediation is not approving completion: the file being there says nothing
+        # about whether it is right, and a shell exit code never says even that. Only a harness
+        # fact about the exact path counts; the completion gates still judge the deliverable.
+        if services.subject_present is None or not services.subject_present(subject):
+            return RemediationResult(RemediationStatus.PENDING, subject, state.completion_remediation_reason)
+        how = "present"
     state.completion_remediation_subject = ""
     state.completion_remediation_reason = ""
     state.completion_remediation_nonwrite_ids = ()
     state.completion_remediation_nonwrite_seen = False
-    _emit(services.log, "loop.completion_remediation_written", subject=subject)
+    _emit(services.log, "loop.completion_remediation_written" if how == "written"
+          else "loop.completion_remediation_present", subject=subject)
     return RemediationResult(RemediationStatus.SETTLED, subject)
 
 
@@ -585,7 +597,7 @@ DEFINITION = DiagnosisDefinition(
                     "negative_diagnosis_support", "negative_diagnosis_log_above", "missing_output_requirement",
                     "verdict_nudge_action", "completion_remediation_nonwrite", "deliverable_observation",
                     "deliverable_observation_user", "periodic_missing_file_gap", "periodic_gap"),
-           state="task-local last_gap_* repeat memory, transient observer cadence, durable completion_remediation_* delivery correlation; only matching write settles",
+           state="task-local last_gap_* repeat memory, transient observer cadence, durable completion_remediation_* delivery correlation; only matching write, or a fresh harness fact that the exact subject is a file (wsview present_now), settles",
            services=("workspace-subject", "closed-question", "reducible-evidence-blocks", "verdict-fix-reader",
                      "tool-write-path", "workspace-path-equality", "shell-command-reader", "inspecting-critic",
                      "workspace-inventory", "workspace-observation-fingerprint", "periodic-check-due", "retained-root-task"),
@@ -595,6 +607,8 @@ DEFINITION = DiagnosisDefinition(
                   Reference("cria/loop.py", "Loop._observe_missing_file_on_done")),
            regressions=(Reference("tests/loop_orientation/test_loop_orientation_completion_diagnosis.py", "test_a_missing_file_diagnosis_is_grounded_only_in_known_workspace_state_and_the_original_task"),
                         Reference("tests/loop_orientation/test_loop_orientation_completion_diagnosis.py", "test_remediation_survives_inspection_gets_one_follow_up_and_ends_only_with_the_correlated_write"),
+                        Reference("tests/gates_completion/test_gates_completion_asum_remediation_present.py", "test_a_shell_redirect_retires_the_remediation_only_when_a_fresh_survey_lists_the_exact_file"),
+                        Reference("tests/loop_planner/test_loop_planner_asum_remediation_retirement.py", "test_a_shell_redirect_retires_a_plan_on_remediation_only_through_a_fresh_survey_of_the_exact_file"),
                         Reference("tests_backup/test_completion_diagnosis_policy.py", "test_observer_composes_real_inventory_and_reuses_grounding"),
                         Reference("tests_backup/test_completion_diagnosis_policy.py", "test_scheduled_delivery_repeats_only_on_renewed_complete_observation"),
                         Reference("tests_backup/test_completion_diagnosis_policy.py", "test_scheduled_observer_owns_stamp_before_question_and_target_delivery"),

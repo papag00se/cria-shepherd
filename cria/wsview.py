@@ -398,6 +398,22 @@ class View:
             return True
         return None if (d is None or f is None) else False
 
+    def present_now(self, path) -> bool:
+        """This exact path is a FILE right now, by a fact the harness gathered AFTER the last thing
+        that could have changed the tree: a complete, current survey that lists it, or a whole-file
+        body (a read, or cria's own write) no later mutator has outdated.
+
+        Strictly two-valued and strict on purpose: an exit code, a stale survey, a cut-off listing,
+        or a read that predates a mutator all answer False — "not shown to be there", never "gone".
+        Unlike `isfile` it will not answer from a tree a mutator has overtaken, and unlike `read`
+        it asks the harness for nothing."""
+        rel = self.rel(path)
+        if rel is None or rel == "":
+            return False
+        if self.observation_fingerprint is not None:
+            return self.isfile(path) is True
+        return self.isfile(path) is True and self._body_current(rel)
+
     def size(self, path) -> int | None:
         rel = self.rel(path)
         if rel is None or rel not in self._files:
@@ -1162,6 +1178,9 @@ class DirectView(View):
 
     def exists(self, path) -> bool | None:
         return os.path.exists(str(path)) if path else None
+
+    def present_now(self, path) -> bool:
+        return self.isfile(path) is True                      # answered from the disk this instant
 
     def size(self, path) -> int | None:
         try:

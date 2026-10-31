@@ -2019,7 +2019,8 @@ def _diagnosis_lifecycle_services(definition, root, chat, role, log):
 
 def _diagnosis_remediation_services(root="", log=None):
     return completiondiagnosis.RemediationServices(
-        _write_path, lambda a, b: _same_workspace_path(a, b, root), _command_text, log)
+        _write_path, lambda a, b: _same_workspace_path(a, b, root), _command_text, log,
+        (lambda subject: wsview.current(root).present_now(groundtruth.resolve(root, subject))) if root else None)
 
 
 def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
