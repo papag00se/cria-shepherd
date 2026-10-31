@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cria import assistruntime, completionconfirmation as confirmation, loop, verifytools
+from cria import assistruntime, completionconfirmation as confirmation, loop, verifytools, wsview
 from cria.config import Role
 from loop_rest_helpers import Rlog, loop_rest_local_view  # noqa: F401
 
@@ -133,3 +133,24 @@ def test_a_trailing_sentinel_is_a_decision_not_a_directive():
                         ("ON_TRACK. You keep re-fetching; write it now.", "You keep re-fetching; write it now."),
                         ("NOT_STUCK", None), (d, d)]:
         assert loop._steer_or_none(text) == steer, text
+
+
+def test_the_toolless_retry_of_the_whole_task_judge_still_holds_the_current_workspace_files(tmp_path):
+    """1792381177/0057->0058: the careful pass was cut, and the reasoning-off RETRY (tools withdrawn) also dropped the seeded file bytes,
+    so the same question fell back from the current source to a condensed OLD read and the judge ruled on stale facts. Both POSTs
+    carry the current file; only the tool grant is withdrawn on the retry."""
+    current = 'native_body_value = "after-write"\n'
+    (tmp_path / "source.txt").write_text(current)
+    cut = completion(None, finish="length")
+    answer = completion(json.dumps({"satisfied": False, "reason": "artifact absent", "proposed_fix": ""}))
+    chat, bodies = scripted([cut, answer])
+    token = wsview.bind(wsview.DirectView(str(tmp_path)))
+    try:
+        with assistruntime.bound(assistruntime.AssistRuntime.select(level=5, profile="rank4-ablation")):
+            result = loop.judge_satisfaction("Finish the requested artifact.", 'Earlier observation: native_body_value = "before-write"',
+                                             chat, ROLE, Rlog(), workspace_root=str(tmp_path))
+    finally:
+        wsview.unbind(token)
+    assert result[0] is False and len(bodies) == 2
+    assert bodies[0].get("tools") and not bodies[1].get("tools") and bodies[1]["chat_template_kwargs"]["enable_thinking"] is False
+    assert all(current in "\n".join(m.get("content") or "" for m in b["messages"]) for b in bodies)

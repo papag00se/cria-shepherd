@@ -100,3 +100,42 @@ def test_a_remembered_body_is_dropped_when_it_was_cut_in_transit_or_the_file_cha
     assert wsview.apply_survey(edited, survey(tree(2000), root="/workspace"))
     assert edited.read("go.mod") is None and "go.mod" in wsview.pending("sess-same-size")[0]                    # newer mtime: unknown, and re-asked
     assert wsview.View("/elsewhere", "sess-same-size").read("go.mod") is None                                    # another root never inherits this one's cache
+
+
+def test_a_written_body_is_rechecked_on_mtime_by_later_surveys_and_a_crlf_body_is_never_reconstructed_by_an_edit():
+    """C38b follow-up (69e4136c): a replayed write (`note_written`) left no mtime check at all, so `go get` bumping go.mod's version at the
+    same width was read back as the pre-bump body forever; it is now tree-corroborated exactly when the known tree agrees on size.
+    35af2a86: the edit executor normalises CRs, so a byte replace on a CRLF body would hold bytes that are not the disk."""
+    old = 'require other.com/pkg v1.4.0\n'
+    tree = lambda mtime: f"F\t{mtime}\t{len(old)}\tgo.mod"
+    wsview._BODY_CACHE.clear()
+    view = wsview.View("/workspace", "sess-replayed-write")
+    assert wsview.apply_survey(view, survey(tree(1000), root="/workspace"))      # the write's own survey rides the same result
+    view.note_written("go.mod", old)
+    assert view.read("go.mod") == old                                           # trusted the moment cria watched it land
+    assert wsview.apply_survey(view, survey(tree(1000), root="/workspace")) and view.read("go.mod") == old       # unchanged: still reused
+    assert wsview.apply_survey(view, survey(tree(2000), root="/workspace"))
+    assert view.read("go.mod") is None and "go.mod" in wsview.pending("sess-replayed-write")[0]     # unobserved same-size edit: dropped, re-asked
+    crlf = wsview.View("/w")
+    assert wsview.apply_survey(crlf, survey("F\t1\t30\ta.java", root="/w"))
+    crlf.note_read("a.java", b"import java.a;\r\nclass A {}\r\n")
+    assert crlf.note_edited("a.java", "class A", "class B") is False
+    lf = wsview.View("/w")
+    assert wsview.apply_survey(lf, survey("F\t1\t28\ta.java", root="/w"))
+    lf.note_read("a.java", b"import java.a;\nclass A {}\n")
+    assert lf.note_edited("a.java", "class A", "class B") is True and lf.read_bytes("a.java") == b"import java.a;\nclass B {}\n"
+
+
+def test_a_packed_survey_ride_unpacks_to_exactly_what_the_unpacked_ride_carries(tmp_path):
+    """N2 / 03b28a42: the survey (66 KB over 59 results on phi4/Java A6) rides home zlib-packed and verified; the unpacked packed block kept a
+    trailing newline the legacy path never had, so the coder-visible text and the view's survey differed by one byte."""
+    for i in range(80):
+        (tmp_path / f"mod_{i:02}.py").write_text("x = 1\n" * 40)
+    rides = {}
+    for pack in (False, True):
+        wsview.want_body("n2-pack", "mod_00.py")
+        rides[pack] = subprocess.run(["bash", "-lc", wsview.survey_command("n2-pack", cd=str(tmp_path), budget=9000, pack=pack)],
+                                     capture_output=True, text=True, timeout=120).stdout
+    assert wsview.SURVEY_PACKED in rides[True] and len(rides[True]) * 2 < len(rides[False])
+    assert wsview.strip_survey("⟦ctx:wrote⟧\n" + rides[True]) == wsview.strip_survey("⟦ctx:wrote⟧\n" + rides[False])
+    assert wsview.strip_survey("⟦ctx:wrote⟧\n" + rides[True])[0] == "⟦ctx:wrote⟧"

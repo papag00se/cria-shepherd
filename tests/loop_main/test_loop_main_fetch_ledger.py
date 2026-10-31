@@ -133,3 +133,19 @@ def test_a_continuation_session_inherits_the_ledger_only_on_a_stable_key_and_nev
         assert bool(kept) is inherits
         if inherits:
             assert kept[SPEC][1] == ROUTES
+
+
+@pytest.mark.parametrize("visible,location,says", [(set(), True, ["NOT in this conversation"]), ({"https://docs.rs/toml/"}, True, ["in this conversation above"]),
+                                                   (set(), False, [])])
+def test_a_page_with_no_spec_makes_exactly_one_claim_about_where_its_body_is(visible, location, says):
+    """C31 re-review (799 coder prompts, 200/200 in Handles C27): `no_spec_here` carried its own 'body is in the transcript above' while
+    `body_absent` said 'NOT in this conversation' in the same sentence; the frozen copy (`location=False`) still asserted it. Once
+    visibility is known (or frozen) the label is location-free, so one clause, or none, is the only source of the claim."""
+    page = "https://docs.rs/toml/"
+    webfetch._DOC_CACHE.clear()
+    webfetch._cache_put(page, 200, "text/html", "some prose, no spec", None, False)
+    out = _format_fetches({SPEC: ("HTTP 200", ROUTES, (), (), ""), page: ("HTTP 200", (), (), (), "")}, visible=visible, location=location)
+    webfetch._DOC_CACHE.clear()
+    segment = out[out.index(page):]
+    assert all(segment.count(s) == 1 for s in says) and "transcript above" not in segment
+    assert ("NOT in this conversation" in segment) is ("NOT in this conversation" in says) and "answered with content" in segment

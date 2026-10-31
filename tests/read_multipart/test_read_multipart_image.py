@@ -78,3 +78,64 @@ def test_an_observation_only_counts_when_provider_role_model_image_attempt_and_t
     if fault == 'task-changed':
         with pytest.raises(ImageUnavailable): s.render(prepared)                                               # the older preparation is stale
     assert s.render(newer if fault == 'task-changed' else prepared) == messages
+
+
+STATEMENT = "Look at ./note.png and tell me what it says, then summarise it in one sentence."
+CLAIM = "The note says Save and Cancel. Summary: two buttons."
+APPLIES = "creating or changing files"        # the one deliverable-type question the confirmation asks
+
+
+def judged(rig, task, *, observed, applies="NO", claim=""):
+    """Run the real whole-task judge with a recording provider while the image context is bound; returns (satisfied, kinds, bodies)."""
+    import types
+    from cria import loop, wsview
+    from cria.config import Role
+    from cria.imageworkflow import SourceImageContext, current
+    _, s, route, messages, prepared, ref, body, tmp = rig
+    if observed:
+        attempt = s.begin(ref, TASK, route, body)
+        s.complete(attempt, delivered(attempt, route))
+    kinds, bodies = [], []
+
+    def provider(request, rlog):
+        text = json.dumps(request["messages"], ensure_ascii=False)
+        bodies.append(text)
+        kind, content = (("applies", applies) if APPLIES in text else ("checker", json.dumps({"consistent": False, "why": "not on disk"}))
+                         if "VERIFICATION CHECKER" in text else ("judge", json.dumps({"satisfied": True, "reason": "the observation supports it"})))
+        kinds.append(kind)
+        return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}]}).encode()
+
+    class Log:
+        def emit(self, *a, **k):
+            pass
+    view = wsview.View(str(tmp), "image-judge")
+    view._ingest_tree("D\t\nF\t72\t1\tnote.png", complete=True)
+    tokens = wsview.bind(view), current.set(SourceImageContext(types.SimpleNamespace(), s, prepared, TASK))
+    try:
+        result = loop.judge_satisfaction(task, "$ view_image {}", provider, Role(name="reasoner", backend="local"), Log(),
+                                         workspace_root=str(tmp), messages=messages, closing_claim=claim)
+    finally:
+        current.reset(tokens[1])
+        wsview.unbind(tokens[0])
+    return result[0], kinds, bodies
+
+
+def test_a_statement_about_an_observed_image_skips_the_file_check_and_its_closing_reply_reaches_the_judge_as_a_labelled_claim(rig):
+    """The whole-task file confirmation refused every 'tell me what the image says' turn until the completion-check bound (16/16 replays,
+    ornith1.5_9b) because nothing on disk can confirm it (3be0f879); the closing reply is that task's deliverable and the action log
+    never holds it, so it rides as a LABELLED claim checked against the observation, only where an observation exists (d2387d9a)."""
+    satisfied, kinds, bodies = judged(rig, STATEMENT, observed=True, claim=CLAIM)
+    assert satisfied is True and "checker" not in kinds and kinds.count("applies") == 1
+    first = bodies[0]
+    assert "a claim made by the coder, not evidence" in first and "Summary: two buttons." in first
+
+
+def test_an_unobserved_image_or_a_task_that_writes_a_file_keeps_the_full_confirmation_and_no_closing_claim(rig, tmp_path):
+    """No completed observation: nothing can ground the claim and the brake stays; a task that also writes a file answers YES (or
+    unreadably) and keeps the file check."""
+    satisfied, kinds, bodies = judged(rig, STATEMENT, observed=False, claim=CLAIM)
+    assert satisfied is False and "checker" in kinds and "applies" not in kinds
+    assert not any("THE CODER'S CLOSING REPLY" in b or "Summary: two buttons." in b for b in bodies)
+    for applies in ("YES", "garbled"):
+        satisfied, kinds, _ = judged(rig, "Look at ./note.png, then write what it says into ./out.txt.", observed=True, applies=applies)
+        assert satisfied is False and "checker" in kinds

@@ -233,3 +233,28 @@ def test_a_continuation_never_promises_paired_results_the_body_does_not_hold():
     assert prompts.load("continuation_results_reference").strip() in sent[1]["content"]
     assert "call_x" not in sent[1]["content"] and cont.split("\n\n", 1)[1] in sent[-1]["content"]   # old words quoted, not erased
     assert modelview._paired_ids(sent) == set()
+
+
+OLD_AUTHORITY = ("Every paired tool result listed after the handoff is retained verbatim in this conversation and is ground truth from the "
+                 "harness. Its paired call id is provenance, not a summary claim. If a handoff assertion conflicts with a retained tool "
+                 "result, the tool result wins. If their relationship is unclear, do not resolve it from the handoff: inspect the retained "
+                 "result or current workspace/checks. Do not treat the task as done, redo work, or hunt for files merely because the "
+                 "handoff says so.")        # historical bytes: the universal promise the old ordinary frame carried
+
+
+@pytest.mark.parametrize("summary,authority_copies", [("Kept the parser.", 1),
+                                                      ("A model quoted:\n" + OLD_AUTHORITY + "\nEnd.", 2)], ids=["plain", "quoted-in-account"])
+def test_an_old_continuations_retention_promise_is_quoted_history_not_live_authority(summary, authority_copies):
+    """d8b1e8e3: a stored old frame still told the model every listed result 'is retained verbatim ... ground truth' though the wire now
+    replaces the inventory (the orphaned-ids lie, one paragraph up). Only the exact outer paragraph moves into the quoted history
+    (once); a model-authored account that merely quotes the same words stays literal."""
+    lead = prompts.load("compaction_reframe").split("\n\n", 1)[0]
+    footer = ("Retained authoritative paired tool results (their full original output remains in their paired tool messages):\n"
+              "- paired tool result (call id: call_x)")
+    cont = f"⟦ctx:continuation⟧ {lead}\n\n{OLD_AUTHORITY}\n\nHandoff account (unverified):\n{summary}\n\n{footer}"
+    sent = prep([{"role": "user", "content": "task"}, {"role": "user", "content": cont}])["messages"]
+    live = next(m["content"] for m in sent if m["content"].startswith("⟦ctx:continuation⟧"))
+    framing, _, account = live.partition("\n\nHandoff account (unverified):\n")
+    assert OLD_AUTHORITY not in framing and summary in account and "call_x" not in live
+    assert sum(m["content"].count(OLD_AUTHORITY) for m in sent) == authority_copies
+    assert any(m["content"].startswith("⟦ctx:inventory⟧") and OLD_AUTHORITY in m["content"] and "call_x" in m["content"] for m in sent)

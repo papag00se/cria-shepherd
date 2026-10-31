@@ -71,12 +71,18 @@ def test_a_reasoner_sees_a_one_line_summary_of_a_huge_miss_report_never_the_file
     assert editrecovery.summarize("a normal tool result") == "a normal tool result"
 
 
+BIG = "\n".join(f"v{i} = {i}" for i in range(400))
+HUGE = "x" * 50_000
 # (id, before, old, new, lines the coder must be shown, claims it must not make)
 ECHOES = [
     ("a replacement", SRC, "line 10", "LINE TEN", ["your replacement is at lines 10-10", "10: LINE TEN", "7: line 7", "13: line 13"], []),
     ("a removal", SRC, "line 10\nline 11\n", "", ["the text you removed was at line 10", "10: line 12"], ["your replacement"]),
     ("an exact match claims no whitespace drift", SRC, "line 10", "x", ["Wrote f.txt"], ["whitespace"]),
     ("a flexible match says the spacing differed", "a = 1\n\n\nb = 2\n", "a = 1\n\nb = 2", "c = 3", ["whitespace differences were ignored"], []),
+    # S2 review R1: "omitted" only when context existed and was dropped; a whole-file replacement over the bound has no surrounding
+    # lines to omit, so it says the replacement is not repeated (never "around it"), and one between huge lines says both are not shown.
+    ("a whole-file replacement over the bound is not repeated", "a = 1\nb = 2\n", "a = 1\nb = 2\n", BIG + "\n", ["not repeated here"], ["around it"]),
+    ("a large replacement between huge lines", f"{HUGE}\nMARK\n{HUGE}\n", "MARK", BIG, ["not repeated here", "too large to show"], []),
 ]
 
 

@@ -63,3 +63,29 @@ def test_refusal_texts_say_what_can_be_changed_and_never_say_offline_or_the_prop
     assert f"({WS})" in moved and "ss -ltnp" in kill
     texts = [cache, plain, moved, kill, dirguard.command_refusal("pip install x", "none", WS), dirguard.root_recursive_delete_refusal("rm -rf /")]
     assert all(t and "cria" not in t.lower() for t in texts)
+
+
+TYPO_WS = "/home/jesse/src/proj/runs/suite-rates_m_codex_poff_1787754910-zpsis1_t"
+TYPOS = [("dropped letter", "zpis1_t"), ("doubled letter", "zpssis1_t"), ("transposed pair", "zspis1_t"), ("wrong letter", "zpxis1_t"),
+         ("letter case", "zpsis1_T")]
+
+
+def test_the_workspace_typo_note_fires_on_any_one_mistyped_glyph_and_never_on_a_different_directory():
+    """L5 shipping-rates-rb x nemotron-elastic: `...-zpis1_t` for the real `...-zpsis1_t` (a DROPPED letter, which a case/dash fold cannot
+    see) drew the refusal on 42 of 115 coder calls and scored 8. Three walks, three glyph classes: the note is one edit on the segment."""
+    note = lambda p: "ONLY BY A TYPO" in (dirguard.path_refusal(p, False, "none", TYPO_WS) or "")      # noqa: E731
+    assert not [(label, p) for label, tail in TYPOS for p in (TYPO_WS.replace("zpsis1_t", tail), TYPO_WS.replace("zpsis1_t", tail) + "/Gemfile")
+                if not note(p)]
+    assert note(TYPO_WS.replace("suite-rates", "suite_rates"))
+    assert not [p for p in ("/tmp/test.db", TYPO_WS.replace("zpsis1_t", "zpi1_t"), TYPO_WS.replace("zpsis1_t", "qqqqqqqq"),
+                            "/home/jesse/src/proj/runs") if note(p)]
+
+
+def test_the_reads_allowed_sentence_names_only_folders_a_read_really_clears():
+    """The refusal's 'READS of ... are allowed' sentence is derived from the cache table; every location it names must be readable
+    (the `~/.gem/ruby` marker was missing, so a named folder was refused) and the credential-holding parent must not be advertised."""
+    sentence = dirguard.path_refusal("/etc/passwd", False, "none", WS)
+    named = [sub.split(" ")[0] for _m, sub in dirguard._DEP_CACHE_ROOTS if sub.startswith("~")]
+    assert len(named) >= 4 and "~/.gem/ruby" in named
+    assert not [loc for loc in named if loc not in sentence or dirguard.path_refusal(loc + "/x", False, "none", WS)]
+    assert "(~/.m2, ~/.gradle" not in sentence

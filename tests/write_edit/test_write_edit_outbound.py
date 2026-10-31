@@ -2,9 +2,9 @@
 import json
 import os
 
-from cria import assistruntime, cleanupsafety, denial, dirguard, writeproxy
+from cria import assistruntime, cleanupsafety, denial, dirguard, writeproxy, wsview
 from cria.config import CRIA_HOME
-from write_edit_helpers import do, write_edit_workspace_view  # noqa: F401
+from write_edit_helpers import call, command_of, do, lower, write_edit_workspace_view  # noqa: F401
 
 SOURCE_DELETES_SHARED_TMP = ("import os, shutil, tempfile\n\n\ndef test_it():\n    fd, path = tempfile.mkstemp()\n"
                              "    shutil.rmtree(os.path.dirname(path), ignore_errors=True)\n")
@@ -98,3 +98,18 @@ def test_a_second_call_fused_into_a_write_payload_is_trimmed_whatever_kind_of_ca
     prose = "line one\nline two mentions </function> in prose\nline three\n"
     big = "".join(f"def f{i}(a, b):\n    return a + b\n" for i in range(200))
     assert writeproxy.trim_fused_tail(REAL) == REAL and writeproxy.trim_fused_tail(prose) == prose and writeproxy.trim_fused_tail(big) == big
+
+
+def test_the_workspace_survey_rides_only_on_one_line_results_never_on_a_listing():
+    """144-cell ladder: list_dir (a listing capped at 9,000 bytes) carried the 6.6-10 KB survey, a ~19 KB result the harness cut in the
+    middle; apply_survey refused the remains (449 refused surveys in 11 cells) and the view went stale. Writes and edits keep carrying it."""
+    token = wsview.bind(wsview.View("/w", "unsurveyed"))        # nothing surveyed yet: every call is due
+    try:
+        cmds = {c["id"]: command_of(c) for c in lower(
+            [call("list_dir", {"path": "."}, "ls"), call("write_file", {"path": "n.txt", "content": "x\n"}, "wr"),
+             call("edit_file", {"path": "m.txt", "old_string": "a", "new_string": "b"}, "ed")],
+            injected=("write_file", "edit_file", "list_dir"))}
+    finally:
+        wsview.unbind(token)
+    assert wsview.SURVEY_CMD_OPEN not in cmds["ls"]
+    assert wsview.SURVEY_CMD_OPEN in cmds["wr"] and wsview.SURVEY_CMD_OPEN in cmds["ed"]

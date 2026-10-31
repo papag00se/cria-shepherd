@@ -59,3 +59,26 @@ def test_a_failed_delivery_keeps_the_rewrite_event_until_one_succeeds(monkeypatc
     result = drv.drive(body, KEY, None, Log())
     assert result["choices"][0]["message"]["tool_calls"][0]["id"] == "after"
     assert event(drv, body) is None
+
+
+def test_a_carried_guidance_note_says_how_many_of_the_coders_calls_ago_it_was_delivered(monkeypatch):
+    """Run04 (ornith1.5_9b / Java): the periodic gate's 'CURRENT state of the repo' note over a red build was carried undated in 38
+    requests after the coder's own build passed; at 0065 it re-ran the build, at 0097 re-read a whole file. The words stay exact; the age
+    (the coder's own forwarded calls since the latest delivery) goes beside them, and an entry never recorded as delivered gets none."""
+    import copy
+    drv, sess, body = driver()
+    note = "I am giving you the CURRENT state of the repo: mvn -q compile fails."
+    sess.guidance_history = ["⟦ctx:steer⟧ an earlier note nobody recorded delivering"]
+    sess.nudge_reason = note
+    calls = lambda n, k: {"choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant", "content": None, "tool_calls": [
+        {"id": f"r{n}-{i}", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"f.txt"}'}} for i in range(k)]}}]}
+    send, posted = transport([calls(1, 2), calls(2, 1), calls(3, 1)])
+    monkeypatch.setattr(drv._ctx.coder_chat.__self__, "_receive_open", send)
+    for turn in range(3):
+        message = drv.drive(body, KEY, None, Log())["choices"][0]["message"]
+        body = copy.deepcopy(body)
+        body["messages"] += [message] + [{"role": "tool", "tool_call_id": tc["id"], "content": "text"} for tc in message["tool_calls"]]
+    carried = lambda i: next(m["content"] for m in posted[i]["messages"] if str(m.get("content")).startswith("⟦ctx:guidance-history⟧"))
+    assert "last delivered 2 of your calls ago" in carried(1) and "last delivered 3 of your calls ago" in carried(2)
+    assert all(note in carried(i) for i in (1, 2))
+    assert carried(1).count("last delivered") == 1                       # the undelivered entry is carried with no invented age

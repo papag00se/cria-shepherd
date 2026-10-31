@@ -50,6 +50,17 @@ def test_unstamped_or_coder_authored_marker_text_is_never_rewritten_and_an_unsta
     assert probegate.gate_probes_of("cd /ws && pytest -q") is None and probegate.gate_probes_of(probegate._gate_sentinel(["pytest"])[:-6]) is None
 
 
+def test_repeated_unstamped_checker_results_stay_verbatim_even_when_only_volatile_details_differ():
+    """705301ac (mellum2 1786051505 had the same finding three times in one prompt): repeats of a checker result were collapsed into a
+    back-reference for EVERY `⟦ctx:checks⟧` tool result; an unstamped one is the coder's own model-visible ground truth, so each keeps every byte. Only
+    provenance-linked gate calls may be collapsed."""
+    result = lambda tid, addr, secs: {"role": "tool", "tool_call_id": tid, "content": (
+        f"{probegate.CHECKS_MARKER} x.py:92:10: undefined name 'pytest'\nurl = <urllib.request.Request object at {addr}>\n3 failed in {secs}")}
+    msgs = [result("a", "0x7cd31c34ac60", "0.36s"), {"role": "user", "content": "edit"},
+            result("b", "0x740a465deed0", "0.28s"), result("c", "0x7b2ed94635f0", "0.31s")]
+    assert probegate.clean_gate_results(msgs) == msgs
+
+
 def test_automatic_checks_reach_a_reasoner_as_observations_never_as_the_coders_actions():
     """ornith1.5_9b / Java run1792297428/0055: a steer credited the synthetic gate's green `mvn` as the coder's progress after
     its inspections were refused. Gate call/result become labelled observations; the coder's own identical command stays its own."""

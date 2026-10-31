@@ -1,12 +1,13 @@
 """Completion fails CLOSED, the repository's own commands win over cria's guess, the judge's tools only read, a checkpoint needs pace evidence."""
 import copy
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from cria import completionconfirmation as cc, completionredrive as redrive, execcheck, loop, probegate, verifytools
+from cria import completionconfirmation as cc, completionredrive as redrive, execcheck, loop, probegate, verifytools, wsview
 from cria.probeclassify import ProbeKind, classify_command
 from suite import milestones
 from gates_completion_helpers import Log, gates_completion_view  # noqa: F401
@@ -127,6 +128,22 @@ def test_the_judges_inspection_tools_only_read_inside_the_workspace_and_state_fa
     assert "DIRECTORY" in run("read_file", path="sub") and "does not exist" in run("read_file", path="nope.py")
     assert all("outside the workspace" in run("read_file", path=p) for p in ("/etc/passwd", "escape/passwd"))
     assert "not one of your tools" in run("write_file", path="x", content="y") and not (tmp_path / "x").exists()
+
+
+def test_a_judge_tool_path_on_a_remote_workspace_is_never_resolved_on_this_machine(monkeypatch):
+    """cfd51304: `realpath` on a harness-supplied path resolved it against cria's disk, not the workstation's; the bound workspace
+    view owns remote path algebra. A lexical escape is still 'outside the workspace'; an unsurveyed path is unknown, never a local fact."""
+    root, real, seen = "/harness/workspace", os.path.realpath, []
+    token = wsview.bind(wsview.View(root, "remote"))
+    monkeypatch.setattr(os.path, "realpath", lambda p, *a, **k: seen.append(str(p)) or real(p, *a, **k))
+    try:
+        run = lambda path: verifytools.execute("read_file", {"path": path}, root)                  # noqa: E731
+        outside = [run("../outside"), run("/other-machine/file")]
+        inside = run("src/app.any")
+    finally:
+        wsview.unbind(token)
+    assert all("outside the workspace" in t for t in outside) and "outside the workspace" not in inside
+    assert not [p for p in seen if "harness" in p or "other-machine" in p]
 
 
 VERDICT = dict(usefulness_percent=35, decision="continue", reason="Some useful edits.", material_changes="Worker-local map.",

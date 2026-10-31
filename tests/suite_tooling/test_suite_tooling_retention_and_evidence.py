@@ -3,6 +3,7 @@ packet outlives its workspace, restored role config is restored byte-exact, samp
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -190,3 +191,36 @@ def test_rate_limit_gate_is_shared_across_instances_and_never_retries_early(tmp_
     RateLimitGate(tmp_path, now=lambda: clock[0], sleep=sleep).observe(headers, 429, body)
     RateLimitGate(tmp_path, now=lambda: clock[0], sleep=sleep).wait()
     assert clock[0] >= 1000 + delay
+
+
+class _CaptureLog:
+    session, turn = "capture-companions", "turn"
+
+    def emit(self, *args, **kwargs):
+        pass
+
+
+def test_transport_receipts_are_never_listed_as_model_calls_but_dotted_phases_are(tmp_path):
+    """f1df5bd2 / 47530384: every request's `.receive.json` custody companion was walked and admitted as one more model call (a live Java
+    cell's evidence admission failed on it). The companion relation comes from the producer; a REAL phase may itself be dotted or even
+    `custom.json.receive`, so a suffix denylist would drop real calls. Real producers, the library lister and the file entrypoint agree."""
+    from cria import callcapture, receivecapture
+    from suite import capture_paths, walk
+    expected = []
+    for phase in ("coder-s1", "custom.phase.receive", "custom.json.receive"):
+        path = Path(callcapture.capture({"messages": [{"role": "user", "content": "p"}]}, _CaptureLog(), calls_dir=tmp_path,
+                                        phase=phase, rendered="p\n"))
+        expected.append((path.name.split("-", 1)[0], phase, path.with_suffix("")))
+        receipt = receivecapture.Receipt(path, request_sha256="wire-sha")
+        receipt.origin.close()
+        receipt.meta.close()
+        callcapture.capture_response(path, {"choices": [{"message": {"content": "reply"}}]})
+        assert receipt.meta_path.name == path.name + ".receive.json" and receipt.meta_path.is_file()
+    calls = path.parent
+    assert walk.list_calls(calls) == expected
+    assert [p.name for p in capture_paths.request_paths(calls)] == [e[2].name + ".json" for e in expected]
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    run = subprocess.run([sys.executable, str(walk.__file__), str(calls), "--out", str(tmp_path / "out")], cwd=tmp_path, env=env,
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert sum(p.read_text().count("CALL ") for p in (tmp_path / "out").glob("chunk*.txt")) == len(expected)

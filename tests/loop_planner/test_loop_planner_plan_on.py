@@ -407,3 +407,34 @@ def test_an_admission_guard_that_keeps_rejecting_gives_up_and_the_loop_drives_th
     start = [kw for k, kw in rlog.events if k == "loop.start"]
     assert len(start) == 1 and start[0]["synthetic"] and start[0]["planner_fallback"]
     assert out is not None and len(coder_calls) == 1 and driver.has_session("sid:p18")
+
+
+def test_a_url_route_with_parentheses_is_never_cut_by_filesystem_path_repair(tmp_path):
+    """94cecf88: the URL matcher stopped at `(`/`)`, so `https://host/openapi/(v1)/x/routes.json` was truncated at `(v1)` and its tail
+    `/x/routes.json` scrubbed as an 'external path'. Prose delimiters around the URL stay; a real external path beside it is still removed."""
+    url = "https://api.handle.me/openapi/(v1)/x/routes.json"
+    assert planner.repoint_unusable_paths(f"Read {url} now", str(tmp_path)) == (f"Read {url} now", "")
+    fixed, note = planner.repoint_unusable_paths(f"Read ({url}), then inspect /etc/nope/missing.yml", str(tmp_path))
+    assert fixed == f"Read ({url}), then inspect" and note == "/etc/nope/missing.yml removed"
+
+
+def test_a_confirmed_step_cannot_cross_a_current_negative_whole_task_verdict(monkeypatch):
+    """24e556ed (C8): a per-step 'consistent' confirmation has step provenance, not task-satisfaction provenance; marking the item done
+    would let the tail replan discard the repair the whole-task judge kept open. The item and its tail stay, the coder gets the
+    evidence, and only a LATER satisfaction pass may release it."""
+    from unittest import mock
+    evidence = "CHECK RESULT: required behavior remains unmet"
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=lambda b, r: json.dumps(tool_call_reply()).encode(),
+                                        reasoner_chat=lambda *_: b"{}", runs_dir="", planner_enabled=True,
+                                        pilot_runtime=assistruntime.AssistRuntime.select(experimental_planning=True)))
+    sess = loop.PlanSession(plan=Plan(id="boundary", task="deliver the requested behavior", created="now",
+                                      items=[PlanItem("implement the active behavior"), PlanItem("verify the remaining behavior")]))
+    loop._record_satisfaction(sess, False, evidence)
+    approval = loop.Verification(True, "consistent with the inspected workspace", loop.Confirmation(True, True, "confirmed"))
+    rlog, replans = Rlog(), mock.Mock(wraps=driver._replan_tail)
+    with assistruntime.bound(driver._ctx.pilot_runtime), mock.patch.object(driver, "_verify", return_value=approval), \
+            mock.patch.object(driver, "_replan_tail", replans):
+        out = driver._periodic_step_check(sess, "k", {"messages": [{"role": "user", "content": "go"}], "tools": [SHELL]}, 1, 2, rlog, force=True)
+    assert out["choices"][0]["message"].get("tool_calls") and not sess.plan.items[0].done
+    assert not [c for c in replans.call_args_list if c.kwargs.get("trigger", lp.Trigger.ADVANCE) is lp.Trigger.ADVANCE]
+    assert "loop.step_held_satisfaction" in rlog.kinds() and "loop.step_done" not in rlog.kinds()
