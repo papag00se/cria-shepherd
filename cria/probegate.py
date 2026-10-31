@@ -55,7 +55,7 @@ from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: 
 
 # Marker line delimiting each section of the composed script's output. The id after the
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
-from .toolwire import SECTION_PREFIX, GATE_SENTINEL
+from .toolwire import SECTION_PREFIX, GATE_SENTINEL, _GATE_LINE
 SECTION_SUFFIX = "___"
 # Historical path listings are not removal acknowledgements. New gates finish cleanup on the
 # harness and carry actual removed paths / failures before the final workspace survey.
@@ -2069,17 +2069,32 @@ def _gate_sentinel(probes: list[str]) -> str:
 
 
 def gate_probes_of(cmd: str) -> list[str] | None:
-    """The probe list a gate command declares, or None when this is not a cria-authored gate."""
-    for line in (cmd or "").splitlines():
-        s = line.strip()
-        if not s.startswith("# " + GATE_SENTINEL):
-            continue
-        try:
-            got = json.loads(base64.b64decode(s[len("# " + GATE_SENTINEL):].encode()).decode("utf-8"))
-        except Exception:                       # noqa: BLE001 — an unreadable stamp is not a gate
-            return None
-        return [str(x) for x in got] if isinstance(got, list) else None
-    return None
+    """The probe list a gate command declares, or None when this is not a cria-authored gate.
+
+    THE DECLARATION LIVES AT ONE POSITION — the very first line of the command, exactly as `toolwire` reads cria's own
+    lowering sentinel (``is_crias_own``). A model's OWN command that merely carries the stamp on a later line (a heredoc,
+    an echo, a file it writes) declares nothing: found on any line, it made the model's `rm -rf build && make` a "gate
+    call" whose text `_strip_command_plumbing` then REWROTE, in the history the model re-reads, to whatever probe list the
+    quoted stamp named, and whose result every `gate_call_ids` reader attributed to cria instead of the coder."""
+    m = _GATE_LINE.match(cmd or "")
+    if m is None:
+        return None
+    try:
+        got = json.loads(base64.b64decode(m.group(1).encode()).decode("utf-8"))
+    except Exception:                           # noqa: BLE001 — an unreadable stamp is not a gate
+        return None
+    return [str(x) for x in got] if isinstance(got, list) else None
+
+
+def _command_text(value) -> str:
+    """The command a shell tool's ``cmd``/``command`` field carries. A string is itself; for an argv array it is the ELEMENT that
+    opens with the declaration (cria's own is ``["bash", "-lc", script]``, `shelltool.shell_args`), else the last element: the
+    position rule is per command text, and joining the whole array would put a real declaration after `bash\\n-lc`."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value:
+        return next((str(x) for x in value if _GATE_LINE.match(str(x))), str(value[-1]))
+    return ""
 
 
 def gate_call_ids(messages: list) -> set:
@@ -2102,9 +2117,7 @@ def gate_call_ids(messages: list) -> set:
             if not isinstance(args, dict):
                 continue
             for field in ("cmd", "command"):
-                value = args.get(field)
-                command = (value if isinstance(value, str) else
-                           "\n".join(str(part) for part in value) if isinstance(value, list) else "")
+                command = _command_text(args.get(field))
                 if gate_probes_of(command) is not None:
                     if call.get("id"):
                         ids.add(call["id"])
@@ -2159,7 +2172,7 @@ def cria_authored_call_ids(m: dict) -> set:
             continue
         for field in ("cmd", "command"):
             v = a.get(field)
-            text = v if isinstance(v, str) else ("\n".join(str(x) for x in v) if isinstance(v, list) else "")
+            text = _command_text(v)
             if gate_probes_of(text) is not None and not _strip_gate_plumbing(text).strip():
                 if tc.get("id"):
                     ids.add(tc["id"])
@@ -2190,9 +2203,9 @@ def _strip_command_plumbing(m: dict) -> dict:
                         a[field] = _strip_gate_plumbing(v)
                         call_changed = True
                     elif isinstance(v, list):
-                        joined = "\n".join(str(x) for x in v)
-                        if gate_probes_of(joined) is not None:
-                            a[field] = [_strip_gate_plumbing(joined)]
+                        script = _command_text(v)
+                        if gate_probes_of(script) is not None:
+                            a[field] = [_strip_gate_plumbing(script)]
                             call_changed = True
                 if call_changed:
                     tc = {**tc, "function": {**fn, "arguments": json.dumps(a)}}
