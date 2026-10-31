@@ -178,12 +178,138 @@ def _installs_into_the_project(command: str, workspace: str | None) -> bool:
 #
 # `kill <pid>` is untouched. A literal pid is a process the coder has identified, which is the whole
 # difference between stopping your own server and clearing the machine.
-_PATTERN_KILL = re.compile(
-    r"(?:^|[\s;&|(])(?:"
-    r"pkill\b|killall\b|fuser\b[^;&|]*\s-k\b|skill\b"
-    r"|kill\b[^;&|]*\$\("                       # kill $(lsof …) / kill $(pgrep …)
-    r"|kill\b[^;&|]*`"                            # backtick form
-    r")", re.IGNORECASE)
+_NAME_KILLERS = frozenset({"pkill", "killall", "skill"})
+# What a kill is REACHED THROUGH. Each wrapper runs the command that follows it; the table says which of its
+# flags take a separate operand (`sudo -u root`, `timeout -s KILL`) and how many positional operands come
+# before the command (`timeout 5`). A finite grammar fact about where the command word sits, nothing more.
+_KILL_WRAPPERS = {
+    "sudo": (frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group", "--host"}), 0),
+    "doas": (frozenset({"-u", "-C"}), 0),
+    "env": (frozenset({"-u", "-C", "--unset", "--chdir"}), 0),
+    "timeout": (frozenset({"-s", "-k", "--signal", "--kill-after"}), 1),
+    "nohup": (frozenset(), 0), "time": (frozenset({"-f", "-o", "--format", "--output"}), 0),
+    "command": (frozenset(), 0), "builtin": (frozenset(), 0), "exec": (frozenset({"-a"}), 0),
+    "nice": (frozenset({"-n", "--adjustment"}), 0), "setsid": (frozenset(), 0),
+    "stdbuf": (frozenset({"-i", "-o", "-e"}), 0), "ionice": (frozenset({"-c", "-n", "-p", "-P", "-u"}), 0),
+    "xargs": (frozenset({"-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a", "--max-args", "--max-procs", "--delimiter"}), 0),
+}
+_KILL_DEPTH = 6
+
+
+def _program_name(word: str) -> str:
+    """The program a command word names: bare, or by a system directory (`/usr/bin/pkill`); anything else
+    (`./pkill`, `/opt/x/pkill`) is some other program and keeps its whole spelling."""
+    return os.path.basename(word) if os.path.dirname(word) in _SYSTEM_PROGRAM_DIRS or not os.path.dirname(word) else word
+
+
+def _wrapped_command(words: list[str]) -> list[str]:
+    """The command a segment really runs, for the kill reader and the root-delete reader: the lead words `_command_words` skips, plus
+    each wrapper in `_KILL_WRAPPERS` with the operands ITS flags take. `command -v X` / `command -V X` only
+    look X up, so they run nothing."""
+    while words:
+        word = words[0]
+        name = _program_name(word)
+        if word in _SHELL_RESERVED_LEAD or re.match(r"^\w+=", word):
+            words = words[1:]
+        elif name in _KILL_WRAPPERS:
+            takes, positional = _KILL_WRAPPERS[name]
+            words = words[1:]
+            while words and words[0].startswith("-") and words[0] != "-":
+                if name in ("command", "builtin") and words[0] in ("-v", "-V"):
+                    return []
+                flag = words[0]
+                words = words[(2 if flag in takes else 1):]
+                if flag == "--":
+                    break
+            words = words[positional:]
+        else:
+            break
+    return words
+
+
+def _shell_body(args: list[str]) -> str | None:
+    """The script a `bash -c '…'` / `sh -lc '…'` call carries (the first operand after the option cluster
+    that holds `c`)."""
+    for i, arg in enumerate(args):
+        if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+            rest = [a for a in args[i + 1:] if not a.startswith("-")]
+            return rest[0] if rest else None
+        if not arg.startswith("-"):
+            return None
+    return None
+
+
+def _unescaped(body: str) -> str:
+    """A `bash -c "kill \\$(pgrep x)"` body as the inner shell reads it: the lexer keeps the backslash that
+    guarded the `$` or backtick from the OUTER shell."""
+    return re.sub(r"\\([$`])", r"\1", body)
+
+
+def _kills_by_selector(words: list[str], marks: str) -> bool:
+    """Is this ONE command (wrappers already removed) a kill whose selector is unbounded?"""
+    if not words:
+        return False
+    name, args = _program_name(words[0]), words[1:]
+    if name in _NAME_KILLERS:
+        return True
+    if name == "fuser":
+        return any(a == "-k" or (a.startswith("-") and not a.startswith("--") and "k" in a) for a in args)
+    if name == "kill":
+        return any(m in a for a in args for m in marks)        # kill $(lsof …) / kill `pgrep …`: the substitution IS the selector
+    return False
+
+
+def _kill_in_script(script: str, depth: int = 0, inherited: str = "") -> bool:
+    """Does any COMMAND in this script (each segment's command word, through wrappers, `bash -c` bodies,
+    `find -exec`, `eval` and command substitutions) kill by an unbounded selector? A bounded backstop: a kill
+    word that is only an argument (`echo pkill -f x`, `grep pkill file`, `man kill`) is prose and is admitted.
+    Text it cannot tokenize is not judged here: `command_refusal` has already refused it as unproven."""
+    if depth > _KILL_DEPTH:
+        return False
+    layout = shellinput.layout(script)          # a heredoc body is data, in a substitution body as at the top
+    if layout.error:
+        return False
+    script = layout.shell
+    subs, unknown = shellinput.expansions(script, shell=True)
+    if unknown:
+        return False
+    if any(_kill_in_script(sub.text(script), depth + 1) for sub in subs):
+        return True
+    mark = next((chr(c) for c in range(0xE000, 0xF8FF) if chr(c) not in script and chr(c) not in inherited), "\ue000")
+    marks = inherited + mark
+    flat, last = [], 0
+    for sub in subs:
+        flat.append(script[last:sub.start])
+        flat.append(mark)
+        last = sub.end
+    flat.append(script[last:])
+    commands = _input_commands("".join(flat), unwrap=False)
+    if commands is None:
+        return False
+    for _s, _e, words, _targets, _inputs in commands:
+        words = _wrapped_command(words)
+        if _kills_by_selector(words, marks):
+            return True
+        if not words:
+            continue
+        name, args = _program_name(words[0]), words[1:]
+        bodies = []
+        if name in _SHELLS or name in ("su", "eval"):
+            body = " ".join(args) if name == "eval" else _shell_body(args)
+            bodies.append(body)
+        elif name == "find":
+            for i, arg in enumerate(args):
+                if arg in ("-exec", "-execdir", "-ok", "-okdir"):
+                    run = []
+                    for word in args[i + 1:]:
+                        if word in (";", "+"):
+                            break
+                        run.append(word)
+                    if _kills_by_selector(_wrapped_command(run), marks):
+                        return True
+        if any(body and _kill_in_script(_unescaped(body), depth + 1, marks) for body in bodies):
+            return True
+    return False
 
 
 def kill_refusal(command: str, level: str) -> str | None:
@@ -192,10 +318,16 @@ def kill_refusal(command: str, level: str) -> str | None:
 
     Deliberately NOT a security control — the same best-effort posture as the rest of raw-shell
     handling, and the same reason: a weak model reaching past the workspace usually does it by
-    accident, and the cheapest fix is to say so at the moment it happens."""
+    accident, and the cheapest fix is to say so at the moment it happens.
+
+    Judged per COMMAND WORD, not by a pattern over the text. Seen: `pkill`/`killall`/`skill`, `fuser -k`,
+    and a `kill` whose operand is a command substitution, reached through the wrappers in `_KILL_WRAPPERS`,
+    `bash -c`/`sh -c`/`su -c`/`eval` bodies, `if … then`, `find -exec` and substitutions. NOT seen: a kill
+    behind a function, a sourced or saved script, `ssh host pkill`, `docker exec c pkill`, `watch pkill`,
+    `parallel`, a wrapper that is not in the table, or a pid list built in a variable (`kill $PIDS`)."""
     if level == "write" or not command:
         return None
-    if not _PATTERN_KILL.search(command):
+    if not _kill_in_script(command):
         return None
     return prompts.load("pattern_kill_refusal")
 
@@ -1991,12 +2123,101 @@ def _is_root_word(word: str) -> bool:
     return bool(_ROOT_WORD.fullmatch(word))
 
 
-def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
-    """Keep source quote ownership and distinguish possible glob options."""
+_ASSIGN_WORD = re.compile(r"([A-Za-z_]\w*)=")
+_ASSIGN_KEYWORDS = frozenset({"export", "declare", "local", "readonly", "typeset"})
+
+
+class _RootFact(NamedTuple):
+    """HOW an operand was found to be the root (or the home directory): `kind` is `shape` (a spelling of
+    `/`), `dotdot` (a path whose `..` leads back to `/`), `variable` (`$R` with `R=/` assigned earlier in the
+    same script) or `home` (a variable that is the home directory). Carried so the refusal can say the real
+    fact instead of a generic claim."""
+    kind: str
+    operand: str
+    name: str = ""
+    value: str = ""
+
+
+def _dotdot_root(text: str) -> bool:
+    """Is this literal path a directory that resolves to `/` through `.`/`..` steps? Resolved on THIS host's
+    filesystem (`realpath`), so a symlink in front of a `..` is followed the way the kernel follows it: with
+    `/tmp/link` pointing at `/usr`, `/tmp/link/..` IS `/`, and a lexical collapse would call it `/tmp`.
+    Only a path that ENDS in a directory step is asked (`rm /link` unlinks the link; it never reaches what the
+    link points at). Unseen: a link on another host than the one cria runs on."""
+    base = text[:-1] if text.endswith("/*") else text
+    if not base.startswith("/") or re.search(r"[$*?\[`{]", base) or not re.search(r"(?:^|/)\.\.?/*$", base):
+        return False
+    return os.path.realpath(base) == "/"
+
+
+def _typed_operand(word: str, source: str, env: dict[str, str]) -> tuple[str, tuple[str, ...]] | None:
+    """The operand's text with every `$NAME` / `${NAME}` replaced by a value assigned earlier in the same
+    script, and the names used; None when any part is not a typed fact (a variable never assigned here, a
+    value from the environment, single-quoted or backslashed text, a substitution). `$HOME` and `~` are the
+    home directory. Operand text without a `$` is its own answer."""
+    if "$" not in source:
+        return word, ()
+    if "'" in source or "\\" in source:
+        return None
+    names: list[str] = []
+
+    def value(match):
+        name = match.group(1) or match.group(2)
+        known = env.get(name, "~" if name == "HOME" else None)
+        if known is None:
+            raise KeyError(name)
+        names.append(name)
+        return known
+    try:
+        text = re.sub(r"\$(?:(\w+)|\{(\w+)\})", value, source.replace('"', ""))
+    except KeyError:
+        return None
+    return (None, ()) if "$" in text or "`" in text else (text, tuple(names))
+
+
+def _root_fact(word: str, source: str, env: dict[str, str]) -> _RootFact | None:
+    typed = _typed_operand(word, source, env)
+    if typed is None or typed[0] is None:
+        return None
+    text, names = typed
+    if _is_root_word(text) or _dotdot_root(text):
+        if names:
+            return _RootFact("variable", source, names[-1], env.get(names[-1], "~"))
+        return _RootFact("shape" if _is_root_word(text) else "dotdot", source)
+    if names and text.rstrip("/") == "~":
+        return _RootFact("home", source, names[-1] if names[-1] in env else "", "~")
+    return None
+
+
+def _note_assignment(segment, env: dict[str, str]) -> None:
+    """A segment of nothing but assignments (`R=/`, `export R=/`, `local -r R=/`) sets shell variables for
+    the rest of the script; `R=/ rm …` does not (the shell expands `$R` first). Straight-line order only: a
+    conditional, a loop or a function body is read as if it ran. A value that is not typed (an unknown `$X`,
+    a substitution) leaves the name unknown."""
+    words = list(segment)
+    while words and (words[0][0] in _ASSIGN_KEYWORDS or words[0][0].startswith("-")) and any(
+            _ASSIGN_WORD.match(w) for w, _ in words[1:]):
+        words = words[1:]
+    if not words or not all(_ASSIGN_WORD.match(w) for w, _ in words):
+        return
+    for word, source in words:
+        name, _, rest = word.partition("=")
+        typed = _typed_operand(rest, source.partition("=")[2], env)
+        if typed is None or typed[0] is None:
+            env.pop(name, None)
+        else:
+            env[name] = typed[0]
+
+
+def _root_delete_in_flat(text: str, mark: str = "") -> tuple[str | None, _RootFact | None]:
+    """Keep source quote ownership and distinguish possible glob options. -> (verdict, fact): PROVEN /
+    POSSIBLE / None, and the first `_RootFact` behind it (a PROVEN root operand, else a home-directory one)."""
     tokens = _shell_tokens(text)
     if tokens is None:
-        return None
+        return None, None
     segment, possible, redirect = [], False, False
+    env: dict[str, str] = {}
+    fact = home = None
     for word, start, end in [*tokens, (';', len(text), len(text))]:
         source = text[start:end]
         if redirect:
@@ -2011,10 +2232,9 @@ def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
             if word:
                 segment.append((word, source))
             continue
-        if segment[:1] and segment[0][0] == 'sudo':
-            segment = segment[1:]
-            while segment and segment[0][0] in ('-n', '--'):
-                segment = segment[1:]
+        _note_assignment(segment, env)
+        if segment:           # the command a wrapper (`sudo -u x`, `env A=1`, `nohup`, `timeout 5`, `A=1 rm …`) runs
+            segment = segment[len(segment) - len(_wrapped_command([w for w, _ in segment])):]
         if segment[:1] and segment[0][0] == 'rm':
             recursive, glob_recursive = False, False
             for option, spelling in segment[1:]:
@@ -2026,15 +2246,20 @@ def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
                 elif option == '--recursive' or (option.startswith('-') and not option.startswith('--')
                                                 and 'r' in option.lower()):
                     recursive = True
-            if any(_is_root_word(w) for w, _ in segment[1:]):
+            facts = [f for f in (_root_fact(w, src, env) for w, src in segment[1:]) if f]
+            roots = [f for f in facts if f.kind != 'home']
+            if roots:
                 if recursive:
-                    return 'PROVEN'
+                    return 'PROVEN', roots[0]
                 possible |= glob_recursive
-        elif (len(segment) > 1 and segment[0][0] == 'find' and _is_root_word(segment[1][0]) and not segment[1][0].endswith('*')
-              and any(w == '-delete' for w, _ in segment[2:])):
-            return 'PROVEN'
+            elif facts and recursive:
+                home = home or facts[0]
+        elif (len(segment) > 1 and segment[0][0] == 'find' and any(w == '-delete' for w, _ in segment[2:])):
+            found = _root_fact(*segment[1], env)
+            if found and found.kind != 'home' and not segment[1][0].endswith('*'):
+                return 'PROVEN', found
         segment = []
-    return 'POSSIBLE' if possible else None
+    return ('POSSIBLE' if possible else None), home
 
 
 def _script_between(text: str, lo: int, hi: int) -> str:
@@ -2047,7 +2272,7 @@ def _script_between(text: str, lo: int, hi: int) -> str:
     return inner
 
 
-def _root_delete_assessment(command: str) -> str | None:
+def _root_delete_scan(command: str) -> tuple[str | None, _RootFact | None, _RootFact | None]:
     """Narrow direct-shell root deletion backstop, independent of directory permission.
 
     Tokenize rather than matching prose in echo/grep/comments. This is not a shell
@@ -2058,7 +2283,7 @@ def _root_delete_assessment(command: str) -> str | None:
     substitutions are judged like any other — a `<<` anywhere never makes this abstain.
     """
     if not command:
-        return None
+        return None, None, None
     # A shell text is read in ITS OWN CONTEXT, and a command substitution is a context of its own: a
     # fresh script (word start, no quote) whose comments end at ITS newlines and whose quote characters
     # never open or close a quote of the text around it. So each work item is a RAW source text, and:
@@ -2074,7 +2299,7 @@ def _root_delete_assessment(command: str) -> str | None:
     # A LIST, never recursion, so nesting depth is unbounded by the interpreter; each body is judged
     # BEFORE any permission level is looked at (the write level returns this verdict alone). An expansion
     # that owner cannot delimit abstains, as it always did.
-    pending, possible = [command], False
+    pending, possible, fact, home = [command], False, None, None
     while pending:
         # Each text is read with its ANSI-C strings ended where bash ends them (same length, so every
         # extent below still indexes it): `echo $'\'' ; rm -rf / #'` runs the rm.
@@ -2102,9 +2327,10 @@ def _root_delete_assessment(command: str) -> str | None:
         # Decode against the unmasked source while retaining substitution placeholders.
         decoded = shellinput.decode_ansi_c("".join(original_outer), outer_text)
         text = _join_continuations(decoded, drop_comments=True)[0]
-        verdict = _root_delete_in_flat(text, mark)
+        verdict, found = _root_delete_in_flat(text, mark)
         if verdict == 'PROVEN':
-            return verdict
+            return verdict, found, home
+        home = home or found
         possible |= verdict == 'POSSIBLE'
         extents = {(body.start, body.end) for body in bodies}
         found = [(body.body, raw) for body in bodies]
@@ -2120,18 +2346,49 @@ def _root_delete_assessment(command: str) -> str | None:
                                        (joined_origin[last_ - 1] + 1) if last_ > first else len(raw)), joined))
         for (lo, hi), source in found:
             pending.append(_script_between(raw, lo, hi))
-    return 'POSSIBLE' if possible else None
+    return ('POSSIBLE' if possible else None), None, home
+
+
+def _root_delete_assessment(command: str) -> str | None:
+    """PROVEN / POSSIBLE / None; the verdict `cleanupsafety` reads for a saved shell script."""
+    return _root_delete_scan(command)[0]
 
 
 def root_recursive_delete_refusal(command: str) -> str | None:
     """The refusal text for a root deletion the lexical backstop proves (or cannot rule out, for a
-    wildcard that may supply the recursive option); None otherwise. A bounded backstop, not a parser."""
-    assessment = _root_delete_assessment(command)
-    if assessment == 'PROVEN':
+    wildcard that may supply the recursive option); None otherwise. A bounded backstop, not a parser or a
+    sandbox. It resolves what the command TYPES: the spellings of `/`, a literal path whose `.`/`..` steps
+    lead back to `/` (resolved on this host, symlinks followed), and `$R` where `R=/` is assigned earlier in the
+    same script text. Unseen, and so admitted: a value from the environment (`$TARGET` never assigned here), a
+    symlink that IS the operand's final component, an assignment inside a child script (a substitution body,
+    `bash -c`, a saved file) for a delete outside it, a variable built from a substitution, loop variables
+    (`for d in /; do rm -rf $d`), and a conditional assignment is read as if it ran. The text says which fact
+    it rests on, never more."""
+    verdict, fact, _home = _root_delete_scan(command)
+    if verdict == 'PROVEN':
+        if fact and fact.kind == 'dotdot':
+            return prompts.fill(prompts.load_map('root_recursive_delete_resolved')['dotdot'], operand=fact.operand)
+        if fact and fact.kind == 'variable':
+            return prompts.fill(prompts.load_map('root_recursive_delete_resolved')['variable'],
+                                operand=fact.operand, name=fact.name, value=fact.value)
         return prompts.load('root_recursive_delete_refusal')
-    if assessment == 'POSSIBLE':
+    if verdict == 'POSSIBLE':
         return prompts.load('work_log_denied')
     return None
+
+
+def home_recursive_delete_refusal(command: str, level: str) -> str | None:
+    """A recursive delete of the HOME directory reached through a variable assigned earlier in the same script
+    (`H=~; rm -rf "$H"`, `rm -rf $HOME`). The literal `rm -rf ~` is an external path the path scan already judges
+    at `none`/`read`; this is the same fact for the spelling the scan cannot see (`$H` is an unresolved
+    expansion to it). At `write` the operator accepted unrestricted paths, so home deletion is their choice."""
+    if level == 'write':
+        return None
+    _verdict, _fact, home = _root_delete_scan(command)
+    if home is None:
+        return None
+    words = prompts.load_map('root_recursive_delete_resolved')
+    return prompts.fill(words['home_assigned'] if home.name else words['home_env'], operand=home.operand, name=home.name)
 
 
 # A directory change is PERSISTED STATE, not a read. In a harness whose shell keeps its working
@@ -2207,6 +2464,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
     root_delete = root_recursive_delete_refusal(command)
     if root_delete or level == "write":
         return root_delete
+    home_delete = home_recursive_delete_refusal(command, level)
+    if home_delete:
+        return home_delete
     if _depth > 3:
         return prompts.load('external_write_unproven')
     layout = shellinput.layout(command)
@@ -2254,9 +2514,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         return installing
     # Same class, judged in the same place: a selector that reaches outside the workspace without
     # naming a path, so the scan below can never see it.
-    # Judged on the layout's view, which keeps every substitution: `kill $(lsof -t -i :8081)` IS the selector,
+    # Judged on the SOURCE (its layout view keeps every substitution): `kill $(lsof -t -i :8081)` IS the selector,
     # and the `outer_shell` above has already replaced its body with an opaque word.
-    killing = kill_refusal(layout.shell, level)
+    killing = kill_refusal(layout.source, level)
     if killing:
         return killing
     # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a

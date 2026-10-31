@@ -55,3 +55,76 @@ READS_BESIDE_NETWORK = [("cat /etc/shadow; curl http://h", 1, 0), ("curl http://
 @pytest.mark.parametrize("command,at_none,at_read", READS_BESIDE_NETWORK)
 def test_an_external_read_beside_a_network_call_is_still_an_external_read(command, at_none, at_read):
     assert bool(dirguard.command_refusal(command, "none", WS)) is bool(at_none) and bool(dirguard.command_refusal(command, "read", WS)) is bool(at_read)
+
+
+# (command, refused as a pattern kill): the kill word must be a COMMAND WORD, reached through the wrappers a coder really uses
+KILLS = [
+    # the incident forms stay refused (orders-api-py x nemotron-elastic: the operator's systemd services were taken down)
+    ("pkill -f uvicorn", 1), ("kill $(lsof -t -i :8081)", 1), ("kill $(pgrep -f node)", 1), ("kill `pgrep -f node`", 1),
+    ('echo "$(kill $(pgrep -f node))"', 1), ("killall python3", 1), ("fuser -k 8081/tcp", 1), ("fuser -km 8081/tcp", 1),
+    # one row per wrapper a kill is reached through
+    ("sudo pkill -f x", 1), ("sudo -u root pkill -f x", 1), ("xargs pkill -f", 1), ("timeout 5 pkill x", 1), ("timeout -s KILL 5 pkill x", 1),
+    ("env A=1 pkill x", 1), ("nohup pkill -f x &", 1), ("nice -n 5 killall x", 1), ("/usr/bin/pkill x", 1), ("bash -c 'pkill -f x'", 1),
+    ("sh -c \"kill $(lsof -t -i :8081)\"", 1), ("sh -c \"kill \\$(pgrep x)\"", 1), ("sudo bash -lc 'timeout 3 pkill x'", 1),
+    ("if pkill -f x; then echo up; fi", 1), ("while pkill x; do :; done", 1), ("x=$(pkill -f y)", 1), ("echo `pkill x`", 1),
+    ("eval 'pkill x'", 1), ("find . -name x -exec pkill y \\;", 1), ("echo ok; true && pkill x", 1),
+    ("sh -c 'bash -c \"pkill x\"'", 1),
+    # a kill word that is only an argument is prose
+    ("echo pkill -f x", 0), ("grep pkill file", 0), ("man kill", 0), ("rg -n 'pkill|killall' cria", 0), ("command -v pkill", 0),
+    ("which pkill", 0), ("for t in ss pkill fuser; do command -v $t; done", 0), ("echo $(date) pkill", 0), ("pgrep -f x", 0),
+    ("ssh host 'pkill -f x'", 0),                    # a REMOTE kill: unseen (and not this machine's processes)
+    # bounded kills: a literal pid, a variable the coder holds, a heredoc/saved text that merely mentions one
+    ("kill -9 4242", 0), ("kill -TERM $PID", 0), ("kill 4242 && echo $(date)", 0), ("kill -0 4242 || echo $(seq 1 3)", 0),
+    ("kill -TERM 4242\nfor i in $(seq 1 3); do kill -0 4242 || break; done", 0),   # an old pattern spanned the newline into the `$(`
+    ("# kill only it\npid=$(ss -ltnp | grep :4096)\nkill \"$pid\"", 0),
+    ("cat <<'EOF'\npkill -f x\nEOF", 0), ("echo $(cat <<'EOF'\n`kill -9 $(lsof -t -i :8080)`\nEOF\n)", 0),
+]
+
+
+@pytest.mark.parametrize("command,refused", KILLS)
+def test_a_selector_kill_is_refused_where_it_is_a_command_word_and_admitted_as_prose(command, refused):
+    assert bool(dirguard.kill_refusal(command, "none")) is bool(refused)
+    assert dirguard.kill_refusal(command, "write") is None
+    assert bool(dirguard.command_refusal(command, "none", WS)) or not refused    # and the public entry point refuses it too
+
+
+# (command, what the root-delete backstop must say): 'root:<fact>' / 'home' / None = admitted
+RESOLVED = [
+    ("rm -rf /", "root:filesystem root"), ("FOO=1 rm -rf /", "root:filesystem root"), ("env rm -rf /", "root:filesystem root"),
+    ("nohup rm -rf /", "root:filesystem root"), ("sudo -u root rm -rf /", "root:filesystem root"), ("timeout 5 rm -rf /", "root:filesystem root"),
+    ("command -v rm", None), ("echo rm -rf /", None), ("rm -rf /a/..", "root:resolves to `/`"), ("rm -rf /usr/../*", "root:resolves to `/`"),
+    ("rm -rf /tmp/../..", "root:filesystem root"),
+    ('R=/; rm -rf "$R"', "root:`R` was set to `/`"), ("R=/\nrm -rf $R/*", "root:`R` was set to `/`"), ("export R=/ && rm -rf ${R}", "root:`R` was set to `/`"),
+    ("B=/; R=$B; rm -rf \"$R\"", "root:`R` was set to `/`"), ("R=/; find \"$R\" -delete", "root:`R` was set to `/`"), ("sudo rm -rf $R; R=/", None),
+    ("R=/; R=build; rm -rf $R", None),               # the later assignment wins
+    ("R=/ rm -rf $R", None),                        # the shell expands $R before the assignment applies
+    ("rm -rf $TARGET", None), ("T=$(pwd); rm -rf $T", None), ("R=/; rm -rf '$R'", None), ("for d in /; do rm -rf $d; done", None),
+    ("R=/; rm -f $R", None), ("rm -rf /zz/../zz", None), ("R=/; echo $R", None),
+    ('H=~; rm -rf "$H"', "home:`H` was set to it"), ("rm -rf $HOME", "home:$HOME is your home directory"), ("rm -rf $HOME/build", None),
+    ("H=~; rm -rf $H/build", None), ("rm -rf ~", None),     # a literal `~` is the path scan's: an external path
+]
+
+
+@pytest.mark.parametrize("command,expected", RESOLVED)
+def test_the_root_and_home_delete_backstops_resolve_what_the_command_types_and_say_which_fact(command, expected):
+    root, home = dirguard.root_recursive_delete_refusal(command), dirguard.home_recursive_delete_refusal(command, "none")
+    if expected is None:
+        assert not root and not home
+    elif expected.startswith("root:"):
+        assert root and expected[5:] in root and not home
+        assert dirguard.command_refusal(command, "write", WS) == root                      # refused even at write
+    else:
+        assert home and expected[5:] in home and not root
+        assert dirguard.command_refusal(command, "read", WS) == home                       # the operator's choice at write
+        assert dirguard.command_refusal(command, "write", WS) is None and dirguard.home_recursive_delete_refusal(command, "write") is None
+
+
+def test_a_dotdot_resolves_through_the_symlink_the_kernel_follows_not_the_lexical_path(tmp_path):
+    """`/tmp/…/link` -> /usr, so `link/..` IS `/` (lexically it would be the directory holding the link); a link
+    that is the LAST word is only unlinked by rm and never reaches what it points at."""
+    (tmp_path / "up").symlink_to("/usr")
+    (tmp_path / "real").mkdir()
+    (tmp_path / "inner").symlink_to(tmp_path / "real")
+    assert "resolves to `/`" in dirguard.root_recursive_delete_refusal(f"rm -rf {tmp_path}/up/..")
+    assert not dirguard.root_recursive_delete_refusal(f"rm -rf {tmp_path}/up")
+    assert not dirguard.root_recursive_delete_refusal(f"rm -rf {tmp_path}/inner/..")    # the parent of `real`, which is tmp_path
