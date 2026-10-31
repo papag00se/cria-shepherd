@@ -8,6 +8,7 @@ canonical versions; callers delegate here so the rules can't diverge again.
 from __future__ import annotations
 
 import json
+import re
 
 from . import jsontext
 
@@ -80,3 +81,24 @@ def write_target(tc: dict) -> tuple[str, bool]:
 def write_path(tc: dict) -> str:
     """The path a write-ish tool call targets, or "" — whole-file or partial alike."""
     return write_target(tc)[0]
+
+
+_PATCH_TARGET = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$", re.MULTILINE)
+
+
+def patch_paths(tc: dict) -> list[str]:
+    """Every file an ``apply_patch`` call names (Add / Update / Delete), in patch order, or [].
+
+    ``write_path`` reads a path KEY, which a patch call does not have: its targets live in the patch text
+    (``{"input": "*** Begin Patch\\n*** Update File: cart.go ..."}`` — or the bare text). Kept separate so
+    the single-path callers keep their meaning; a caller that must account for every file a call touches
+    (the work ledger) asks here."""
+    fn = (tc or {}).get("function") or {}
+    if fn.get("name") != "apply_patch":
+        return []
+    raw = fn.get("arguments")
+    args = parse_args(raw)
+    text = next((args[k] for k in ("input", "patch", "diff") if isinstance(args.get(k), str)), None)
+    if text is None and isinstance(raw, str) and not args:
+        text = raw
+    return list(dict.fromkeys(m.strip() for m in _PATCH_TARGET.findall(text or "")))

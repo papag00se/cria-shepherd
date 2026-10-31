@@ -1209,8 +1209,9 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
             fn = (tc or {}).get("function") or {}
             result = results.get(tc.get("id"))
             refused = result is not None and tc.get("id") in unlanded
-            path = toolargs.write_path(tc)
-            if path:
+            # A patch call has no path KEY: its targets are named in the patch text, one event per file.
+            paths = [path] if (path := toolargs.write_path(tc)) else toolargs.patch_paths(tc)
+            if paths:
                 if result is None:
                     state = "no result recorded"
                 elif tc.get("id") in landed_ids:
@@ -1219,7 +1220,8 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
                     state = "refused, not written"
                 else:
                     state = "no confirmation recorded"
-                add(_one_line(f"{fn.get('name')} {rel(path)}: {state}"))
+                for target in paths:
+                    add(_one_line(f"{fn.get('name')} {rel(target)}: {state}"))
                 continue
             args = toolargs.parse_args(fn.get("arguments"))
             cmd = next((str(args[k]) for k in _LEDGER_EXEC_ARGS if args.get(k)), "")
