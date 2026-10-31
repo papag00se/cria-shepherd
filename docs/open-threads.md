@@ -393,3 +393,9 @@ the same way.
 ## Open — `dirguard.kill_refusal` matches a kill word anywhere, not at command position (2026-10-31)
 
 `echo pkill -f x` is refused as a pattern kill: `_PATTERN_KILL` is a regex over the whole (layout-projected) command text, so a kill word that is only an argument (prose, an `echo`, a `grep` pattern) matches. Not fixed: the command-position owner (`_input_commands` / `_command_words`) does not yet unwrap what a kill is reached through (`sudo`, `xargs`, `timeout`, `bash -c '…'`, `if …; then`), so switching the reader would trade a prose false positive for real misses of the incident forms (`pkill -f uvicorn`, `kill $(lsof -t -i :8081)`). Next owner: run `kill_refusal` per recognised command word of each segment (and of each `bash -c` body) with the wrapper unwrap, with a table row for each wrapper and the prose row `echo pkill -f x` admitted.
+
+Update (2026-11): `_command_words` now also unwraps `if/then/do/while/{`, `/usr/bin/env` and `function NAME`; `timeout`, `xargs` operands and `bash -c` bodies are still not unwrapped for the kill reader.
+
+## Open — root/home delete backstop is spelling-based (2026-11)
+
+`root_recursive_delete_refusal` recognises the root by word shape (`/`, `/*`, `//`, `/.`, `/./`, `/..`, `///`) — not by resolving the path, so `rm -rf /a/..` (root by `..`), `rm -rf "$R"` with `R=/`, or a symlink to `/` are not seen. A bare `~` is now an external path at `none`/`read` (as `~/` always was); at `write` level home deletion stays the operator's choice, since the root-delete text says "filesystem root" and cria must not state a false fact. Owner if wanted: a home-delete verdict with its own prompt.

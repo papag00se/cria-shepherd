@@ -100,7 +100,15 @@ def test_root_delete_judges_what_a_glob_option_could_expand_to(command, refused)
     assert bool(dirguard.root_recursive_delete_refusal(command)) is bool(refused)
 
 
-@pytest.mark.xfail(strict=True, reason="the root spelled // or /. (or the home dir as a bare ~) is not recognised as the root")
-@pytest.mark.parametrize("command", ["rm -rf //", "rm -rf /.", "rm -rf /./", "rm -rf ///"])
-def test_other_spellings_of_the_root_are_root_deletes_too(command):
-    assert dirguard.root_recursive_delete_refusal(command)
+@pytest.mark.parametrize("command,refused", [("rm -rf //", 1), ("rm -rf /.", 1), ("rm -rf /./", 1), ("rm -rf ///", 1), ("rm -rf /..", 1),
+                                              ("rm -rf //*", 1), ("rm -rf /./*", 1), ("find // -delete", 1), ("find /. -delete", 1),
+                                              ("rm -rf /.git", 0), ("rm -rf /.hidden", 0), ("rm -rf ./", 0), ("rm -rf /tmp//", 0), ("find /. -name x", 0)])
+def test_other_spellings_of_the_root_are_root_deletes_too(command, refused):
+    assert bool(dirguard.root_recursive_delete_refusal(command)) is bool(refused)
+
+
+@pytest.mark.parametrize("command,refused", [("rm -rf ~", 1), ("cd ~", 1), ("ls ~", 1), ("cat a~b", 0), ("git diff HEAD~1", 0), ("echo 'a ~ b'", 0)])
+def test_a_bare_tilde_is_the_home_directory_like_tilde_slash(command, refused):
+    """`rm -rf ~/` was refused outside the workspace; `rm -rf ~` named the same directory and was not. (`write` still
+    permits external writes by the operator's choice, including home.)"""
+    assert bool(dirguard.command_refusal(command, "none", WS)) is bool(refused)

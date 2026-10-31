@@ -34,7 +34,7 @@ LEVELS = ("none", "read", "write")
 # (`https://host/path`, `//host`) are NOT matched; only a rooted single-`/...` or `~/...`. This guard
 # governs the FILESYSTEM, never the network — a `curl https://…`/`wget` must never be mistaken for an
 # external file access. The token ends at whitespace or a shell metacharacter.
-_PATH_TOKEN = re.compile(r"(?<![\w.:/])(?:~/|/(?!/))[^\s'\";|&><()`$*]*")
+_PATH_TOKEN = re.compile(r"(?<![\w.:/])(?:~/|~(?=[\s;&|)<>]|$)|/(?!/))[^\s'\";|&><()`$*]*")
 # Does the command WRITE (create/modify/delete a file) rather than only read? Heuristic: a write verb,
 # or a `>`/`>>` redirection to a file (but not `>&`, an fd dup like `2>&1`).
 _WRITE_VERB = re.compile(
@@ -1980,6 +1980,14 @@ def _root_glob_may_recurse(source: str) -> bool:
     return glob_may_recurse(source)
 
 
+_ROOT_WORD = re.compile(r"(?:/+(?:\.\.?(?=/|$))?)+\*?")
+
+
+def _is_root_word(word: str) -> bool:
+    """`/`, `/*` and every spelling of the same directory: `//`, `///`, `/.`, `/./`, `/..`, `//*`."""
+    return bool(_ROOT_WORD.fullmatch(word))
+
+
 def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
     """Keep source quote ownership and distinguish possible glob options."""
     tokens = _shell_tokens(text)
@@ -2015,11 +2023,12 @@ def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
                 elif option == '--recursive' or (option.startswith('-') and not option.startswith('--')
                                                 and 'r' in option.lower()):
                     recursive = True
-            if any(w in ('/', '/*') for w, _ in segment[1:]):
+            if any(_is_root_word(w) for w, _ in segment[1:]):
                 if recursive:
                     return 'PROVEN'
                 possible |= glob_recursive
-        elif [w for w, _ in segment[:2]] == ['find', '/'] and any(w == '-delete' for w, _ in segment[2:]):
+        elif (len(segment) > 1 and segment[0][0] == 'find' and _is_root_word(segment[1][0]) and not segment[1][0].endswith('*')
+              and any(w == '-delete' for w, _ in segment[2:])):
             return 'PROVEN'
         segment = []
     return 'POSSIBLE' if possible else None
