@@ -55,17 +55,20 @@ def test_each_coder_reply_keeps_the_receipt_and_remediation_of_the_call_that_pro
     receipts.record(first)
     receipts.record({"choices": ["other"]}, {"b.py": "x"}, remediation="missing.py")
     assert receipts.receipt(first) == {"a.py": "sha"} and receipts.remediation_receipt(first) == ""
+    receipts.record(first, {"c.py": "new"}, remediation="later.py")                                  # the same reply recorded again: the newest record wins
+    assert receipts.receipt(first) == {"c.py": "new"} and receipts.remediation_receipt(first) == "later.py"
     assert receipts.remediation_receipt(receipts._replies[1][0]) == "missing.py" and receipts.receipt({"unknown": 1}) == {}
     assert receipts.remediation_receipt({"unknown": 1}) == "" and sess.guidance_history == ["note one"] and sess.guidance_delivered_seq == {"note one": 4}
 
 
-def test_a_search_file_is_read_from_the_workspace_never_from_crias_own_directory(tmp_path):
+def test_a_search_file_is_read_from_the_workspace_never_from_crias_own_directory(tmp_path, monkeypatch):
     (tmp_path / "tmp").mkdir()
     (tmp_path / "tmp" / "search.txt").write_text("results here")
     token = wsview.bind(wsview.DirectView(str(tmp_path)))
     try:
         assert loop.search_file_text(str(tmp_path), "./tmp/search.txt") == "results here"
         assert loop.search_file_text(str(tmp_path), "tmp/gone.txt") == "" and loop.search_file_text(str(tmp_path), "") == ""
+        monkeypatch.chdir(tmp_path)                                                                  # cria's own cwd holds a file of that name
         assert loop.search_file_text("", "tmp/search.txt") == ""
     finally:
         wsview.unbind(token)
@@ -75,7 +78,7 @@ def test_a_search_file_is_read_from_the_workspace_never_from_crias_own_directory
 
 
 @pytest.mark.parametrize("one,two,root,same", [("a.py", "a.py", "", True), ("/w/a.py", "a.py", "/w", True), ("/w/a.py", "b.py", "/w", False),
-                                                ("", "a.py", "/w", False), ("a/../a.py", "a.py", "", True)])
+                                                ("", "a.py", "/w", False), ("", "", "/w", False), ("a/../a.py", "a.py", "", True)])
 def test_two_spellings_are_one_file_only_when_they_normalise_to_one_path(one, two, root, same):
     assert loop._same_workspace_file(one, two, root) is same
 
