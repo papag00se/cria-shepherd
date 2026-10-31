@@ -355,8 +355,7 @@ the same way.
   16K system1 OFF 3/8 accepted (`PLAN` 4/8, scope `NARROWS` 1/8), 32K system1 OFF 1/8 (`PLAN` 5/8, `UNWRITTEN` 2/8) — the
   reported numbers reproduce — but with system1 ON (production) 16K 8/8 and 32K 7/8. Four other real sessions' views at
   the 0.33 share, n=4 each, system1 ON: 16K 14/16, 32K 10/16, and the SAME 32K views at 49,152 (:18084) 9/16 — no
-  window effect. Of the sixteen system1 rejections (all windows), `NARROWS` 5, `UNWRITTEN` 3, `PLAN` 4, `UNFAITHFUL` 1 and
-  three more `NARROWS`/`PLAN` mixes; the typed lenses are the ones that carry signal (one `UNWRITTEN package.json` is a
+  window effect. Of the sixteen system1-ON rejections (16K, 32K and 49K together): `PLAN` 6, scope `NARROWS` 5, `UNWRITTEN` 4, `UNFAITHFUL` 1; the typed lenses are the ones that carry signal (one `UNWRITTEN package.json` is a
   briefing stating the file as built that the transcript never wrote).
 - *Floor reduction (a):* not at these fire points. One cold-process 16K writer body was floor-trimmed (8,007 → 5,523
   est., 21 turns, `safety` 1.8 because no summary request has been measured yet although the coder's density is
