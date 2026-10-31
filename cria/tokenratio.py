@@ -46,13 +46,6 @@ def observed(model) -> float:
         return _ratios.get(model or "", DEFAULT_RATIO)
 
 
-def highest() -> float:
-    """The highest learned ratio for any key, or the default: a conservative density when the
-    exact request key is not known yet."""
-    with _lock:
-        return max(_ratios.values(), default=DEFAULT_RATIO)
-
-
 def observed_kind(kind: str) -> float:
     """The highest learned ratio for any model's ``kind`` requests (keys ``model#kind``), or the
     default until one is measured. Highest, because under-estimating overflows the window."""

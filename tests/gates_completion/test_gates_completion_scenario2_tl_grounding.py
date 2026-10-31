@@ -56,16 +56,6 @@ def test_entry_points_follow_each_languages_own_convention_and_manifests(tmp_pat
     assert execcheck.entrypoints(str(tmp_path)) == expected
 
 
-@pytest.mark.parametrize("pkg,want", [
-    ('{"scripts": {"build": "x", "start": "node a", "test": "t"}}', ["npm run build", "npm run start", "npm run test", "npm start", "npm test"]),
-    ('{"scripts": null}', []), ("[1]", []), ("{broken", []),
-])
-def test_declared_commands_come_from_the_manifests_scripts_and_tolerate_a_malformed_one(tmp_path, pkg, want):
-    (tmp_path / "package.json").write_text(pkg)
-    (tmp_path / "Gemfile").write_text("source 'x'\n")
-    assert execcheck.manifest_commands(str(tmp_path)) == want + ["bundle exec"]
-
-
 def test_readme_commands_are_only_launcher_lines_and_nothing_is_read_from_a_missing_or_empty_root(tmp_path):
     (tmp_path / "README.rst").write_text("# c\n$ python3 app.py goose\n> node x\n| bash a |\n\n./run.sh --fast\nsay hello\n   $   make test  \n")
     (tmp_path / "notes.md").write_text("python hidden.py\n")
@@ -73,4 +63,4 @@ def test_readme_commands_are_only_launcher_lines_and_nothing_is_read_from_a_miss
     empty = tmp_path / "e"
     empty.mkdir()
     for root in ("", str(empty), str(tmp_path / "gone")):
-        assert execcheck.readme_commands(root) == [] == execcheck.manifest_commands(root) == execcheck.entrypoints(root)
+        assert execcheck.readme_commands(root) == [] == execcheck.entrypoints(root)

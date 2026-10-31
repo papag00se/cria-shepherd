@@ -1,44 +1,24 @@
-"""Live execution check — does the thing the task asked for actually RUN?
+"""Workspace entry-point and README-command readers — what the project says it can run.
 
-cria's completion gate proves a workspace compiles, lints and passes its own tests. None of that can
-tell you the delivered program does anything. Measured across 51 archived suite runs: 13 of them
-(25%) contained no entry point at all — a library where a program was asked for — and **not one of
-those 13 ever scored full marks**. In the run that prompted this module the gate was green on three
-real commands while `resolve_handle.py goose` printed nothing, because nothing had ever run it.
-
-The wall this module gets past is ARGUMENTS. cria cannot invent a meaningful argument for a program
-it knows nothing about, and it must never be told the task's content (that is benchmark
-special-casing). The operator's design solves it: **the model states the command and what a positive
-result looks like, and cria corroborates that claim against artifacts before believing it enough to
-run.** Three independent sources must agree:
-
-  1. the model's stated run command          (a claim — but cria runs it, so the OUTPUT cannot be faked)
-  2. a command documented in the README      (an artifact the task itself asked for)
-  3. a real entry point found on disk        (language convention, same shape as TEST_CONVENTIONS)
-
-Only when all three name the same program does cria execute anything.
-
-**This never blocks a completion.** A new guard that can refuse work is the dangerous class of
-intervention (principle 2: additive / regression-only, never block the first fix). This one is
-EVIDENCE: it labels the completion and lets the judge and the operator weigh it. The two negative
-outcomes are kept distinct rather than blurred into one "failed", because they mean different
-things — a program that ran and produced nothing is a defect, while a program cria could not run is
-a gap in cria's knowledge.
+HISTORY: this module used to host a live-execution check (the model stated a run command, cria
+corroborated it against the README and a real entry point, then ran it). That seat was removed
+2026-08-18 (``98952c23``): cria no longer executes anything a model named. What remains is the two
+deterministic READERS that corroboration used — :func:`entrypoints` (files that are programs by
+their own language's convention) and :func:`readme_commands` (launcher lines the README documents) —
+plus ``_SKIP_DIRS``/``_SKIP_PREFIXES``, the shared walk exclusions. Production's only consumer is
+``loop`` reading ``_SKIP_DIRS``; the two readers are used by ``suite/replay_logic`` alone.
 """
 from __future__ import annotations
 
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 from . import probediscovery, wsview
 
-# How long a delivered program gets to show it works. Long enough for a network round trip, short
-# enough that a server that never returns does not hold the gate open.
 # Command heads a README line has to start with before cria will call it a command the project
 # declares. Deliberately a short, stable list of language launchers — it is read by
-# `readme_commands`, which `suite/replay_logic` and the probe discovery use.
+# `readme_commands`, which `suite/replay_logic` uses.
 _RUNNERS = frozenset({"python", "python3", "node", "ruby", "php", "java", "go", "cargo", "npm",
                       "yarn", "pnpm", "bundle", "rake", "make", "mvn", "gradle", "dotnet", "deno",
                       "bun", "sh", "bash", "./"})
@@ -86,8 +66,6 @@ from .groundtruth import INSTALL_PREFIXES as _SKIP_PREFIXES  # noqa: E402
 # source here while the table already knew all three.
 _is_test_file = probediscovery.looks_like_a_test_path
 
-# A command cria is willing to execute. Anything else is INCONCLUSIVE rather than run — the point is
-# to observe a delivered program, never to give a weak model a way to have cria run what it likes.
 
 def entrypoints(root: str) -> list[str]:
     """Files on disk that ARE programs, by their own language's convention. Never a claim."""
@@ -132,62 +110,6 @@ def entrypoints(root: str) -> list[str]:
     return sorted(set(found))
 
 
-_MANIFEST_COMMANDS = (("Cargo.toml", ["cargo run", "cargo test"]),
-                      ("pom.xml", ["mvn test", "mvn compile"]),
-                      ("go.mod", ["go run", "go test"]),
-                      ("Rakefile", ["rake test"]), ("rakefile", ["rake test"]),
-                      ("Gemfile", ["bundle exec"]), ("build.gradle", ["gradle test"]),
-                      ("build.gradle.kts", ["gradle test"]), ("mix.exs", ["mix test"]))
-
-
-def _commands_in_dir(d: str) -> list[str]:
-    out: list[str] = []
-    view = wsview.current()
-    pkg = view.read(os.path.join(d, "package.json"))
-    if pkg is not None:
-        try:
-            import json as _json
-            scripts = (_json.loads(pkg) or {}).get("scripts") or {}
-            out += [f"npm run {k}" for k in scripts]
-            for k in ("start", "test"):
-                if k in scripts:
-                    out.append(f"npm {k}")
-        except (ValueError, AttributeError):
-            pass
-    for name, cmds in _MANIFEST_COMMANDS:
-        if view.isfile(os.path.join(d, name)) is True:
-            out += cmds
-    return out
-
-
-def manifest_commands(root: str) -> list[str]:
-    """Run commands the project DECLARES in its build manifest — a package.json script, a Rakefile
-    task, a Cargo/Maven target. The same class of artifact as a README command and available in
-    projects that were never asked for a README.
-
-    THE MANIFEST IS WHEREVER THE PROJECT IS. This read `root` and nothing else, so a model that ran
-    `cargo new toml-cli` — the normal way to start a Rust project — declared `cargo run` in a file
-    cria refused to look at. Measured on cycle 4 cell 6, `rust-toml-cli x gemma4`: a complete and
-    correct CLI, judged 95% useful, and cria published `no manifest in this workspace declares cargo
-    run` while `toml-cli/Cargo.toml` sat one directory down. That sentence is false (#5b) and it
-    reaches the CODER, which is where the earlier occurrence of this class cost a run.
-
-    `probediscovery.inventory` already owns "where are this workspace's projects" — bounded depth,
-    vendor dirs skipped — and the gate composes its probes from it. Reading the same answer here is
-    what stops the two halves of cria from disagreeing about where the project is (#23)."""
-    out: list[str] = []
-    if not root or not wsview.current(root).surveyed:
-        return out
-    seen: set[str] = set()
-    for pd in probediscovery.inventory(Path(root)):
-        d = str(pd.dir)
-        if d in seen:
-            continue
-        seen.add(d)
-        out += _commands_in_dir(d)
-    return [c for i, c in enumerate(out) if c not in out[:i]]
-
-
 def readme_commands(root: str) -> list[str]:
     """Run commands the README documents. A command there is an artifact the model committed to —
     not a sentence in a chat turn."""
@@ -209,16 +131,3 @@ def readme_commands(root: str) -> list[str]:
             if head in _RUNNERS or head.startswith("./"):
                 out.append(s)
     return out
-
-
-def _completeness_claim() -> str:
-    """The inventory footer's exact text, read from the one prompt that owns it so the two cannot
-    drift apart — a hardcoded copy here would go stale the first time the sentence is reworded."""
-    try:
-        from . import prompts
-        return (prompts.load_map("workspace_inventory") or {}).get("complete", "").strip()
-    except Exception:  # noqa: BLE001 — a missing prompt must not break the listing
-        return ""
-
-
-_COMPLETENESS_CLAIM = _completeness_claim()

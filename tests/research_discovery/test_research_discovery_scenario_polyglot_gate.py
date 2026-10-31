@@ -54,6 +54,21 @@ def recorded(argv, cwd, timeout):
     return 0, "", "", False
 
 
+def run_gate(root, timeout_s=90):
+    """The gate as production runs it: select the probes, take the harness shell tool's result for each composed
+    command (exit code + merged output; 124 = killed by `timeout`, 127 = could not launch) and interpret it."""
+    selected = proberun.select_completion_probes(root)
+    results = []
+    for c in selected:
+        try:
+            code, out, err, timed_out = recorded(list(c.command), str(c.working_dir), timeout_s)
+        except OSError:
+            code, out, err, timed_out = proberun.NOT_FOUND_EXIT_CODE, "", "", False
+        results.append(proberun.interpret_probe_output(
+            c, proberun.display_command(c.command), out + err, proberun.TIMEOUT_EXIT_CODE if timed_out else code, timeout_s))
+    return proberun.ProbeReport(selected=selected, results=results)
+
+
 @pytest.fixture
 def workspace(tmp_path):
     for rel, body in FILES.items():
@@ -66,7 +81,7 @@ def workspace(tmp_path):
 
 
 def test_every_ecosystem_is_checked_and_each_failure_is_located_in_the_checkers_own_words(workspace):
-    report = proberun.run_completion_probes(recorded, str(workspace), 90)
+    report = run_gate(str(workspace))
     heads = {c.command[0] for c in report.selected}
     assert {"mvn", "gradle", "npm", "cargo", "go", "ruby", "pyflakes", "python3"} <= heads
     where = {(f.file.rsplit("/", 1)[-1], f.line) for r in report.results for f in r.findings}
@@ -81,23 +96,25 @@ def test_every_ecosystem_is_checked_and_each_failure_is_located_in_the_checkers_
     assert "$ gradle check — TIMEOUT after 90s" in nudge                           # ran, never finished: not clean
 
     unran = proberun.unran_probes(report)
-    assert [u.split(" — ")[0] for u in unran] == ["$ cargo test --no-fail-fast (Test)"] and "No such file" in unran[0]
+    assert [u.split(" — ")[0] for u in unran] == ["$ gradle check (BuildCheck)", "$ cargo test --no-fail-fast (Test)"]
+    assert "TIMEOUT after 90s" in unran[0] and proberun.PROXY_LAUNCH_DETAIL in unran[1]   # a timeout and a launch failure: both missing signal
     digest = proberun.completion_probe_digest(report, missing=["go vet ./..."]).splitlines()
     assert digest[0] == "SYNTAX FLOOR: parse/syntax issues found" and digest[1].endswith("go vet ./...")
     row = lambda head: next(ln for ln in digest if ln.startswith(head))
-    assert "exit 124 — TIMEOUT after 90s" in row("$ gradle check") and "did NOT launch (tool missing?)" in row("$ cargo test")
+    assert "UNFINISHED" in row("$ gradle check") and "TIMEOUT after 90s" in row("$ gradle check") and "did NOT launch (tool missing?)" in row("$ cargo test")
     assert "no tests collected (nothing to run — not a failure)" in row("$ python3 -m pytest")
     assert "exit 0 (ran clean) — no problems reported — 0 structured finding(s)" in row("$ go build -mod") + row("$ go vet")
-    assert [f.split(" — ")[0] for f in proberun.failed_unparsed_probes(report)] == ["$ gradle check"]     # the only failure with no location
+    assert [f.split(" — ")[0] for f in proberun.failed_unparsed_probes(report)] == []     # the unlocated non-pass (gradle) is unran, not failed: no exit code
     assert proberun.completion_block_nudge(proberun.ProbeReport()) is None and proberun.completion_probe_digest(proberun.ProbeReport()).endswith(proberun.DIGEST_NO_PROBES)
 
 
 def test_a_launch_failure_and_an_empty_command_are_results_not_crashes(workspace):
-    def boom(argv, cwd, timeout):
-        raise PermissionError(13, "Permission denied")
     c = next(c for c in proberun.select_completion_probes(str(workspace)) if c.kind is ProbeKind.BuildCheck)
-    r = proberun.run_candidate(boom, c, 5)
-    assert r.exit_code is None and "Permission denied" in r.summary and r.findings == []
-    assert proberun.run_candidate(boom, type(c)(**{**c.__dict__, "command": []}), 5).summary == proberun.EMPTY_COMMAND_SUMMARY
-    killed = proberun.run_candidate(lambda *a: (-9, "", "", False), c, 5)         # a signal-kill is "no exit code", never 0
-    assert killed.exit_code is None
+    joined = proberun.display_command(c.command)
+    for code in proberun.LAUNCH_FAILURE_EXIT_CODES:     # 125/126/127: the shell could not launch the checker
+        r = proberun.interpret_probe_output(c, joined, "sh: 1: nope: Permission denied\n", code, 5)
+        assert r.exit_code is None and proberun.PROXY_LAUNCH_DETAIL in r.summary and r.findings == []
+    gone = proberun.interpret_probe_output(c, joined, "sh: 1: cargo: command not found\n", None, 5)   # text only, no sentinel
+    assert gone.exit_code is None and proberun.LAUNCH_FAILURE_MARKER in gone.summary
+    empty = type(c)(**{**c.__dict__, "command": []})
+    assert proberun.interpret_probe_output(empty, "", "", 0, 5).summary == proberun.EMPTY_COMMAND_SUMMARY

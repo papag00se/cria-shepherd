@@ -5,7 +5,6 @@ not owned here. Payload boundaries continue to use the canonical body hint.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import NamedTuple
 

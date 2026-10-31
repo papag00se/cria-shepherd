@@ -12,7 +12,6 @@ logits), which the runtime replays at startup.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil

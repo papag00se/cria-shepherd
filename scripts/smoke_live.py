@@ -56,8 +56,6 @@ SHELL_TOOL = {
         "parameters": {"type": "object", "properties": {"command": {"type": "array"}}},
     },
 }
-WRITE_TOOL = {"type": "function", "function": {"name": "write_file"}}
-PATCH_TOOL = {"type": "function", "function": {"name": "apply_patch"}}
 
 
 def free_port() -> int:

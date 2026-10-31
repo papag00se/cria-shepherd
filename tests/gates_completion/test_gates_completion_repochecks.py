@@ -99,12 +99,7 @@ def test_a_program_is_the_projects_own_never_a_vendored_or_generated_tree(tmp_pa
     assert execcheck.entrypoints(str(tmp_path)) == expected
 
 
-def test_the_manifest_is_wherever_the_project_is_and_the_readme_commands_are_read(tmp_path):
-    """cycle 4 cell 6: `cargo new toml-cli` put Cargo.toml one level down and cria said 'no manifest declares cargo run'."""
-    (tmp_path / "toml-cli/src").mkdir(parents=True)
-    (tmp_path / "toml-cli/Cargo.toml").write_text('[package]\nname = "toml-cli"\nversion = "0.1.0"\n')
-    (tmp_path / "toml-cli/src/main.rs").write_text("fn main() {}\n")
-    assert {"cargo run", "cargo test"} <= set(execcheck.manifest_commands(str(tmp_path)))
+def test_the_readme_commands_are_read(tmp_path):
     (tmp_path / "README.md").write_text("# x\n\n## Run\n\n```bash\nnode lookup.js goose\n```\n")
     assert "node lookup.js goose" in execcheck.readme_commands(str(tmp_path))
 

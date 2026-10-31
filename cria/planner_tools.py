@@ -23,7 +23,6 @@ import json
 import os
 
 from . import content_reduce
-import re
 import tempfile
 import uuid
 import urllib.parse
@@ -31,7 +30,7 @@ import urllib.request
 from .planningcontracts import ToolResult
 
 from . import brave, prompts, webfetch, wsview, researchpolicies
-from .searchloop import first_domain_in, normalize_search, searches_match  # compatibility support exports
+from .searchloop import normalize_search
 
 # The READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
 # write/patch/exec tools at all: planning is not building, and cria cannot run a command on the
@@ -47,13 +46,6 @@ PLANNER_TOOLS = [
     {"type": "function", "function": {"name": "web_search", "description": _TD["web_search"], "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
 ]
 
-# Match the coder-side cap (webfetch.MAX_BODY_BYTES). This path was left at the old 512 KiB and,
-# unlike its sibling, never detected the cut: it read exactly the cap and decoded whatever came back,
-# so a spec whose `paths` block sits past 512 KiB arrived as valid-looking front matter with the
-# endpoints missing. Worse, the truncated bytes then went through `_record_fetch` → `_structure_of`,
-# where broken JSON simply fails to parse, so the durable ledger handed the CODER a 2xx with no
-# routes — indistinguishable from "this page isn't a spec".
-_FETCH_MAX_BYTES = webfetch.MAX_BODY_BYTES
 # Ask Brave for as many results as it will return (its API clamps to 20 in brave.query_url), so a
 # planner's gather sees the fuller result set rather than an arbitrary 5. The count is disclosed in
 # format_results so the model knows how many landed.
@@ -334,37 +326,6 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
         provenance=(request_provenance, r.status, r.final_url, r.content_type, r.truncated, reduced))
 
 
-def _search_no_structure_note(facts: dict | None) -> str:
-    """The search-result flavor of the no-routes disclosure — same condition, same silence rule as
-    :func:`_no_structure_note`, worded for snippets (a search that answered is still not a SOURCE)."""
-    from . import assistbinding, documentguidance
-    return documentguidance.selected_guidance(assistbinding.selected_definition(documentguidance.DEFINITION),
-        documentguidance.GuidanceInput('planner_search', facts=facts),
-        webfetch.guidance_services()).text
-
-
-def _no_structure_note(facts: dict | None, parsed=None) -> str:
-    """Disclose an unstructured page only when the shared fetcher established that fact."""
-    from . import assistbinding, documentguidance
-    return documentguidance.selected_guidance(assistbinding.selected_definition(documentguidance.DEFINITION),
-        documentguidance.GuidanceInput('planner_fetch', parsed=parsed, facts=facts),
-        webfetch.guidance_services()).text
-
-
-def _spill_to_scratch(r, reduced: str, parsed, scratch: str | None) -> str | None:
-    """Write a too-large doc to the gather's scratchpad and return the pointer message; None if it
-    could not be written (then the caller inlines it — a fetch that reached the model as nothing at
-    all would be worse than one that costs context)."""
-    from . import assistbinding, externalization as e
-    root = scratch or os.path.join(tempfile.gettempdir(), 'gather-docs-' + uuid.uuid4().hex)
-    result = _externalize_planner(assistbinding.selected_definition(e.DEFINITION), None, None, '',
-        lambda: e.planner_fetch(status=r.status, url=r.final_url, reduced=reduced, parsed=parsed,
-            content_type=r.content_type, root=root, remedy=spill_remedy,
-            services=e.PlannerFetchServices(webfetch.OVERSIZE_CHARS, webfetch.spill_content,
-                                            webfetch._spill_name, webfetch.spill_outline)), '', None)
-    return result.text or None
-
-
 def spill_remedy(target: str) -> str:
     """How to read a spilled file, in the names of the tools THIS SEAT HOLDS.
 
@@ -502,16 +463,6 @@ def retain_tool_result(result, current_owner) -> bool:
     if current_owner is None or delivery is None or result.externalization_owner is not current_owner:
         return False
     return delivery.settle(e.Outcome.RETAINED, stored=result.externalization_stored)
-
-
-def _spill_search(query: str, body: str, scratch: str | None) -> str | None:
-    """Save a search result list to the scratchpad and return the pointer + the titles, or None when
-    it is small enough to inline. Same contract as :func:`_spill_to_scratch` for fetches."""
-    from . import assistbinding, externalization as e
-    result = _externalize_planner(assistbinding.selected_definition(e.DEFINITION), None, None, '',
-        lambda: e.planner_search(query, body, scratch=scratch,
-            inline_chars=_SEARCH_INLINE_CHARS, remedy=spill_remedy), '', None)
-    return result.text or None
 
 
 def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[dict]:

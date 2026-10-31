@@ -30,8 +30,7 @@ from __future__ import annotations
 
 import re
 
-from . import denial, fetchfacts, groundtruth, jsontext, prompts
-from .jsontext import extract_json_object, strip_think
+from . import denial, fetchfacts, groundtruth, jsontext
 
 
 

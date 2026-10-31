@@ -1277,15 +1277,15 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/gatecleanup.py:PROGRAM`](../../cria/gatecleanup.py#L144)
 - [`cria/probediscovery.py:discover`](../../cria/probediscovery.py#L405)
 - [`cria/probeclassify.py`](../../cria/probeclassify.py)
-- [`cria/proberun.py:select_completion_probes`](../../cria/proberun.py#L200)
+- [`cria/proberun.py:select_completion_probes`](../../cria/proberun.py#L176)
 - [`cria/linterprobe.py:py_compile_argv`](../../cria/linterprobe.py#L177)
-- [`cria/proberun.py:compose_probe_command`](../../cria/proberun.py#L755)
+- [`cria/proberun.py:compose_probe_command`](../../cria/proberun.py#L671)
 - [`cria/probegate.py:ingest_transport`](../../cria/probegate.py#L556)
 - [`cria/probegate.py:fail_transport`](../../cria/probegate.py#L505)
 - [`cria/loop.py:guard_gate_transport`](../../cria/loop.py#L7159)
 - [`cria/probegate.py:interpret_gate`](../../cria/probegate.py#L2597)
 - [`cria/probeparse.py`](../../cria/probeparse.py)
-- [`cria/proberun.py:completion_probe_digest`](../../cria/proberun.py#L684)
+- [`cria/proberun.py:completion_probe_digest`](../../cria/proberun.py#L600)
 - [`cria/loop.py:record_gate_state`](../../cria/loop.py#L7869)
 - [`cria/loop.py:_checks_superseded_by_coder_run`](../../cria/loop.py#L8036)
 
@@ -1567,7 +1567,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:Loop._verify_after_probe`](../../cria/loop.py#L3963)
 - [`cria/planner.py:Planner.plan_for`](../../cria/planner.py#L848)
 - [`cria/planner.py:Planner._gather_and_plan`](../../cria/planner.py#L1150)
-- [`cria/planner_tools.py:execute_tool`](../../cria/planner_tools.py#L69)
+- [`cria/planner_tools.py:execute_tool`](../../cria/planner_tools.py#L61)
 - [`cria/steppreparation.py:prepare_step`](../../cria/steppreparation.py#L211)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5292)
 - [`cria/livingplan.py:propose_tail`](../../cria/livingplan.py#L199)
@@ -1601,7 +1601,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: webfetch_guards. Dependencies: none.
-  Hooks: [`cria/webfetch.py:prior_matching_search`](../../cria/webfetch.py#L1395), [`cria/webfetch.py:allow_search`](../../cria/webfetch.py#L1408), [`cria/webfetch.py:gate_search`](../../cria/webfetch.py#L1427), [`cria/loop.py:guard_search_query`](../../cria/loop.py#L10662), [`cria/planner_tools.py:gate_search`](../../cria/planner_tools.py#L540).
+  Hooks: [`cria/webfetch.py:prior_matching_search`](../../cria/webfetch.py#L1395), [`cria/webfetch.py:allow_search`](../../cria/webfetch.py#L1408), [`cria/webfetch.py:gate_search`](../../cria/webfetch.py#L1427), [`cria/loop.py:guard_search_query`](../../cria/loop.py#L10662), [`cria/planner_tools.py:gate_search`](../../cria/planner_tools.py#L491).
   Regressions: [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_the_selected_search_stage_clears_once_per_session_and_refuses_the_rest`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L50), [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_a_deselected_search_stage_neither_detects_nor_spends_a_clearance_but_keeps_the_facts`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L35), [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_a_replaced_stage_runs_instead_of_the_canonical_detector_and_owns_the_state`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L60), [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_an_empty_selection_stops_every_research_stage_in_every_entry_at_once`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L148).
 - `search-domain-advice` — [`cria/researchpolicies.py:DOMAIN`](../../cria/researchpolicies.py); execute `domain_advice`.
   Stage `research-domain-advice`; default level 2; scope `runtime`.
@@ -1609,7 +1609,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: webfetch_guards. Dependencies: none.
-  Hooks: [`cria/webfetch.py:_search_input`](../../cria/webfetch.py#L1444), [`cria/planner_tools.py:gate_search`](../../cria/planner_tools.py#L540).
+  Hooks: [`cria/webfetch.py:_search_input`](../../cria/webfetch.py#L1444), [`cria/planner_tools.py:gate_search`](../../cria/planner_tools.py#L491).
   Regressions: [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_domain_advice_is_its_own_switch_and_never_changes_admission`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L79).
 - `fetch-repeat-admission` — [`cria/researchpolicies.py:FETCH`](../../cria/researchpolicies.py); execute `fetch_admission`.
   Stage `research-fetch-admission`; default level 2; scope `runtime`.
@@ -1651,7 +1651,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:guard_search_query`](../../cria/loop.py#L10662)
 - [`cria/loop.py:judge_rehunt`](../../cria/loop.py#L917)
 - [`cria/loop.py:judge_search`](../../cria/loop.py#L936)
-- [`cria/planner_tools.py:gate_search`](../../cria/planner_tools.py#L540)
+- [`cria/planner_tools.py:gate_search`](../../cria/planner_tools.py#L491)
 
 **Historical families:** F51.
 
@@ -1746,7 +1746,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/upstream.py:Upstream._observe_capacity`](../../cria/upstream.py#L1250)
 - [`cria/upstream.py:Upstream._open_with_refit`](../../cria/upstream.py#L1268)
 - [`cria/contextfloor.py:fit`](../../cria/contextfloor.py#L441)
-- [`cria/tokenratio.py:record`](../../cria/tokenratio.py#L65)
+- [`cria/tokenratio.py:record`](../../cria/tokenratio.py#L58)
 
 **Historical families:** F55.
 
@@ -2009,9 +2009,9 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/writeproxy.py:observe_externalization_results`](../../cria/writeproxy.py#L159)
 - [`cria/server.py:CriaHandler._handle_chat`](../../cria/server.py#L1078)
 - [`cria/loop.py:_label_spill_entries`](../../cria/loop.py#L11237)
-- [`cria/planner_tools.py:_web_fetch`](../../cria/planner_tools.py#L281)
-- [`cria/planner_tools.py:_externalize_planner`](../../cria/planner_tools.py#L452)
-- [`cria/planner_tools.py:retain_tool_result`](../../cria/planner_tools.py#L498)
+- [`cria/planner_tools.py:_web_fetch`](../../cria/planner_tools.py#L273)
+- [`cria/planner_tools.py:_externalize_planner`](../../cria/planner_tools.py#L413)
+- [`cria/planner_tools.py:retain_tool_result`](../../cria/planner_tools.py#L459)
 
 **Historical families:** F63.
 

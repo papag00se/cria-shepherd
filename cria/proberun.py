@@ -24,20 +24,13 @@ model-facing renderings:
   nothing collected), timed out, or never launched. The critic needs it to
   tell "tests pass" apart from "tests never ran".
 
-WHO EXECUTES: cria owns no executors. Upstream spawned the probe inline
-(pipe-drain threads, a 40ms try_wait poll loop, kill-on-timeout); all of that
-host machinery sits behind the injectable ``Runner`` protocol defined in
-:mod:`cria.probeparse` — ``runner(argv, cwd, timeout_s) -> (exit_code | None,
-stdout, stderr, timed_out)``. For proxy deployments where even the Runner is
-unavailable (the harness's shell tool is the only executor), the same probe is
-expressed as one composed shell line (:func:`compose_probe_command`) and the
-tool result that flows back is mapped onto the identical ProbeResult contract
-(:func:`interpret_probe_output`): coreutils ``timeout`` stands in for the kill
-loop (exit 124), ``exit 127`` / "command not found" stands in for the spawn
-error, and a trailing ``EXIT:<n>`` sentinel recovers the exit code when the
-harness returns text only.  The gate transport spools the complete combined
-result on the harness and pages it back over later requests; this function
-therefore never selects or clips the checker's bytes.
+WHO EXECUTES: cria owns no executors. The probe is expressed as one composed shell line
+(:func:`compose_probe_command`) that the harness's own shell tool runs, and the tool result that
+flows back is mapped onto the ProbeResult contract (:func:`interpret_probe_output`): coreutils
+``timeout`` stands in for the kill loop (exit 124), ``exit 127`` / "command not found" stands in for
+the spawn error, and a trailing ``EXIT:<n>`` sentinel recovers the exit code when the harness returns
+text only.  The gate transport spools the complete combined result on the harness and pages it back
+over later requests; this function therefore never selects or clips the checker's bytes.
 
 Timeout interplay (proxy path): the harness's own shell-tool timeout must
 exceed the probe timeout, or the harness kills the command before timeout(1)
@@ -57,7 +50,6 @@ from .probeparse import (
     LAUNCH_FAILURE_FMT,
     TIMEOUT_SUMMARY_FMT,
     ProbeResult,
-    Runner,
     err_result,
     family_of,  # re-exported: upstream defines family_of in probe_run.rs
     parse_output,
@@ -71,12 +63,6 @@ if TYPE_CHECKING:  # annotation-only names
 # Upstream constants (probe_run.rs, verbatim values)
 # ---------------------------------------------------------------------------
 
-# Default: run at most 3 probes, 120s each. Callers can override.
-DEFAULT_MAX_PROBES = 3
-DEFAULT_TIMEOUT_S = 120.0
-# Upstream's child try_wait() poll cadence (40ms). cria never polls a child —
-# this is the contract value a host-side Runner implementation should honor.
-CHILD_POLL_INTERVAL_S = 0.040
 # (Upstream's .take(5) per-probe findings cap was removed — completion_block_nudge now shows EVERY
 # file:line finding so an error past the 5th is never hidden from the model.)
 
@@ -179,16 +165,6 @@ class ProbeReport:
     project_type: list[str] = field(default_factory=list)
     selected: list[ProbeCandidate] = field(default_factory=list)
     results: list[ProbeResult] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Selection (pure filesystem reads — stays local and synchronous)
-# ---------------------------------------------------------------------------
-
-def select_probes(root: str, max_probes: int) -> list[ProbeCandidate]:
-    """The top ``max_probes`` candidates, best-first. ``discover()`` already
-    safe-filtered and ranked; selection is just the slice."""
-    return probediscovery.discover(root)[:max_probes]
 
 
 # Non-floor ranked candidates admitted per gate (the per-file floor is bounded separately by
@@ -300,7 +276,7 @@ def program_is_installed(candidate) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Execution via the injectable Runner seam
+# Mapping a harness shell result onto ProbeResult
 # ---------------------------------------------------------------------------
 
 def source_line_reader(cwd: str):
@@ -321,66 +297,6 @@ def source_line_reader(cwd: str):
         except IndexError:
             return None
     return read
-
-
-def run_candidate(runner: Runner, c: ProbeCandidate, timeout_s: float) -> ProbeResult:
-    """Run one candidate with a hard timeout via the injected runner.
-
-    Never mutates the workspace (the candidate was vetted safe upstream, in
-    discovery). Upstream's process machinery — spawn, drain threads so a chatty
-    tool can't deadlock on a full pipe, the 40ms poll loop, kill+reap — lives
-    behind the Runner; what is ported here is the result contract.
-    """
-    joined = display_command(c.command)
-    if not c.command:
-        return err_result(joined, EMPTY_COMMAND_SUMMARY)   # joined == "" here
-    try:
-        exit_code, stdout, stderr, timed_out = runner(list(c.command),
-                                                      str(c.working_dir), timeout_s)
-    except OSError as e:  # FileNotFoundError, PermissionError, ...
-        return err_result(joined, LAUNCH_FAILURE_FMT.format(e=e))
-    if exit_code is not None and exit_code < 0:
-        # Rust status.code() is None for signal-kills; a Python subprocess
-        # runner reports -signum — normalize so both worlds agree.
-        exit_code = None
-    result = parse_output(joined, family_of(c.command), exit_code, stdout, stderr,
-                          read_source_line=source_line_reader(str(c.working_dir)))
-    if timed_out:
-        # upstream quirk, preserved: Duration::as_secs() TRUNCATES — a 0.4s
-        # timeout reads "TIMEOUT after 0s". The summary is OVERWRITTEN but any
-        # findings parsed from the partial pre-kill output are KEPT.
-        result.summary = TIMEOUT_SUMMARY_FMT.format(secs=int(timeout_s))
-        result.timed_out = True   # ran and did NOT finish → the completion gate fails CLOSED (M3)
-    return result
-
-
-def run_probes(runner: Runner, root: str) -> ProbeReport:
-    """Default: run at most 3 probes, 120s each. Callers can override."""
-    return run_probes_with(runner, root, DEFAULT_MAX_PROBES, DEFAULT_TIMEOUT_S)
-
-
-def run_probes_with(runner: Runner, root: str, max_probes: int,
-                    timeout_s: float) -> ProbeReport:
-    """Select the top candidates and run them sequentially, in rank order."""
-    selected = select_probes(root, max_probes)
-    results = [run_candidate(runner, c, timeout_s) for c in selected]
-    return ProbeReport(
-        project_type=list(probediscovery.project_types(root)),
-        selected=selected,
-        results=results,
-    )
-
-
-def run_completion_probes(runner: Runner, root: str, timeout_s: float) -> ProbeReport:
-    """Run the completion-time selection (see :func:`select_completion_probes`),
-    each probe bounded by ``timeout_s``."""
-    selected = select_completion_probes(root)
-    results = [run_candidate(runner, c, timeout_s) for c in selected]
-    return ProbeReport(
-        project_type=list(probediscovery.project_types(root)),
-        selected=selected,
-        results=results,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -946,7 +862,7 @@ def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
     if exit_code == TIMEOUT_EXIT_CODE:
         result = parse_output(joined, family_of(c.command), None, output, "",
                               read_source_line=read_line)
-        # Same as_secs() truncation as run_candidate; findings kept.
+        # as_secs() truncation (a 0.4s timeout reads "TIMEOUT after 0s"); findings kept.
         result.summary = TIMEOUT_SUMMARY_FMT.format(secs=int(timeout_s))
         result.timed_out = True   # ran and did NOT finish → the completion gate fails CLOSED (M3)
         return result

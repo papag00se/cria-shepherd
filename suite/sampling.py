@@ -23,8 +23,6 @@ import json
 import urllib.request
 import struct
 import math
-import re
-import sys
 from pathlib import Path
 
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
