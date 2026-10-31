@@ -30,6 +30,8 @@ def test_reasoning_and_sampling_translate_per_backend_without_mixing_dialects():
 @rows([({"reasoning_effort": "none"}, NEMOTRON, {"chat_template_kwargs": {"enable_thinking": False}}),         # row p28: reasoning never turned off, 37,719 tokens burned for zero content
        ({"reasoning_effort": "medium"}, NEMOTRON, {"chat_template_kwargs": {"enable_thinking": True}}),
        ({"chat_template_kwargs": {"enable_thinking": False}}, BONSAI, {"reasoning_effort": "none"}),
+       ({"chat_template_kwargs": {"enable_thinking": True}}, BONSAI, {"reasoning_effort": "medium"}),
+       ({"chat_template_kwargs": {"enable_thinking": False, "preserve_thinking": True}}, BONSAI, {"reasoning_effort": "none", "chat_template_kwargs": {"preserve_thinking": True}}),  # the template's other knobs survive
        ({"chat_template_kwargs": {"enable_thinking": False}}, NEMOTRON, None),                                    # matching: left alone, silent
        ({"reasoning_effort": "none"}, "{{ messages }}", None)])                                                   # ambiguous template: the explicit config choice wins
 def test_the_wire_corrects_a_knob_the_served_template_demonstrably_ignores(knob, template, corrected):
