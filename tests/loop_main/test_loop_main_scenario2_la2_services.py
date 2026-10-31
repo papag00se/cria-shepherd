@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cria import pastedfile, shrinkprotection, wsview
+from cria import assistruntime, pastedfile, shrinkprotection, wsview
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore
 from cria.plan import Plan, PlanItem
@@ -49,6 +49,8 @@ def test_the_shrink_services_need_the_policy_a_root_a_reasoner_and_a_role_and_re
         asked.extend(m["content"] for m in body["messages"])
         return json.dumps(completion("WHOLE_FILE")).encode()
     root = str(tmp_path)
+    unselected = make(reasoner_chat=reasoner, reasoner_role=ROLE, pilot_runtime=assistruntime.AssistRuntime.select(level=3))
+    assert unselected.shrinking_write_services("sid:s", [], root, Rlog()) is None    # the policy is not on this rung
     assert make(reasoner_chat=reasoner, reasoner_role=ROLE, assists=False).shrinking_write_services("sid:s", [], root, Rlog()) is None
     assert make(reasoner_chat=reasoner, reasoner_role=ROLE).shrinking_write_services("sid:s", [], "", Rlog()) is None
     assert make(reasoner_chat=reasoner).shrinking_write_services("sid:s", [], root, Rlog()) is None
