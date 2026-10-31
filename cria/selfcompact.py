@@ -252,7 +252,24 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     # tail on purpose. That case is left exactly as it was.
     if budget_tokens > 0 and i == len(messages) and len(messages) - 1 > head_end:
         i = len(messages) - 1
+    # A RELOCATED HISTORICAL ANNOTATION IS NOT THE TURN BEING ANSWERED. The guidance history and the workspace
+    # inventory ride at the END of the view (loop._prepare_coder_context appends them before every reducer), so
+    # they were the one message the clause above guaranteed, and the newest real exchange, if bigger than the
+    # budget, fell into the folded middle: the coder saw only the rollup and repeated the call it had just made
+    # (scratch E2E c5, 16,384 window: 14 of 16 coder turns a `list_dir`, 0 edits). The newest message that is
+    # actual work is kept, with its exchange.
+    if budget_tokens > 0:
+        newest = max((n for n in range(head_end + 1, len(messages)) if not _historical_annotation(messages[n])),
+                     default=None)
+        if newest is not None and i > newest:
+            i = newest
     return _whole_exchange_start(messages, i)
+
+
+def _historical_annotation(message: dict) -> bool:
+    """A relocated record of earlier guidance or of the workspace listing: state, never a turn of work."""
+    return any(message.get(bodykeys.ANNOTATION_SOURCE) is source for source in (
+        bodykeys.AnnotationSource.INVENTORY, bodykeys.AnnotationSource.GUIDANCE_HISTORY))
 
 
 def _whole_exchange_start(messages: list[dict], start: int) -> int:

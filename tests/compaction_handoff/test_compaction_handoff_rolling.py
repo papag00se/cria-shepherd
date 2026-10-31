@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cria import contextfloor, denial, prompts, resultnotes, selfcompact as sc
+from cria import bodykeys, contextfloor, denial, prompts, resultnotes, selfcompact as sc
 from cria.content_reduce import est_tokens
 from cria.memoryeffects import Effect
 from compaction_handoff_helpers import asst, call, history, result, write
@@ -155,6 +155,22 @@ def test_the_tail_never_starts_inside_an_exchange():
     assert calls(seen[0]) == answers(seen[0]) and contextfloor.ensure_tool_integrity(res.messages)[1] == 0
     lone = [msgs[0], call("only", "read_file"), result("only", "z" * 600)]
     assert run(lone, room_tokens=10, keep_tail_tokens=40, recompact_tokens=5)[0].messages is lone     # a tail spanning everything folds nothing
+
+@pytest.mark.parametrize("source", [bodykeys.AnnotationSource.GUIDANCE_HISTORY, bodykeys.AnnotationSource.INVENTORY])
+def test_a_relocated_historical_annotation_never_takes_the_place_of_the_turn_the_coder_is_answering(source):
+    """ornith1.5_9b / Python orders-api, scratch E2E c5 (16,384 window, 2026-11-01, call 0034 -> 0036): the last exchange was a 2.1K-token
+    `list_dir` result; the guidance-history annotation, appended AFTER it, was the one message the tail was guaranteed to keep, so the exchange
+    fell into the folded middle, the coder was handed only the rollup, and listed the directory again: 14 of 16 coder turns, 0 edits, 11 folds."""
+    note = {"role": "user", "content": "⟦ctx:guidance-history⟧ " + "g" * 600, bodykeys.ANNOTATION_SOURCE: source}
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}]
+    for i in range(3):
+        msgs += [call(f"e{i}", "read_file", path=f"f{i}"), result(f"e{i}", f"R{i} " + "y" * 400)]
+    msgs += [call("last", "list_dir", path="."), result("last", "LISTING " + "n" * 8400), note]    # the newest exchange alone is ~2.1K tok
+    res, seen = run(msgs, keep_tail_tokens=1000, recompact_tokens=5)
+    kept = [text(m) for m in res.messages]
+    assert res.applied and any(t.startswith("LISTING") for t in kept) and note in res.messages
+    assert not any("LISTING" in text(m) for m in seen[0])                  # the newest exchange is not in the writer's evidence either
+    assert contextfloor.ensure_tool_integrity(res.messages)[1] == 0
 
 @pytest.mark.parametrize("keep", [150, 200, 260, 330])
 def test_a_parallel_batch_is_one_exchange_even_when_the_harness_sends_its_calls_as_separate_assistant_messages(keep):
