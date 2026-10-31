@@ -11,7 +11,7 @@ import os
 import pytest
 
 from cria import wsview
-from write_edit_helpers import call, command_of, lower, run
+from write_edit_helpers import call, command_of, lower, run, write_edit_workspace_view  # noqa: F401  (binds the real-disk view)
 
 
 class Log:
