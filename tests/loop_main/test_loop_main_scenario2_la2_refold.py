@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from cria import selfcompact
+from cria import assistruntime, selfcompact
 from cria.config import Role
 from cria.loop import Loop, LoopContext
 
@@ -50,3 +50,12 @@ def test_the_accumulated_rollup_is_refolded_only_when_the_refold_is_written_and_
     else:             # too long beats gone: the old text stands, the new increment appended
         assert sess.compact_state.summary == OLD + "\n\nThen the CLI was wired up."
         assert "Earlier work: resolver internals" in rollup and "CONDENSED" not in rollup
+
+
+def test_a_rung_without_the_compaction_policy_ships_the_history_untouched_and_asks_nobody(tmp_path):
+    asked = []
+    driver = Loop(LoopContext(planner=None, coder_chat=None, reasoner_chat=lambda b, r: asked.append(b),
+                              runs_dir="", reasoner_role=Role(name="reasoner", backend="local"),
+                              pilot_runtime=assistruntime.AssistRuntime.select(level=3)))
+    view = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(60)]
+    assert driver._self_compact(view, synthetic("build it"), 1, Rlog()) is view and not asked
