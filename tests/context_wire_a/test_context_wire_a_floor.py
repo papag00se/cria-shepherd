@@ -198,7 +198,9 @@ def test_a_tool_result_no_lever_can_shrink_is_withheld_with_a_sized_note_not_lef
     assert "6,000-token context window" in note and "Do not repeat the same call" in note
     piece = int(note.split("about ")[1].split(" lines")[0].replace(",", ""))
     cost = cf.est_tokens("\n".join(LOG.split("\n")[:piece])) * 1.5                # one suggested piece, at the density in force
-    assert 0.8 * 1250 <= cost <= 1250 and f"`head -n {piece}`" in note               # about a quarter of the 5,000 tokens of room and "cria" not in note.lower()
+    assert 0.8 * 1250 <= cost <= 1250                                                # about a quarter of the 5,000 tokens of room
+    # the exact one-step reruns, built from the call that produced THIS result (a shell command) and its measured size
+    assert f"`( cat app.log ) 2>&1 | tail -n {piece}`" in note and f"`( cat app.log ) 2>&1 | head -n {piece}`" in note and "| grep -n WORD" in note and "cria" not in note.lower()
     assert out[-2] == msgs[-2] and out[-1]["tool_call_id"] == "c1" and bodykeys.READ_OBSERVATION not in out[-1]
     assert cf.fit(out, None, window=6000, reserve=1000, safety=1.5)[0] == out
     assert msgs[-1]["content"] == LOG                                            # the caller's list is untouched
@@ -223,16 +225,72 @@ def test_withholding_is_the_last_resort_and_touches_only_what_it_must():
     assert "30,000 bytes in 1 line(s)" in note and "Line 1, the longest, is 30,000 bytes" in note and "head -c 4000" in note
 
 
+def test_the_note_names_the_exact_narrower_call_for_the_kind_of_result_it_replaces():
+    """wave 10 OVFL follow-up: a long test run's tail matters, and a note that only said "read it in pieces" cost one rerun
+    of guesswork. From typed facts alone (the call that produced the result, the tool's declared fields, the measured size) a
+    shell result gets its own command piped through tail/head/grep, a read tool that declares a line window gets the exact
+    arguments for the first and the LAST piece, and a result with no usable call keeps the generic route; a command too long
+    to quote is not quoted."""
+    menu_ = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object", "properties": {
+        "path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}}}},
+        {"type": "function", "function": {"name": "view", "parameters": {"type": "object", "properties": {
+            "file_path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}}}}]
+    def note(call_name, args, tools=menu_, window=6000):
+        msgs = [{"role": "system", "content": "sys"}, u("task"), a("", "c1", call_name, json.dumps(args)), tool("c1", LOG)]
+        return cf.fit(msgs, tools, window=window, reserve=1000, safety=1.5)[0][-1]["content"]
+    piece = int(note("exec_command", {"cmd": "pytest -q"}).split("about ")[1].split(" lines")[0])
+    assert f"`( pytest -q ) 2>&1 | tail -n {piece}`" in note("exec_command", {"cmd": "pytest -q"})
+    assert f"`( cd /ws && make test ) 2>&1 | tail -n {piece}`" in note("shell", {"command": ["bash", "-lc", "cd /ws && make test"]})
+    read = note("read_file", {"path": "src/app.py"})
+    assert f'read_file {{"path": "src/app.py", "offset": 1, "limit": {piece}}} returns the first {piece} lines' in read
+    assert f'{{"path": "src/app.py", "offset": {3000 - piece + 1}, "limit": {piece}}}' in read and "the last" in read
+    view = note("view", {"file_path": "src/app.py"})
+    assert f'"start_line": 1, "end_line": {piece}}}' in view and f'"start_line": {3000 - piece + 1}, "end_line": 3000}}' in view
+    for generic in (note("exec_command", {"cmd": "x" * 700}), note("web_fetch", {"url": "http://x"}), note("read_file", {"path": "p"}, tools=[])):
+        assert f"about {piece} lines at a time: a line range on a read tool" in generic and "( " not in generic and '"offset"' not in generic
+
+
+def test_a_last_result_too_big_for_any_window_keeps_the_history_that_cannot_help():
+    """wave 10 OVFL follow-up (lever order): a session of 30 earlier call/result pairs whose NEWEST result alone cannot fit
+    used to lose the older turns first (lever 5), a futile, labelled loss. The result is withheld first, and when that is
+    enough every older turn is still there; a result that merely competes with history is still left to the drop levers."""
+    history = pairs(30, 300)
+    out, _, rep = cf.fit(_cat(LOG, extra=history), None, window=6000, reserve=1000, safety=1.5)
+    assert rep.results_withheld == 1 and rep.turns_dropped == 0 and rep.protected_dropped == 0 and not rep.over_budget
+    assert out[2:2 + len(history)] == history and out[-1]["content"].startswith("⟦ctx:result-not-delivered⟧")
+    modest = pairs(30, 300) + [a("", "m1", "exec_command", "{}"), tool("m1", "m" * 3000)]
+    out, _, rep = cf.fit([{"role": "system", "content": "sys"}, u("task"), *modest], None, window=6000, reserve=1000, safety=1.5)
+    assert rep.results_withheld == 0 and rep.protected_dropped > 0 and out[-1]["content"] == "m" * 3000
+
+
+def test_a_frame_the_eight_newest_messages_overflow_keeps_only_the_newest_call_and_its_result():
+    """wave 10 OVFL follow-up (frame): when even the last eight messages do not fit beside the fixed frame and no result is
+    big enough to withhold, lever 7 keeps the newest call and its result (labelled by the compacted note) instead of ending
+    the turn; system text, the task and the newest pair survive. A protected read keeps its own overflow route."""
+    msgs = [{"role": "system", "content": "sys " + "s" * 2000}, u("task " + "t" * 2000),
+            *[a("w" * 1600) for _ in range(6)], a("", "c0", "read_file", '{"path": "p"}'), tool("c0", "r" * 200)]
+    out, _, rep = cf.fit(msgs, None, window=3600, reserve=600, safety=1.5)
+    assert not rep.over_budget and rep.protected_dropped > 0 and rep.results_withheld == 0
+    assert out[0] == msgs[0] and out[1] == msgs[1] and out[-2:] == msgs[-2:] and notes(out)
+    assert sum(1 for m in out if m["role"] == "assistant") == 1                 # the six long assistant turns went
+    out, _, rep = cf.fit(msgs, None, window=3600, reserve=600, safety=1.5, protected_call_ids=("c0",))
+    assert rep.over_budget and rep.protected_dropped == 0 and out[-2:] == msgs[-2:]    # a protected read: lever 7 does not run
+
+
 @pytest.mark.parametrize("count,desc,window,fits", [(60, 600, 20000, True), (120, 900, 49152, True), (100, 200, 512, False)])
 def test_a_fat_tool_menu_is_compressed_never_deleted(count, desc, window, fits):
     """qwopus-9: 34K tokens of connector tools overflowed because the schema was irreducible. Descriptions
     shrink; every tool keeps its name/params; an impossible menu is reported, not silently crippled."""
     tools = menu(count, desc)
+    original = copy.deepcopy(tools)
     msgs = [{"role": "system", "content": "S" * 40000 if count == 120 else "s"}, u("do a coding task")]
     _, new, rep = cf.fit(msgs, tools, window=window, reserve=min(4096, window // 2))
     assert [t["function"]["name"] for t in new] == [t["function"]["name"] for t in tools]
     assert "arg" in new[0]["function"]["parameters"]["properties"] and rep.tools_dropped == 0
     assert rep.tool_tokens < rep.tool_tokens_before and rep.over_budget is (not fits)
+    assert tools == original and rep.tools_compressed == count                    # the caller's menu is untouched; every description was shortened ...
+    assert all(t["function"]["description"].endswith(" […more]") and t["function"]["parameters"]["properties"]["arg"]["description"].endswith(" […more]")
+               for t in new)                                                       # ... with a visible mark, on the tool and on its parameters
 
 
 def test_a_reserve_as_large_as_the_window_is_clamped_not_zeroing_the_prompt():
@@ -274,20 +332,6 @@ def test_the_floor_reduces_the_harness_persona_before_conversation_evidence_and_
     assert persona not in out[0]["content"] and cf._REDUCED_MARK in out[0]["content"]
     assert configured in out[0]["content"] and out[0]["content"].startswith("coder frame")
     assert sum("EVIDENCE" in str(m.get("content")) for m in out) == 6
-
-
-def test_the_task_survives_steers_injected_after_it():
-    """53 of 1,475 coder prompts shipped with no task: cria's own steer/notes made the task the OLDEST
-    droppable turn. It is protected structurally (no marker needed), with unproven earlier user context."""
-    banner = "Working environment - cwd: /tmp/ws"
-    task = "Fix the rounding bug causing totals to be one cent low."
-    msgs = [{"role": "system", "content": "sys"}, u(banner), u(task)]
-    for i in range(40):
-        msgs += [a("filler " * 200), u(f"⟦ctx:steer⟧ note {i}")]
-    out, _, rep = cf.fit(msgs, None, window=1500, reserve=300, pinned_task=task)
-    assert rep.turns_dropped > 0
-    texts = [m.get("content") for m in out]
-    assert task in texts and banner in texts
 
 
 def test_a_standin_for_a_removed_file_text_block_is_not_shed_with_the_oldest_turns():

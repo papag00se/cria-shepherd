@@ -55,7 +55,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import bodykeys, imageprotocol
-from . import denial, editrecovery, prompts, readshape, selfcompact, toolargs, toolwire, windowcaps
+from . import denial, editrecovery, prompts, readshape, selfcompact, shelltool, toolargs, toolwire, windowcaps
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -192,6 +192,8 @@ DEFAULT_GEN_RESERVE = windowcaps.GEN_RESERVE   # 4,096 at the 49,152-token windo
 # Lever 5 keeps this many trailing messages when forced to drop inside the protected span —
 # the active work (the newest tool call/result pairs) survives even a hard overflow.
 OVERFLOW_KEEP_TAIL = 8
+# Lever 7 narrows that tail to the newest call and its result when even the last eight do not fit.
+RESULT_TURN_TAIL = 2
 # Distinct live obligations: becoming the current request is a stronger change
 # than merely remaining in a recent tail; a newly paired live result also matters.
 _LIVE_REQUEST = 1
@@ -547,6 +549,12 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         work, rep.restored_reduced = _reduce_restored_text(work, msg_budget, **protected)
         # --- Lever 3: reduce the bulkiest tool OUTPUTS before deleting any turn. ---
         work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget, **protected)
+        # --- Lever 3b: a tool result that cannot fit even ALONE beside the frame (system text, the request,
+        # the tool menu). Dropping every older turn cannot make room for it, so it is withheld BEFORE levers 4-5
+        # spend history on a fit they cannot reach. A result that merely competes with history is left to them.
+        work, rep.results_withheld = _withhold_oversized_results(
+            work, tools, window=window, reserve=reserve, safety=safety, overhead=rep.wire_overhead,
+            unfittable_alone=True, **protected)
         hard_budget = msg_budget
         if headroom and _msgs_tokens(work) > hard_budget:
             # Headroom never initiates reduction on a fitting request and never
@@ -596,12 +604,37 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # survive, so the result is swapped for a labelled not-delivered note and the coder, which
         # holds the tools, goes on by reading a part. A USER message is never touched here: a person
         # is there to answer it (Upstream raises InputOverflow, a truthful message with sizes).
-        work, rep.results_withheld = _withhold_oversized_results(
+        work, more = _withhold_oversized_results(
             work, tools, window=window, reserve=reserve, safety=safety,
             overhead=rep.wire_overhead, **protected)
-        if rep.results_withheld:
+        rep.results_withheld += more
+        if more:
             rep.msg_tokens_after = _msgs_tokens(work)
             over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
+    if over and not protected_call_ids:
+        # --- Lever 7: the live tail itself. Lever 5 stops at the last OVERFLOW_KEEP_TAIL messages; when even
+        # those do not fit (a harness frame near the window's size), keep only the last call and its result.
+        # Labelled by the same compacted note; never touches system messages or the request. Not run when a
+        # read is protected: that overflow is answered by the read's own route (ReadFitOverflow, loop compaction).
+        hard_budget = max(target_est - tool_budget, MIN_MSG_BUDGET)
+        work, more = _drop_protected_overflow(
+            work, msg_budget, sacrifice_budget=hard_budget, tail_keep=RESULT_TURN_TAIL, **protected)
+        rep.protected_dropped += more
+        work, more_orphans = _strip_orphan_tools(work)
+        rep.orphans_removed += more_orphans
+        rep.msg_tokens_after = _msgs_tokens(work)
+        over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
+        if over:
+            work, more = _withhold_oversized_results(
+                work, tools, window=window, reserve=reserve, safety=safety,
+                overhead=rep.wire_overhead, **protected)
+            rep.results_withheld += more
+            over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
+    if over:
+        required = math.ceil((est_total(work, tools) + rep.wire_overhead) * safety)
+        if required <= window:
+            rep.reserve = min(reserve, window - required)
+            over = False
     rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
@@ -610,30 +643,45 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
 
 def _withhold_oversized_results(messages: list[dict], tools, *, window: int, reserve: int, safety: float,
-                                overhead: int, protected_call_ids=()) -> tuple[list[dict], int]:
-    """Lever 6, the last: swap the LARGEST tool results for a labelled not-delivered note, one at a time, until
-    the request fits (or none is left). Nothing else is touched, and a request that already fits never reaches it.
+                                overhead: int, protected_call_ids=(), unfittable_alone=False) -> tuple[list[dict], int]:
+    """Swap the LARGEST tool results for a labelled not-delivered note, one at a time, until the request fits
+    (``fits``, default: the whole request under the window) or none is left. Nothing else is touched, and a
+    request that already fits never reaches it.
+
+    Two call sites, one rule. LEVER 3b (``unfittable_alone``) runs before any history is dropped and takes every
+    result that cannot fit even alone beside the frame (system text, the request, the tool menu): dropping every
+    older turn cannot make room for it, so a session whose last result is too big keeps its history. LEVER 6 is the
+    last resort over whatever is left, largest first, until the request fits.
 
     Why a note and not a clipped copy: content_reduce refuses to cut plain text (rule 5, and the prose tier it
     removed), so no lossless form of such a result exists; any slice of it would be a half-result the coder could
     mistake for the whole. The note says what was measured (bytes, lines, the window), that none of it counts as
-    seen, and the next step SIZED from those measurements, so the coder reads it in pieces itself — the pattern
-    ``multipart_fit_overflow`` set for a read that cannot fit. It is derived from the result alone, so every later
-    request carrying the same result (the harness keeps it in its history) is answered the same way — no state.
+    seen, and the exact command or call that reads THIS result in pieces, built from the call that produced it and
+    its measured size, so the coder goes on in one step — the pattern ``multipart_fit_overflow`` set for a read
+    that cannot fit. It is derived from the result and its call alone, so every later request carrying the same
+    result (the harness keeps it in its history) is answered the same way — no state.
 
     Left alone: a protected read (its own overflow path), a result carrying an image, cria's own gate output, and
     any result too small to be the reason (a stand-in must save something)."""
-    preserved = _preserved_indices(messages, protected_call_ids)
-    marked = _marker_protected(messages)
+    # The frame no lever drops: system text, the request being answered, the tool menu. Lever 3b only ever takes a
+    # result answering the request (after the last user message, which lever 4 never drops): anything earlier is
+    # history, and history is the drop levers' to spend.
+    last_user = _last_user(messages)
+    frame = est_total([m for i, m in enumerate(messages) if m.get("role") in ("system", "developer") or i == last_user], tools)
+    def fits(w):
+        return (est_total(w, tools) + overhead) * safety <= window - reserve
+    preserved = _preserved_indices(messages, protected_call_ids) | _marker_protected(messages)   # cria's gate output too
     sized = sorted(((est_tokens(_msg_text(m)), i) for i, m in enumerate(messages)
-                    if m.get("role") == "tool" and i not in preserved and i not in marked),
+                    if m.get("role") == "tool" and i not in preserved
+                    and (not unfittable_alone or (i > last_user and (est_tokens(_msg_text(m)) + frame + overhead) * safety > window - reserve))),
                    reverse=True)
     out, n = list(messages), 0
     for size, i in sized:
-        if (est_total(out, tools) + overhead) * safety <= window - reserve:
+        if not unfittable_alone and fits(out):
             break
         text = _msg_text(out[i])
-        note = _not_delivered_note(text, window=window, reserve=reserve, safety=safety)
+        note = _not_delivered_note(text, _call_of(out, out[i].get("tool_call_id")), tools,
+                                   window=window, reserve=reserve, safety=safety)
         if est_tokens(note) >= size:
             break                      # sorted largest first: no later one can save more
         out[i] = {k: v for k, v in out[i].items() if k not in _READ_CLAIMS} | {"content": note}
@@ -644,19 +692,72 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
 # The producer hints that say "this result's bytes are the file / the output". A withheld result carries none of
 # them: nothing it held was seen, so nothing it held may earn a read credit or be attributed to a payload boundary.
 _READ_CLAIMS = (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.PAYLOAD_BOUNDARY)
+_COMMAND_FIELDS = ("command", "cmd", "shell_command")
+_RANGE_FIELDS = (("offset", "limit"), ("start_line", "end_line"))
+_MAX_COMMAND_CHARS = 600
 
 
-def _not_delivered_note(text: str, *, window: int, reserve: int, safety: float) -> str:
-    """The note that stands for a withheld tool result: measured size, window, and the sized next step."""
+def _call_of(messages, call_id) -> tuple[str, dict] | None:
+    """(tool name, parsed arguments) of the assistant call this result answers, or None."""
+    for m in messages:
+        for tc in (m.get("tool_calls") or []) if isinstance(m, dict) and m.get("role") == "assistant" else ():
+            if isinstance(tc, dict) and call_id and tc.get("id") == call_id:
+                fn = tc.get("function") or {}
+                return str(fn.get("name") or ""), toolargs.parse_args(fn.get("arguments"))
+    return None
+
+
+def _command_of(call) -> str | None:
+    """The shell command string of a shell-tool call (an argv array yields its last element), or None."""
+    if call is None or not shelltool.is_shell_tool_name(call[0]):
+        return None
+    for field_name in _COMMAND_FIELDS:
+        value = call[1].get(field_name)
+        if isinstance(value, list) and value and all(isinstance(v, str) for v in value):
+            value = value[-1]
+        if isinstance(value, str) and value.strip():
+            return value if len(value) <= _MAX_COMMAND_CHARS else None
+    return None
+
+
+def _range_route(call, tools) -> tuple[str, str, str] | None:
+    """(tool name, first-piece args JSON, last-piece args JSON) when the call was a read tool that declares a line
+    window, so the exact narrower call can be written; None otherwise. Built from the tool's own declared fields."""
+    if call is None:
+        return None
+    name, args = call
+    path = toolargs.tool_path(args)
+    declared = next((((t.get("function") or t).get("parameters") or {}).get("properties") or {}
+                     for t in tools or [] if isinstance(t, dict) and (t.get("function") or t).get("name") == name), None)
+    if path is None or not declared:
+        return None
+    for first, second in _RANGE_FIELDS:
+        if first in declared and second in declared:
+            return name, first, second
+    return None
+
+
+def _not_delivered_note(text: str, call, tools, *, window: int, reserve: int, safety: float) -> str:
+    """The note that stands for a withheld tool result: measured size, window, and the one-step way on."""
     raw = text.encode("utf-8", "surrogatepass")
     shape = readshape.measure(raw)
     routes = prompts.load_map("result_not_delivered_next")
+    # One piece costs about a quarter of the room the window leaves, at the density in force (est x safety).
+    per_line = max(est_tokens(text), 1) * safety / max(shape.lines, 1)
+    piece = max(1, int(max(window - reserve, 0) / 4 / per_line))
     if readshape.line_bound(shape):
         nxt = prompts.fill(routes["long_line"], longest_line=shape.longest_line, longest=f"{shape.longest:,}")
+    elif (route := _range_route(call, tools)) is not None:
+        name, first, second = route
+        path = toolargs.tool_path(call[1])
+        start = max(shape.lines - piece + 1, 1)
+        end = lambda a: piece if second == "limit" else a + piece - 1   # noqa: E731 - limit is a count, end_line a position
+        nxt = prompts.fill(routes["range"], tool=name, piece=f"{piece:,}", lines=f"{shape.lines:,}",
+                           first_args=json.dumps({"path": path, first: 1, second: end(1)}),
+                           last_args=json.dumps({"path": path, first: start, second: end(start)}))
+    elif (command := _command_of(call)) is not None:
+        nxt = prompts.fill(routes["command"], command=command, piece=f"{piece:,}", lines=f"{shape.lines:,}")
     else:
-        # One piece costs about a quarter of the room the window leaves, at the density in force (est x safety).
-        per_line = max(est_tokens(text), 1) * safety / max(shape.lines, 1)
-        piece = max(1, int(max(window - reserve, 0) / 4 / per_line))
         nxt = prompts.fill(routes["lines"], piece=f"{piece:,}")
     return prompts.render("result_not_delivered", bytes=f"{shape.size:,}", lines=f"{shape.lines:,}",
                           window=f"{window:,}", next=nxt)
@@ -857,8 +958,8 @@ def _historical_annotation(message: dict) -> bool:
         bodykeys.AnnotationSource.INVENTORY, bodykeys.AnnotationSource.GUIDANCE_HISTORY))
 
 
-def _live_tail(messages: list[dict]) -> set[int]:
-    return set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-OVERFLOW_KEEP_TAIL:])
+def _live_tail(messages: list[dict], keep: int = OVERFLOW_KEEP_TAIL) -> set[int]:
+    return set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-keep:])
 
 
 def _input_core(messages: list[dict], pinned_task: str, *, protected_call_ids=()) -> list[dict]:
@@ -995,7 +1096,7 @@ def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_ca
 
 
 def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
-                             sacrifice_budget: int | None = None,
+                             sacrifice_budget: int | None = None, tail_keep: int = OVERFLOW_KEEP_TAIL,
                              protected_call_ids=()) -> tuple[list[dict], int]:
     """Last resort when the PROTECTED span alone is over budget: drop its oldest turns,
     never touching (a) system/developer messages, (b) the last user message — the request
@@ -1014,7 +1115,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
     # firing on nearly every request of a long run.
     while _msgs_tokens(work + ([note] if note else [])) > msg_budget:
         last_user = _last_user(work)
-        tail = _live_tail(work)
+        tail = _live_tail(work, tail_keep)
         preserved = _preserved_indices(work, protected_call_ids)
         def _droppable(i, m):
             return (i not in preserved and ((_historical_annotation(m) or (i > last_user and i not in tail))
