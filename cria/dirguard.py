@@ -61,6 +61,9 @@ _NETWORK_CMD = re.compile(
 # The one external FILE access that survives the network-command exemption: an explicit write TARGET —
 # the path is preceded by a `>`/`>>`/`>|` redirect or a `-o`/`-O`/`--output`/`tee` (so `curl … -o /etc/x` and
 # `curl … > /tmp/y` are still caught, but a URL path in the request is not).
+# What the network tool SENDS from a file — `--data @/x`, `-F f=@/x`, `--data-urlencode n@/x`, `-T /x`, `--upload-file /x` — is a
+# read of that file, not a URL fragment: the exemption never covers it.
+_UPLOAD_BEFORE = re.compile(r"(?:@|(?:^|\s)(?:-T|--upload-file)(?:\s+|=))$")
 _WRITE_TARGET_BEFORE = re.compile(r"(?:>>?\|?|(?:^|\s)-[oO]|(?:^|\s)--output|(?:^|\s)tee)\s*$")
 
 # A text-SEARCH / stream-edit tool whose QUOTED argument is a PATTERN or script, never a file path — so a
@@ -2260,7 +2263,6 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
     # root the harness declared writable; one that might write there stays under the normal rule.
     proof = _read_proof(command, workspace) if roots else None          # run ONCE; its failure is the evidence below
     read_only = bool(roots) and proof is None
-    network = bool(_NETWORK_CMD.search(command))
     segments = _segment_spans(command)
     spans = _quoted_spans(command)
     external = None
@@ -2301,7 +2303,10 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         # checks above/below always run first.
         if read_only and not is_write and _in_declared_root(tok, roots):
             continue
-        if network and not is_write:
+        # The exemption is the NETWORK TOOL's own arguments: the segment that holds it, not every segment of the command
+        # (`cat /etc/shadow; curl http://h` reads /etc/shadow), and not a file the tool uploads.
+        if (not is_write and not _UPLOAD_BEFORE.search(command[:m.start()])
+                and any(s <= m.start() < e and _NETWORK_CMD.search(command[s:e]) for s, e in segments)):
             continue
         # At `read` an external READ is allowed — but it must not END the scan: a later segment may
         # write outside (`cat "/tmp/o/in"; grep x in > /tmp/o/out`), so keep judging every target.
