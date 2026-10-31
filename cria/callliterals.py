@@ -132,9 +132,6 @@ def _unescape_once(body: str) -> str:
     return "".join(out)
 
 
-_MUTATION_TOOLS = ("write_file", "create_file", "edit_file", "str_replace", "apply_patch")
-
-
 def _content_truncated(fn: dict) -> bool:
     """A ``write_file`` whose ARGS parse (valid JSON, normal `tool_calls` finish) but whose CONTENT is a
     provably-truncated source file — the model cut its own file off mid-string, so the JSON-level guard
@@ -185,7 +182,7 @@ def has_incomplete_tool_args(completion: dict) -> bool:
                 json.loads(raw, strict=False)
             except (json.JSONDecodeError, ValueError):
                 return True  # repair could not close it → the call was cut off mid-arguments
-            if fn.get("name") in _MUTATION_TOOLS and _content_truncated(fn):
+            if _content_truncated(fn):
                 return True  # write args parse but the file content is cut off mid-string → refuse
     return False
 

@@ -47,3 +47,12 @@ def test_calls_with_non_string_arguments_or_no_calls_are_not_judged():
 def test_a_writes_arguments_are_recovered_only_when_the_json_is_structurally_whole(raw, expected):
     assert cl._recover_write_args(raw) == expected
     assert cl._json_structurally_complete(raw) is (expected is not None)
+
+
+def test_a_content_key_that_lost_its_opening_quote_is_not_recovered_as_the_rest_of_the_text():
+    """NOT unreachable (the wave-9 note called it that): the completeness scan reads `"f"content":"` as a string, a word and an
+    opened string, so a call can be 'whole' while the regex-found content value has no closing quote. Slicing to the end would
+    write the tail of the call as the file; it is refused instead."""
+    raw = '{"path":"f.py"content":"}'
+    assert cl._json_structurally_complete(raw) and cl._content_value_end(raw, raw.index('":"}') + 3) is None
+    assert cl._recover_write_args(raw) is None

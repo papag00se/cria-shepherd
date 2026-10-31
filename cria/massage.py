@@ -46,7 +46,7 @@ from .callformats import (
     _repair_hunk_headers, _fix_hunk_lines)
 from .callliterals import (
     _FUSED_SENTINELS, _PATH_RE, _CONTENT_RE, _json_structurally_complete,
-    _recover_write_args, _content_value_end, _unescape_once, _MUTATION_TOOLS,
+    _recover_write_args, _content_value_end, _unescape_once,
     _content_truncated, has_incomplete_tool_args, _decode_backslash_escapes, trim_fused_tail)
 
 
