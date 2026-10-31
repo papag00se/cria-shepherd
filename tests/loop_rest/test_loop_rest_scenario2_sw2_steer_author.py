@@ -66,11 +66,11 @@ def test_a_reply_cut_by_the_token_limit_is_asked_again_once_and_then_withheld(lo
     assert out is None and calls == 2 and kinds.count("summarize.truncated") == 2
 
 
-def vet(directive, evidence="", ask=None, flag="", messages=None):
+def vet(directive, evidence="", ask=None, flag="", messages=None, ws=None):
     class Sess:
         fetched_pages, last_gate_flag = {}, flag
     log = Rlog()
-    return loop._vet_steer(directive, evidence, log, ask, Sess() if flag or ask else None, [] if messages is None else messages, None), log.kinds()
+    return loop._vet_steer(directive, evidence, log, ask, Sess() if flag or ask else None, [] if messages is None else messages, ws), log.kinds()
 
 
 WRITE = [{"role": "assistant", "tool_calls": [{"id": "w", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "go.mod", "content": "x"})}}]},
@@ -95,3 +95,42 @@ FLAGGED = "Use the pinned version in go.mod."
 def test_each_rejection_reason_of_the_steer_funnel_names_its_guard_and_logs_it(args, expected, event):
     got, kinds = vet(**args)
     assert got == expected and (event is None or event in kinds)
+
+
+def test_a_path_inside_the_workspace_and_a_symbol_in_an_unreadable_file_are_never_refuted(tmp_path):
+    (tmp_path / "rates.py").write_text("def zone_for(code):\n    return code\n")
+    for directive in (f"Create {tmp_path}/new/module.py and give it a main.", "Rename `nope_fn` in missing.py to something else.", "Rename `zone_for` in rates.py."):
+        assert vet(directive, ws=str(tmp_path))[0] == (directive, "")
+    assert vet("Rename `nope_fn` in rates.py.", ws=str(tmp_path))[0] == (None, "phantom_symbol")
+
+
+# the answer says ON_TRACK but the reasoner's own thinking says the coder is stuck: ask once more, trust only a settled recovery
+RECOVERY = [("Run python3 live_test.py instead of python.", "Run python3 live_test.py instead of python.", ["loop.steer_answer_contradicted", "loop.steer_from_reasoning"]),
+            ("UNSETTLED", None, ["loop.steer_answer_contradicted", "loop.steer_recover_unsettled"]),
+            ("ON_TRACK", None, ["loop.steer_answer_contradicted", "loop.steer_on_track"])]
+
+
+@pytest.mark.parametrize("recovered,directive,events", RECOVERY)
+@pytest.mark.parametrize("tool_path", [False, True])
+def test_an_on_track_answer_over_thinking_that_says_stuck_is_asked_again_once(request, recovered, directive, events, tool_path):
+    root = request.getfixturevalue("surveyed_root") if tool_path else None
+    if not tool_path:
+        request.getfixturevalue("loop_rest_local_view")
+    replies = iter([{"content": "ON_TRACK", "reasoning_content": "The coder is stuck in a loop, repeating python. Needs help."}, {"content": recovered}])
+    log = Rlog()
+    chat = lambda body, rlog: json.dumps({"choices": [{"message": next(replies), "finish_reason": "stop"}]}).encode()  # noqa: E731
+    out = loop.author_steer(chat, None, root, loop.GuardState(), {"messages": SESSION, "tools": []}, log, condition="wheel_spin")
+    assert out == directive and [k for k in log.kinds() if k in events] == events
+
+
+@pytest.mark.parametrize("reasoning,finish,calls,kinds", [("The coder is making fine progress on the parser.", "stop", 1, ["loop.steer_on_track"]),
+                                                          ("The coder is stuck in a loop.", "rumination", 2, ["loop.steer_rescue_skipped"])])
+def test_the_recovery_question_is_not_asked_without_stuck_thinking_or_after_a_guard_aborted_the_stream(loop_rest_local_view, reasoning, finish, calls, kinds):
+    asked = []
+    log = Rlog()
+
+    def chat(body, rlog):
+        asked.append(body)
+        return json.dumps({"choices": [{"message": {"content": "ON_TRACK", "reasoning_content": reasoning}, "finish_reason": finish}]}).encode()
+    out = loop.author_steer(chat, None, None, loop.GuardState(), {"messages": SESSION, "tools": []}, log, condition="wheel_spin")
+    assert len(asked) == calls and set(kinds) <= set(log.kinds()) and "loop.steer_answer_contradicted" not in log.kinds() and out is None
