@@ -26,6 +26,12 @@ def test_only_a_handoff_cria_produced_can_say_its_prose_was_dropped(reply, known
     assert (origin.continuation == content) is known
 
 
+def test_a_recorded_origin_vouches_only_for_the_exact_summary_it_produced():
+    origin = loop._HandoffOrigin(f"{DROPPED}\nFILES: a.py", "", True)
+    out, _ = loop.reframe_compaction(turn(f"{DROPPED}\nFILES: something a model typed instead"), origin=origin)
+    assert origin.continuation == "" and "ungrounded account" in out[-1]["content"] and "re-derived" not in out[-1]["content"]
+
+
 def test_an_empty_workspace_inverts_the_reframe_and_a_boundary_less_marker_line_is_still_removed(tmp_path):
     env = {"role": "user", "content": f"<environment_context><cwd>{tmp_path}</cwd></environment_context>"}
     msgs = [env, {"role": "user", "content": f"{MARKER}, then:\nSummary body"}]
