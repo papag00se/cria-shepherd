@@ -676,11 +676,6 @@ def collect_event_census(t0: float, t1: float) -> dict:
     return {'assists': assists, 'wire_translations': wire_translations}
 
 
-def collect_assists(t0: float, t1: float) -> dict:
-    """Compatibility view of coding-assist observations; rows carry the full census."""
-    return collect_event_census(t0, t1)['assists']
-
-
 def budget_intervals(task_dir: Path) -> int:
     """Retained legacy budget metadata; neither a stop rule nor required task content."""
     meta = tomllib.loads((task_dir / "meta.toml").read_text())
@@ -718,10 +713,6 @@ class MilestonePacing:
     def maximum_active_seconds(self) -> int:
         return self.interval_seconds * self.budget_intervals
 
-    @property
-    def at_limit(self) -> bool:
-        return self.next_milestone >= self.maximum_active_seconds
-
     def active_elapsed(self, now: float) -> float:
         return now - self.started_at
 
@@ -742,8 +733,8 @@ def milestone_progress(verdict: dict, minute: int, actual_active_seconds: float 
             f"[material changes] {verdict['material_changes']}")
 
 
-def milestone_terminal(verdict: dict, minute: int, at_limit: bool = False) -> str | None:
-    """Honor the half-hour floor, then the judge. Legacy at_limit never overrides inference."""
+def milestone_terminal(verdict: dict, minute: int) -> str | None:
+    """Honor the half-hour floor, then the judge; the pacing budget never ends a run by itself."""
     if minute < 30:
         return None
     decision = verdict.get("decision")

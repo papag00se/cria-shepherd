@@ -73,7 +73,7 @@ def test_pacing_is_one_fifteen_minute_wall_clock_with_a_budget_cap():
     ("continue", 0, 75, None), ("stalled", 99, 45, "milestone-stalled-45min")])
 def test_the_judge_decides_the_stop_never_the_percentage(decision, pct, minute, expected):
     """Only a recorded complete/stalled decision from minute 30 ends a run; a low score alone never does."""
-    assert run.milestone_terminal({"decision": decision, "usefulness_percent": pct}, minute, True) == expected
+    assert run.milestone_terminal({"decision": decision, "usefulness_percent": pct}, minute) == expected
 
 
 def test_progress_line_always_states_the_inferred_percentage_and_changes():
