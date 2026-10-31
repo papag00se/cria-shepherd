@@ -33,11 +33,11 @@ def chat_reply(content):
     return json.dumps({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}]})
 
 LENSES = {"retrospective": "RETROSPECTIVE", "scope": "PRESERVES", "files": "NONE", "changes": "NONE",
-          "sizes": "NONE", "build": "NONE"}
+          "sizes": "NONE", "build": "NONE", "fidelity": "FAITHFUL"}
 
 def lens_of(system):
     for name in LENSES:
-        if system.startswith(prompts.load("compaction_validate_" + name)):
+        if system.startswith(prompts.load("compaction_validate" + ("" if name == "fidelity" else "_" + name))):
             return name
     return None
 

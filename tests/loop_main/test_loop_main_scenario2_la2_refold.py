@@ -21,7 +21,7 @@ def compact(refold_verdict, refold_text, tmp_path):
     def reasoner(body, rlog):
         phases.append(rlog.phase)
         system = body["messages"][0]["content"]
-        answers = {**ACCEPT, "PLAN or RETROSPECTIVE": refold_verdict if "refold" in rlog.phase else "RETROSPECTIVE"}
+        answers = {**ACCEPT, "UNFAITHFUL or FAITHFUL": refold_verdict if "refold" in rlog.phase else "FAITHFUL"}
         if rlog.phase.startswith("self-compact-refold"):
             text = refold_text
         else:
@@ -38,9 +38,9 @@ def compact(refold_verdict, refold_text, tmp_path):
     return out, sess, phases
 
 
-@pytest.mark.parametrize("verdict,text,refolded", [("RETROSPECTIVE", "CONDENSED: resolver built and verified.", True),
-                                                   ("PLAN", "CONDENSED: resolver built and verified.", False),
-                                                   ("RETROSPECTIVE", "", False)])
+@pytest.mark.parametrize("verdict,text,refolded", [("FAITHFUL", "CONDENSED: resolver built and verified.", True),
+                                                   ("UNFAITHFUL", "CONDENSED: resolver built and verified.", False),
+                                                   ("FAITHFUL", "", False)])
 def test_the_accumulated_rollup_is_refolded_only_when_the_refold_is_written_and_validated(verdict, text, refolded, tmp_path):
     out, sess, phases = compact(verdict, text, tmp_path)
     rollup = next(m["content"] for m in out if "⟦ctx:rollup⟧" in str(m.get("content")))

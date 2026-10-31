@@ -7597,7 +7597,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     # is asked anything. It replaced the whole-briefing fidelity verdict (docs/open-threads.md, 2026-11-02).
     unread = briefinggrounding.ungrounded(briefing, [*transcript_blocks, files, checks, task])
     if unread:
-        answers["figures"] = "UNGROUNDED " + ", ".join(unread)
+        answers["figures"] = "UNGROUNDED " + ", ".join(unread[:8])
         if rlog is not None:
             rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
                       accepted=False, answers=answers)
