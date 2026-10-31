@@ -1,4 +1,4 @@
-"""A plan-off session whose history outgrows the coder's room is folded by the briefing writer, and only a briefing that survives its four
+"""A plan-off session whose history outgrows the coder's room is folded by the briefing writer, and only a briefing that survives its
 validators becomes the coder's context: the root task stays verbatim, the briefing follows it, the newest turns stay whole."""
 import json
 
@@ -11,14 +11,14 @@ from loop_main_helpers import Chat, Rlog, SHELL, acting, loop_main_local_view, s
 from test_loop_main_compaction import ACCEPT
 
 
-@pytest.mark.parametrize("fidelity,folded", [("FAITHFUL", True), ("UNFAITHFUL", False)])
-def test_the_coder_gets_a_rollup_only_when_the_briefing_is_validated(fidelity, folded):
+@pytest.mark.parametrize("scope,folded", [("PRESERVES", True), ("NARROWS", False)])
+def test_the_coder_gets_a_rollup_only_when_the_briefing_is_validated(scope, folded):
     phases = []
 
     def reasoner(body, rlog):
         phases.append(rlog.phase)
         system = body["messages"][0]["content"]
-        answers = {**ACCEPT, "UNFAITHFUL or FAITHFUL": fidelity}
+        answers = {**ACCEPT, "NARROWS or PRESERVES": scope}
         return json.dumps({"choices": [{"message": {"content": next((v for k, v in answers.items() if k in system),
                                                                     "Built the resolver; app.py exists.")}}]}).encode()
     coder = Chat(acting())
@@ -29,7 +29,7 @@ def test_the_coder_gets_a_rollup_only_when_the_briefing_is_validated(fidelity, f
     history = [{"role": "user", "content": "build it"}] + [{"role": "assistant", "content": f"turn {i} " + "y" * 1000} for i in range(50)]
     out = driver.drive({"messages": history, "tools": [SHELL], "stream": True}, "sid:k", None, Rlog())
     assert out["choices"][0]["message"]["tool_calls"]                                             # the coder still acts either way
-    assert phases[0] == "self-compact" and sum(p.startswith("compaction-validate") for p in phases) == 4
+    assert phases[0] == "self-compact" and sum(p.startswith("compaction-validate") for p in phases) == (3 if folded else 2)   # a refusal stops the lenses after it
     sent = coder.bodies[-1]["messages"]
     rollup = [m for m in sent if "⟦ctx:rollup⟧" in str(m.get("content"))]
     assert bool(rollup) is folded
