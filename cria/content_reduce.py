@@ -141,9 +141,7 @@ def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> st
         # valid" came back as "request could not read server because token not valid", silently, on
         # the compaction path, in text the model reads as fact.
         reduced = reduce_json(content, cap_tokens, strip_prose=False)
-        if reduced is not None and est_tokens(reduced) <= cap_tokens:
-            return reduced
-        content = reduced if reduced is not None else content
+        content = reduced if reduced is not None else content   # fits or not, the lossless form is what is kept
     return content   # still over cap: KEEP IT WHOLE and let the caller disclose it
 
 
@@ -329,40 +327,6 @@ def _collapse_ws(s: str) -> str:
             blanks = 0
             out.append(c)
     return "".join(out).strip()
-
-
-def _looks_like_code(s: str) -> bool:
-    """Conservative code sniff for the plain-text reduction gate. A prose-share test alone is
-    fooled by indented source — indentation inflates the whitespace ratio, so a block of Python
-    scores >75% "prose-ish" and a word-deleting stripper (now removed) would eat its `for`/`in`/`is`/`as`/`from`/`with`
-    keywords. Uses only STRUCTURAL signals (no per-language keyword list) so it generalizes:
-    (1) a high share of lines ending in a block opener / statement terminator, or (2) a high
-    density of structural symbols among the non-whitespace characters."""
-    lines = [ln for ln in s.splitlines() if ln.strip()]
-    if not lines:
-        return False
-    enders = sum(1 for ln in lines if ln.rstrip().endswith((":", "{", "}", ";")))
-    if enders * 100 // len(lines) >= 40:
-        return True
-    non_space = [c for c in s if not c.isspace()]
-    if not non_space:
-        return False
-    symbols = sum(1 for c in non_space if c in "{}()[]<>=;+*/\\|&%$#@`~")
-    if symbols * 100 // len(non_space) >= 12:
-        return True
-    # PER-LINE fallback: the AGGREGATE ratios above are fooled by a comment/docstring-DOMINANT source
-    # file — a few code lines drowned in prose comments scores as prose, and the stripper then eats its
-    # keywords (the confirmed corruption of a model-read file). A single line that structurally reads as
-    # code protects the whole blob. Biased to protect: over-detecting code only skips a lossy reduction;
-    # under-detecting corrupts the model's authoritative read (never-truncate).
-    for ln in lines:
-        t = ln.rstrip()
-        if t.endswith(("{", "}", ";")):        # block terminators are ~never line-final in prose
-            return True
-        ns = [c for c in t if not c.isspace()]  # a symbol-dense single line, e.g. "def go(items):"
-        if ns and sum(1 for c in ns if c in "{}()[]<>=;+*/\\|&%$#@`~") * 100 // len(ns) >= 12:
-            return True
-    return False
 
 
 # THE ONLY SANCTIONED WAY TO SHORTEN MODEL-FACING TEXT. Six sites clipped a string with a bare slice
