@@ -61,7 +61,7 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
-from . import contextrestoration, filepresence, ledgercopies, reorientation, steppreparation, system1wiring
+from . import briefinggrounding, contextrestoration, filepresence, ledgercopies, reorientation, steppreparation, system1wiring
 from .toolstages import policy_log
 from .modulestate import ModuleInput, ModuleState
 from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
@@ -7561,9 +7561,14 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
     and omissions over a long transcript. In both failed L5 cells it accepted forward plans and
     claims contradicted in its own prompt. Ask the semantic questions separately: candidate-only
-    retrospection, task-scope preservation, then evidence fidelity. Every applicable lens must
-    return their exact positive verdict. Callers retain verbatim history (self-compaction) or only
-    re-derivable appendices (a harness-owned compaction) on any rejection or unavailable answer.
+    retrospection, then task-scope preservation. Every applicable lens must return their exact
+    positive verdict. Evidence fidelity is NOT a third verdict: a one-word judgment over the whole
+    transcript carried no claim-level signal (it was blind on two of three real briefings and noisy
+    on the third, rejecting an honest sentence as often as a fabricated one), so what it was
+    asked is settled by lookup instead: the typed lenses below for files, changes, sizes and build
+    state, and `briefinggrounding` for every other concrete figure. Callers retain verbatim history
+    (self-compaction) or only re-derivable appendices (a harness-owned compaction) on any rejection
+    or unavailable answer.
 
     ``system1`` (the service's trained classifier, when ``[system1]`` is enabled) answers ONLY the
     first lens — PLAN versus RETROSPECTIVE over the whole briefing. Scope and fidelity still go to the
@@ -7585,6 +7590,17 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 
     candidate = prompts.render("compaction_candidate", briefing=briefing.strip())
     answers: dict[str, str] = {}
+
+    # No model in this one: every concrete figure the briefing states is looked up, literally, in the evidence the
+    # writer read. A figure found nowhere was not read from anything (briefinggrounding); it refuses before a model
+    # is asked anything. It replaced the whole-briefing fidelity verdict (docs/open-threads.md, 2026-11-02).
+    unread = briefinggrounding.ungrounded(briefing, [*transcript_blocks, files, checks, task])
+    if unread:
+        answers["figures"] = "UNGROUNDED " + ", ".join(unread[:8])
+        if rlog is not None:
+            rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
+                      accepted=False, answers=answers)
+        return False
 
     def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
         answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
@@ -7637,16 +7653,6 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         if unbuilt:
             answers["build"] = "UNRUN " + unbuilt
             accepted = False
-    if accepted:
-        blocks = list(transcript_blocks)
-        if task_fact and task_fact not in blocks:
-            blocks.append(task_fact)
-        blocks.append(candidate)
-        blocks.append(prompts.render("compaction_files_fact", files=files.strip()) if files.strip()
-                      else prompts.render("compaction_no_fact", kind="FILESYSTEM INVENTORY"))
-        blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
-                      else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
-        accepted = judge("fidelity", prompts.load("compaction_validate"), blocks, "FAITHFUL")
     if rlog is not None:
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
                   level="info" if accepted else "warn", accepted=accepted, answers=answers)

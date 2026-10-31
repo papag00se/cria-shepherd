@@ -29,7 +29,7 @@ def validate(briefing, survey=SURVEY, messages=None, **replies):
         def emit(self, kind, **fields):
             answers.update(fields.get("answers") or {})
     ok = validate_compaction_briefing(chat, Role(name="reasoner", backend="fixture"), briefing, files=survey, checks="",
-                                      transcript_blocks=["assistant: write_file Importer.java"], rlog=Log(),
+                                      transcript_blocks=["assistant: write_file Importer.java (324 lines)"], rlog=Log(),
                                       task="Fix the importer.", messages=messages)
     return ok, [lens_of(b["messages"][0]["content"]) for b in seen], answers, seen
 

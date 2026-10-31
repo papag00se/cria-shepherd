@@ -8,7 +8,7 @@ from cria.loop import Loop, LoopContext, _satisfaction_evidence, _work_log
 from loop_main_helpers import Rlog, synthetic, loop_main_local_view  # noqa: F401
 
 ACCEPT = {"PLAN or RETROSPECTIVE": "RETROSPECTIVE", "NARROWS or PRESERVES": "PRESERVES", "CHANGED or NOT CHANGED": "NONE",
-          "GREEN or EARLIER or NOT GREEN": "NONE", "UNFAITHFUL or FAITHFUL": "FAITHFUL"}
+          "GREEN or EARLIER or NOT GREEN": "NONE"}
 
 
 def test_judge_evidence_after_a_harness_compaction_carries_the_summary_as_the_record_of_the_work():
@@ -36,6 +36,7 @@ def test_a_rollup_that_launders_a_tests_pass_claim_carries_crias_measured_red_ch
     sess = synthetic()
     sess.last_gate_red, sess.last_gate_flag = True, "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"
     view = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
+    view[1]["content"] = "pytest collected 7 tests"                       # the figure the writer's sentence rests on is in the record
     rollup = next(m["content"] for m in loop._self_compact(view, sess, 1, Rlog()) if "⟦ctx:rollup⟧" in str(m.get("content")))
     assert "all 7 tests now pass" in rollup and sess.last_gate_flag in rollup
     assert "had reported failures" in rollup and "A later result from the same check supersedes" in rollup
