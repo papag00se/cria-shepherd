@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from cria import bodykeys, wsview
+from cria import bodykeys, denial, wsview
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
@@ -52,7 +52,11 @@ def judge(verdicts, asked):
     def chat(body, rlog):
         asked.append(rlog.phase)
         if rlog.phase == "satisfaction":
-            return say(json.dumps(next(rulings)))
+            ruling = next(rulings)
+            if ruling.get("by_tool"):                                  # the judge declares its verdict as a call, not as text
+                return say(None, tool_calls=[{"id": "v", "type": "function", "function": {
+                    "name": "verdict", "arguments": json.dumps({k: v for k, v in ruling.items() if k != "by_tool"})}}])
+            return say(json.dumps(ruling))
         if rlog.phase == "satisfaction-confirm":                       # the independent look at the files must LOOK first
             if not any(m["role"] == "tool" for m in body["messages"]):
                 return say(None, tool_calls=[{"id": "r", "type": "function", "function": {
@@ -104,7 +108,7 @@ def test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge(tmp_
     asked = []
     coder = Chat(reply("All done."), reply("Fixed the name."), reply("Added the README."), reply("Added more."),
                  reply("Now complete."))
-    run = Run(tmp_path, coder, judge([GAP, SILENT, OK, OK], asked), satisfaction_check_start=0)
+    run = Run(tmp_path, coder, judge([GAP, SILENT, {**OK, "by_tool": True}, OK], asked), satisfaction_check_start=0)
     read = {"id": "r0", "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"path": str(tmp_path / "app.py")})}}
     run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [read]},
                              {"role": "tool", "tool_call_id": "r0", "content": "x = 1"}]
@@ -121,6 +125,7 @@ def test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge(tmp_
     final = run.turn(GREEN)                                   # GREEN and satisfied -> done; the session is dropped
     assert final["content"] == "Now complete." and "tool_calls" not in final
     assert asked.count("satisfaction") == 3 and "satisfaction-confirm" in asked and run.ended()
+    assert "loop.verdict_by_tool" in run.log.names()                  # the approval that ended it was read off the judge's verdict CALL
     assert [(k, f.get("blocked", f.get("satisfied"))) for k, f in run.log.events if k in ("loop.gate", "loop.done_critic")] == [
         ("loop.gate", True), ("loop.done_critic", False), ("loop.done_critic", False), ("loop.done_critic", True), ("loop.gate", False)]
 
@@ -216,3 +221,60 @@ def test_a_call_cria_could_not_forward_is_said_to_the_coder_not_read_as_done(tmp
     assert len(bodies) == 2 and step["tool_calls"][0]["function"]["name"] == "write_file" and not run.sess.done_probe
     assert all(t in bodies[1]["messages"][-1]["content"] for t in told)
     assert key not in step and key not in json.dumps(run.out)
+
+
+def test_a_done_probe_survives_a_compaction_and_a_corrupt_page_is_never_read_as_green(tmp_path):
+    """The harness compacts the history between cria's probe and its result: the result is asked for again (never assumed). The page
+    that finally comes back fails its own checksum: the evidence is UNKNOWN, the coder is told so, and the session does not end."""
+    coder = Chat(reply("All done."), reply("done again"), reply("still working"))
+    run = Run(tmp_path, coder)
+    run.turn()
+    probe_call = run.out["choices"][0]["message"]["tool_calls"][0]
+    run.body["messages"] = [{"role": "user", "content": TASK}, {"role": "user", "content": "[CONTEXT COMPACTION] Summary: all done."}]
+    def drive():
+        return run.driver.drive(json.loads(json.dumps(run.body)), "sid:k", None, run.log)["choices"][0]["message"]
+    poll = drive()                                             # no result survives the fold -> the page is polled for, not guessed
+    assert "history was compacted" in poll["content"] and "gate.transport_poll_after_rewrite" in run.log.names() and run.sess.done_probe
+    good = gate_page(run.sess.gate_plan, GREEN)
+    corrupt = good.replace("sha256\t", "sha256\t0")
+    call = poll["tool_calls"][0]
+    run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [call]},
+                             {"role": "tool", "tool_call_id": call["id"], "content": corrupt}]
+    step = drive()
+    heard = coder.bodies[-1]["messages"][-1]["content"]
+    assert heard.startswith("⟦ctx:steer⟧") and "check result is UNKNOWN. This is not a clean or passing result" in heard
+    assert "gate.transport_unknown" in run.log.names() and not run.ended()
+    assert step["tool_calls"][0]["id"] not in (probe_call["id"], call["id"])      # its next claim is probed afresh, not waved through
+
+
+def test_repeated_refusals_run_the_repos_checks_and_the_steer_states_only_the_count_cria_measured(tmp_path):
+    """Four refused writes (the harness never ran them) are in the history: the coder is not told it is wrong, it is told how many of its
+    calls were refused and none ran, beside the repo's own check reading."""
+    count = [0]
+    bodies = []
+
+    def coder(body, rlog):
+        bodies.append(body)
+        count[0] += 1
+        return say(None, tool_calls=[{"id": f"w{count[0]}", "type": "function", "function": {
+            "name": "write_file", "arguments": json.dumps({"path": f"f{count[0]}.py", "content": "x"})}}])
+    run = Run(tmp_path, coder, tools=(SHELL, WRITE))
+    for i in range(4):
+        run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [{"id": f"x{i}", "type": "function", "function": {
+            "name": "write_file", "arguments": json.dumps({"path": "/etc/passwd", "content": "x"})}}]},
+            {"role": "tool", "tool_call_id": f"x{i}", "content": denial.mark("write_file REFUSED (not written)"),
+             bodykeys.RESULT_OUTCOME: denial.REFUSED}]
+    run.turn()
+    probe = run.turn()
+    assert "repeated action detected" in probe["content"] and probe["tool_calls"][0]["function"]["name"] == "shell"
+    run.turn(RED)
+    steer = bodies[-1]["messages"][-1]["content"]
+    assert steer.startswith("⟦ctx:steer⟧") and "4 of your recent calls were refused, so none of them ran" in steer
+    assert "undefined name 'x'" in steer                                           # and the checker's own words ride with it
+
+
+def test_reasoning_that_leaked_into_the_coders_content_never_reaches_the_harness_when_reasoning_is_off(tmp_path):
+    leaky = reply("private musings about the task</think>Writing the file now.", tool_calls=[{
+        "id": "w", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "n.py", "content": "x"})}}])
+    run = Run(tmp_path, Chat(leaky), tools=(SHELL, WRITE), coder_role=Role(name="coder", backend="local", reasoning="off"))
+    assert run.turn()["content"] == "Writing the file now."
