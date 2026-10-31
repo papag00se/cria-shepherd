@@ -87,6 +87,26 @@ def _norm(path: str) -> str:
     return os.path.basename(os.path.normpath(path.strip().strip("`'\""))).lower()
 
 
+def _parts(path: str) -> tuple[bool, tuple[str, ...]]:
+    """``(absolute, components)`` of a spelled path, lower-cased, ``.`` and doubled separators gone."""
+    rel = os.path.normpath(path.strip().strip("`'\"").rstrip(".,;:)")).replace(os.sep, "/").lower()
+    return rel.startswith("/"), tuple(p for p in rel.split("/") if p)
+
+
+def _same_file_possible(claim: str, written: str) -> bool:
+    """Could two spellings with the same file name be one file? The record cannot resolve a relative path
+    against a working directory it never saw, so a relative spelling is compatible with any path it is a
+    trailing part of (`src/main/A.java` and `/ws/src/main/A.java`); two ABSOLUTE spellings must be equal, and
+    a bare file name says nothing about its directory, so it is always compatible (an honest abstention)."""
+    (a_abs, a), (b_abs, b) = _parts(claim), _parts(written)
+    if len(a) < 2 or len(b) < 2:
+        return True
+    if a_abs and b_abs:
+        return a == b
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    return long_[len(long_) - len(short):] == short
+
+
 def _targets(name: str, arguments) -> list[str] | None:
     """File names a write-class call targets, or None when its arguments name no readable target."""
     args = toolargs.parse_args(arguments)
@@ -101,11 +121,13 @@ def _targets(name: str, arguments) -> list[str] | None:
 
 
 class WriteRecord:
-    """What the transcript can show was written: file names (lower-case basenames) that some
-    write-class call or shell command may have changed, and whether anything could have changed any."""
+    """What the transcript can show was written: the paths (as the calls spelled them, grouped under their
+    lower-case file name) that some write-class call or shell command may have changed, and whether anything
+    could have changed any. A claim is matched on the PATH, never the file name alone: a refused write to
+    ``src/main/Importer.java`` beside a landed ``src/test/Importer.java`` is not one change."""
 
     def __init__(self, messages):
-        self.names: set[str] = set()
+        self.names: dict[str, list[str]] = {}
         self.commands: list[str] = []
         self.anywhere = False
         msgs = [m for m in (messages or []) if isinstance(m, dict)]
@@ -124,7 +146,8 @@ class WriteRecord:
                     if targets is None:
                         self.anywhere = True
                     else:
-                        self.names.update(_norm(t) for t in targets)
+                        for t in targets:
+                            self.names.setdefault(_norm(t), []).append(t)
 
     def _shell(self, name, arguments) -> None:
         command = _command(arguments)
@@ -143,7 +166,8 @@ class WriteRecord:
     def may_have_changed(self, path: str) -> bool:
         """Could this record's calls have created or changed ``path`` (as spelled in a briefing)?"""
         base = _norm(path)
-        return (self.anywhere or base in self.names
+        return (self.anywhere
+                or any(_same_file_possible(path, written) for written in self.names.get(base, ()))
                 or any(base in command for command in self.commands))
 
 

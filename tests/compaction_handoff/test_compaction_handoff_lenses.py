@@ -101,6 +101,9 @@ def test_a_complete_current_survey_settles_absence_only_for_unlisted_workspace_f
     assert groundtruth.survey_size_contradicted(two, [("Importer.java", 5)]) == []             # a base name two listed files answer to is not settled
     assert groundtruth.survey_size_contradicted(PARTIAL, [("pom.xml", 235)]) == []
 
+REFUSED_MAIN = [call("m", "edit_file", path="src/main/Importer.java", old_string="a", new_string="b"), result("m", "no", denial.REFUSED)]
+LANDED_TEST = [call("t", "edit_file", path="src/test/Importer.java", old_string="a", new_string="b"), result("t", outcome=denial.LANDED)]
+
 @pytest.mark.parametrize("messages,path,changed", [
     (HISTORY, "pom.xml", False), (HISTORY, "Importer.java", True),                              # a read changes nothing; a landed write changes its file
     ([call("p", "apply_patch", input="*** Update File: pom.xml"), result("p", "Done!")], "pom.xml", True),   # no typed proof: unestablished counts FOR the path
@@ -109,7 +112,16 @@ def test_a_complete_current_survey_settles_absence_only_for_unlisted_workspace_f
     (HISTORY + shell("s", "curl -sLo pom.xml https://example.org/pom.xml"), "pom.xml", True),
     (HISTORY + shell("s", "cat pom.xml"), "pom.xml", False),
     (HISTORY + shell("s", "npm install left-pad"), "pom.xml", True),                           # a mutation that names no target could touch any file
-    (HISTORY + shell("s", "cat > /tmp/Check.java <<'EOF'\nimport org.apache.commons.csv.*;\nEOF"), "pom.xml", False)])   # a heredoc body is data, not a glob
+    (HISTORY + shell("s", "cat > /tmp/Check.java <<'EOF'\nimport org.apache.commons.csv.*;\nEOF"), "pom.xml", False),   # a heredoc body is data, not a glob
+    # a write is keyed by its PATH: the refused src/main write and the landed src/test write share a file name, not a file
+    (REFUSED_MAIN + LANDED_TEST, "src/main/Importer.java", False),
+    (REFUSED_MAIN + LANDED_TEST, "src/test/Importer.java", True),
+    (REFUSED_MAIN + LANDED_TEST, "/outside/src/main/Importer.java", False),
+    (REFUSED_MAIN + LANDED_TEST, "Importer.java", True),                                    # a bare name does not say which: abstain for the claim
+    (REFUSED_MAIN + [call("a", "write_file", path="/ws/src/test/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/test/Importer.java", True),   # relative claim, absolute write
+    (REFUSED_MAIN + [call("a", "write_file", path="/ws/src/test/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/Importer.java", False),
+    ([call("a", "write_file", path="Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/Importer.java", True),    # a cwd-relative write: the directory is unknown, so abstain
+    ([call("a", "write_file", path="./src/main/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/importer.java", True)])
 def test_the_write_record_says_a_path_changed_unless_the_record_proves_nothing_could_have(messages, path, changed):
     """The write record says a path may have changed unless typed evidence proves nothing could have (uncertainty counts for the path)."""
     assert writerecord.WriteRecord(messages).may_have_changed(path) is changed
