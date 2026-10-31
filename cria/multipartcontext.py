@@ -24,8 +24,9 @@ def take(call):
     context = _context.get()
     if context is None:
         return None
+    # The entry holds `call` itself, so its id cannot be reused while it is recorded: a hit is always this call.
     entry = context['aliases'].pop(id(call), None)
-    return entry[1] if entry is not None and entry[0] is call else None
+    return entry[1] if entry is not None else None
 
 
 def record_prefix(call_id, text, prefix):

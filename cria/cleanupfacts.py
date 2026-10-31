@@ -36,7 +36,8 @@ def join_fact(left, right):
 def is_root(atom):
     if atom is not None and atom.kind == 'path':
         atom = atom.parent
-    return atom is not None and atom.kind == 'literal' and posixpath.normpath(atom.text) == '/'
+    # POSIX keeps exactly two leading slashes through normpath (`//` stays `//`), but `//` IS the root on Linux.
+    return atom is not None and atom.kind == 'literal' and posixpath.normpath(atom.text) in ('/', '//')
 
 
 def classify(targets, workspace, permission, recursive=False, possible=False):
