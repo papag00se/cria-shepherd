@@ -52,18 +52,22 @@ EXPECTED = {
     16384: {"judge_reply": 6144, "summary_reply": 3072, "critic_reply": 3072, "plan_reply": 3072,
             "extract_reply": 2048, "gen_reserve": 2048, "selfcompact_trigger": 5461,
             "selfcompact_keep_tail": 2000, "selfcompact_recompact": 1333, "selfcompact_refold": 2000,
+            "dependency_surface": 4800, "dependency_notes": 8000,
             "evidence_block": 2000},
     32768: {"judge_reply": 10922, "summary_reply": 5461, "critic_reply": 5461, "plan_reply": 5461,
             "extract_reply": 2730, "gen_reserve": 2730, "selfcompact_trigger": 10922,
             "selfcompact_keep_tail": 4000, "selfcompact_recompact": 2666, "selfcompact_refold": 4000,
+            "dependency_surface": 4800, "dependency_notes": 16000,
             "evidence_block": 4000},
     131072: {"judge_reply": 32768, "summary_reply": 21845, "critic_reply": 21845, "plan_reply": 21845,
              "extract_reply": 10922, "gen_reserve": 10922, "selfcompact_trigger": 43690,
              "selfcompact_keep_tail": 16000, "selfcompact_recompact": 10666, "selfcompact_refold": 16000,
+             "dependency_surface": 12000, "dependency_notes": 64000,
              "evidence_block": 16000},
     262144: {"judge_reply": 32768, "summary_reply": 32768, "critic_reply": 32768, "plan_reply": 32768,
              "extract_reply": 16384, "gen_reserve": 16384, "selfcompact_trigger": 87381,
              "selfcompact_keep_tail": 32000, "selfcompact_recompact": 21333, "selfcompact_refold": 32000,
+             "dependency_surface": 12000, "dependency_notes": 96000,
              "evidence_block": 32000},
 }
 
@@ -104,6 +108,10 @@ class TheReferenceWindowIsUnchanged(unittest.TestCase):
         self.assertEqual(values["selfcompact_recompact"], old["selfcompact.RECOMPACT_TOKENS"])
         self.assertEqual(values["selfcompact_refold"], old["selfcompact.REFOLD_TOKENS"])
         self.assertEqual(values["evidence_block"], old["evidencesummary.EVIDENCE_BLOCK_CHARS"])
+        # The two note budgets were the bare constants _SURFACE_INLINE_BUDGET = 6000 and
+        # _MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 24_000 (HEAD f36f9d16), in returnedpolicies AND writeproxy.
+        self.assertEqual(values["dependency_surface"], 6000)
+        self.assertEqual(values["dependency_notes"], 24_000)
         for name, value in OLD_LITERALS.items():
             self.assertEqual(values[name], value, name)
 

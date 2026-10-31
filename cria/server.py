@@ -1449,7 +1449,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         body["messages"] = redact_secrets(
             represent_inbound(body.get("messages", []), rlog,
                               workspace_root=getattr(self, "_workspace_root", None),
-                              sess_key=sess_key, tools_present=_c40_active),
+                              sess_key=sess_key, tools_present=_c40_active,
+                              window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog)),
             [self._brave_key])
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness

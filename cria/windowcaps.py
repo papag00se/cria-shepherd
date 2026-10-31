@@ -82,6 +82,14 @@ _SPECS: dict[str, tuple[int, int, int]] = {
     "selfcompact_keep_tail": (6_000, 1_500, 36_000),
     "selfcompact_recompact": (4_000, 1_000, 24_000),
     "selfcompact_refold": (6_000, 1_500, 36_000),
+    # Dependency-surface notes appended to build-tool results (returnedpolicies), in BYTES. One surface: sized by
+    # the measured real surfaces (decimal 4,645 B, toml 3,152 B, commons-csv 7,007 B) — the floor keeps a
+    # surface like decimal's WHOLE on a small window (a smaller budget truncated the member list before
+    # `Round`, the very member that contradicts the invented one the note exists to catch). The SUM of notes
+    # one request carries: 24 KB is ~two thirds of a 16K window's bytes, so it scales with the window; the
+    # floor still holds one whole surface plus a pointer, the ceiling is a runaway bound.
+    "dependency_surface": (6_000, 4_800, 12_000),
+    "dependency_notes": (24_000, 8_000, 96_000),
     # Composed-evidence block size, in CHARACTERS (evidencesummary.EVIDENCE_BLOCK_CHARS): the unit the
     # floor drops oldest-first, so it is a granularity of "what fits".
     "evidence_block": (6_000, 2_000, 36_000),
@@ -102,6 +110,8 @@ SELFCOMPACT_TRIGGER = _cap("selfcompact_trigger")
 SELFCOMPACT_KEEP_TAIL = _cap("selfcompact_keep_tail")
 SELFCOMPACT_RECOMPACT = _cap("selfcompact_recompact")
 SELFCOMPACT_REFOLD = _cap("selfcompact_refold")
+DEPENDENCY_SURFACE = _cap("dependency_surface")
+DEPENDENCY_NOTES = _cap("dependency_notes")
 EVIDENCE_BLOCK = _cap("evidence_block")
 
 for _name, (_ref, _lo, _hi) in _SPECS.items():

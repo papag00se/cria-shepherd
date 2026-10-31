@@ -64,11 +64,6 @@ _ALLOWED = {
     ("generationguards.py", "WIDE_EVAL_STRIDE"): "measured: detector evaluation stride",
     ("generationguards.py", "WIDE_MIN_CHARS"): "measured: detector minimum text",
     ("planner_tools.py", "_SEARCH_INLINE_CHARS"): "planner research seat's inline search preview; the planner is OFF unless explicitly requested (experiments only)",
-    # --- OPEN, named so the next sweep finds them: dependency-surface notes appended to the coder request.
-    ("returnedpolicies.py", "_SURFACE_INLINE_BUDGET"): "OPEN: sized by the measured dependency surface (4.6-7 KB); a window share is not yet derived",
-    ("returnedpolicies.py", "_MAX_TOTAL_NOTE_BYTES_PER_REQUEST"): "OPEN: runaway bound on the SUM of dependency notes per request (24 KB = ~two thirds of a 16K window); labelled when it trips, floor-fitted, but not yet a window share",
-    ("writeproxy.py", "_SURFACE_INLINE_BUDGET"): "OPEN: same bound as returnedpolicies._SURFACE_INLINE_BUDGET",
-    ("writeproxy.py", "_MAX_TOTAL_NOTE_BYTES_PER_REQUEST"): "OPEN: same bound as returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST",
     # --- a literal max_tokens default
     ("loop.py", "ask_closed(max_tokens=)"): "one word: the default reply room of a closed question when the caller names none (38/38 answered at 1,024 with reasoning off, classify.py)",
 }
@@ -144,11 +139,11 @@ class TheRatchetTests(unittest.TestCase):
         """A row in the table that nothing reads is a bound that was never wired (or one that was removed)."""
         sources = {p: p.read_text(encoding="utf-8") for p in _ROOT.rglob("*.py") if p.name != "windowcaps.py"}
         for const in ("JUDGE_REPLY", "SUMMARY_REPLY", "CRITIC_REPLY", "PLAN_REPLY", "EXTRACT_REPLY", "GEN_RESERVE",
-                      "SELFCOMPACT_TRIGGER", "SELFCOMPACT_KEEP_TAIL", "SELFCOMPACT_RECOMPACT",
+                      "SELFCOMPACT_TRIGGER", "SELFCOMPACT_KEEP_TAIL", "SELFCOMPACT_RECOMPACT", "DEPENDENCY_SURFACE", "DEPENDENCY_NOTES",
                       "SELFCOMPACT_REFOLD", "EVIDENCE_BLOCK"):
             with self.subTest(const):
                 self.assertTrue(any(f"windowcaps.{const}" in text for text in sources.values()), const)
-        self.assertEqual(len(windowcaps.NAMES), 11)
+        self.assertEqual(len(windowcaps.NAMES), 13)
 
 
 if __name__ == "__main__":

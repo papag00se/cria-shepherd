@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import denial, depsurface, dirguard, probeparse, proberun, prompts
+from . import denial, depsurface, dirguard, probeparse, proberun, prompts, windowcaps
 from .resultnotes import (append_note, probegate_marker_in, _strip_exec_envelope,
                           _workspace_ecosystem, _noted, exec_envelope)
 from .toolargs import parse_args as _parse
@@ -12,10 +12,17 @@ from .toolcontracts import (ReturnedResult, ReturnedHistory, ReturnedDefinition,
                             DraftDefinition, RejectedDraft)
 
 _REJECTED_PAYLOAD_CHARS = 400
-_SURFACE_INLINE_BUDGET = 6000
 _MAX_NOTES_PER_REQUEST = 3
 _MAX_ANCHOR_RENDERS_PER_REQUEST = 12
-_MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 24_000
+
+
+def _note_budgets(window: int | None) -> tuple[int, int]:
+    """``(bytes one dependency surface may take inline, bytes ALL dependency notes may take in one request)``
+    for the coder's ``window`` (windowcaps: 6,000 and 24,000 at 49,152 tokens, a share of the window between a
+    floor and a ceiling; the reference values when the window is unknown). THE one definition — writeproxy
+    carries none."""
+    return (windowcaps.resolve(windowcaps.DEPENDENCY_SURFACE, window),
+            windowcaps.resolve(windowcaps.DEPENDENCY_NOTES, window))
 
 def _rejected_payload_note(tc: dict, path: str) -> str:
     """Lossless, explicitly provenanced copy of large bytes removed from a rejected tool argument."""
@@ -126,6 +133,7 @@ def _note_dependency_surface(source: ReturnedHistory) -> None:
     build_roots = dirguard.dependency_roots(messages, workspace_root)   # where THIS run's build keeps its dependencies
     declared_keys = {(eco, package, version) for eco, package, version in declared}
 
+    surface_budget, total_budget = _note_budgets(source.window)
     total_bytes = 0
     anchor_renders = 0
 
@@ -139,7 +147,7 @@ def _note_dependency_surface(source: ReturnedHistory) -> None:
             continue   # never anchored -- phase 2's job
         anchor_id, note_text = state
         note_bytes = len(note_text.encode("utf-8", "replace"))
-        if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
+        if total_bytes + note_bytes > total_budget:
             break   # anchored notes have priority; if even one cannot fit, stop -- phase 2 won't fit either
         anchor_msg = by_call_id.get(anchor_id)
         if anchor_msg is not None:
@@ -182,12 +190,12 @@ def _note_dependency_surface(source: ReturnedHistory) -> None:
         if surface is None:
             depsurface.record_abstain(sess_key, coordinate_key)
             continue   # abstain silently -- manifest declares it, but the local cache does not
-        note = _render_dependency_surface(surface, eco)
+        note = _render_dependency_surface(surface, eco, surface_budget)
         if not note:
             depsurface.record_abstain(sess_key, coordinate_key)
             continue
         note_bytes = len(note.encode("utf-8", "replace"))
-        if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
+        if total_bytes + note_bytes > total_budget:
             # A REAL surface that simply does not fit -- withheld PERMANENTLY, never gathered again.
             depsurface.record_withheld(sess_key, coordinate_key, surface.coordinate, surface.root,
                                        surface.read_hint)
@@ -218,7 +226,7 @@ def _note_dependency_surface(source: ReturnedHistory) -> None:
         # in the label is always the real total, so an incomplete pointer list never claims to be
         # the whole one.
         shown_lines: list[str] = []
-        budget_left = _MAX_TOTAL_NOTE_BYTES_PER_REQUEST - total_bytes
+        budget_left = total_budget - total_bytes
         used = 0
         for line in all_lines:
             cost = len(line.encode("utf-8", "replace")) + 1
@@ -233,7 +241,7 @@ def _note_dependency_surface(source: ReturnedHistory) -> None:
             total_bytes += len(block.encode("utf-8", "replace"))
 
 
-def _render_dependency_surface(surface, ecosystem: str) -> str:
+def _render_dependency_surface(surface, ecosystem: str, inline_budget: int | None = None) -> str:
     """The model-facing note for one real DependencySurface -- every line in it is byte-identical to a
     line :func:`cria.depsurface.gather` read from disk (#5b: never a cria paraphrase of what a real
     tool said). Uses the COMPLETE template ONLY when ``surface.complete`` is True (a real,
@@ -242,16 +250,19 @@ def _render_dependency_surface(surface, ecosystem: str) -> str:
     claims a missing member does not exist (independent review B3). ``ecosystem`` selects the
     TIMELESS manifest label ("the version declared in go.mod") -- this text is re-rendered verbatim on
     every later turn, so it must never say anything that is only true at the moment of first
-    delivery."""
+    delivery. ``inline_budget`` is the bytes one surface may take (the window-sized
+    :func:`_note_budgets`; None = the reference value)."""
     manifest = depsurface.MANIFEST_LABEL.get(ecosystem, "the project's dependency manifest")
+    if inline_budget is None:
+        inline_budget = _note_budgets(None)[0]
     joined = "\n".join(surface.lines)
-    fits = len(joined.encode("utf-8", "replace")) <= _SURFACE_INLINE_BUDGET
+    fits = len(joined.encode("utf-8", "replace")) <= inline_budget
     if surface.complete and fits:
         return prompts.render("dependency_surface_complete", coordinate=surface.coordinate,
                               manifest=manifest, root=surface.root, lines=joined)
     shown: list[str] = list(surface.lines) if fits else []
     if not fits:
-        budget = _SURFACE_INLINE_BUDGET
+        budget = inline_budget
         for line in surface.lines:
             cost = len(line.encode("utf-8", "replace")) + 1
             if cost > budget:

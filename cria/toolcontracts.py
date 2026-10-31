@@ -145,6 +145,7 @@ class ReturnedHistory:
     session: str
     tools_present: bool
     log: EventLog | None = None
+    window: int | None = None   # the coder's measured window; None = unknown (the reference budgets)
 
 
 @dataclass(frozen=True)

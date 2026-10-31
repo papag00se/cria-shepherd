@@ -68,6 +68,24 @@ class _WorkspaceCase(unittest.TestCase):
                 "func (d Decimal) RoundCeil(places int32) Decimal {\n\treturn d\n}\n"))
 
 
+    def _many_dependencies(self, n=6, module_prefix="example.invalid/pkg", members=60):
+        lines = ["module example.com/many\n\ngo 1.21\n"]
+        for i in range(n):
+            module = f"{module_prefix}{i}"
+            lines.append(f"require {module} v1.0.0\n")
+            d = os.path.join(self.home, "go", "pkg", "mod", f"{module}@v1.0.0")
+            os.makedirs(d, exist_ok=True)
+            # A body large enough that its OWN inline-budget-fitting note is a meaningful fraction of
+            # the total budget -- makes the total-byte cap the binding constraint, not the count cap.
+            body_lines = "\n\n".join(f"func Member{i}_{j}(x int) int {{\n\treturn x\n}}"
+                                     for j in range(members))
+            with open(os.path.join(d, "x.go"), "w") as fh:
+                fh.write(f"package pkg{i}\n\n{body_lines}\n")
+        with open(os.path.join(self.ws, "go.mod"), "w") as fh:
+            fh.write("".join(lines))
+
+
+
 class FailsBeforeTests(_WorkspaceCase):
     def test_manifest_present_but_no_local_cache_yields_no_note(self):
         self._write_go_mod()
@@ -299,41 +317,71 @@ class BoundedNotesTests(_WorkspaceCase):
         self.assertEqual(second[1]["content"], "go vet ./... clean")
 
 
+class TheNoteBudgetsFollowTheCodersWindowTests(_WorkspaceCase):
+    """The two note budgets were fixed byte counts (6,000 for one surface, 24,000 for the sum per request): 24 KB
+    is about two thirds of a 16K window's bytes, so several notes could fill the coder's window before it had
+    read anything. They are windowcaps rows now — the old values at 49,152 tokens — resolved against the
+    coder's measured window, with ONE definition (writeproxy's duplicate is gone)."""
+
+    def represent_at(self, messages, window):
+        return writeproxy.represent_inbound(messages, workspace_root=self.ws, sess_key=self.sess,
+                                            tools_present=True, window=window)
+
+    def test_the_budgets_are_the_old_values_at_49152_and_when_the_window_is_unknown(self):
+        self.assertEqual(returnedpolicies._note_budgets(49152), (6000, 24000))
+        self.assertEqual(returnedpolicies._note_budgets(None), (6000, 24000))
+        self.assertEqual(returnedpolicies._note_budgets(0), (6000, 24000))
+
+    def test_they_shrink_on_a_small_window_but_one_surface_stays_whole(self):
+        surface16, total16 = returnedpolicies._note_budgets(16384)
+        surface32, total32 = returnedpolicies._note_budgets(32768)
+        self.assertEqual((total16, total32), (8000, 16000))
+        self.assertLess(total16, 0.2 * 16384 * 3, "the sum of notes is a bounded share of a 16K window's bytes")
+        self.assertGreaterEqual(surface16, 4645, "the measured decimal surface (4,645 B) is still delivered whole at 16K")
+        self.assertGreater(returnedpolicies._note_budgets(262144)[1], 24000)
+
+    def test_one_definition_only(self):
+        for gone in ("_SURFACE_INLINE_BUDGET", "_MAX_TOTAL_NOTE_BYTES_PER_REQUEST"):
+            self.assertFalse(hasattr(writeproxy, gone), gone)
+            self.assertFalse(hasattr(returnedpolicies, gone), gone)
+
+    def test_a_16k_request_with_many_dependency_notes_stays_inside_its_share(self):
+        real_max = returnedpolicies._MAX_NOTES_PER_REQUEST
+        self._many_dependencies(n=6, module_prefix="example.invalid/many", members=90)    # 6 x ~6 KB surfaces
+        returnedpolicies._MAX_NOTES_PER_REQUEST = 10
+        try:
+            at16 = self.represent_at([tool("build output")], 16384)[0]["content"]
+            depsurface._ANCHOR.clear(); depsurface._WITHHELD.clear(); depsurface._ABSTAINED.clear()
+            at49 = self.represent_at([tool("build output")], 49152)[0]["content"]
+        finally:
+            returnedpolicies._MAX_NOTES_PER_REQUEST = real_max
+        added16 = len(at16.encode()) - len("build output")
+        added49 = len(at49.encode()) - len("build output")
+        self.assertLessEqual(added16, 8000 + 1500, "budget plus one labelled pointer list")
+        self.assertGreater(added49, 8000 + 1500, "the same project at 49,152 still gets the old, larger allowance")
+        self.assertLessEqual(added49, 24000 + 1500)
+        self.assertIn("will NOT appear automatically", at16, "what tripped the budget is labelled, as before")
+
+
 class TotalByteBudgetTests(_WorkspaceCase):
     """Independent review round 3, R3, THEN round 4's regression fixes on top of it:
     individually-bounded notes are not collectively bounded once several real direct dependencies are
-    anchored -- `_MAX_TOTAL_NOTE_BYTES_PER_REQUEST` caps the SUM. Round 4 fixed three problems in the
+    anchored -- the total-note budget (`returnedpolicies._note_budgets`) caps the SUM. Round 4 fixed three problems in the
     round-3 shape: (1) budget was spent in manifest order, so a brand-new dependency could displace an
     already-anchored note; (2) a withheld coordinate was re-`gather()`ed every request; (3) the
     withheld wording promised a future delivery ('they will appear on a later turn') this design can
     never actually make happen."""
 
-    def _many_dependencies(self, n=6, module_prefix="example.invalid/pkg", members=60):
-        lines = ["module example.com/many\n\ngo 1.21\n"]
-        for i in range(n):
-            module = f"{module_prefix}{i}"
-            lines.append(f"require {module} v1.0.0\n")
-            d = os.path.join(self.home, "go", "pkg", "mod", f"{module}@v1.0.0")
-            os.makedirs(d, exist_ok=True)
-            # A body large enough that its OWN inline-budget-fitting note is a meaningful fraction of
-            # the total budget -- makes the total-byte cap the binding constraint, not the count cap.
-            body_lines = "\n\n".join(f"func Member{i}_{j}(x int) int {{\n\treturn x\n}}"
-                                     for j in range(members))
-            with open(os.path.join(d, "x.go"), "w") as fh:
-                fh.write(f"package pkg{i}\n\n{body_lines}\n")
-        with open(os.path.join(self.ws, "go.mod"), "w") as fh:
-            fh.write("".join(lines))
-
     def test_many_anchored_coordinates_are_capped_by_total_bytes_and_labelled(self):
         self._many_dependencies(n=6)
-        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_budgets = returnedpolicies._note_budgets
         real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
-        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000   # force the budget to bind in this test
+        returnedpolicies._note_budgets = lambda window, _t=(4000): (real_budgets(window)[0], _t)   # force the budget to bind in this test
         returnedpolicies._MAX_NOTES_PER_REQUEST = 10                # let every dependency be attempted at once
         try:
             out = self.represent([tool("build output")])
         finally:
-            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._note_budgets = real_budgets
             returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
         content = out[0]["content"]
         total_note_bytes = len(content.encode()) - len("build output".encode())
@@ -372,12 +420,12 @@ class TotalByteBudgetTests(_WorkspaceCase):
                      "require example.invalid/newcomer v1.0.0\n"          # listed FIRST
                      "require example.invalid/nonexistent v1.4.0\n")      # already-anchored, listed SECOND
 
-        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
-        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = len(anchored_text.encode()) + 200
+        real_budgets = returnedpolicies._note_budgets
+        returnedpolicies._note_budgets = lambda window, _t=(len(anchored_text.encode()) + 200): (real_budgets(window)[0], _t)
         try:
             second = self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
         finally:
-            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._note_budgets = real_budgets
         # The already-anchored coordinate's text is untouched -- priority honoured.
         self.assertEqual(second[0]["content"], anchored_text)
         combined = "".join(m["content"] for m in second)
@@ -388,9 +436,9 @@ class TotalByteBudgetTests(_WorkspaceCase):
 
     def test_a_withheld_coordinate_is_never_gathered_again_R3_fix_2(self):
         self._many_dependencies(n=6)
-        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_budgets = returnedpolicies._note_budgets
         real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
-        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000
+        returnedpolicies._note_budgets = lambda window, _t=(4000): (real_budgets(window)[0], _t)
         returnedpolicies._MAX_NOTES_PER_REQUEST = 10
         calls = {"n": 0}
         real_gather = depsurface.gather
@@ -409,7 +457,7 @@ class TotalByteBudgetTests(_WorkspaceCase):
                             tool("t3", call_id="c3")])
         finally:
             depsurface.gather = real_gather
-            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._note_budgets = real_budgets
             returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
         # Every coordinate was already attempted (anchored or withheld) on the first request (the cap
         # override lets all 6 be tried at once) -- later requests must not call gather() again at all.
@@ -421,9 +469,9 @@ class TotalByteBudgetTests(_WorkspaceCase):
         requests the WITHHELD SET and the total `gather()` COUNT must both stay fixed once every
         coordinate has been attempted once."""
         self._many_dependencies(n=5, module_prefix="example.invalid/five", members=70)
-        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_budgets = returnedpolicies._note_budgets
         real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
-        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000   # binds well before all 5 fit
+        returnedpolicies._note_budgets = lambda window, _t=(5000): (real_budgets(window)[0], _t)   # binds well before all 5 fit
         returnedpolicies._MAX_NOTES_PER_REQUEST = 10                # let all 5 be attempted on request 1
         calls = {"n": 0}
         real_gather = depsurface.gather
@@ -452,7 +500,7 @@ class TotalByteBudgetTests(_WorkspaceCase):
                                  "the total gather() COUNT must stay fixed -- no re-gathering")
         finally:
             depsurface.gather = real_gather
-            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._note_budgets = real_budgets
             returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
 
     def test_a_version_bump_or_removal_of_a_withheld_coordinate_stops_naming_it(self):
@@ -461,9 +509,9 @@ class TotalByteBudgetTests(_WorkspaceCase):
         bump leaves BOTH the old and new version listed, and a removed dependency is still named every
         turn: false present-tense facts about the project's current state."""
         self._many_dependencies(n=5, module_prefix="example.invalid/five", members=70)
-        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_budgets = returnedpolicies._note_budgets
         real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
-        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000
+        returnedpolicies._note_budgets = lambda window, _t=(5000): (real_budgets(window)[0], _t)
         returnedpolicies._MAX_NOTES_PER_REQUEST = 10
         try:
             out1 = self.represent([tool("t1", call_id="c1")])
@@ -500,7 +548,7 @@ class TotalByteBudgetTests(_WorkspaceCase):
             # is correctly withheld under ITS OWN key -- named as the current fact.
             self.assertIn("example.invalid/five1 v1.1.0", combined2)
         finally:
-            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._note_budgets = real_budgets
             returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
 
 

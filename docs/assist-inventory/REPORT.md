@@ -587,7 +587,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/writeproxy.py:represent_inbound`](../../cria/writeproxy.py#L1800)
 - [`cria/denial.py:read_payload`](../../cria/denial.py#L190)
 - [`cria/writeproxy.py:_debinarized`](../../cria/writeproxy.py#L1549)
-- [`cria/returnedpolicies.py:_found_nothing`](../../cria/returnedpolicies.py#L404)
+- [`cria/returnedpolicies.py:_found_nothing`](../../cria/returnedpolicies.py#L415)
 
 **Historical families:** F14, F18.
 
@@ -776,15 +776,15 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: dependency_surface_complete, dependency_surface_partial, dependency_surface_withheld. Dependencies: none.
   Hooks: [`cria/writeproxy.py:represent_inbound`](../../cria/writeproxy.py#L1800).
-  Regressions: [`tests/test_dependency_surface_note.py:MultiRequestReplayTests`](../../tests/test_dependency_surface_note.py#L163), [`tests/test_tool_policy_stages.py:test_dependency_anchor_settlement_and_abstention_counters_stop_when_deselected`](../../tests/test_tool_policy_stages.py#L149).
+  Regressions: [`tests/test_dependency_surface_note.py:MultiRequestReplayTests`](../../tests/test_dependency_surface_note.py#L181), [`tests/test_tool_policy_stages.py:test_dependency_anchor_settlement_and_abstention_counters_stop_when_deselected`](../../tests/test_tool_policy_stages.py#L149).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/returnedpolicies.py:_note_missing_dependency`](../../cria/returnedpolicies.py#L268)
-- [`cria/returnedpolicies.py:_note_dependency_search`](../../cria/returnedpolicies.py#L306)
+- [`cria/returnedpolicies.py:_note_missing_dependency`](../../cria/returnedpolicies.py#L279)
+- [`cria/returnedpolicies.py:_note_dependency_search`](../../cria/returnedpolicies.py#L317)
 - [`cria/depsurface.py:anchor_state`](../../cria/depsurface.py#L800)
 - [`cria/depsurface.py:is_withheld`](../../cria/depsurface.py#L877)
-- [`cria/returnedpolicies.py:_note_dependency_surface`](../../cria/returnedpolicies.py#L75)
-- [`cria/returnedpolicies.py:_render_dependency_surface`](../../cria/returnedpolicies.py#L236)
+- [`cria/returnedpolicies.py:_note_dependency_surface`](../../cria/returnedpolicies.py#L82)
+- [`cria/returnedpolicies.py:_render_dependency_surface`](../../cria/returnedpolicies.py#L244)
 - [`cria/refusalledger.py:refusal_events`](../../cria/refusalledger.py#L353)
 - [`cria/refusalledger.py:_supersedes`](../../cria/refusalledger.py#L430)
 - [`cria/loop.py:_session_refusals`](../../cria/loop.py#L8836)

@@ -1798,7 +1798,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
-                      sess_key: str = "", tools_present: bool = True) -> list[dict]:
+                      sess_key: str = "", tools_present: bool = True, window: int | None = None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1810,7 +1810,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
 
     ``sess_key`` is the session identity Candidate C40's delivered-state remembers against; without
     it that mechanism never fires (no identity to remember delivery against). ``tools_present=False``
-    marks a harness compaction/summarize turn (empty tool menu) -- C40 skips those entirely."""
+    marks a harness compaction/summarize turn (empty tool menu) -- C40 skips those entirely.
+    ``window`` is the coder's measured window (None = unknown): the dependency-note budgets are shares of it."""
     # Retired client-supplied hint spellings are never provenance, regardless
     # of message role. Only the typed current owner marker can withhold proof.
     messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
@@ -2082,38 +2083,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
     toolstages.current().returned_history(
-        ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog))
+        ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog, window))
     return out
 
 
-# Bytes of REAL selected lines allowed inline before this switches to the partial/overflow wording
-# (#5: never truncate silently -- the switch STATES the real total and the real read_hint, it never
-# drops lines without saying so). Deliberately small: a handful of real signatures is the common
-# case, and a large budget would let one bloated package push everything else in the same tool
-# result out of the window it rides in.
-# Independent review round 4 (usefulness finding): measured against the REAL shopspring/decimal
-# cache, the declaration-only (no doc-prose) surface is 4,645 real bytes -- comfortably real-world
-# sized once prose is gone, but still bigger than the old 2,400-byte budget, which truncated the
-# alphabetically-sorted member list before reaching `Round`/`RoundCeil`/`RoundBank` -- the exact real
-# members that contradict the invented `Quantize`/`RoundingModeCeiling` this candidate exists to catch.
-# Measured: decimal 4,645B, toml 0.8.23 3,152B, a robfig/cron-shaped fixture 150B all now fit whole;
-# commons-csv (8 real classes' worth of javap output, 7,007B) does not and stays partial-with-pointer,
-# which is the explicitly allowed outcome for a genuinely large single dependency.
-_SURFACE_INLINE_BUDGET = 6000
-# How many NEW coordinates one request will ever gather() for the first time (independent review B2):
-# even restricted to direct dependencies, a manifest can name several in one project, and each
-# first-time gather() may be a real disk walk or (JVM) up to MAX_FILES real `javap` subprocesses.
-# Re-RENDERING an already-anchored coordinate (replaying cached text) does not count against this --
-# it costs one dict lookup, never a disk read -- but is separately bounded by
-# `_MAX_ANCHOR_RENDERS_PER_REQUEST` so a project with many direct dependencies cannot still turn one
-# request into an unbounded wall of text.
-_MAX_NOTES_PER_REQUEST = 3
-_MAX_ANCHOR_RENDERS_PER_REQUEST = 12
-# A hard ceiling on the TOTAL bytes this candidate appends in one request, across every coordinate
-# combined (independent review round 3, R3). `_SURFACE_INLINE_BUDGET` already bounds one note; this
-# bounds the SUM, because a session that has anchored several real direct dependencies would otherwise
-# re-render all of them, every request, forever -- individually bounded, collectively not. A
-# coordinate skipped for THIS reason is not withdrawn (its anchor state is untouched) and is retried
-# on the next request; if anything was withheld this pass, ONE labelled sentence says so -- never a
-# silent cut (#5).
-_MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 24_000
+# The dependency-note budgets (one surface inline, and the sum of all notes per request) live in
+# ``returnedpolicies._note_budgets`` / ``windowcaps`` — window-sized, one definition.
