@@ -8,7 +8,7 @@ import pytest
 
 from cria import assistruntime, completionconfirmation as cc, evidencesummary as es, loop
 from loop_rest_helpers import Rlog, loop_rest_local_view  # noqa: F401
-from test_loop_rest_judge_protocol import ROLE
+from test_loop_rest_judge_protocol import ROLE, completion, scripted
 
 LOG = "step 1: wrote app.py\nstep 2: ran pytest\n"
 
@@ -94,3 +94,22 @@ def test_the_task_deliverable_observer_stays_silent_unless_the_observer_affirms(
                                                     reasoner_role=ROLE, rlog=Rlog())
     assert seen == offline == unselected == loop.VerdictNudge() and not seen.action
     assert questions == ["deliverable-observation"] * asked
+
+
+@pytest.mark.parametrize("reply,query,prior,new", [
+    ('{"new_direction": true}', "eu vat rates", "gem search", True), ("```json\n{\"new_direction\": true}\n```", "q", "p", True),
+    ('{"new_direction": "yes"}', "q", "p", False), ('{"new_direction": false}', "q", "p", False), ("same hunt", "q", "p", False),
+    ('{"new_direction": true}', "  ", "p", False), ('{"new_direction": true}', "q", "", False)])
+def test_the_rehunt_judge_grants_a_repeat_search_only_on_a_literal_new_direction(reply, query, prior, new):
+    chat, bodies = scripted([completion(reply)])
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        assert loop.judge_rehunt(chat, ROLE, "charge EU VAT", query, prior, Rlog()) is new
+        assert loop.judge_rehunt(chat, None, "charge EU VAT", query, prior, Rlog()) is False
+    assert len(bodies) == (1 if query.strip() and prior else 0)
+
+
+def test_the_critic_results_unpack_as_the_historic_two_value_pair_without_losing_the_confirmation_flag():
+    ok, why = loop.Verification(True, "all checked", loop.Confirmation(True, False, "unobserved"))
+    confirmed, reason = loop.Confirmation(False, True, "README absent")
+    assert (ok, why, confirmed, reason) == (True, "all checked", False, "README absent")
+    assert loop.Verification(True, "x", loop.Confirmation(True, False)).confirmation.observed is False
