@@ -1,6 +1,8 @@
 """A call left in reasoning_content is recovered only when the model clearly emitted it; jsontext tolerates model-shaped JSON."""
 import json
 
+import pytest
+
 from context_wire_b_helpers import Rlog, rows
 from cria import jsontext, massage
 
@@ -98,3 +100,16 @@ def test_a_nested_example_never_displaces_the_call_that_encloses_it_and_nothing_
        ('{"done": true}</THINK >{"done": false}', {"done": False}), ('{"done": true}<thinking>x</thinking>{"done": false}', {"done": False})])                                          # an empty first value never shadows a real one
 def test_model_shaped_json_is_extracted_tolerantly_and_the_first_real_duplicate_wins(raw, expected):
     assert jsontext.extract_json_object(raw) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"done": false, "reason": "x"', {"done": False, "reason": "x"}),                                    # run 20260728T000013 call 0469-critic: one absent }
+    ('{"a": [1, {"b": 2', {"a": [1, {"b": 2}]}),                                                          # closers come back in the nesting order the text opened
+    ('{"a": "has } and \\" and ] in it", "b": [', {"a": 'has } and " and ] in it', "b": []}),             # brackets and an escaped quote inside a string open nothing
+    ('Sure, here: {"a": 1', {"a": 1}), ('{ not json {"a": 1', {"a": 1}),                                 # the first `{` that repairs wins
+    ('{"a": "unfinished', None), ('{"a": ', None), ('{"a": 1,', None), ('{"a": [1}', None),            # ends mid-string / needs a value / needs a comma removed / mismatched: authoring, refused
+    ('{"a": 1}', None), ('[1, 2', None), ('', None),                                                      # complete (extract's job) / not an object / empty
+])
+def test_an_object_missing_only_its_closing_braces_is_closed_and_nothing_else_is_ever_supplied(raw, expected):
+    """close_unclosed_object supplies closers and nothing else: no half-written string is closed, no value or comma is invented."""
+    assert jsontext.close_unclosed_object(raw) == expected

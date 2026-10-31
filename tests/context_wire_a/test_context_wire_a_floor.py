@@ -53,6 +53,10 @@ def test_a_fitting_request_is_returned_unchanged_and_inputs_are_never_mutated():
     small = [{"role": "system", "content": "sys"}, u("hi")]
     out, _, rep = cf.fit(small, None, window=49152, reserve=4096)
     assert out == small and not rep.applied and not rep.over_budget
+    exact = [u("task")] + pairs(3, 2000) + [u("now")]
+    est = cf.est_total(exact, None)                      # a request whose estimate IS the budget fits: the floor is not engaged at all
+    out, _, rep = cf.fit(exact, None, window=est + 100, reserve=100, safety=1.0)
+    assert out == exact and not rep.applied and cf.fit(exact, None, window=est + 99, reserve=100, safety=1.0)[2].applied
     big, tools = [u("task"), a("Z" * 12000), u("now")], menu(40, 500)
     snap = json.dumps((big, tools))
     cf.fit(big, tools, window=3000, reserve=500)

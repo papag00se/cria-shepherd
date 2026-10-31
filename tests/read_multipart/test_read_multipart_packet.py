@@ -47,6 +47,7 @@ def test_a_record_is_read_only_at_the_position_asked_never_searched_for_and_repo
     assert rp.read_record(rp.line('', rp.REFUSED), 0, '') is None and rp.read_record(line[:-1], 0, R) is None and rp.read_record(line + line, len(line), R) is not None
     s = rp.line(R, rp.SURVEY, body=b'block')
     assert rp.read_record(s, 0, R, survey=True).body == b'block' and rp.read_record(s, 0, R) is None and rp.read_record(line, 0, R, survey=True) is None
-    for n in (0, 1, 999, 5000, 9000): assert len(rp.line(R, rp.SURVEY, body=os.urandom(n))) <= rp.wire_cost(n)
+    for n in (0, 1, 2, 3, 4, 999, 5000, 9000):      # a bound, and a TIGHT one: over-estimating shrinks the room a survey is given for nothing
+        assert 0 <= rp.wire_cost(n) - len(rp.line(R, rp.SURVEY, body=(b'\xff' + os.urandom(n))[:n])) <= 8
     for wire in (500, 1000, 5000, 6900):
         n = rp.max_text_for_wire(wire); assert rp.wire_cost(n) <= wire < rp.wire_cost(n + 3)
