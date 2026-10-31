@@ -16,19 +16,20 @@ class Log:
 
 
 EVIDENCE = "Traceback:\n  File app.py, line 9\n    total = sum(prices)\nNameError: name 'prices' is not defined\n"
+MARK = loop._INVENTED_MARK
 
 
-@pytest.mark.parametrize("directive,invented", [
-    ("Change line 9 to `total = sum(prices)`.", 0),                                  # the coder's own failing line is grounded
-    ("Replace it with:\n    return compute_total(items, tax=0.2)\nThen rerun.", 2),   # a code LINE the author never read (the line and the call in it)
-    ("Replace it with: total = compute_total(items, tax=0.2)", 1),                   # an inline call
-    ("Call total_for(cart, 0.2) and sum(prices) before returning.", 1),              # the grounded call is not counted
-    ("Call Importer.load() to see the listing.", 0),                                  # empty parens name a method, they dictate nothing
-    ("Read the traceback and fix the NameError.", 0),
+@pytest.mark.parametrize("directive,kept,stripped", [
+    ("Change line 9 to `total = sum(prices)`.", None, 0),                                  # the coder's own failing line is grounded
+    ("Replace it with:\n    return compute_total(items, tax=0.2)\nThen rerun.", "Replace it with:\n    " + MARK + "\nThen rerun.", 1),   # a code LINE goes whole
+    ("Replace it with: total = compute_total(items, tax=0.2)", "Replace it with: total = " + MARK, 1),                      # an inline call loses only the call
+    ("Call total_for(cart, 0.2) and sum(prices) before returning.", "Call " + MARK + " and sum(prices) before returning.", 1),
+    ("Call Importer.load() to see the listing.", None, 0),                                  # empty parens name a method, they dictate nothing
+    ("Read the traceback and fix the NameError.", None, 0),
 ])
-def test_only_code_the_author_could_have_read_is_not_counted_as_invented_in_a_steer(directive, invented):
-    assert loop._invented_code_spans(directive, EVIDENCE) == invented
-    assert loop._invented_code_spans(directive, "") == 0                            # nothing to check against: nothing is claimed invented
+def test_only_code_the_author_could_have_read_survives_a_steer(directive, kept, stripped):
+    assert loop._strip_invented_code(directive, EVIDENCE) == (directive if kept is None else kept, stripped)
+    assert loop._strip_invented_code(directive, "") == (directive, 0)                       # nothing to check against: change nothing
 
 
 def test_what_cria_observed_is_tool_results_and_written_bytes_never_the_coders_own_words():
