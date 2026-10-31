@@ -26,19 +26,24 @@ BENIGN_SLICES = {  # (file, expression) -> why it is not a silent cut: display t
 }
 
 def sliced_into_text():
-    out = set()
+    out = []
     for name, tree in trees():
+        seen = set()   # an f-string nested in an f-string walks its slices twice
         for node in ast.walk(tree):
             roots = ([node] if isinstance(node, ast.JoinedStr) else
                      [node.args[0]] if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                      and node.func.attr == "join" and node.args else [])
-            out |= {(name, ast.unparse(n)) for r in roots for n in ast.walk(r)
-                    if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Slice)}
+            cuts = [n for r in roots for n in ast.walk(r) if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Slice)]
+            out += [(name, ast.unparse(n)) for n in cuts if id(n) not in seen]
+            seen.update(id(n) for n in cuts)
     return out
 
 def test_no_new_unmarked_bound_reaches_model_or_operator_text():
     """A bound applied with a bare `[:N]` and no sentence saying so is a silent, undetectable lie to the reader."""
-    check_ratchet(sliced_into_text(), BENIGN_SLICES, "bare slice into text")
+    found = sliced_into_text()
+    check_ratchet(found, BENIGN_SLICES, "bare slice into text")
+    # a second use of an allowed (file, expression) is a new cut: the set check alone would absorb it silently
+    assert sorted(k for k in found if found.count(k) > 1) == [], "an allowed bare slice is used again: give it its own reason"
 
 SIZE = re.compile(r"(_TOKENS|_RESERVE|_CHARS|_BYTES|_BUDGET|_CAP|_LIMIT|_FLOOR|_MAX|_MIN|_STRIDE|_ENTRIES|_FILES|_DIRS|_SIZE"
                   r"|_MAX_[A-Z_]+|_MIN_[A-Z_]+)$|^(MAX|MIN)_")
