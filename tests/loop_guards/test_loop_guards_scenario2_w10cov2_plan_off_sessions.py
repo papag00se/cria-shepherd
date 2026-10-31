@@ -8,7 +8,7 @@ from cria.loop import LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
 from loop_guards_helpers import Chat, reply
 from loop_guards_gatefixture import gate_page
-from test_loop_guards_scenario_lb_sessions import GREEN, SHELL, TASK, WRITE, Run, local_view, steer_seen  # noqa: F401
+from test_loop_guards_scenario_lb_sessions import GREEN, OK, SHELL, TASK, WRITE, Run, judge, local_view, steer_seen  # noqa: F401
 
 EVIDENCE = "README.md is still absent from the workspace"
 
@@ -80,3 +80,17 @@ def test_a_done_probe_whose_output_arrives_in_pages_is_pulled_to_the_last_page_b
     step = deliver(run, gate_page(plan, raw, 90))
     assert step["tool_calls"][0]["function"]["name"] == "write_file" and not run.sess.done_probe
     assert "undefined name 'x'" in steer_seen(coder, 2) and "not done yet" in steer_seen(coder, 2)
+
+
+def test_a_done_claim_on_a_session_whose_original_task_is_unknown_is_never_approved_and_the_judge_is_not_asked_to_guess(tmp_path):
+    """Fail closed: with no recoverable original task the whole-task judge cannot be asked a question, so a GREEN check plus a done claim
+    does not end the session - the coder is told the completion check could not confirm the task, and no verdict is invented."""
+    asked = []
+    coder = Chat(reply("All done."), reply("All done."), WRITE_README)
+    run = Run(tmp_path, coder, judge([OK, OK], asked), tools=(SHELL, WRITE))
+    run.sess.plan.task = ""
+    run.turn()
+    step = run.turn(GREEN)
+    assert step["tool_calls"][0]["function"]["name"] == "write_file" and not run.ended() and "satisfaction" not in asked
+    assert "did not name which deliverable is unfinished" in steer_seen(coder, 2) and run.sess.latest_satisfaction is False
+    assert ("loop.done_critic", {"plan_off": True, "satisfied": False, "original_task_unknown": True}) in run.log.events
