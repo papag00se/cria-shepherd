@@ -15,6 +15,16 @@ from suite.sampling_adapter import RateLimitGate, inject_sampling  # noqa: E402
 from suite import close_walk, restored_roles  # noqa: E402
 
 
+def _restore_permissions(root):
+    """A test (or a failure part-way through one) may leave 0555 directories; pytest's basetemp and copy tools cannot
+    delete those. Owner-only restore of every entry still under ``root``, symlinks and foreign owners untouched."""
+    for dirpath, dirs, files in os.walk(root):
+        for name in (".", *dirs, *files):
+            path = os.path.join(dirpath, name)
+            if not os.path.islink(path) and os.stat(path).st_uid == os.geteuid():
+                os.chmod(path, os.stat(path).st_mode | 0o700)
+
+
 @pytest.fixture
 def area(tmp_path):
     scratch, repo = tmp_path / "scratch", tmp_path / "repo"
@@ -25,7 +35,8 @@ def area(tmp_path):
     record = dict(unit="walk-1", owner="o", closure="operator final fix dispositions", closed=True,
                   fixes=[dict(id="f1", disposition="ACCEPTED", changes=[])], scratch=[str(unit)],
                   protected_paths=[], call_logs=[])
-    return scratch, unit, repo, record
+    yield scratch, unit, repo, record
+    _restore_permissions(tmp_path)
 
 
 def close(area):
