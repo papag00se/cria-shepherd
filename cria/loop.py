@@ -7597,7 +7597,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     # is asked anything. It replaced the whole-briefing fidelity verdict (docs/open-threads.md, 2026-11-02).
     unread = briefinggrounding.ungrounded(briefing, [*transcript_blocks, files, checks, task])
     if unread:
-        answers["figures"] = "UNGROUNDED " + ", ".join(unread[:8])
+        answers["figures"] = "UNGROUNDED " + ", ".join(unread)
         if rlog is not None:
             rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
                       accepted=False, answers=answers)
@@ -10088,63 +10088,14 @@ _DESCRIBES = "DESCRIBES"
 # something that is not an answer", which are different events and used to look identical.
 _DICTATES = "DICTATES"
 
-# A line worth checking for provenance: a code line or a command line. Short fragments and ordinary
-# prose are left alone — the question is only ever about a line the coder could paste.
-_QUOTABLE_MIN = 12
-
 # How many independently-command lines make a post-compaction re-orientation a SCRIPT rather than a
 # directive. Two is a sentence that names a command and then names another; three is a listing.
 # Measured over the 59 captured re-orientation notes: at three, exactly the two script-dumps fire.
 _REANCHOR_MAX_COMMAND_LINES = 3
-_INVENTED_MARK = ("[code removed — written by this supervisor, not read from your files or your "
-                  "checker output; make the change in your own code]")
-# The two shapes, checked differently: a line that IS code, and a call embedded in prose.
-# THE LANGUAGE HALF ONLY. The shell half of this pattern used to live here as a second, weaker
-# alternation (`$ `, `sudo `, `pip install`, `sed -i`, `cat `, `grep -n`, `python -m`, `pytest`) and
-# it missed the shape that cost a run: `cat > REVIEW.md << 'EOF'` matched none of it, so
-# `_strip_invented_code` scored zero, so the restate path never fired and the command shipped
-# (feed-pipeline-java x qwen35, 2026-08-19, call 0270). `cria.shellshape` owns that question now, for
-# every caller — see its module docstring for why it is a score rather than a predicate.
-_CODE_LINE = re.compile(
-    r"^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )", re.M)
-
-
-def _is_code_line(line: str) -> bool:
-    return _grounded_actions()._is_code_line(line)
-# EMPTY PARENS ARE A NAME, NOT CODE. `Importer.load()` hands the coder nothing to paste — it says
-# WHERE, the way a file path does, and a directive is entitled to name the method it is talking
-# about. The argument text is the part that can be invented, so the pattern now requires some.
-#
-# Walked on the sub-40 pass, feed-pipeline-java x nemotron-elastic (scored 16). The reasoner wrote
-# the run's correct fix — delete the five `builder.set…` lines that do not exist on the CSV builder —
-# and `_invented_code_spans` counted 2, so the directive was refused. The 2 were `Importer.load()`
-# and a `builder.setEscapeCharacter` call whose escape was one character off from the line that IS on
-# disk. Either one alone would have shipped it. Whether the NAME exists is a different guard's
-# question
-# (`_symbol_not_in_the_file`), and that one reads the file.
-# …AND THE DOT WAS NEVER THE THING THAT MADE IT CODE. The pattern required a DOTTED name, so a bare
-# constructor call carried no dot and was invisible: cria's own reasoner wrote
-# `new CSVParser(new StringReader(line), ',', '\\'', true, true, true, null, null)` at
-# feed-pipeline-java x nemotron-elastic 0019 and again at 0060, `_invented_code_spans` scored 0, and
-# the directive shipped as dictated code with cria's authority behind it. The real constructor —
-# named by javac IN THAT SAME PROMPT — takes eight arguments, all chars first, and no Reader at all.
-# The coder adopted the shape and the run died on it (36 compile errors; repairing everything else
-# still leaves 28). Java, C++, Rust tuple structs and every `new Thing(...)` write calls that way.
-#
-# The ARGUMENTS are what can be invented, so that is the whole test: a name, and parens with
-# something in them. `_QUOTABLE_MIN` now bounds this branch as it already bounds the line branch,
-# which is the same "empty parens are a name" rule stated by length instead of by emptiness —
-# `m.group(1)`, `sys.exit(0)`, `O(n)` hand the coder nothing to paste. Measured over the captures:
-# dropping the dot finds 134,084 more spans, 99.8% of them real code; the floor costs 0.8% of
-# today's dotted hits, all of them names with a trivial argument.
-_INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)*\(\s*[^)\n\s][^)\n]*\)")
 
 
 def _unquoted(s: str) -> str:
     return _grounded_actions()._unquoted(s)
-
-
-_QUOTE_CHARS = {ord(c): None for c in "'\"`\\"}
 
 
 def _observed_code(messages: list[dict] | None) -> str:
@@ -10183,43 +10134,6 @@ def _observed_code(messages: list[dict] | None) -> str:
             if isinstance(args, str):
                 out.append(args)
     return "\n".join(out)
-
-
-def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
-    """The directive with code the author did NOT read replaced by a marker.
-
-    Code survives when it appears in what cria OBSERVED — see :func:`_observed_code` for why that is
-    tool results and written bytes, and never the coder's own prose. That is the whole distinction
-    the 2026-08-04 ruling rests on: a steer quoting the coder's own failing line is grounded and
-    carried the ladder passes; a steer inventing a replacement is the author, and the author is the
-    same weak model with no compiler.
-
-    SPANS, not lines. An invented call usually sits inside a sentence that is otherwise a correct
-    diagnosis, and deleting the sentence throws away the half worth keeping — so a code-shaped LINE
-    is replaced whole, while an inline call embedded in prose loses only the call. Whitespace-
-    insensitive, because cria's own relay reflows the directive before the coder sees it.
-
-    Returns (directive, spans_stripped)."""
-    if not evidence:
-        return directive, 0                       # nothing to check against → change nothing
-    haystack = " ".join(evidence.split())
-    seen = lambda s: " ".join(s.split()) in haystack        # noqa: E731 — one predicate, used twice
-    stripped = 0
-    out = []
-    for line in directive.splitlines():
-        body = line.strip().strip("`")
-        if len(body) >= _QUOTABLE_MIN and _is_code_line(line) and not seen(body):
-            stripped += 1
-            out.append("    " + _INVENTED_MARK)
-            continue
-        def _sub(m):
-            nonlocal stripped
-            if seen(m.group(0)):
-                return m.group(0)
-            stripped += 1
-            return _INVENTED_MARK
-        out.append(_INLINE_CALL.sub(_sub, line))
-    return "\n".join(out), stripped
 
 
 def _invented_code_spans(directive: str, evidence: str) -> int:
