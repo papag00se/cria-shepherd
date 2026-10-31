@@ -198,12 +198,12 @@ def test_the_spill_helpers_tell_the_coder_what_is_on_disk_and_never_guess(base, 
     monkeypatch.setattr(wf, "SPILL_CONTENT_MAX", 5000)
     for path in ("/long.txt", "/data.json", "/min.html"):
         wf.fetch_nav(f"{base}{path}")
-    wf._cache_put("https://x.org/m.js", 200, "application/javascript", "function a(){var s='};';return 1;}" * 400, None, False)
+    wf._cache_put("https://x.org/m.js", 200, "application/javascript", "function a(){var s='it\\'s };';return 1;}" * 400, None, False)
     wf._cache_put("https://x.org/m.xml", 200, "application/xml", "<a><b>x</b></a>" * 800, None, False)
     wf._cache_put("https://x.org/page.go", 200, "text/html", "<html><body>" + "<div class='a'>word</div>" * 400 + "</body></html>", None, False)
     wf._cache_put("https://x.org/oneline", 200, "text/plain", "w" * 10000, None, False)
     js = wf.oversized_spill("https://x.org/m.js")
-    assert js[1] == "./tmp/reference/x.org_m.js.txt" and js[2].startswith("function a(){\nvar s='};';\nreturn 1;\n}\nfunction a(){")   # string-aware break
+    assert js[1] == "./tmp/reference/x.org_m.js.txt" and js[2].startswith("function a(){\nvar s='it\\'s };';\nreturn 1;\n}\nfunction a(){")   # string-aware break
     assert wf.oversized_spill("https://x.org/m.xml")[2].startswith("<a>\n<b>x</b>\n</a>\n<a>")
     assert wf.oversized_spill(f"{base}/nope-not-cached") is None and wf.spill_path_for(f"{base}/nope-not-cached") == ""
     page = wf.oversized_spill("https://x.org/page.go")
@@ -216,7 +216,7 @@ def test_the_spill_helpers_tell_the_coder_what_is_on_disk_and_never_guess(base, 
     outline = wf.outline_for_spill_path("tmp/reference/" + wf._spill_name(f"{base}/data.json").rsplit("/", 1)[1])
     assert outline.startswith("[top-level keys (2): items, meta]") and wf.outline_for_spill_path(wf._spill_name("https://x.org/m.js")) == ""
     hint = wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 2000)
-    assert hint.startswith("It is 526 lines — read_file with start_line=1 end_line=") and wf.spill_reading_hint("./tmp/reference/none.txt", 2000) == ""
+    assert hint.startswith("It is 454 lines — read_file with start_line=1 end_line=") and wf.spill_reading_hint("./tmp/reference/none.txt", 2000) == ""
     assert wf.spill_reading_hint(wf._spill_name("https://x.org/oneline"), 2000) == "" and wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 5) == ""
     assert wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 10**7) == ""
     assert wf.spill_extent_of("https://nowhere/x").startswith("there (the file's own last line says")

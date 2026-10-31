@@ -78,7 +78,7 @@ def test_an_f811_shadow_of_a_def_is_a_real_finding_but_an_import_rebinding_is_ad
 
 @pytest.mark.parametrize("online,offline,sentence", [
     ("3 passed in 0.1s", "3 passed in 0.1s", "The same tests (0f/3p) pass with the network switched off"),
-    ("3 passed in 0.1s", "2 passed, 1 skipped in 0.1s", None),                    # a test stepped aside: no claim
+    ("3 passed in 0.1s", "3 passed, 1 skipped in 0.1s", None),                    # same tally but a test stepped aside: no claim
     ("ok", "ok", "only that none of them failed"),                                 # uncounted: only what the exit code showed
     ("ok", "ok (1 skipped)", None),
 ], ids=["equal-counts", "skipped-offline", "uncounted", "uncounted-skip"])
