@@ -189,3 +189,58 @@ def test_stale_editable_install_into_a_run_workspace_is_flagged(tmp_path, monkey
     (tmp_path / "__editable__.x-0.1.pth").write_text(target + "\n")
     monkeypatch.setattr(preflight.site, "getusersitepackages", lambda: str(tmp_path))
     assert bool([f for f in preflight.stale_suite_installs() if f["target"] == target]) is flagged
+
+
+_ROLES = {
+    "vision": '[roles.coder]\nbackend = "b"\nvision = true\nvision_model = "m"\n',
+    "false": '[roles.coder]\nbackend = "b"\nvision = false\n',
+    "undeclared": '[roles.coder]\nbackend = "b"\n',
+    # vision on a role that is not the coder must not widen the coder's catalog
+    "reasoner only": '[roles.coder]\nbackend = "b"\n[roles.reasoner]\nvision = true\nvision_model = "m"\n',
+    "broken": "[roles.coder",
+    "no roles": 'x = 1\n',
+}
+
+
+@pytest.mark.parametrize("name,expected", [("vision", ["text", "image"]), ("false", ["text"]),
+                                           ("undeclared", ["text"]), ("reasoner only", ["text"]),
+                                           ("broken", ["text"]), ("no roles", ["text"])])
+def test_suite_tooling_img_catalog_declares_image_input_only_for_a_vision_coder(tmp_path, name, expected):
+    """Pinned Codex refuses `view_image` against a text-only catalog, so a coder declaring vision needs
+    `image` in input_modalities; every other cell keeps the text-only no-catalog default."""
+    cfg = tmp_path / "cria.toml"
+    cfg.write_text(_ROLES[name])
+    home = tmp_path / "home"
+    home.mkdir()
+    path = run.local_codex_catalog("m", 1000, home, vision=run.coder_declares_vision(cfg))
+    assert json.loads(path.read_text())["models"][0]["input_modalities"] == expected
+
+
+def test_suite_tooling_img_non_vision_catalog_is_byte_identical_to_the_default(tmp_path):
+    """Existing non-vision cells must receive exactly the bytes they always did; a vision catalog differs
+    only in input_modalities."""
+    a, b, c = (tmp_path / n for n in "abc")
+    for d in (a, b, c):
+        d.mkdir()
+    default = run.local_codex_catalog("m", 1000, a).read_bytes()
+    assert run.local_codex_catalog("m", 1000, b, vision=False).read_bytes() == default
+    plain, vis = json.loads(default), json.loads(run.local_codex_catalog("m", 1000, c, vision=True).read_text())
+    plain["models"][0]["input_modalities"] = ["text", "image"]
+    assert plain == vis
+
+
+@pytest.mark.skipif(not (run.RESTORED_CODEX_BINARY.is_file() and (run.SUITE_CODEX_HOME / "config.toml").is_file()),
+                    reason="pinned codex / suite codex home absent")
+@pytest.mark.parametrize("name,expected", [("vision", ["text", "image"]), ("undeclared", ["text"])])
+def test_suite_tooling_img_restored_launch_reads_the_cells_role_config(tmp_path, policy, name, expected):
+    """The restored launcher derives vision from the cell's cria config, end to end into the catalog file
+    the argv points Codex at."""
+    cfg = tmp_path / "cria.toml"
+    cfg.write_text(_ROLES[name])
+    home = tmp_path / "home"
+    home.mkdir()
+    (tmp_path / "ws").mkdir()
+    argv = run._codex_argv("task", tmp_path / "ws")
+    argv, prov = run.restored_codex_argv(argv, "m", 1000, "http://127.0.0.1:18085/v1", home, cria_config=cfg)
+    cat = next(a for a in argv if a.startswith("model_catalog_json=")).split("=", 1)[1]
+    assert json.loads(Path(json.loads(cat)).read_text())["models"][0]["input_modalities"] == expected

@@ -161,8 +161,21 @@ def cell_codex_home(workspace: Path) -> Path:
     return home
 
 
-def local_codex_catalog(model: str, context: int, home: Path) -> Path:
-    """Explicit capabilities avoid Codex's unknown-model fallback (which omits patching)."""
+def coder_declares_vision(config_path: Path = CRIA_TOML) -> bool:
+    """True only when `[roles.coder] vision = true` is declared in the cell's cria config.
+    Unknown/false/missing/unreadable all mean text-only (the pinned no-catalog default)."""
+    try:
+        roles = tomllib.loads(Path(config_path).read_text()).get('roles', {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    coder = roles.get('coder') if isinstance(roles, dict) else None
+    return isinstance(coder, dict) and coder.get('vision') is True
+
+
+def local_codex_catalog(model: str, context: int, home: Path, vision: bool = False) -> Path:
+    """Explicit capabilities avoid Codex's unknown-model fallback (which omits patching).
+    Image input is declared only when the coder role declares vision: with a text-only catalog
+    Codex itself refuses `view_image`, so a vision role could never be exercised."""
     from cria import prompts
     record = {
         'slug': model, 'display_name': model,
@@ -175,7 +188,7 @@ def local_codex_catalog(model: str, context: int, home: Path) -> Path:
         'effective_context_window_percent': 95,
         # Preserve pinned Codex's no-catalog default; capabilities must not widen tool output.
         'truncation_policy': {'mode': 'bytes', 'limit': 10000},
-        'input_modalities': ['text'], 'supports_image_detail_original': False,
+        'input_modalities': ['text', 'image'] if vision else ['text'], 'supports_image_detail_original': False,
         'default_reasoning_summary': 'none', 'support_verbosity': False,
         'experimental_supported_tools': [],
         'include_skills_usage_instructions': False,
@@ -874,7 +887,7 @@ def codex_adapter_argv(argv, adapter_url):
     return [*argv[:-1], '-c', f'model_providers.{provider}.base_url=' + json.dumps(adapter_url), argv[-1]]
 
 
-def restored_codex_argv(argv, model, context, adapter_url, home=None):
+def restored_codex_argv(argv, model, context, adapter_url, home=None, cria_config=None):
     """Supported provider URL overrides only; explicit binary avoids mise latest drift."""
     argv = codex_adapter_argv(argv, adapter_url)
     if not RESTORED_CODEX_BINARY.is_file() or not os.access(RESTORED_CODEX_BINARY, os.X_OK):
@@ -888,7 +901,8 @@ def restored_codex_argv(argv, model, context, adapter_url, home=None):
     extra = ["-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
              "-c", f"model_auto_compact_token_limit={int(context * .85)}"]
     if home is not None:
-        catalog = local_codex_catalog(model, context, home)
+        catalog = local_codex_catalog(
+            model, context, home, vision=coder_declares_vision(CRIA_TOML if cria_config is None else cria_config))
         extra += ['-c', 'model_catalog_json=' + json.dumps(str(catalog))]
         provenance['model_catalog'] = l0_config_fingerprint(catalog)
         provenance['cell_home'] = str(home)
