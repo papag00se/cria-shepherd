@@ -110,3 +110,39 @@ def test_an_absent_runtime_library_is_a_typed_dependency_error_and_unsafe_names_
         with pytest.raises(System1BundleError):
             system1._relative(name)
     assert system1._relative("policy/x.txt") == "policy/x.txt"
+
+
+def _runtime(eng, tmp_path, **kw):  # noqa: F811
+    return system1.System1Runtime(make_bundle(tmp_path / "rt", eng), **kw)
+
+
+@pytest.mark.parametrize("break_it, message", [
+    (lambda e: setattr(e.ort, "InferenceSession", lambda *a, **k: (_ for _ in ()).throw(OSError("corrupt graph"))), "cannot load the System 1 graph or tokenizer: corrupt graph"),
+    (lambda e: setattr(e.ort.InferenceSession, "get_providers", lambda self: ["CUDAExecutionProvider"]), r"CPU only; ORT selected \['CUDAExecutionProvider'\]"),
+    (lambda e: setattr(e.ort.InferenceSession, "get_inputs", lambda self: [types.SimpleNamespace(name="ids")]), "graph inputs are"),
+    (lambda e: setattr(e.tok.__class__, "token_to_id", lambda self, t: 5), "tokenizer maps <<LABEL>> to 5"),
+    (lambda e: setattr(e, "logits", [[-9.0, 9.0]]), "self-test .* disagrees with the producer's record"),     # the label flips
+    (lambda e: setattr(e, "logits", [[2.1, -1.0]]), "disagrees with the producer's record"),                  # logits drift beyond 2e-4
+    (lambda e: setattr(e, "fail", RuntimeError("oom")), "self-test case could not run"),
+])
+def test_a_runtime_that_cannot_reproduce_the_producers_records_never_starts(eng, tmp_path, break_it, message):  # noqa: F811
+    """Load, provider, input-name, token-id and self-test disagreement are each a typed startup refusal with the cause in the message."""
+    root = make_bundle(tmp_path / "rt", eng)
+    break_it(eng)
+    with pytest.raises(System1BundleError, match=message):
+        system1.System1Runtime(root)
+
+
+def test_a_logits_drift_inside_the_gate_is_accepted_and_the_tokenizer_failure_is_typed(eng, tmp_path):  # noqa: F811
+    """1e-5 of drift passes the 2e-4 gate (the self-test is a fidelity check, not an equality one); a tokenizer that raises at prepare time is a System1RuntimeError, not a bare exception."""
+    root = make_bundle(tmp_path / "rt", eng)
+    eng.logits = [[2.00001, -1.0]]
+    rt = system1.System1Runtime(root)
+    assert rt.bundle_id == "fake" and rt.threads >= 1 and rt.memory_budget_bytes > 0 and len(rt.manifest_sha256) == 64
+    eng.tok.__class__.encode = lambda self, text: (_ for _ in ()).throw(ValueError("bad utf-8"))
+    with pytest.raises(system1.System1RuntimeError, match="tokenizer failed: bad utf-8"):
+        rt.prepare("dictation", {"public_directive": "x"})
+    with pytest.raises(system1.System1StateError, match="unknown System 1 family 'nope'"):
+        rt.prepare("nope", {"public_directive": "x"})
+    with pytest.raises(system1.System1StateError, match="must be exactly"):
+        rt.prepare("dictation", ["public_directive"])
