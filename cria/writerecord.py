@@ -25,6 +25,7 @@ Those are cria's markers and the harness's artifacts, never prose about edits.
 """
 from __future__ import annotations
 
+import mimetypes
 import os
 import re
 
@@ -120,6 +121,21 @@ def _targets(name: str, arguments) -> list[str] | None:
     return [f.strip() for f in found if f.strip()] or None
 
 
+# THE FILE'S ROLE, from the stdlib's own content-type registry (no list of ours): a prose document - markdown, reStructuredText -
+# is read by no compiler, interpreter or test runner the project's registries know, so writing one after the last
+# run cannot change that run's result. Everything else counts as a possible build input: sources, manifests and configs
+# (`probediscovery`'s own tables never type as a document - a test pins that), data files, and every file whose type the
+# registry does not know (`.log`, `.tmp`, an extensionless name). `.txt` is deliberately NOT a document here: a
+# `requirements.txt`, a `CMakeLists.txt` and a test fixture all are one. Uncertainty counts FOR "could change the build".
+_TYPES = mimetypes.MimeTypes()          # the built-in table only: no per-machine /etc/mime.types
+_PROSE_DOCUMENTS = frozenset({"text/markdown", "text/x-rst"})
+
+
+def may_change_a_build(path: str) -> bool:
+    """Could a write to ``path`` change what compiling or testing the project reports? False only for a prose document."""
+    return _TYPES.guess_type(os.path.basename(path.strip().strip("`'\"")))[0] not in _PROSE_DOCUMENTS
+
+
 class WriteRecord:
     """What the transcript can show was written: the paths (as the calls spelled them, grouped under their
     lower-case file name) that some write-class call or shell command may have changed, and whether anything
@@ -191,7 +207,9 @@ class CheckRecord:
     * a LANDED change - a write-class call whose own program typed it `landed` (`denial.landed_call_ids`);
     * a MAYBE - a write to a named file with no such proof (a native tool, a pending call): it proves no change
       and forbids saying that nothing was written;
-    * everything that only reads is inert. A shell mutator is an execution, never a landed change.
+    * everything that only reads is inert, and so is a write whose every target is a prose document (`may_change_a_build`:
+      a REVIEW.md written after the last compile cannot change what that compile reported). A shell mutator is an
+      execution, never a landed change.
     """
 
     def __init__(self, messages):
@@ -211,12 +229,21 @@ class CheckRecord:
                 if cid in gate or shelltool.is_shell_tool_name(name):
                     self.events.append(("exec", "unknown" if cid in gate else self._state(paired.get(cid))))
                 elif cid in landed:
-                    self.events.append(("change", ""))
+                    if self._reaches_a_build(name, fn.get("arguments")):
+                        self.events.append(("change", ""))
                 elif shelltool.is_write_tool_name(name) and shelltool.is_file_tool_name(name) \
                         and _targets(name, fn.get("arguments")):
-                    self.events.append(("maybe", ""))          # a write that proves neither way
+                    if self._reaches_a_build(name, fn.get("arguments")):
+                        self.events.append(("maybe", ""))      # a write that proves neither way
                 elif not (shelltool.is_read_tool_name(name) and shelltool.is_file_tool_name(name)):
                     self.events.append(("exec", "unknown"))    # a tool nothing here can classify may run anything
+
+    @staticmethod
+    def _reaches_a_build(name, arguments) -> bool:
+        """False only when the write's every readable target is a prose document (a notes file written after the run);
+        a write whose target cannot be read could be anything."""
+        targets = _targets(name, arguments)
+        return targets is None or any(may_change_a_build(t) for t in targets)
 
     @staticmethod
     def _state(result) -> str:

@@ -61,3 +61,53 @@ def test_the_last_build_verdict_of_a_script_that_ran_two_builds_is_the_newest_st
     assert probeparse.build_verdict("BUILD SUCCESSFUL in 3s\nBUILD FAILED in 1m 2s\n") == "failed"      # gradle's closing line carries its duration
     assert probeparse.build_verdict("the BUILD FAILED banner is printed when it fails\n") == ""
     assert probeparse.build_verdict("BUILD FAILED\n") == "failed" and probeparse.build_verdict("") == ""
+
+
+# --- a write to a prose document after the last run cannot change that run's result -------------------------------------
+from cria import cleanup_languages, denial, probediscovery
+from compaction_handoff_helpers import call, result
+
+GREEN_MVN = shell("m", "mvn test", PASSED, 0)
+RED_MVN = shell("m", "mvn test", COMPILE, 1)
+
+@pytest.mark.parametrize("path,counts", [
+    ("REVIEW.md", False), ("docs/notes.rst", False), ("/ws/NOTES.markdown", False),       # prose documents
+    ("src/main/java/pipeline/Importer.java", True), ("pom.xml", True), ("requirements.txt", True),
+    ("src/test/resources/orders.csv", True), ("scratch.log", True), ("Makefile", True), ("a.tmp", True)])   # a source, manifest, fixture, or a type the registry does not know
+def test_only_a_prose_document_is_a_write_that_cannot_change_a_build(path, counts):
+    assert writerecord.may_change_a_build(path) is counts
+
+def test_no_source_extension_manifest_or_config_cria_knows_ever_types_as_a_prose_document():
+    """The prose rule must never swallow a build input the project's own registries name (a future entry fails here)."""
+    names = list(probediscovery.RELEVANT_EXACT) + list(probediscovery.PRIMARY_MANIFESTS)
+    names += [c for conv in probediscovery.TEST_CONVENTIONS for c in conv.configs]
+    names += [f"Main.{ext}" for conv in probediscovery.TEST_CONVENTIONS for ext in conv.exts]
+    names += [f"Main{ext}" for ext in cleanup_languages.LANGUAGES]
+    assert len(names) > 60 and [n for n in names if not writerecord.may_change_a_build(n)] == []
+
+def doc_write(cid, path="REVIEW.md", outcome=denial.LANDED):
+    return [call(cid, "write_file", path=path, content="# Review\n" * 30), result(cid, "Wrote", outcome)]
+
+@pytest.mark.parametrize("parts,reason", [
+    ([GREEN_MVN, doc_write("d")], ""),                                           # a REVIEW.md after the green compile: the green is still current
+    ([GREEN_MVN, doc_write("d", "src/Importer.java")], "a write landed after the last run"),
+    ([GREEN_MVN, doc_write("d"), write("w")], "a write landed after the last run"),   # ...but a source write alongside it still is
+    ([GREEN_MVN, [call("p", "apply_patch", input="*** Add File: REVIEW.md\n+x\n*** Update File: pom.xml\n"), result("p", "Done", denial.LANDED)]],
+     "a write landed after the last run"),                                       # one build input among the patch's targets
+    ([GREEN_MVN, [call("w", "write_file", content="x"), result("w", "Wrote", denial.LANDED)]], "a write landed after the last run"),   # unreadable target
+    ([RED_MVN, doc_write("d", outcome=None)], "the newest run failed"),          # a notes write no longer masks the red run behind a 'maybe'
+    ([RED_MVN, doc_write("d", "pom.xml", outcome=None)], "")])                   # an unproven write to a build input still does
+def test_a_prose_write_after_the_last_run_neither_stales_a_green_nor_hides_a_red(parts, reason):
+    """A false refusal of 'it compiles' because REVIEW.md was written last; and a red newest run masked by the same write."""
+    messages = TASK + write("w0") + [m for part in parts for m in part]
+    assert writerecord.CheckRecord(messages).unsupported() == reason
+
+from test_compaction_handoff_lenses import GREEN, validate
+
+def test_a_green_briefing_is_not_refused_for_a_notes_file_written_after_the_green_run_but_is_for_a_source_write():
+    """Through the whole gate: the build lens asks nothing (the typed record backs the claim) after a REVIEW.md write."""
+    notes = TASK + write("w0") + GREEN_MVN + doc_write("d")
+    ok, asked, _, _ = validate(GREEN, messages=notes, build=f"{GREEN} | GREEN")
+    assert ok is True and "build" not in asked
+    ok, asked, answers, _ = validate(GREEN, messages=TASK + write("w0") + GREEN_MVN + write("w1"), build=f"{GREEN} | GREEN")
+    assert ok is False and answers["build"].startswith("UNRUN") and "build" in asked
