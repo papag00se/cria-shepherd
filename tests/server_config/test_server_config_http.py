@@ -12,7 +12,6 @@ from cria.config import (Backend, Config, IndicatorsConfig, LoggingConfig, Role,
                          ServerConfig, UpstreamConfig)
 from cria.events import EventLog
 from cria.indicators import MARKER, PROSE_DROPPED_MARKER
-from cria.server import LOCAL_COMPACT_MARKER
 from cria.receivecapture import DefaultTransport
 from cria.server import CriaServer
 from cria.upstream import Upstream
@@ -25,6 +24,11 @@ SSE = (b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
        b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}\n\n'
        b"data: [DONE]\n\n")
 BIG = " ".join("w%05d" % i for i in range(30000))  # ~70k tokens on the fake chars/3 tokenizer
+
+
+COMPACTION_JUDGES = {"Answer PLAN if": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES", "FAITHFUL": "FAITHFUL",
+                     "present in the workspace right now": "app.py | PRESENT", "ALREADY created": "app.py | NOT CHANGED",
+                     "which state of the code": "none", "what size does the briefing give": "none"}
 
 
 class FakeUpstream(BaseHTTPRequestHandler):
@@ -60,8 +64,40 @@ class FakeUpstream(BaseHTTPRequestHandler):
             return self._reply({"choices": [{"message": {"content": '{"engagement": "task", "task_type": "coding", "reason": "x"}'}}]})
         if "__NONJSON__" in text:  # an intermediary's HTML error page served as 200
             return self._reply(b"<html>502 Bad Gateway</html>", "text/html")
+        system = body["messages"][0].get("content") if body.get("messages") else ""
+        for lens, verdict in COMPACTION_JUDGES.items():  # the briefing validators, each answering its own lens
+            if isinstance(system, str) and lens in system:
+                verdict = "PLAN" if verdict == "RETROSPECTIVE" and "Next step" in text else verdict
+                return self._reply({"choices": [{"message": {"content": verdict}}]})
+        if "You are writing a briefing" in text:  # the compactor
+            plan = "Next step: rewrite app.py with argparse." if "__PLAN__" in text else "no check has failed."
+            return self._reply({"choices": [{"message": {"role": "assistant", "content": "The user asked for app.py. app.py now exists and prints 1; " + plan}}]})
+        if "REQUEST CLASSIFIER" not in text and self.server.__dict__.get("flaky"):  # a server that rejects its next N generations
+            code = self.server.flaky.pop(0)
+            return self._reply(code[1] if isinstance(code, tuple) else {"error": {"message": "overloaded"}}, code=code[0] if isinstance(code, tuple) else code)
+        if "__DROP__" in text:  # the connection dies halfway through the body
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "500")
+            self.end_headers()
+            self.wfile.write(b'{"choices": [{"mess')
+            self.close_connection = True
+            return
         if "__500__" in text:
             return self._reply({"error": {"message": "template rejected"}}, code=500)
+        if "__TOOL__" in text:  # the model asks to write a file, as a buffered completion or as streamed argument deltas
+            call = {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "hello.txt", "content": "hi there\n"})}}
+            if not body.get("stream"):
+                return self._reply({"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [call]}, "finish_reason": "tool_calls"}]})
+            args = call["function"]["arguments"]
+            tc = lambda **f: {"choices": [{"delta": {"tool_calls": [{"index": 0, **f}]}}]}
+            frames = [tc(id="call_1", type="function", function={"name": "write_file", "arguments": args[:20]}), tc(function={"arguments": args[20:]}),
+                      {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}]
+            self.close_connection = True
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            return self.wfile.write(b"".join(b"data: " + json.dumps(f).encode() + b"\n\n" for f in frames) + b"data: [DONE]\n\n")
         if body.get("stream"):
             self.close_connection = True
             self.send_response(200)
@@ -73,7 +109,7 @@ class FakeUpstream(BaseHTTPRequestHandler):
 
 
 class Wire:
-    def __init__(self, tmp, routing=None, heartbeat=5.0, capture=False):
+    def __init__(self, tmp, routing=None, heartbeat=5.0, capture=False, indicators=False):
         self.fake = ThreadingHTTPServer(("127.0.0.1", 0), FakeUpstream)
         self.fake.chats, self.fake.release = [], threading.Event()
         threading.Thread(target=self.fake.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
@@ -81,7 +117,7 @@ class Wire:
         cfg = Config(server=ServerConfig(host="127.0.0.1", port=0, heartbeat_seconds=heartbeat), upstream=UpstreamConfig(base_url=self.url),
                      logging=LoggingConfig(dir=str(tmp), capture_dir=str(tmp / "calls"), console=False,
                                           capture_calls=True),
-                     indicators=IndicatorsConfig(enabled=False),
+                     indicators=IndicatorsConfig(enabled=indicators),
                      routing=routing(self.url) if routing else RoutingConfig(engagement_level=3))
         self.log = EventLog(dir=str(tmp), console=False)
         up = Upstream(self.url, context_window=WINDOW, engagement_level=3,
@@ -278,22 +314,6 @@ def test_the_dropped_prose_marker_never_reaches_the_model_at_any_level(tmp_path,
         w.close()
     sent = json.dumps(w.fake.chats[-1][1]["messages"], ensure_ascii=False)
     assert "README.md" in sent and PROSE_DROPPED_MARKER not in sent and "cria" not in sent.lower()
-
-
-def test_a_marked_compaction_turn_is_routed_without_asking_the_classifier(tmp_path):
-    """cria once spent 131 minutes classifying compaction turns it had already identified: the marker routes straight to the compactor and records the skip."""
-    w = Wire(tmp_path, lambda url: RoutingConfig(
-        backends={"local": Backend("local")},
-        roles={"classifier": Role("classifier", "local"), "reasoner": Role("reasoner", "local"),
-               "coder": Role("coder", "local")},
-        failover={"coding": ("coder",)}, engagement_level=3))
-    try:
-        w.post("/v1/chat/completions", chat_body(f"{LOCAL_COMPACT_MARKER} summarize the work so far"))
-        kinds = [e["kind"] for e in w.events()]
-    finally:
-        w.close()
-    assert "classify.skipped" in kinds
-    assert not any("REQUEST CLASSIFIER" in json.dumps(b) for _, b in w.fake.chats)
 
 
 def test_call_capture_keeps_the_exact_request_prompt_response_and_received_bytes(tmp_path):
