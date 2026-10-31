@@ -344,6 +344,36 @@ the same way.
   not the cause of the `PLAN` verdicts. At 49,152 the same history is rejected by the fidelity lens in both arms
   (identical wire bytes before/after), as in the original capture 0065.
 
-Owner to read next: the writer prompt (`selfcompact_summary`) and the retrospective lens on a writer reply that reads as
-a plan — what in the writer's briefing the lens calls `PLAN` (open the 0062/0064-style captures for a rejected one).
-Out of scope for the cap-scaling change; not chased.
+**Investigated 2026-10-30 (R2) — it is not a window effect.**
+
+- *The earlier replay was not the production path.* It replayed the captured OUTBOUND body of call 0061, which already
+  carries cria's `⟦ctx:rollup⟧` user message; `selfcompact.root_text` counts that message as part of the root task, so
+  the writer's "ORIGINAL TASK" block held the previous briefing (real call 0062's did not). And it ran the reasoner's
+  retrospective lens, while the live service answers that lens with the system1 classifier. Rebuilt from the real
+  INBOUND history (session 01a162ad `inbound-c668c47b`, cut at the same boundary a pinned trigger would use, real
+  root task, writer + validators as `Loop._self_compact` runs them), n=8 per arm (2 at temperature 0, 6 at 0.7):
+  16K system1 OFF 3/8 accepted (`PLAN` 4/8, scope `NARROWS` 1/8), 32K system1 OFF 1/8 (`PLAN` 5/8, `UNWRITTEN` 2/8) — the
+  reported numbers reproduce — but with system1 ON (production) 16K 8/8 and 32K 7/8. Four other real sessions' views at
+  the 0.33 share, n=4 each, system1 ON: 16K 14/16, 32K 10/16, and the SAME 32K views at 49,152 (:18084) 9/16 — no
+  window effect. Of the sixteen system1 rejections (all windows), `NARROWS` 5, `UNWRITTEN` 3, `PLAN` 4, `UNFAITHFUL` 1 and
+  three more `NARROWS`/`PLAN` mixes; the typed lenses are the ones that carry signal (one `UNWRITTEN package.json` is a
+  briefing stating the file as built that the transcript never wrote).
+- *Floor reduction (a):* not at these fire points. One cold-process 16K writer body was floor-trimmed (8,007 → 5,523
+  est., 21 turns, `safety` 1.8 because no summary request has been measured yet although the coder's density is
+  1.17); the predicate (73570ade) now fires early enough that evidence fits whole at the floor's own density.
+  Distillation fired at 16K on the cold first call; its extraction was refused 4 of 8 times for object-shaped list entries
+  (`valid_extraction`, deliberate), a wasted ~800-token call and a kept-verbatim piece, not a cause of a verdict.
+- *Reply cap (b):* writer replies 575–1,380 tokens, `finish_reason` stop in every sample: not cut.
+- *What the reasoner's retrospective lens calls `PLAN` (c):* judged sentence by sentence, the flagged lines are the
+  task's own requirements restated as commands ("Fix the threading bug and re-enable parallel workers", "Make the
+  importer at least 4× faster", "Decide and implement how…"), not the extracted `latest_plan`. The scope lens demands the
+  task survive; this lens refuses any imperative. Landed: one VOICE rule in the writer prompt (`selfcompact_summary`):
+  state the task as what was asked, never as orders. Same input, system1 OFF, n=8: 16K 3/8 → 6/8, 32K 1/8 → 4/8
+  accepted. System1-ON acceptance after the change was NOT re-measured, and two 16K/32K temperature-0 samples still
+  answer `PLAN` on a restated task paragraph.
+- *Next:* (1) re-measure with system1 ON and on the other four real sessions (the rule changes every writer body, at 49K
+  too); (2) the remaining `PLAN` lines are still the numbered task list — a writer that cites the task by deliverable
+  ("deliverable 2: threading, unmet") instead of quoting it may clear them; (3) the scope lens is strict on briefings
+  that say a deliverable is "done" (session 3's three `NARROWS`); (4) `valid_extraction` refusing object-shaped entries
+  wastes the cold-process extraction call at 16K — a stricter example in `compaction_extract` is the upstream change to
+  try, with a fabricated-entry control.
