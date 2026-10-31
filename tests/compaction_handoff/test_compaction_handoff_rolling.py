@@ -133,6 +133,22 @@ def test_the_tail_never_starts_inside_an_exchange():
     lone = [msgs[0], call("only", "read_file"), result("only", "z" * 600)]
     assert run(lone, room_tokens=10, keep_tail_tokens=40, recompact_tokens=5)[0].messages is lone     # a tail spanning everything folds nothing
 
+@pytest.mark.parametrize("keep", [150, 200, 260, 330])
+def test_a_parallel_batch_is_one_exchange_even_when_the_harness_sends_its_calls_as_separate_assistant_messages(keep):
+    """ornith1.5_9b / Java (20261007T193504 inbound-2ffd2629; 28 of 894 views rebuilt from 447 real compaction requests): Codex issues parallel calls as
+    consecutive assistant messages followed by their results. A cut BETWEEN the calls folded the first call and kept its result, which the
+    wire re-roled as a bare `user` message with the call and its path gone - the lone-result failure again, in the batch shape."""
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}]
+    for i in range(4):
+        msgs += [call(f"p{i}a", "read_file", path=f"a{i}"), call(f"p{i}b", "read_file", path=f"b{i}"),
+                 result(f"p{i}a", f"A{i} " + "y" * 560), result(f"p{i}b", f"B{i} " + "y" * 560)]
+    res, seen = run(msgs, keep_tail_tokens=keep)
+    calls = lambda ms: {tc["id"] for m in ms for tc in m.get("tool_calls") or []}
+    answers = lambda ms: {m["tool_call_id"] for m in ms if m["role"] == "tool"}
+    assert res.applied and answers(res.messages) and calls(res.messages) == answers(res.messages)
+    assert calls(seen[0]) == answers(seen[0]) and contextfloor.ensure_tool_integrity(res.messages)[1] == 0
+    assert calls(seen[0]) | calls(res.messages) == calls(msgs)                                 # every call is in the rollup's evidence or verbatim, none twice
+
 def test_anchors_survive_verbatim_identical_copies_collapse_and_an_anchored_result_keeps_its_call():
     """Anchors survive verbatim; byte-identical exchanges collapse (counted) but copies differing in their tool call both stay; an anchored result keeps its call."""
     digest = "[API endpoints (33): /, /handles/{handle}]\n[response shape — fields]\n" + "x" * 400

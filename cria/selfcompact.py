@@ -264,19 +264,25 @@ def _whole_exchange_start(messages: list[dict], start: int) -> int:
     in the user's voice with the call and its path gone (60 of 315 real self-compactions rebuilt from
     ornith1.5_9b / Java captures; ornith-java-overnight-c7dd… call 0039 index 4). Anchored exchanges were already kept whole (:func:`_anchor_units`); this is
     the same unit for the tail. The tail may therefore run a call longer than its budget; it never holds
-    a result without its call. An empty tail (``start == len(messages)``) has no first message to move."""
+    a result without its call, whichever of its results the cut fell nearest. An empty tail (``start == len(messages)``) has no first message to move."""
     issuer: dict[str, int] = {}
     for i, m in enumerate(messages):
         if m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
                 if isinstance(tc, dict) and tc.get("id"):
                     issuer[tc["id"]] = i
-    while start < len(messages):
-        m = messages[start]
-        turn = issuer.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
-        if turn is None or turn >= start:
-            break
-        start = turn
+    # EVERY result in the tail, not only the one the cut lands on. A harness that issues a parallel batch
+    # sends its calls as CONSECUTIVE assistant messages followed by their results; a cut between two of
+    # those calls begins on an assistant message, so the first call folded and its result rode on alone
+    # (ornith1.5_9b / Java: 28 of 894 views rebuilt from 447 real compaction requests). Pulling the start
+    # back to the earliest issuer of any tail result keeps the batch whole; it is the same unit as above.
+    moved = True
+    while moved:
+        moved = False
+        for m in messages[start:]:
+            turn = issuer.get(m.get("tool_call_id")) if m.get("role") == "tool" else None
+            if turn is not None and turn < start:
+                start, moved = turn, True
     return start
 
 
