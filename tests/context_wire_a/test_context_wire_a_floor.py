@@ -324,3 +324,22 @@ def test_a_compaction_digest_never_rewrites_prose():
     assert content_reduce(task * 100, None, 20) == task * 100
     big = '{"a": "' + "x" * 4000 + '"}'
     assert len(digest_reduce(big, "application/json", 50)) < len(big)
+
+
+def test_a_responses_instructions_persona_is_reduced_before_conversation_evidence_on_a_proxied_turn():
+    """Relay path (no coder frame): the Responses translation itself anchors the span, so the floor spares the
+    conversation and the developer constraint exactly as it does behind the coder frame."""
+    from cria import responses
+    persona, configured = "PERSONA " * 1500, "sandbox_mode is workspace-write"
+    items = [{"type": "message", "role": "developer", "content": [{"type": "input_text", "text": configured}]},
+             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "the task"}]}]
+    for i in range(6):
+        items += [{"type": "function_call", "call_id": f"c{i}", "name": "read_file", "arguments": "{}"},
+                  {"type": "function_call_output", "call_id": f"c{i}", "output": "EVIDENCE " + "x " * 400}]
+    items.append({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]})
+    msgs = responses.to_chat_body({"model": "m", "instructions": persona, "input": items})["messages"]
+    out, _, rep = cf.fit(msgs, None, window=2500, reserve=300, safety=1.0, pinned_task="the task")
+    assert rep.caller_reduced == 1 and rep.turns_dropped == 0 and not rep.over_budget
+    assert persona not in out[0]["content"] and cf._REDUCED_MARK in out[0]["content"]
+    assert out[0]["content"].endswith(configured)
+    assert sum("EVIDENCE" in str(m.get("content")) for m in out) == 6

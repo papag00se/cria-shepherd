@@ -90,7 +90,11 @@ def to_chat_body(r: dict) -> dict:
                          bodykeys.CALLER_INSTRUCTIONS: True,
                          # `instructions` is the harness's own base prompt; developer items are the
                          # caller's configured constraints. Only the former may later be reduced.
-                         **({bodykeys.CALLER_PERSONA: persona} if persona else {})})
+                         # The span lets the context floor reduce an oversized persona with its label on a turn
+                         # cria proxies (the coder path anchors its own in `assemble_base`); `instructions` leads
+                         # the folded message, so it starts at 0. Never reaches the wire (stripped in `_prep`).
+                         **({bodykeys.CALLER_PERSONA: persona,
+                             bodykeys.CALLER_SPAN: {"start": 0, "text": persona}} if persona else {})})
     messages.extend(rest)
 
     body: dict = {"model": r.get("model"), "messages": messages, "stream": bool(r.get("stream"))}
