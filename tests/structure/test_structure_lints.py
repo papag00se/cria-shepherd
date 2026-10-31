@@ -47,19 +47,47 @@ def test_no_new_unmarked_bound_reaches_model_or_operator_text():
 
 SIZE = re.compile(r"(_TOKENS|_RESERVE|_CHARS|_BYTES|_BUDGET|_CAP|_LIMIT|_FLOOR|_MAX|_MIN|_STRIDE|_ENTRIES|_FILES|_DIRS|_SIZE"
                   r"|_MAX_[A-Z_]+|_MIN_[A-Z_]+)$|^(MAX|MIN)_")
-# Reasons a size does not move with the window: transport (harness/OS cap), safety, one word, measured; else it must be a windowcaps.Cap.
+# (file, name) -> why the size does not move with the context window; else it must be a windowcaps.Cap. Each reason is a
+# transport / safety / one-word / measured fact read from the constant's own comment and history, not a category label.
 FIXED_SIZES = {
-    "content_reduce.py": "INLINE_RESULT_MAX_BYTES COMMAND_ARG_BUDGET", "externalization.py": "STDOUT_MAX_BYTES",
-    "filecommands.py": "READ_TRANSPORT_STDOUT_BYTES", "multipart.py": "STDOUT_LIMIT", "writeproxy.py": "ECHO_MAX_BYTES",
-    "probegate.py": "TRANSPORT_CHUNK_BYTES TRANSPORT_RAW_PAGE_MAX", "upstream.py": "_REASONING_FLUSH_BYTES",
-    "toolwire.py": "_RIDE_ALONG_HOST_RESERVE _RIDE_ALONG_COMMAND_RESERVE",
-    "wsview.py": "TREE_MAX_ENTRIES TREE_MAX_BYTES BLOB_BYTES_MAX _BODY_CACHE_MAX_BYTES",
-    "depsurface.py": "MAX_FILE_BYTES MAX_ROOT_DIRS", "apidiscovery.py": "MAX_PROBE_BYTES", "webfetch.py": "MAX_BODY_BYTES",
-    "groundtruth.py": "DEFAULT_FILE_CAP", "planner.py": "_GROUND_SCAN_MAX_BYTES", "probeparse.py": "U32_MAX",
-    "probediscovery.py": "MAX_FLOOR_FILES_PER_LANG", "system1.py": "MAX_WINDOW_TOKENS WEIGHT_BUDGET_BYTES ARENA_BUDGET_BYTES "
-    "_MIN_ARENA_BUDGET_BYTES", "filepresence.py": "MAX_TOKENS", "loop.py": "COMPACTION_VERDICT_RESERVE ask_closed(max_tokens=)",
-    "dedup.py": "MIN_RUN_CHARS", "handoffdistill.py": "FRAME_TOKENS", "planner_tools.py": "_SEARCH_INLINE_CHARS",
-    "generationguards.py": "DEFAULT_REASONING_BUDGET DEGENERATE_RUN_CHARS WIDE_RUN_CHARS WIDE_EVAL_STRIDE WIDE_MIN_CHARS",
+    ("content_reduce.py", "INLINE_RESULT_MAX_BYTES"): "transport: the harness middle-cuts a result near 10,000 bytes (run 1785893473, 84 prompts); 9,000 leaves its framing room",
+    ("content_reduce.py", "COMMAND_ARG_BUDGET"): "transport: a spill reaches the harness disk as ONE command argv string, so a document past this is cut",
+    ("externalization.py", "STDOUT_MAX_BYTES"): "transport: complete producer stdout before the harness envelope, same ~10 KB result bound",
+    ("filecommands.py", "READ_TRANSPORT_STDOUT_BYTES"): "transport: the harness stdout bound a multipart read must fit in",
+    ("multipart.py", "STDOUT_LIMIT"): "transport: the harness stdout bound for one multipart record line",
+    ("writeproxy.py", "ECHO_MAX_BYTES"): "measured: one byte bound on a write's echoed window and its report; over it the window shrinks, never cut mid-way",
+    ("probegate.py", "TRANSPORT_CHUNK_BYTES"): "transport: 6,000 raw bytes encode to 8,000 chars under the harness's ~9-10 KiB result bound",
+    ("probegate.py", "TRANSPORT_RAW_PAGE_MAX"): "safety: caps what one hostile/garbled compressed page may decompress to in memory",
+    ("upstream.py", "_REASONING_FLUSH_BYTES"): "measured: a kill loses at most this much reasoning; larger would be a write per token",
+    ("toolwire.py", "_RIDE_ALONG_HOST_RESERVE"): "transport: room under the inline bound for the harness's own framing lines",
+    ("toolwire.py", "_RIDE_ALONG_COMMAND_RESERVE"): "transport: room under the inline bound for the command text a result rides home on",
+    ("wsview.py", "TREE_MAX_ENTRIES"): "transport: survey tree held to the inline result bound less the survey's other sections; a fold is named, a cut is not",
+    ("wsview.py", "TREE_MAX_BYTES"): "transport: same inline-bound budget as TREE_MAX_ENTRIES",
+    ("wsview.py", "BLOB_BYTES_MAX"): "measured: per-survey body budget bounding a real demand (a 40 KB source file is ordinary)",
+    ("wsview.py", "_BODY_CACHE_MAX_BYTES"): "safety: memory bound on the per-(session, root) manifest body cache",
+    ("depsurface.py", "MAX_FILE_BYTES"): "safety: bounded read-only scan of a dependency source file, never a full-tree crawl",
+    ("depsurface.py", "MAX_ROOT_DIRS"): "safety: bounded directory walk under a declared dependency root (feed-pipeline-java opencsv case)",
+    ("apidiscovery.py", "MAX_PROBE_BYTES"): "safety: read far enough that a real schema parses (a 2 MB cut made a real MCP/GraphQL server look empty); a hit is disclosed",
+    ("webfetch.py", "MAX_BODY_BYTES"): "safety: raw-body read cap raised well past real specs (was 512 KiB); a body beyond it is disclosed as truncated",
+    ("groundtruth.py", "DEFAULT_FILE_CAP"): "safety: last-resort valve for a pathologically huge file; the context floor is the window-aware bound",
+    ("planner.py", "_GROUND_SCAN_MAX_BYTES"): "safety: bounded sweep; a token this common is found long before",
+    ("probeparse.py", "U32_MAX"): "external: Rust u32::MAX, parse_u32 mirrors str::parse::<u32>()",
+    ("probediscovery.py", "MAX_FLOOR_FILES_PER_LANG"): "safety: pathological-tree / ARG_MAX ceiling, far above any real source tree (the old 40-file clip let syntax errors escape)",
+    ("system1.py", "MAX_WINDOW_TOKENS"): "external: the frozen classifier model's own input window",
+    ("system1.py", "WEIGHT_BUDGET_BYTES"): "measured: bundle graph + weights must stay under this on the actual files",
+    ("system1.py", "ARENA_BUDGET_BYTES"): "safety: quadratic attention could ask for a 32 GiB buffer; the allocator refuses, the caller declines",
+    ("system1.py", "_MIN_ARENA_BUDGET_BYTES"): "safety: floor for the configurable arena budget",
+    ("filepresence.py", "MAX_TOKENS"): "one-word: a claim list is a line per file name; a few hundred tokens covers any briefing",
+    ("loop.py", "COMPACTION_VERDICT_RESERVE"): "measured: a lens answers ONE word; 16,384 held back starved 12 of 33 judge-shaped floor reductions (ornith-java captures 2026-10-26..28)",
+    ("loop.py", "ask_closed(max_tokens=)"): "one-word: a closed question's single-verdict reply",
+    ("dedup.py", "MIN_RUN_CHARS"): "measured: a fold pointer costs ~30 tokens; a shorter run is not worth folding",
+    ("handoffdistill.py", "FRAME_TOKENS"): "measured: instruction + intro + ask frame around a composed request (~1.9K measured)",
+    ("planner_tools.py", "_SEARCH_INLINE_CHARS"): "measured: above this a result list spills to the scratchpad; titles and URLs still ride inline",
+    ("generationguards.py", "DEFAULT_REASONING_BUDGET"): "detector tuning, no recorded measurement: reasoning tokens before a ruminating stream is steered; a width on the stream's own text, not a share of the prompt window",
+    ("generationguards.py", "DEGENERATE_RUN_CHARS"): "detector tuning, no recorded measurement: smallest repeated run read as degeneration; a width on the stream's own text, not a share of the prompt window",
+    ("generationguards.py", "WIDE_RUN_CHARS"): "detector tuning, no recorded measurement: wide-period repetition detector window; a width on the stream's own text, not a share of the prompt window",
+    ("generationguards.py", "WIDE_EVAL_STRIDE"): "detector tuning, no recorded measurement: how often the wide detector is evaluated; a width on the stream's own text, not a share of the prompt window",
+    ("generationguards.py", "WIDE_MIN_CHARS"): "detector tuning, no recorded measurement: least text before the wide detector may judge; a width on the stream's own text, not a share of the prompt window",
 }
 
 
@@ -92,12 +120,17 @@ def fixed_sizes():
 
 def test_no_new_fixed_size_stands_in_for_the_context_window():
     """Every size-like integer is a windowcaps.Cap (not a literal) or carries a reason it does not move with the window."""
-    allowed = {(f, n) for f, names in FIXED_SIZES.items() for n in names.split()}
-    check_ratchet(fixed_sizes(), allowed, "fixed size")
+    assert all(FIXED_SIZES.values()), "every fixed size names its reason"
+    check_ratchet(fixed_sizes(), FIXED_SIZES, "fixed size")
 
-NOT_A_RESHAPE = {  # measurement or abstention: nothing was rewritten, so nothing for the operator's ledger
-    "context.floor_skipped", "context.window", "context.calibrated", "context.refit",
-    "context.measured", "context.image_fit_unknown", "context.image_density_unknown"}
+NOT_A_RESHAPE = {  # measurement or abstention: nothing was rewritten, so nothing for the operator's ledger. Each entry says which.
+    "context.floor_skipped": "abstention: the window is a guess, so the floor declines to run",
+    "context.window": "measurement: the window discovered from the server's /props (or why it could not be)",
+    "context.calibrated": "measurement: the real/estimated token ratio learned from an accepted prompt",
+    "context.refit": "measurement: the server's own rejection of the prompt, with its stated window and the real and estimated counts",
+    "context.measured": "measurement: the real prompt token count against the window",
+    "context.image_fit_unknown": "abstention: an image's cost is not measured by the text tokenizer, so no fit is claimed",
+    "context.image_density_unknown": "abstention: image tokens are not text density, so no ratio is learned"}
 
 def emits():
     for name, tree in trees():
@@ -109,7 +142,7 @@ def emits():
 def test_every_context_event_declares_reshape_at_its_fire_site():
     """context.{ledger,repeat,anchor}_dedup and deorphaned rewrote model-visible content but never reached the operator's turn
     line (the label lived in a hand-kept map elsewhere): each context.* emit declares `reshape=` or is a measurement."""
-    assert NOT_A_RESHAPE <= {k for _, _, k, _ in emits()}, "dead allowlist entries (NOT_A_RESHAPE): delete them"
+    assert all(NOT_A_RESHAPE.values()) and NOT_A_RESHAPE.keys() <= {k for _, _, k, _ in emits()}, "NOT_A_RESHAPE: every entry needs a reason and a fire site"
     assert [f"{f}:{ln} {k}" for f, ln, k, kw in emits()
             if k.startswith("context.") and k not in NOT_A_RESHAPE and not kw & {"reshape", "steer"}] == []
 
