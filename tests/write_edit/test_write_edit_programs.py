@@ -164,25 +164,50 @@ def test_an_edit_is_written_through_a_symlink_and_a_failed_edit_leaves_no_temp(t
     assert (tmp_path / "ro/a.py").read_text() == "x = 1\n" and os.listdir(tmp_path / "ro") == ["a.py"]
 
 
-DEFECT = "source defect reported to Main (write_file path), not fixed here"
-
-
-@pytest.mark.parametrize("case", [pytest.param("symlink", marks=pytest.mark.xfail(strict=True, reason=DEFECT)),
-                                  pytest.param("unwritable", marks=pytest.mark.xfail(strict=True, reason=DEFECT))])
-def test_a_whole_write_follows_a_symlink_and_an_unwritable_directory_is_a_statement_like_the_edit_path(tmp_path, case):
-    """The edit executor writes THROUGH a symlink and says 'could not be written: Permission denied'; the whole-write program replaces the link
-    with a regular file and prints a raw Python traceback (with the survey record ahead of it) for a read-only directory."""
-    (tmp_path / "ro").mkdir()
+@pytest.mark.parametrize("case", ["symlink", "symlink_other_dir", "dangling", "hardlink", "new_dir", "exact_bytes"])
+def test_a_whole_write_lands_through_links_like_the_edit_path(tmp_path, case):
+    """The write and the edit program share ONE landing: a symlink (even to another directory, even dangling) is written
+    THROUGH and stays a link; a hard-linked file is rewritten in place so every name sees it; bytes stay exact."""
+    (tmp_path / "other").mkdir()
     (tmp_path / "real.py").write_text("x = 1\n")
+    (tmp_path / "other/real.py").write_text("x = 1\n")
+    content = "y = 2\n"
+    if case == "symlink":
+        os.symlink("real.py", tmp_path / "lnk.py"); target = tmp_path / "real.py"
+    elif case == "symlink_other_dir":
+        os.symlink("other/real.py", tmp_path / "lnk.py"); target = tmp_path / "other/real.py"
+    elif case == "dangling":
+        os.symlink("other/new.py", tmp_path / "lnk.py"); target = tmp_path / "other/new.py"
+    elif case == "hardlink":
+        os.link(tmp_path / "real.py", tmp_path / "lnk.py"); target = tmp_path / "real.py"
+    elif case == "new_dir":
+        target = tmp_path / "fresh/deep/lnk.py"
+    else:
+        target = tmp_path / "lnk.py"; content = "a\r\nb\u2603\x00c\n"
+    path = "fresh/deep/lnk.py" if case == "new_dir" else "lnk.py"
+    _, done, msgs = do("write_file", {"path": path, "content": content}, tmp_path)
+    assert denial.landed(msgs[1]) and target.read_bytes() == content.encode()
+    if case in ("symlink", "symlink_other_dir", "dangling"):
+        assert os.path.islink(tmp_path / "lnk.py")
+    if case == "hardlink":
+        assert (tmp_path / "lnk.py").read_bytes() == content.encode() and os.stat(target).st_nlink == 2
+    assert not [n for d in (tmp_path, tmp_path / "other", tmp_path / "fresh/deep") if d.exists() for n in os.listdir(d) if ".atomic-" in n]
+
+
+@pytest.mark.parametrize("case", ["readonly_dir", "readonly_parent_of_new_dir", "link_into_a_file"])
+def test_a_whole_write_that_cannot_land_is_a_did_not_run_statement_not_a_traceback(tmp_path, case):
+    """An unwritable directory (existing file, or a new subdirectory under it) or a link whose real parent cannot be a directory is the plain
+    'could not be written' result the edit path gives, with nothing changed. (The write used to print a raw traceback.)"""
+    (tmp_path / "ro").mkdir()
     (tmp_path / "ro/a.py").write_text("x = 1\n")
-    os.symlink("real.py", tmp_path / "lnk.py")
     os.chmod(tmp_path / "ro", 0o555)
     try:
-        if case == "symlink":
-            do("write_file", {"path": "lnk.py", "content": "y = 2\n"}, tmp_path)
-            assert os.path.islink(tmp_path / "lnk.py") and (tmp_path / "real.py").read_text() == "y = 2\n"
-        else:
-            _, _, msgs = do("write_file", {"path": "ro/a.py", "content": "y = 2\n"}, tmp_path)
-            assert denial.unlanded(msgs[1]) and "Traceback" not in msgs[1]["content"]
+        path = {"readonly_dir": "ro/a.py", "readonly_parent_of_new_dir": "ro/sub/a.py", "link_into_a_file": "gone/a.py"}[case]
+        if case == "link_into_a_file":
+            (tmp_path / "plain").write_text("i am a file")
+            os.symlink(tmp_path / "plain/x", tmp_path / "gone")     # the link's real parent can never be a directory
+        _, _, msgs = do("write_file", {"path": path, "content": "y = 2\n"}, tmp_path)
     finally:
         os.chmod(tmp_path / "ro", 0o755)
+    assert denial.unlanded(msgs[1]) and "Traceback" not in msgs[1]["content"], msgs[1]["content"]
+    assert (tmp_path / "ro/a.py").read_text() == "x = 1\n" and os.listdir(tmp_path / "ro") == ["a.py"]

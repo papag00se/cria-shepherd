@@ -482,6 +482,16 @@ def _at(raw, msg):
         return ''
 '''
 
+# THE ONE STATEMENT for bytes that could not be put on a file, shared by the write and the edit program (it reads
+# their `p`, `_late` and `_rec`). A refusal before anything was touched is a plain "did not run" result; a failure
+# after the target may have changed is an `uncertain` record plus the mutation-unknown statement. Never a traceback.
+_UNLANDED_PY = r'''
+def _unlanded(_e):
+    _t='%%UNCERTAIN%%' if isinstance(_e,_TargetMutationUncertain) else '%%UNWRITABLE%%'
+    if _t=='%%UNCERTAIN%%': sys.stdout.write(_rec('uncertain', **({'late':True} if _late else {}))); sys.stdout.flush()
+    sys.exit(base64.b64decode(_t).decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
+'''
+
 # Byte-exact atomic write (python heredoc — content rides in the source on stdin, no arg-size limit /
 # no chunking), with validate-before-write: refuse only when this would replace a currently-VALID file
 # with content that does not parse. A new file or an already-broken file writes freely.
@@ -499,19 +509,13 @@ if p.is_dir():
 _bp=next((a for a in p.parents if a.exists()), None)
 if _bp is not None and not _bp.is_dir():
     sys.exit(base64.b64decode('{parentfile}').decode().replace('%%NAME%%',str(p)).replace('%%BLOCK%%',str(_bp)))
-p.parent.mkdir(parents=True,exist_ok=True)
-# The SAME directory lock the edit executor takes, so a write and an edit sent in one batch cannot interleave;
-# the atomic helper exclusively allocates its own temporary inode.
-import fcntl
+rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is written THROUGH, never replaced
 try:
-    _lk=os.open(os.path.realpath(str(p.parent)),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
-except OSError:
-    pass
-try:
-    _atomic_replace(p,raw)
-except _TargetMutationUncertain as _e:
-    sys.stdout.write(_rec('uncertain', **({{'late':True}} if _late else {{}}))); sys.stdout.flush()
-    sys.exit(base64.b64decode('{uncertain}').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
+    rp.parent.mkdir(parents=True,exist_ok=True)
+    _lk=_lock_directory(rp)       # the SAME directory lock the edit executor takes: a write and an edit in one batch cannot interleave
+    _write_through(rp,raw)
+except OSError as _e:
+    _unlanded(_e)
 # THE LANDED FACT, and the removal facts the shrink protection measured (handed in by its wrapper), are TYPED fields of the
 # record — never lines a reader has to find.
 sys.stdout.write(_rec('landed', **({{'rm':os.environ['CRIA_RM']}} if os.environ.get('CRIA_RM') else {{}}), **({{'late':True}} if _late else {{}})))
@@ -544,7 +548,6 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None) -
     fetch-spill path, where it WAS observed, states its own bound and cuts with disclosure."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX,
-                                           uncertain=_b64(prompts.load('edit_mutation_unknown')),
                                            # Both are REFUSALS decided inside the lowered heredoc —
                                            # validate-before-lower rejected the content, or the path
                                            # is a directory. Nothing was written either way, so both
@@ -557,7 +560,9 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None) -
                                            # FileExistsError traceback — cause invisible, three
                                            # identical retries, tests never landed. Name the block.
                                            parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
-    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
+    py = py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
+    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("write_unwritable")))).replace(
+        '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
     py = _queued(py, seq)
     return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
@@ -574,7 +579,7 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None) -
 # This keeps the history-blind, whipsawing rewrite/don't-rewrite advice OUT of the per-call heredoc.
 _EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
 %%RECORD%%
-import fcntl,os
+import os
 p=pathlib.Path(base64.b64decode('{path}').decode())
 rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is read and written THROUGH, never replaced
 old=base64.b64decode('{old}').decode()
@@ -587,10 +592,7 @@ new=base64.b64decode('{new}').decode()
 # the directory, so it leaves nothing in the user's tree; it is released when this process exits.
 _late=False
 #%%SEQ%%
-try:
-    _lk=os.open(str(rp.parent),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
-except OSError:
-    pass
+_lk=_lock_directory(rp)
 s=rp.read_text()
 def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
@@ -609,19 +611,10 @@ _before=_v(str(p),s)
         _e=_v(str(p),res)
         if _e is not None:
             _fail('would_break',err=_e)
-    _inplace_started=False
     try:
-        if os.stat(str(rp)).st_nlink>1:          # replacing would split the hard-linked names
-            with rp.open('r+') as _stream:       # open without truncating: pre-open refusal is still nonmutating
-                _inplace_started=True
-                _stream.truncate(0)             # a failure from here onward has uncertain mutation
-                _stream.write(res)
-        else:
-            _atomic_replace(rp,res.encode(),preserve=True)
+        _write_through(rp,res.encode(),preserve=True)
     except OSError as _e:
-        _template='%%UNCERTAIN%%' if _inplace_started or isinstance(_e,_TargetMutationUncertain) else '%%UNWRITABLE%%'
-        if _template=='%%UNCERTAIN%%': sys.stdout.write(_rec('uncertain')); sys.stdout.flush()
-        sys.exit(base64.b64decode(_template).decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
+        _unlanded(_e)
     _ev={echocall}
     sys.stdout.write(_rec('landed', **({{'ev':_ev}} if _ev else {{}}), **({{'late':True}} if _late else {{}})))
     sys.exit()
@@ -868,9 +861,8 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
     py = py.replace("%%RECORD%%", resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()))
-    py = py.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable"))))
-    py = py.replace('%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown")))
-    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py
+    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable")))).replace(
+        '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
     py = _queued(py, seq)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 

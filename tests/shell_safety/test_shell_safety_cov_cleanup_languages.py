@@ -55,10 +55,24 @@ def test_a_root_deletion_through_an_unimported_or_rebound_api_is_unresolved_not_
         assert not result.blocked and {(f.confidence, f.rule) for f in result.findings} == {('UNKNOWN', 'unresolved')}, source
     assert not analyze('f.js', 'fs.rmSync("/", {recursive:true});', WS, 'write').blocked
 
-@pytest.mark.xfail(strict=True, reason='SOURCE DEFECT: cleanup_extra treats `obj->remove(path)` (a C member/callback call) as libc remove(); only `.` and `::` are member accesses')
-def test_a_c_arrow_member_call_named_remove_is_not_the_libc_function():
-    """A callback member `obj->remove("/outside/data")` mutates nothing cria can see, so it must not be PROVEN."""
-    assert not analyze('x.c', '#include <stdio.h>\nobj->remove("/outside/data");', WS).blocked
+@pytest.mark.parametrize('suffix,prelude,call,blocked', [
+    ('.c', '#include <stdio.h>\n', 'remove("/outside/data");', True),                   # the real libc function
+    ('.c', '#include <stdio.h>\n', 'obj->remove("/outside/data");', False),             # a callback member, invisible to cria
+    ('.c', '#include <stdio.h>\n', 'obj->a->remove("/outside/data");', False),
+    ('.c', '#include <stdio.h>\n', 'if (a->b) remove("/outside/data");', True),         # an arrow elsewhere does not hide the call
+    ('.c', '#include <stdio.h>\n', 'obj.remove("/outside/data");', False),
+    ('.c', '#include <stdio.h>\n', 'char *s = "a->remove(/outside/data)";', False),     # prose in a string literal
+    ('.cpp', '#include <cstdio>\n', 'ptr->remove("/outside/data");', False),
+    ('.cpp', '#include <cstdio>\n', 'std::remove("/outside/data");', True),
+    ('.php', '<?php ', '$o->unlink("/outside/data");', False),
+    ('.php', '<?php ', 'unlink("/outside/data");', True),
+    ('.pl', 'use File::Path qw(remove_tree);\n', '$o->remove_tree("/outside/data");', False),
+    ('.pl', 'use File::Path qw(remove_tree);\n', 'remove_tree("/outside/data");', True),
+])
+def test_an_arrow_member_call_named_like_a_delete_function_is_not_that_function(suffix, prelude, call, blocked):
+    """`obj->remove("/outside/data")` (C/C++/PHP/Perl member or callback call) mutates nothing cria can see, so it is not PROVEN; the free function still is.
+    (cleanup_extra/cleanup_languages read only `.` and `::` as member access, so C `->` and PHP/Perl `$o->unlink(...)` were blocked as the real call.)"""
+    assert analyze('x' + suffix, prelude + call, WS).blocked is blocked
 
 EXTRA = [   # language, suffix, declaration prelude, a mutation with a literal external target
     ('c', '.c', '#include <stdio.h>\n', 'remove("/outside/data");'), ('cpp', '.cpp', '#include <filesystem>\n', 'std::filesystem::remove_all("/outside/data");'),

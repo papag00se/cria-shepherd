@@ -49,7 +49,11 @@ CONSTRUCTORS = {'kotlin.io.path.Path', 'java.nio.file.Paths.get', 'java.nio.file
                 'std::path::Path::new', 'std::path::PathBuf::from'}
 # Broad advisory-only recognition, never proof of API identity.
 LEADS = re.compile(r'(?:delete|remove|unlink|rmtree|truncate|rm_rf|writeFile|WriteAll|remove_dir)', re.I)
-LEX = re.compile(r'''(?P<space>[ \t\r]+)|(?P<newline>\n)|(?P<block>/\*.*?\*/)|(?P<comment>//[^\n]*)|(?P<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(?P<word>\$?[A-Za-z_][\w$]*[!?]?)|(?P<op>::|:=|=>|\?\.|[^\s])''', re.S)
+# `a->remove(...)` is a member call (a callback or method, never the free function) in these languages only; in Java, Kotlin,
+# Rust, Swift, Scala... `->` is a lambda/return arrow, so it stays two ordinary tokens there and `x -> remove(x)` is a call.
+ARROW_MEMBER_LANGUAGES = frozenset({'c', 'cpp', 'objective-c', 'perl', 'php'})
+MEMBER_OPS = ('.', '::', '->')
+LEX = re.compile(r'''(?P<space>[ \t\r]+)|(?P<newline>\n)|(?P<block>/\*.*?\*/)|(?P<comment>//[^\n]*)|(?P<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(?P<word>\$?[A-Za-z_][\w$]*[!?]?)|(?P<op>::|->|:=|=>|\?\.|[^\s])''', re.S)
 
 
 @dataclass(frozen=True)
@@ -70,7 +74,10 @@ def tokens(source, language):
             end = source.find('\n', m.start())
             comment_end = len(source) if end < 0 else end
             continue
-        if m.lastgroup not in ('space', 'block', 'comment'):
+        if m.group() == '->' and language not in ARROW_MEMBER_LANGUAGES:
+            out.append(Token('-', 'op', m.start(), m.start() + 1))
+            out.append(Token('>', 'op', m.start() + 1, m.end()))
+        elif m.lastgroup not in ('space', 'block', 'comment'):
             out.append(Token(m.group(), m.lastgroup, m.start(), m.end()))
     return out
 
@@ -243,16 +250,16 @@ def stable_bindings(ts, language, imports):
             if token.kind != 'word' or token.text != root or i in declarations:
                 continue
             prev = ts[i-1].text if i else ''
-            if prev in ('.', '::'):
+            if prev in MEMBER_OPS:
                 continue  # a property with this spelling is not the binding
             if prev in ('function', 'def', 'defp', 'class', 'module', 'namespace', 'fn', 'mod'):
                 return False
             j = i+1
             if callable_name and j < len(ts) and ts[j].text == '(':
                 continue
-            if j >= len(ts) or ts[j].text not in ('.', '::'):
+            if j >= len(ts) or ts[j].text not in MEMBER_OPS:
                 return False
-            while j+1 < len(ts) and ts[j].text in ('.', '::') and ts[j+1].kind == 'word':
+            while j+1 < len(ts) and ts[j].text in MEMBER_OPS and ts[j+1].kind == 'word':
                 j += 2
             if j < len(ts) and ts[j].text in ('=', ':=', '[', '+', '-'):
                 return False
@@ -348,7 +355,7 @@ def inspect_source(source, language, workspace, permission):
         # only known qualified APIs at the start of a statement, preserving spans.
         expanded = []
         for line in split_lines(ts):
-            start = next((i for i,t in enumerate(line) if t.kind in ('string',) or (i > 0 and t.kind == 'word' and line[i-1].text not in ('.', '::'))), None)
+            start = next((i for i,t in enumerate(line) if t.kind in ('string',) or (i > 0 and t.kind == 'word' and line[i-1].text not in MEMBER_OPS)), None)
             if start is not None and name(line[:start]) in APIS[language] and line[start].text != '(':
                 expanded.extend(line[:start] + [Token('(', 'op', line[start].start, line[start].start)]
                                 + line[start:] + [Token(')', 'op', line[-1].end, line[-1].end)])
@@ -387,9 +394,9 @@ def inspect_source(source, language, workspace, permission):
             while end < len(ts) and ts[end].text not in (';', '\n'):
                 end += 1
             variable = ts[i-1].text
-            if i > 2 and ts[i-2].text in ('.', '::'):
+            if i > 2 and ts[i-2].text in MEMBER_OPS:
                 root = i-3
-                while root > 1 and ts[root-1].text in ('.', '::'):
+                while root > 1 and ts[root-1].text in MEMBER_OPS:
                     root -= 2
                 imports.pop(ts[root].text, None)
             variables[variable] = expression(ts[i+1:end], variables, imports, language)
@@ -399,7 +406,7 @@ def inspect_source(source, language, workspace, permission):
         if t.text != '(' or i == 0:
             continue
         begin = i-1
-        while begin >= 2 and ts[begin-1].text in ('.', '::', '?.') and ts[begin-2].kind == 'word':
+        while begin >= 2 and ts[begin-1].text in (*MEMBER_OPS, '?.') and ts[begin-2].kind == 'word':
             begin -= 2
         raw = name(ts[begin:i])
         api_name = raw
@@ -436,8 +443,8 @@ def inspect_source(source, language, workspace, permission):
                 # Evaluate again WITHOUT variables from other branches/scopes.
                 # Also require stable identities for every qualified path helper.
                 roots = {tok.text for j,tok in enumerate(args[0]) if tok.kind == 'word'
-                         and (j == 0 or args[0][j-1].text not in ('.', '::'))
-                         and j+1 < len(args[0]) and args[0][j+1].text in ('.', '::')}
+                         and (j == 0 or args[0][j-1].text not in MEMBER_OPS)
+                         and j+1 < len(args[0]) and args[0][j+1].text in MEMBER_OPS}
                 closed_target = expression(args[0], {}, closed_imports, language)
                 if roots <= closed_imports.keys() and is_root(closed_target):
                     possible = False

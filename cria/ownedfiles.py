@@ -2,7 +2,7 @@
 
 TEMP_SUFFIX = '.tmp-partial'
 
-ATOMIC_REPLACE_PROGRAM = r'''import errno,os,stat,tempfile
+ATOMIC_REPLACE_PROGRAM = r'''import errno,fcntl,os,stat,tempfile
 
 class _TargetMutationUncertain(OSError):
     pass
@@ -42,6 +42,38 @@ def _atomic_replace(path, data, preserve=False):
             if not committed and owned(): os.unlink(tmp)
     except OSError as error:
         if target_attempted: raise _TargetMutationUncertain(*error.args) from error
+        raise
+
+def _lock_directory(path):
+    # ONE WRITE AT A TIME PER DIRECTORY, whichever program holds the pen (edit or whole write). The lock sits on the
+    # directory of the file ITSELF (a symlink resolved first), so it leaves nothing in the user's tree and is
+    # released when the process exits. The returned descriptor must stay referenced; None means no lock was possible.
+    try:
+        descriptor=os.open(os.path.dirname(os.path.realpath(os.fspath(path))) or '.',os.O_RDONLY)
+        fcntl.flock(descriptor,fcntl.LOCK_EX)
+        return descriptor
+    except OSError:
+        return None
+
+def _write_through(path, data, preserve=False):
+    # THE landing of bytes on a named file, for every program that writes one. A symlink is written THROUGH (the link
+    # stays a link, the file it names changes); a file with more than one hard link is rewritten IN PLACE (replacing it
+    # would split the names); anything else is swapped atomically. Uncertainty about whether the target changed is one
+    # exception type, _TargetMutationUncertain, whichever branch raised it.
+    path=os.path.realpath(os.fspath(path))
+    try: links=os.stat(path).st_nlink
+    except FileNotFoundError: links=1
+    if links<=1:
+        _atomic_replace(path,data,preserve)
+        return
+    started=False
+    try:
+        with open(path,'r+b') as stream:   # open without truncating: a pre-open refusal is still nonmutating
+            started=True
+            stream.truncate(0)
+            stream.write(data)
+    except OSError as error:
+        if started: raise _TargetMutationUncertain(*error.args) from error
         raise
 
 '''.replace('%%SUFFIX%%', TEMP_SUFFIX)

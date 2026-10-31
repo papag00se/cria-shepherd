@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import re
 
 from .cleanupfacts import Analysis, Finding, PathFact, classify, join_fact, parent_fact
-from .cleanup_languages import Token, LEADS, name
+from .cleanup_languages import Token, LEADS, name, ARROW_MEMBER_LANGUAGES, MEMBER_OPS
 
 LANGUAGES = {
     '.c': 'c', '.h': 'c', '.cc': 'cpp', '.cpp': 'cpp', '.cxx': 'cpp',
@@ -181,7 +181,7 @@ def lex(source, language):
             i = match.end()
             out.append(Token(match[0], 'word', start, i))
         else:
-            op = next((op for op in ('::', '<<-', '<-', '<<', '=>', '==', '!=', '+=', '-=') if source.startswith(op, i)), c)
+            op = next((op for op in ('::', *(('->',) if language in ARROW_MEMBER_LANGUAGES else ()), '<<-', '<-', '<<', '=>', '==', '!=', '+=', '-=') if source.startswith(op, i)), c)
             i += len(op)
             out.append(Token(op, 'op', start, i))
             if language == 'perl' and op in ('/', '<<'):
@@ -213,7 +213,7 @@ def call_start(ts, end):
     begin = end-1
     if begin < 0 or ts[begin].kind != 'word':
         return end
-    while begin >= 2 and ts[begin-1].text in ('.', '::') and ts[begin-2].kind == 'word':
+    while begin >= 2 and ts[begin-1].text in MEMBER_OPS and ts[begin-2].kind == 'word':
         begin -= 2
     return begin
 
@@ -262,7 +262,7 @@ def stable(ts, raw, module=False, bare=False):
     for i, token in enumerate(ts):
         if token.kind != 'word' or [t.text for t in ts[i:i+len(parts)]] != parts:
             continue
-        if i and ts[i-1].text in ('.', '::'):
+        if i and ts[i-1].text in MEMBER_OPS:
             continue
         prev = ts[i-1].text if i else ''
         j = i + len(parts)
@@ -271,7 +271,7 @@ def stable(ts, raw, module=False, bare=False):
         if module:
             if j >= len(ts) or ts[j].text not in ('.', '::', '('):
                 return False
-            while j+1 < len(ts) and ts[j].text in ('.', '::') and ts[j+1].kind == 'word':
+            while j+1 < len(ts) and ts[j].text in MEMBER_OPS and ts[j+1].kind == 'word':
                 j += 2
             if j < len(ts) and ts[j-1].text == 'ofstream' and ts[j].kind == 'word':
                 j += 1  # std::ofstream stream(path): a constructor declaration
@@ -474,7 +474,7 @@ class Inspector:
         ts = self.ts
         if ts[i].text not in ('Directory', 'File') or i+1 >= len(ts) or ts[i+1].text != '(':
             return
-        if i and ts[i-1].text in ('.', '::'):
+        if i and ts[i-1].text in MEMBER_OPS:
             return
         close = end_group(ts, i+1)
         if close is None or close+3 >= len(ts) or ts[close+1].text != '.' or ts[close+3].text != '(':
@@ -600,7 +600,7 @@ class Inspector:
                 if begin == i:
                     continue
                 # foo.remove and Directory(...).delete are not free remove/delete.
-                if begin and ts[begin-1].text in ('.', '::'):
+                if begin and ts[begin-1].text in MEMBER_OPS:
                     continue
                 end = end_group(ts, i)
                 if end is None:
@@ -612,7 +612,7 @@ class Inspector:
                     held_until = end
                     continue
                 if (self.language == 'cpp' and begin >= 3 and name(ts[begin-3:begin]) == 'std::ofstream'
-                        and (begin == 3 or ts[begin-4].text not in ('.', '::'))):
+                        and (begin == 3 or ts[begin-4].text not in MEMBER_OPS)):
                     self.call('std::ofstream', arguments(ts[i+1:end]), ts[begin-3].start, ts[end].end)
                 else:
                     self.call(raw, arguments(ts[i+1:end]), ts[begin].start, ts[end].end)
