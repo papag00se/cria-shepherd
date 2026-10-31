@@ -800,6 +800,9 @@ def map_kind(classifier_kind: probeclassify.ProbeKind, name: str) -> ProbeKind:
     }[classifier_kind]
 
 
+_FD_REDIRECT = re.compile(r"\d*[<>]&\d+-?|&>>?|\d*[<>]&-")
+
+
 def _js_script_admitted(vet: "probeclassify.ProbeDetection", body: str) -> bool:
     """True when the safety vet keeps this declared script body, False when it withholds it.
 
@@ -819,14 +822,14 @@ def _js_script_admitted(vet: "probeclassify.ProbeDetection", body: str) -> bool:
     already admits. Quoting is respected throughout via ``probeclassify.top_level_operators``, so a
     ``;`` inside a quoted ``-e`` string (no real chain at all) is never mistaken for one.
     """
-    if vet.kind is not probeclassify.ProbeKind.UNKNOWN:
-        return True
-    if probeclassify.has_unsafe_segment(body):
+    # A redirect's `&` (`2>&1`, `>&2`, `&>out`) is no chain operator; only the operator set is read from this view.
+    ops = probeclassify.top_level_operators(_FD_REDIRECT.sub("", body))
+    if vet.kind is probeclassify.ProbeKind.UNKNOWN and probeclassify.has_unsafe_segment(body):
         return False
-    ops = probeclassify.top_level_operators(body)
-    if not ops:
-        return True             # a single simple command — the ordinary case
-    return ops <= {"&&"}        # exit-status-preserving chain of admitted-alone segments
+    # A RECOGNISED runner is held to the same rule: `jest || true` and `eslint . | tee out` classify as the
+    # runner but their exit status is no longer the runner's, and a check whose status is hidden is not a check.
+    # (An unsafe segment beside a recognised one is not withheld here: build_js flags it Risky, still visible.)
+    return ops <= {"&&"}        # a single simple command, or an exit-status-preserving chain
 
 
 def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
