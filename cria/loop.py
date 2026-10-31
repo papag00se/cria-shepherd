@@ -5375,7 +5375,8 @@ class Loop:
                 lambda: _reorientation_inventory(sess, raw, rlog),
                 reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
                 None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
-                    self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding")))
+                    self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding"),
+                lambda: _reorientation_written(sess)))
             if result.message is not None:
                 history = history + [result.message]
             reoriented = result.message is not None
@@ -9473,6 +9474,22 @@ def _reorientation_inventory(sess, messages: list, rlog) -> str:
         return origin.inventory
     rlog.emit("loop.reanchor_inventory", source="none")
     return ""
+
+
+def _reorientation_written(sess) -> tuple[tuple[str, str], ...]:
+    """(path, survey note) for every file this session's landed write calls produced — typed records
+    only (`sess.written_files`, keyed like the ledger), sized from the latest survey when it lists the
+    file. The facts-only orientation an owned handoff falls back to when its authored guidance is refused."""
+    written = getattr(sess, "written_files", None)
+    if not written:
+        return ()
+    key, view = _ledger_key(sess), _surveyed_view(sess)
+    out = []
+    for path in sorted({key(p) for p in written}):
+        size = view.size(path) if view is not None else None
+        out.append((path, "no workspace survey yet" if view is None else
+                    f"{size} B in the latest survey" if size is not None else "not listed in the latest survey"))
+    return tuple(out)
 
 
 def _surveyed_view(sess):

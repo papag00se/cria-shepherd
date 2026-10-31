@@ -91,6 +91,9 @@ class ReorientationInput:
     log: Log
     # Shared closed-question transport; absent means unknown, never permission.
     judge: Callable[[str, list[str]], str] | None = None
+    # Typed record of the files this session's own landed writes produced, as
+    # (path, survey note) pairs. Absent means no facts-only orientation exists.
+    written: Callable[[], tuple[tuple[str, str], ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,23 @@ class ReorientationResult:
 def _head(text: str) -> str:
     text = text.strip()
     return text if len(text) <= 120 else text[:120] + "…"
+
+
+def _facts_only(source: ReorientationInput, why: str) -> tuple[str | None, str]:
+    """What an owned handoff still tells the coder when its authored guidance was refused.
+
+    Only typed records the harness already holds, in no model's words: the files this
+    session's landed writes produced. Omitted when there is no such record, and never
+    an instruction, a completion claim or an inspection order (a task may forbid one)."""
+    try:
+        rows = source.written() if source.written is not None else ()
+    except Exception:
+        rows = ()
+    if not rows:
+        return None, why
+    source.log.emit("loop.reanchor_facts_only", level="info", refused=why, files=len(rows))
+    return prompts.render("reanchor_facts",
+                          files="\n".join(f"- {path} ({note})" for path, note in rows)), "facts-only"
 
 
 def _reason(source: ReorientationInput) -> tuple[str | None, str]:
@@ -145,7 +165,7 @@ def _reason(source: ReorientationInput) -> tuple[str | None, str]:
     lines = len(shellshape.command_lines(text))
     if "```" in text or lines >= MAX_COMMAND_LINES:
         source.log.emit("loop.reanchor_refused", level="warn", lines=lines, head=_head(text))
-        return canned, "script"
+        return _facts_only(source, "script") if owned_summary else (canned, "script")
     invented = invented_names(text, grounding)
     if invented and independent_task and source.judge is not None:
         # Spelling gathers the candidates, never decides their semantic role.
@@ -169,7 +189,7 @@ def _reason(source: ReorientationInput) -> tuple[str | None, str]:
     if invented:
         source.log.emit("loop.reanchor_ungrounded", level="warn",
                         names=prompts.named_list(invented), head=_head(text))
-        return canned, "ungrounded"
+        return _facts_only(source, "ungrounded") if owned_summary else (canned, "ungrounded")
     return text, "authored"
 
 
@@ -195,7 +215,7 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "history-rewrite-reorientation", "post-history-rewrite", 4, family_id="F49",
-    prompts=("reanchor", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge",
+    prompts=("reanchor", "reanchor_facts", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge",
              "reanchor_name_grounding", "reanchor_candidate", "reanchor_task_authority", "reanchor_author_context"),
     state="optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache",
     services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider", "shared-closed-question"),

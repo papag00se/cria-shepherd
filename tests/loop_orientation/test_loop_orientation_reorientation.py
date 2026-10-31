@@ -14,11 +14,12 @@ CANNED = prompts.load("reanchor")
 def steer(text):
     return {"role": "user", "content": prompts.render("nudge", reason=text)}
 
-def source(answer="Inspect main.py.", *, task=TASK, owner="", reasoner=True, texts=None, judge=None, consume=True):
+def source(answer="Inspect main.py.", *, task=TASK, owner="", reasoner=True, texts=None, judge=None, consume=True,
+           written=None):
     """`owner` is the continuation the handoff's producer recorded; it is owned only if it is among the user texts."""
     facts = ro.ReorientationFacts(tuple(texts or (task, SUMMARY)), reasoner, task, owner)
     return ro.ReorientationInput(True, lambda: facts, Mock(return_value="main.py (13 B)"), Mock(return_value=answer),
-                                 Mock() if consume else None, Log(), judge)
+                                 Mock() if consume else None, Log(), judge, written)
 
 @pytest.mark.parametrize("answer,reason,delivered,owner", [
     ("Inspect main.py.", "authored", "Inspect main.py.", ""),
@@ -97,3 +98,37 @@ def test_acknowledgement_is_the_callers_when_none_and_never_taken_on_author_fail
         ro.reorient(failing)
     failing.consume_rewrite.assert_not_called()
     assert ro.reorient(failing, enabled=False).message is None and ro.reorient(replace(failing, rewritten=False)).message is None
+
+
+WRITTEN = (("pom.xml", "1010 B in the latest survey"), ("tmp/old.java", "not listed in the latest survey"))
+
+@pytest.mark.parametrize("mode,answer", [("fenced", "```sh\ncat main.py\n```"), ("ungrounded", "Inspect phantom.py."),
+                                         ("judge-error", "Inspect phantom.py.")])
+def test_a_refused_owned_handoff_still_gives_the_coder_the_typed_file_record_and_nothing_authored(mode, answer):
+    """ornith1.5_9b / Java 98473 0065: the author wrote guidance, the name check or judge refused it, and an owned
+    handoff then delivered NOTHING. The harness's own landed-write record is delivered instead, in no model's words:
+    no instruction, no inspection order, none of the refused text."""
+    judge = Mock(side_effect=RuntimeError("down")) if mode == "judge-error" else Mock(return_value='{"grounded": false}')
+    item = source(answer, owner=SUMMARY, judge=judge, written=lambda: WRITTEN)
+    result = ro.reorient(item)
+    text = result.message["content"]
+    assert result.reason == "facts-only" and result.consumed
+    assert text == prompts.render("nudge", reason=prompts.render("reanchor_facts", files=(
+        "- pom.xml (1010 B in the latest survey)\n- tmp/old.java (not listed in the latest survey)")))
+    assert "phantom.py" not in text and "main.py" not in text and "nspect" not in text
+    item.consume_rewrite.assert_called_once_with()
+
+@pytest.mark.parametrize("variant", ["no-record", "record-raises", "keep-task", "authored", "unowned"])
+def test_the_typed_record_never_replaces_a_decision_or_an_accepted_directive(variant):
+    """KEEP_TASK, an accepted directive and an unowned handoff keep their own outcomes; an empty or unreadable
+    record adds nothing (never a placeholder)."""
+    written = {"no-record": lambda: (), "record-raises": Mock(side_effect=RuntimeError("x"))}.get(variant, lambda: WRITTEN)
+    answer = {"keep-task": "KEEP_TASK", "authored": "Inspect main.py."}.get(variant, "```sh\ncat x\n```")
+    owner = "" if variant == "unowned" else SUMMARY
+    result = ro.reorient(source(answer, owner=owner, written=written))
+    if variant == "authored":
+        assert (result.reason, result.message) == ("authored", steer("Inspect main.py."))
+    elif variant == "unowned":
+        assert (result.reason, result.message) == ("script", steer(CANNED))
+    else:
+        assert result.message is None and result.reason in ("script", "task-preserved")

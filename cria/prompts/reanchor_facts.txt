@@ -1,0 +1,2 @@
+Harness record of this session's own earlier work, not guidance: each file below was written in full by one of your earlier write calls, and that write landed. Sizes are from the latest workspace survey; a file may have changed since, and edits and shell writes are not part of this record.
+{{FILES}}

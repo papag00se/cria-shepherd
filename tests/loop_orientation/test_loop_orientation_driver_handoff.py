@@ -55,6 +55,23 @@ def test_a_handoff_cria_produced_never_overrides_the_task_with_a_canned_inspecti
     framed, _ = prepare(monkeypatch, after_work(task, SUMMARY), answer="Inspect phantom.py before editing.", origin=origin)
     assert steers(framed) == [] and any(m.get("content") == task for m in framed["messages"])
 
+def test_a_refused_authored_steer_leaves_the_coder_the_sessions_typed_write_record(monkeypatch):
+    """The owned handoff's authored directive names a file nothing supports and is refused; through the real
+    _prepare_coder_context the coder is still told, from the session's landed-write record and the survey, which files
+    its own writes produced — and nothing the author wrote."""
+    drv, sess, body = driver()
+    drv._ctx.reasoner_role = Role(name="reasoner", backend="local")
+    sess.handoff_origin = loop._HandoffOrigin("Earlier work", "", False, continuation=SUMMARY)
+    sess.written_files = {"pom.xml": (1010, "33 lines"), "src/Importer.java": (9509, "300 lines")}
+    body["messages"] = after_work(TASK, SUMMARY)
+    monkeypatch.setattr(loop, "summarize", Mock(return_value="Inspect phantom.py before editing."))
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        framed, reoriented = drv._prepare_coder_context(sess, body, Log(), synthetic=True, rewritten=True)
+    [note] = steers(framed)
+    assert reoriented and "- pom.xml (no workspace survey yet)" in note and "- src/Importer.java (" in note
+    assert "phantom" not in note
+    assert note.startswith("⟦ctx:steer⟧ Harness record of this session's own earlier work, not guidance")
+
 @pytest.mark.parametrize("recorded_for,root,shown", [
     ("same", "/w", True),                       # the listing the briefing writer saw reaches the orienter
     ("other-boundary", "/w", False),            # a continuation cria did not produce gets no listing
