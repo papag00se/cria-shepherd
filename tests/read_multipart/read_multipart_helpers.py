@@ -16,8 +16,11 @@ HEX = ''.join('%08x\n' % (i * 2654435761 % 2**32) for i in range(5000))   # ~45 
 
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
-    """Multipart state lives under $HOME/.cria: keep each test's private state in its own tmp dir."""
+    """Multipart and image state live under CRIA_HOME (~/.cria): keep each test's private state in its own tmp dir.
+    CRIA_HOME is fixed at import, so HOME alone no longer moves it."""
+    from cria import privatepaths
     (tmp_path / 'home').mkdir(); monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    monkeypatch.setattr(privatepaths, 'CRIA_HOME', tmp_path / 'home' / '.cria')
 
 def pty_run(command, cwd=None):
     """Run `command` as the harness does (stdout is a pty: LF becomes CRLF, 10,000-byte result cap) and return its text."""
