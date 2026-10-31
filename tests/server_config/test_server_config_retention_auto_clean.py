@@ -126,3 +126,21 @@ def test_auto_prune_never_touches_symlinked_or_foreign_entries_or_snapshots(home
     for p in (images / 'image-session-link', mp / ('a' * 64 + '.json')): os.utime(p, (1, 1), follow_symlinks=False)
     ev = Events(); assert pruner(home, ev).run_once()['removed'] == 0
     assert victim.exists() and (images / 'image-session-link').is_symlink() and all(f['why'].startswith('refused') for f in ev.kinds('retention.auto_prune.skip'))
+
+def test_multipart_images_and_retention_all_use_the_one_cria_home_constant(tmp_path, monkeypatch):
+    """Changing CRIA_HOME moves the multipart bridge, the image store and the retention default together (the bridge once hard-coded ~/.cria/multipart, so a relocated home was pruned in one place and written in another)."""
+    from cria import privatepaths
+    moved = tmp_path / 'moved-home'; moved.mkdir(mode=0o700); monkeypatch.setattr(privatepaths, 'CRIA_HOME', moved)
+    cfg = Config(server=ServerConfig(port=0), retention=RetentionConfig(auto_prune_after='14d'))
+    log = EventLog(dir=str(tmp_path / 'logs'), console=False); srv = CriaServer(cfg, log, Upstream(cfg.upstream.base_url))
+    try:
+        assert srv.multipart_bridge.storage_dir == str(moved / 'multipart')
+        rec = record(moved, tmp_path, 'sid:moved'); age(moved, 30)
+        stored = srv.multipart_bridge._dirfd(); os.close(stored)
+        assert srv.start_retention() is not None                        # no home argument: the default is the same constant
+        deadline = time.time() + 10
+        while rec.exists() and time.time() < deadline: time.sleep(0.02)
+        assert not rec.exists()
+        srv.image_workflow.capture('sid:img', {'messages': [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AAAA'}}]}]})
+        assert (moved / 'images').is_dir() and list((moved / 'images').glob('image-session-*'))
+    finally: srv.retention.stop(); srv.server_close(); log.close()

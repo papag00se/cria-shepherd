@@ -868,7 +868,8 @@ class CriaServer(ThreadingHTTPServer):
         self.stats_store = StatsStore()
         self.retention = None   # AutoPruner, only when the operator configured [retention] auto_prune_after
         from .multipart_bridge import Bridge
-        self.multipart_bridge = Bridge(os.path.expanduser('~/.cria/multipart'))
+        from . import privatepaths   # ONE private root for multipart, images and retention
+        self.multipart_bridge = Bridge(str(privatepaths.CRIA_HOME / 'multipart'))
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
         # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
         self.active_streams: dict = {}
