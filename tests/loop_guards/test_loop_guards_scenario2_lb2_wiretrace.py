@@ -140,5 +140,6 @@ def test_without_the_repository_check_assist_a_probe_result_is_still_recorded_as
         verdict.probe_call_id, verdict.gate_fresh = "p", False
         assert loop.guard_gate_verdict(verdict, body, log) is None and verdict.gate_fresh is True and verdict.last_gate_ran is False
         idle = loop.GuardState()
-        assert loop.guard_periodic_result(idle, body, log) is None and idle.gate_fresh is not True
+        idle.awaiting_probe, idle.probe_call_id = True, "p"                                                   # a completion probe is pending, not a periodic one
+        assert loop.guard_periodic_result(idle, body, log) is None and idle.awaiting_probe is True
     assert log.events == []                                                                                    # nothing ran, so nothing is logged as a result
