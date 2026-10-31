@@ -11,13 +11,11 @@ SPEC = {"openapi": "3.0.3", "info": {"title": "H"},
         "paths": {f"/p{i}": {"get": {"summary": f"op {i}"}} for i in range(200)} | {"/handles/{handle}": {"get": {"summary": "Resolve a handle"}}},
         "defs": {"Handle": {"type": "object"}}}
 
-
 @pytest.fixture(autouse=True)
 def fresh_cache():
     wf.clear_cache()
     yield
     wf.clear_cache()
-
 
 @pytest.fixture
 def served(monkeypatch):
@@ -26,7 +24,6 @@ def served(monkeypatch):
         monkeypatch.setattr(wf, "fetch", lambda u, ua=None: wf.FetchResult(status, u, ct, body, truncated))
         return url
     return serve
-
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -37,10 +34,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(body)
-
     def log_message(self, *a):
         pass
-
 
 def test_a_failed_fetch_keeps_its_body_and_names_the_real_reason():
     """api.handle.me answers 404 with the diagnosis; a bot wall's 403 is a refusal, not 'your URL is wrong'; file:// is refused."""
@@ -64,7 +59,6 @@ def test_a_failed_fetch_keeps_its_body_and_names_the_real_reason():
         assert f"HTTP {code}" in note and "on your side" not in note and "rate limit" not in note.lower()
     assert "sent nothing back" in wf.client_error_note(403, "") and "read that first" not in wf.client_error_note(403, "")
 
-
 def test_a_big_spec_is_navigable_and_find_answers_from_the_cache(served):
     """The Ada-handle seed: a one-line 200-route JSON must be paged with its routes up front, never cut to a prefix that reads as a 404."""
     url = served(json.dumps(SPEC, separators=(",", ":")))
@@ -75,7 +69,6 @@ def test_a_big_spec_is_navigable_and_find_answers_from_the_cache(served):
     wf.fetch = lambda *a, **k: pytest.fail("find must be served from the cache")
     assert "op 150" in wf.fetch_nav(url, find="p150")
     assert wf.page_from("\n".join(f"line {i}" for i in range(50)), 10_000, 20)[0] == ""   # past the end: graceful
-
 
 def test_find_answers_every_term_and_never_calls_a_present_term_absent():
     """run 0727-124354: `holder_address|total_handles` read 'no match' about a document holding both; 10 fetches + 66 calls followed."""
@@ -93,7 +86,6 @@ def test_find_answers_every_term_and_never_calls_a_present_term_absent():
     assert "no match" in miss and "paths" in miss
     assert "Sections:" in wf.find_text("# Title\n## Install\nfoo\n## Usage\nbar", "zzz", 4000)
 
-
 def test_a_find_on_a_document_that_fits_never_deletes_it(served):
     """A find on a small doc returns the WHOLE doc; only a transport-cut body narrows (and says so)."""
     small = json.dumps({"paths": {"/a": {}}, "info": {"title": "tiny"}})
@@ -105,7 +97,6 @@ def test_a_find_on_a_document_that_fits_never_deletes_it(served):
     out = wf.fetch_nav(cut, find="nonexistentkey")
     assert "no match" in out and "fetch limit" in out   # a miss on a cut body may be a cut, not an absence
 
-
 def test_a_cut_body_is_disclosed_on_every_exit():
     """The paging end must never look like a clean end-of-document."""
     cut = wf.render_page("https://x/big", 200, "text/plain", "body", None, 0, 200, True)
@@ -114,7 +105,6 @@ def test_a_cut_body_is_disclosed_on_every_exit():
     sch = {"type": "object", "properties": {"nested": {"type": "object", "properties": {f"f{i}": {"type": "string"} for i in range(wf.FIELD_CAP + 5)}}}}
     out = wf._schema_field_summary(sch, {}, wf.FIELD_CAP)
     assert out[-1] == "nested: …+5 more field(s)"   # the cap discloses itself INSIDE the nesting, where a slice removed it
-
 
 def test_content_is_reduced_by_shape_raw_is_its_own_identity_and_nothing_is_reworded(served):
     """XML/SVG keep their markup; HTML flattens unless raw; raw after reduced is not 'already fetched'; reducing never rewords a sentence."""
@@ -131,7 +121,6 @@ def test_content_is_reduced_by_shape_raw_is_its_own_identity_and_nothing_is_rewo
     body = json.dumps({"items": [{"message": "the request could not be read from the server because the token is not valid"}] * 40})
     for reduce in (content_reduce.digest_reduce, content_reduce.content_reduce):
         assert "could not be read from the server" in reduce(body, "application/json", 50)   # function-word deletion once inverted this
-
 
 def test_spec_fields_carry_what_the_spec_declares_and_nothing_it_does_not():
     """Optional fields are marked, the optional marker never becomes part of a key, examples/placeholder runs are handled."""

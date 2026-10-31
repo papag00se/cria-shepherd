@@ -9,7 +9,6 @@ from research_discovery_helpers import disk_view, write  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("disk_view")
 
-
 def test_a_directory_is_skipped_only_on_proof_that_a_tool_generated_it():
     """Templates pruned an unanchored `lib/`/`build/`: a package the model just wrote vanished from the lint floor and the gate said clean."""
     kids = lambda *n: (lambda: list(n))
@@ -25,7 +24,6 @@ def test_a_directory_is_skipped_only_on_proof_that_a_tool_generated_it():
     # half a pair proves nothing: an author's `gems/` or `autoload.php`
     assert ignore.generated("gems", kids("europe.rb")) is None and ignore.generated("src", kids("autoload.php", "Model.php")) is None
 
-
 def test_the_floor_walk_skips_installed_trees_keeps_the_authors_source_and_names_what_it_skipped(tmp_path):
     write(tmp_path / "myenv", "pyvenv.cfg", "home = /usr\n")
     write(tmp_path / "myenv/lib/python3.12/site-packages/pip", "x.py", "import os\n")
@@ -35,7 +33,6 @@ def test_the_floor_walk_skips_installed_trees_keeps_the_authors_source_and_names
     files, skipped = linterprobe.collect_files_with_skips(str(tmp_path), ["py"])
     assert sorted(os.path.relpath(p, tmp_path) for p in files) == [os.path.join("lib/handlers/zones.py"), "resolver.py"]
     assert sorted(skipped) == ["myenv (contains pyvenv.cfg)", "node_modules (a tool owns this name)"]
-
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can list an unreadable directory")
 def test_a_directory_that_cannot_be_listed_is_named_not_dropped(tmp_path):
@@ -47,7 +44,6 @@ def test_a_directory_that_cannot_be_listed_is_named_not_dropped(tmp_path):
     finally:
         os.chmod(tmp_path / "locked", 0o755)
     assert skipped == ["locked (could not be listed)"]
-
 
 def test_a_clean_verdict_names_what_it_did_not_read():
     """#11b: a mechanism may only speak about what it reached."""

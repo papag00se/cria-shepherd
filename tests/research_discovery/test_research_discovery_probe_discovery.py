@@ -12,20 +12,16 @@ from research_discovery_helpers import disk_view, surveyed, write  # noqa: F401
 pytestmark = pytest.mark.usefixtures("disk_view")
 RAKEFILE = 'require "rake/testtask"\nRake::TestTask.new(:test) do |t|\n  t.test_files = FileList["test/**/test_*.rb"]\nend\n'
 
-
 def pkg(scripts, **extra):
     return {"package.json": json.dumps({"scripts": scripts, **extra})}
-
 
 def probes(tmp_path, files):
     for rel, body in files.items():
         write(tmp_path, rel, body)
     return pd.discover(tmp_path)
 
-
 def cmds(cands):
     return [" ".join(c.command) for c in cands]
-
 
 @pytest.mark.parametrize("files,present,absent", [
     ({"Cargo.toml": "[package]\nname='x'\n", "Cargo.lock": ""}, ["cargo check", "cargo test --no-fail-fast"], []),
@@ -48,7 +44,6 @@ def test_commands_come_from_the_repos_own_manifest(tmp_path, files, present, abs
     got = cmds(probes(tmp_path, files))
     assert [c for c in present if c not in got] == [] and [c for c in absent if c in got] == [], got
 
-
 def test_ranking_cheap_confident_first_and_monorepo_dirs_are_kept(tmp_path):
     """Candidates are sorted by the documented key (build check before suite) and keep their own working dir."""
     got = probes(tmp_path, {"package.json": json.dumps({"private": True}), "packages/api/Cargo.toml": "[package]\nname='api'\n",
@@ -57,7 +52,6 @@ def test_ranking_cheap_confident_first_and_monorepo_dirs_are_kept(tmp_path):
     assert next(c for c in got if c.command == ["cargo", "check"]).working_dir.name == "api"
     assert next(c for c in got if c.command == ["pnpm", "run", "typecheck"]).working_dir.name == "web"
     assert all(a.sort_key() <= b.sort_key() for a, b in zip(got, got[1:]))
-
 
 def test_maven_checkstyle_only_when_the_pom_declares_it_and_a_broken_pom_is_caught(tmp_path):
     """feed-pipeline-java: an undeclared checkstyle applied sun_checks as 'the repo's own standard' (43 phantom violations)."""
@@ -68,7 +62,6 @@ def test_maven_checkstyle_only_when_the_pom_declares_it_and_a_broken_pom_is_caug
     assert done.returncode == 1 and "pom.xml" in done.stdout
     write(tmp_path, "pom.xml", "<project><build><plugins><plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin></plugins></build></project>")
     assert any("checkstyle" in c for c in cmds(proberun.select_completion_probes(tmp_path)))
-
 
 @pytest.mark.parametrize("gemfile,expect", [
     ('source "x"\ngem "europe"\ngem "rake"\n', ["bundle exec rake test"]),   # shipping-rates-rb 1787268190: bare rake could not see vendor/bundle
@@ -87,7 +80,6 @@ def test_ruby_runs_through_bundler_only_when_the_gemfile_declares_rake(tmp_path,
     got = cmds(out)
     assert [c for c in got if "rake" in c] == expect and not [c for c in got if "rspec" in c or "rubocop" in c]
 
-
 def test_unrecognised_test_script_still_runs_but_unsafe_ones_are_refused(tmp_path):
     """handles-cli-node: 8 of 9 workspaces got ZERO test probes because the classifier only knew `node --test`."""
     (known,) = [c for c in probes(tmp_path / "a", pkg({"test": "node --test"})) if c.kind is pd.ProbeKind.Test]
@@ -103,7 +95,6 @@ def test_unrecognised_test_script_still_runs_but_unsafe_ones_are_refused(tmp_pat
     msg = " ".join(pd.tests_with_no_command(tmp_path / "u2"))
     assert "declares a `test` script in package.json" in msg and "no command to run them was found" not in msg
 
-
 def test_an_unread_manifest_is_unknown_not_absent():
     """C38: a Rakefile whose body cria has not been told is 'not yet read', never 'no command to run them was found'."""
     root = Path("/workspace")
@@ -117,7 +108,6 @@ def test_an_unread_manifest_is_unknown_not_absent():
             assert absent or "Rakefile" in said
         finally:
             wsview.unbind(token)
-
 
 def test_a_manifest_body_the_harness_delivered_reaches_the_next_requests_plan():
     """C38 / p27 shipping-rates-rb: every request builds a fresh View, so the delivered Rakefile body died with its request."""
@@ -133,10 +123,12 @@ def test_a_manifest_body_the_harness_delivered_reaches_the_next_requests_plan():
         assert "Rakefile" in wsview.pending(session)[0]
     finally:
         wsview.unbind(token)
-    surveyed(root, tree, blob=blob, session=session)                    # same round trip: the harness delivers the body
+    delivered = surveyed(root, tree, blob=blob, session=session)        # same round trip: the harness delivers the body
     token = wsview.bind(surveyed(root, tree, session=session))          # NEXT request: brand-new View
     try:
         (test,) = [c for c in pd.discover(Path(root)) if c.kind is pd.ProbeKind.Test]
         assert test.command == ["rake", "test"] and "Rakefile" in test.reason
     finally:
         wsview.unbind(token)
+    delivered.note_changed("Rakefile")   # an edit landing between requests: the old body is unknown now, never replayed
+    assert surveyed(root, tree, session=session).read("Rakefile") is None

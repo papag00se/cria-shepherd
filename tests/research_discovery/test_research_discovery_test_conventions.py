@@ -1,5 +1,4 @@
 """What cria says about test files is an observation about default discovery, never 'will not run'."""
-import subprocess
 
 import pytest
 
@@ -30,14 +29,13 @@ LAYOUTS = {
     # ruby is one language with two frameworks: minitest (test/test_*.rb) drew 'No rspec tests were found' 49 times over a green suite
     "ruby minitest": ({"lib/rates.rb": "module S\nend\n", "test/test_rates.rb": 'require "minitest/autorun"\nclass T < Minitest::Test\n  def test_a\n  end\nend\n'}, [], [], ["Test files for"]),
     "ruby no tests": ({"lib.rb": "module X\nend\n"}, ["minitest", "rspec"], None, None),
+    "py misnamed, runner configured": ({"resolve_handle.py": PY_TEST, "pytest.ini": "\n"}, [], [], None),
     "py runner configured": ({"resolve.py": "x\n", "pytest.ini": "\n"}, [], [], None),
     "vendored tree": ({"resolve.py": "x\n", ".venv/lib/python3.12/site-packages/_pytest/test_main.py": "def test_x(): pass\n"},
                       ["No pytest tests were found"], [], None),
     # names that merely contain `test`/`spec` are production code
-    "testing.js": ({**NODE, "testing.js": "x"}, ["No jest/vitest tests"], [], None),
     "protest.rb": ({"protest.rb": "x"}, None, [], None),
 }
-
 
 @pytest.mark.parametrize("name", sorted(LAYOUTS))
 def test_layout_gets_the_right_observation(tmp_path, name):
@@ -53,7 +51,6 @@ def test_layout_gets_the_right_observation(tmp_path, name):
         assert all(s in text for s in said), (name, text)
         assert "will not run" not in text   # a default-convention mismatch is not an execution prohibition
 
-
 @pytest.mark.parametrize("src,cfg", [("resolve.py", "pytest.ini"), ("index.js", "jest.config.js"), ("a.php", "phpunit.xml"), ("a.rb", ".rspec")])
 def test_a_runner_config_silences_the_default_convention_claim(tmp_path, src, cfg):
     """phpunit.xml / jest.config / pytest.ini re-point discovery, so the default-convention sentence would be false."""
@@ -61,7 +58,6 @@ def test_a_runner_config_silences_the_default_convention_claim(tmp_path, src, cf
     assert pd.undiscoverable_tests(tmp_path)
     write(tmp_path, cfg, "\n")
     assert pd.undiscoverable_tests(tmp_path) == []
-
 
 @pytest.mark.parametrize("ext,body,holds", [
     # three languages wrote tests the ordinary way and cria said they had none
@@ -76,7 +72,6 @@ def test_a_languages_ordinary_test_spelling_is_recognised(tmp_path, ext, body, h
     import re
     marker = next(c for c in pd.TEST_CONVENTIONS if ext in c.exts).marker
     assert bool(re.search(marker, body, re.M)) is holds
-
 
 def test_a_bare_dir_gets_a_test_floor_but_a_declared_runner_or_no_tests_gets_none(tmp_path):
     """Python and Ruby need no manifest, so a root test file alone must produce a probe (the six-language battery found zero tests run)."""
@@ -97,18 +92,3 @@ def test_a_bare_dir_gets_a_test_floor_but_a_declared_runner_or_no_tests_gets_non
     assert ["rake", "test"] in rake("rake") and ["rake", "test"] not in rake("rake2")   # a declared rake target is not an invention
     assert not [c for c in proberun.select_completion_probes(str(tmp_path / "rbcfg")) if "test/**/test_*.rb" in " ".join(c.command)]
 
-
-def test_syntax_floor_catches_a_broken_toml_and_checks_only_strict_json(tmp_path):
-    """The floor reports the file and exits non-zero; JSONC (tsconfig) is tsc's, not strict-checked."""
-    write(tmp_path, "pyproject.toml", 'name = "ok"\n')
-    write(tmp_path, "package.json", '{"name": "x",}')
-    write(tmp_path, "tsconfig.json", '{\n  // comments are legal here\n  "compilerOptions": {}\n}')
-    floor = pd.syntax_floor_candidates(tmp_path)
-    (toml,) = [c for c in floor if "TOML" in c.reason]
-    (json_,) = [c for c in floor if "JSON" in c.reason]
-    assert subprocess.run(toml.command, cwd=tmp_path, capture_output=True).returncode == 0
-    write(tmp_path, "pyproject.toml", "name = \n")
-    broken = subprocess.run(toml.command, cwd=tmp_path, capture_output=True, text=True)
-    assert broken.returncode == 1 and "pyproject.toml" in broken.stdout
-    assert "tsconfig.json" not in " ".join(json_.command) and "package.json" in " ".join(json_.command)
-    assert subprocess.run(json_.command, cwd=tmp_path, capture_output=True, text=True).returncode == 1

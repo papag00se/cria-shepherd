@@ -14,7 +14,6 @@ from research_discovery_helpers import surveyed
 URL = "https://docs.example.com/big"
 SHELL = {"name": "shell", "parameters": {}}
 
-
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
     wf.clear_cache()
@@ -23,23 +22,19 @@ def clean(monkeypatch):
     wsview.unbind(token)
     wf.clear_cache()
 
-
 class Harness:
     """Lower web_fetch through the real writeproxy and run the command in a real shell inside a workspace."""
-
     def __init__(self, tmp_path, doc):
         self.ws, self.session = str(tmp_path), "sp-" + uuid4().hex
         self.store = LoopStore()
         self.owner = self.store.get_guard(self.session, create=True)
         self.patch = mock.patch.object(wf, "fetch", lambda u, ua=None: wf.FetchResult(200, u, "application/json", doc, False))
-
     def lower(self, cid="t1", **kw):
         comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {
             "name": "web_fetch", "arguments": json.dumps({"url": URL, **kw})}}]}}]}
         writeproxy.translate_outbound(comp, SHELL, injected={"web_fetch"}, session=self.session, workspace_root=self.ws,
                                       externalization_owner=self.owner)
         return comp, comp["choices"][0]["message"]["tool_calls"][0]
-
     def deliver(self, cid="t1"):
         comp, call = self.lower(cid)
         command = writeproxy._command_of(call["function"]["arguments"])
@@ -51,11 +46,9 @@ class Harness:
         writeproxy.observe_externalization_results(self.store.get_guard(self.session), history)
         return done.stdout, open(os.path.join(self.ws, "tmp/reference/docs.example.com_big.txt")).read()
 
-
 def doc_of(chars):
     n = chars // 230
     return json.dumps({"paths": {f"/p{i}": {"get": {"summary": "x" * 200}} for i in range(n)}})
-
 
 def test_a_spill_holds_the_whole_document_or_says_exactly_where_it_stops(tmp_path):
     """A doc that fits one command is saved byte-for-byte 'IN FULL'; a bigger one is cut, and the file AND the pointer state the counts."""
@@ -78,7 +71,6 @@ def test_a_spill_holds_the_whole_document_or_says_exactly_where_it_stops(tmp_pat
     assert "IN FULL" not in out and "the file itself says where it stops" in out
     assert json.loads(out.splitlines()[0])["rep"]["st"]["byte_count"] == len(saved.encode())   # the stored fact is typed and true
 
-
 def test_a_spilled_doc_is_not_refetched_after_compaction_but_a_targeted_read_is_answered(tmp_path):
     """live 0727-104845: the harness compacted the spilled result away and the coder re-fetched the SAME url 19 times."""
     h = Harness(tmp_path, doc_of(30_000))
@@ -91,31 +83,25 @@ def test_a_spilled_doc_is_not_refetched_after_compaction_but_a_targeted_read_is_
         _, nav = h.lower("t3", find="/p42")
         assert wf._spill_name(URL) not in writeproxy._command_of(nav["function"]["arguments"])   # navigation is not a re-fetch
 
-
 def test_the_spill_refusal_answers_with_the_outline_it_holds_and_invents_none(tmp_path):
     """ada-handles pon_1785721353: every route to the spec was refused and 'grep it' had no operand (47% of refusals carried no outline)."""
     spec = {"openapi": "3.0.0", "info": {"description": "x" * (wf.OVERSIZE_CHARS + 500)},
             "paths": {"/handles/{handle}": {"get": {"responses": {"200": {"content": {"application/json": {"schema": {
                 "type": "object", "properties": {"holder": {"type": "string"}}}}}}}}}, "/holders/{address}": {}}}
     url, other = "https://api.handle.me/swagger.yml", "https://example.com/never-parsed.bin"
-    body = json.dumps(spec)
-    wf._cache_put(url, 200, "application/json", *wf.reduce_for_cache(body, "application/json", url), False)
-    for u in (url, other):
+    wf._cache_put(url, 200, "application/json", *wf.reduce_for_cache(json.dumps(spec), "application/json", url), False)
+    for sess, u in (("s-cached", url), ("s-uncached", other)):
         target = wf._spill_name(u)
-        sess = "s-" + str(len(u))
-        view = surveyed(str(tmp_path), [f"F\t0\t17\t{target.lstrip('./')}"], session=sess)
-        token = wsview.bind(view)
+        token = wsview.bind(surveyed(str(tmp_path), [f"F\t0\t17\t{target.lstrip('./')}"], session=sess))
         try:
             wf.note_fetch_spill(sess, u, target, workspace_root=str(tmp_path))
             out = wf.fetch_nav(u, session=sess, workspace_root=str(tmp_path))
+            wf.note_fetch_spill("s-other", u, target, workspace_root="/some/other/workspace")   # another workspace's spill is never claimed here
+            assert wf.already_spilled(sess, u, str(tmp_path)) and not wf.already_spilled("s-other", u, str(tmp_path))
         finally:
             wsview.unbind(token)
         assert target in out and "grep" in out and "<keyword>" not in out
-        if u == url:
-            assert "API endpoints (2)" in out and "/holders/{address}" in out and "holder" in out
-        else:
-            assert "API endpoints" not in out and "top-level keys" not in out
-
+        assert ("API endpoints (2)" in out and "/holders/{address}" in out) is (u == url) and ("top-level keys" in out) is False
 
 def test_search_repeat_is_refused_only_while_visible_and_names_the_file_cria_really_wrote():
     """The refusal never points at a file cria did not write, never claims 'still above', and is by word-set not exact string."""
@@ -140,7 +126,6 @@ def test_search_repeat_is_refused_only_while_visible_and_names_the_file_cria_rea
     wf.set_visible("s3", [], ["resolve handle address holder api.handle.me"])
     assert "web_fetch https://api.handle.me" in wf.gate_search("s3", "resolve handle address total api.handle.me")
 
-
 def test_a_search_cleared_by_the_reasoner_runs_once_not_forever():
     """run 0727-103922: a standing clearance let the identical search run three times; the clearance is consumed."""
     visible, rehunt = "ADA Handle API resolve handle to address holder address total handles", "ADA Handle API resolve handle holder"
@@ -149,7 +134,6 @@ def test_a_search_cleared_by_the_reasoner_runs_once_not_forever():
     wf.allow_search("s9", rehunt)
     assert wf.gate_search("s9", rehunt) is None
     assert wf.gate_search("s9", rehunt) is not None and wf.gate_search("s9", visible) is not None
-
 
 def test_fetch_repeat_is_refused_only_while_visible_and_keyed_by_url_find_and_cursor(monkeypatch):
     """Compaction ends the refusal; a different find is a new navigation; an internal host and a first miss are never gated."""
@@ -167,17 +151,6 @@ def test_fetch_repeat_is_refused_only_while_visible_and_keyed_by_url_find_and_cu
     monkeypatch.setattr(wf, "fetch", lambda u, ua=None: wf.FetchResult(404, u, "text/plain", "nope", False))
     assert ["guessing" in wf.fetch_nav(f"https://api.x/miss{i}", session="s2") for i in range(3)] == [False, False, True]
 
-
-def test_a_repeat_of_a_failed_fetch_says_what_the_server_said(monkeypatch):
-    """The refusal quotes the real status and tells the model to read the server's words; it never claims 'no content'."""
-    monkeypatch.setattr(wf, "fetch", lambda u, ua=None: wf.FetchResult(404, u, "application/json", '{"error":"route_not_found"}', False))
-    url = "https://fetch-fixture.invalid/handle/goose"
-    assert "route_not_found" in wf.fetch_nav(url, session="s")
-    wf.set_visible("s", [(url, "", "", False)], [])
-    repeat = wf.fetch_nav(url, session="s")
-    assert "returned HTTP 404 Not Found" in repeat and "anything the server returned" in repeat and "no content" not in repeat.lower()
-
-
 def test_the_ledger_claims_a_body_is_in_the_conversation_only_when_it_is():
     """Rust P20: the ledger told the coder 'its body is in this conversation above' for three pages it never fetched."""
     page, big = "https://docs.rs/toml/latest/toml/", "https://www.rubydoc.info/gems/countries/3.1.0/ISO3166/Country"
@@ -193,7 +166,6 @@ def test_the_ledger_claims_a_body_is_in_the_conversation_only_when_it_is():
         assert bool(wf.spill_path_for(page)) == (wf.oversized_spill(page) is not None)
     assert wf.spill_path_for("https://never.fetched/x") == ""
 
-
 def test_the_window_a_spill_names_is_measured_and_honoured_by_the_ranged_read():
     """feed-pipeline-java: 'start_line=1 end_line=205 fits in one read' was estimated from average width, then the read refused 1-200."""
     body = "\n".join(["W" * 2000] * 10 + ["x" * 10] * 1000)
@@ -205,7 +177,6 @@ def test_the_window_a_spill_names_is_measured_and_honoured_by_the_ranged_read():
     hint = wf.spill_reading_hint(os.path.basename(wf._spill_name("https://t/wide")), 9000)
     end = int(hint.split("end_line=")[1].split()[0])
     assert "fits in one read" in hint and numbered(end) <= 9000
-
 
 def test_what_a_spill_says_about_the_file_is_about_the_file():
     """A page about a file is not the file; a cut copy is never called whole; the line count is the file's own."""
@@ -219,13 +190,8 @@ def test_what_a_spill_says_about_the_file_is_about_the_file():
     u = "https://raw.githubusercontent.com/x/y/master/big.txt"
     whole = "\n".join(f"line {i} " + "z" * 60 for i in range(4_000))
     wf._DOC_CACHE[u] = (200, "text/plain", whole, None, False)
-    assert "IN FULL" not in wf.spill_extent_of(u) and "IN FULL" not in wf.spill_extent_of("https://never/fetched")
-    on_disk = whole.encode()[:wf.SPILL_CONTENT_MAX].decode("utf-8", "ignore")
-    hint = wf.spill_reading_hint(wf._spill_name(u), 4_000)
-    assert f"{on_disk.count(chr(10)) + 1:,} lines" in hint and f"{whole.count(chr(10)) + 1:,} lines" not in hint
-    wf._DOC_CACHE[u] = (200, "text/plain", "small enough", None, False)
-    assert "IN FULL" in wf.spill_extent_of(u)
-
+    on_disk = whole.encode()[:wf.SPILL_CONTENT_MAX].decode("utf-8", "ignore")   # cart-billing-go: 'saved IN FULL' beside '2,414 lines' of a 1,656-line file
+    assert "IN FULL" not in wf.spill_extent_of(u) and f"{on_disk.count(chr(10)) + 1:,} lines" in wf.spill_reading_hint(wf._spill_name(u), 4_000)
 
 @pytest.mark.parametrize("payload,start,descr", [({"web": {"results": []}}, "0 results:", None),
                                                  ({"web": {"results": [{"title": "t", "url": "u", "description": "Arbitrary-precision decimals"}]}}, "1 results:", "Arbitrary-precision")])

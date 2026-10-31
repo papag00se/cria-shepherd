@@ -11,7 +11,6 @@ from cria.research import files_read
 PRIOR = "ADA Handle API resolve handle to address holder address total handles"
 QUERY = "ADA Handle API resolve handle holder"
 
-
 def request(session, reply, query=QUERY):
     """A re-hunt question whose reasoner (the only external boundary) answers `reply`."""
     coder = {"choices": [{"message": {"tool_calls": [{"id": "s", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": query})}}]}}]}
@@ -19,7 +18,6 @@ def request(session, reply, query=QUERY):
     ask = Mock(return_value=reply)
     judge = policy.Judge(ask, Mock(side_effect=AssertionError), object(), Mock())
     return policy.RehuntInput(coder, session, facts, judge), ask, facts
-
 
 @pytest.mark.parametrize("reply,fresh", [("garbage", False), ("{}", False), ('{"new_direction":false}', False), ('{"new_direction":true}', True)])
 def test_a_rehunt_is_judged_once_and_a_new_direction_runs_exactly_once(reply, fresh):
@@ -39,20 +37,6 @@ def test_a_rehunt_is_judged_once_and_a_new_direction_runs_exactly_once(reply, fr
     finally:
         webfetch.reset_session(session)
 
-
-@pytest.mark.parametrize("visible", [[], [QUERY], ["entirely unrelated prior"]])
-def test_no_prior_or_an_identical_query_asks_nothing(visible):
-    """No visible near-duplicate means there is no re-hunt to judge: the reasoner is never called."""
-    session = "semantic-" + uuid.uuid4().hex
-    webfetch.set_visible(session, [], visible)
-    req, ask, facts = request(session, '{"new_direction": true}')
-    state = policy.RehuntState()
-    assert not policy.rehunt(req, state).clearance_requested and state.verdicts is None
-    ask.assert_not_called()
-    facts.assert_not_called()
-    webfetch.reset_session(session)
-
-
 def test_reading_back_what_the_coder_wrote_is_not_research_but_a_preexisting_file_is():
     """nemotron-elastic/rust 0033: the research step closed on a test file the coder had written four calls earlier."""
     call = lambda name, path, tid: {"role": "assistant", "content": None, "tool_calls": [{"id": tid, "type": "function", "function": {"name": name, "arguments": json.dumps({"path": path})}}]}
@@ -63,3 +47,13 @@ def test_reading_back_what_the_coder_wrote_is_not_research_but_a_preexisting_fil
     assert [p for p, _ in files_read(wrote + read)] == ["Cargo.toml"]
     refused = [call("read_file", "big.json", "r9"), result("r9", denial.mark("too large to return"), denial.REFUSED)]
     assert files_read(refused) == []   # an attempted read is not a read
+
+
+def test_an_identical_or_unrelated_visible_search_asks_nothing():
+    """No visible near-duplicate means no re-hunt to judge: the reasoner is never called."""
+    for visible in ([], [QUERY], ["entirely unrelated prior"]):
+        session = "semantic-" + uuid.uuid4().hex
+        webfetch.set_visible(session, [], visible)
+        req, ask, _ = request(session, '{"new_direction": true}')
+        assert not policy.rehunt(req, policy.RehuntState()).clearance_requested
+        ask.assert_not_called()

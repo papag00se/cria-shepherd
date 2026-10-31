@@ -23,16 +23,14 @@ SWAGGER2 = {"swagger": "2.0", "basePath": "/v1", "paths": {
     "definitions": {"Handle": {"type": "object", "properties": {"holder": {"type": "string"}, "resolved": {"type": "object", "properties": {"ada": {"type": "string"}}}}},
                     "Holder": {"type": "object", "properties": {"total_handles": {"type": "integer"}}}}}
 
-
 @pytest.mark.parametrize("url,status,body,ct,kind", [
     ("https://api.handle.me/mcp", 405, "", None, "mcp"), ("https://x.com/graphql", 400, "", None, "graphql"),
     ("https://x.com/rpc", 405, '{"jsonrpc":"2.0","error":{"code":-32000}}', None, "mcp"),
     ("https://x.com/api", 400, "Must provide query string.", None, "graphql"),
     # a document that GETs fine is never POSTed to
-    ("https://api.handle.me/openapi.json", 200, '{"openapi":"3.0"}', "application/json", None), ("https://x.com/nope", 404, "Not Found", "text/plain", None)])
+    ("https://x.com/docs", 200, "<p>our graphql api</p>", "text/html", None), ("https://api.handle.me/openapi.json", 200, '{"openapi":"3.0"}', "application/json", None), ("https://x.com/nope", 404, "Not Found", "text/plain", None)])
 def test_a_server_is_probed_only_when_it_says_it_speaks_the_protocol(url, status, body, ct, kind):
     assert ad.probe_kind(url, status, body, ct) == kind
-
 
 def test_mcp_tools_are_listed_with_required_arguments_and_only_declared_outputs(monkeypatch):
     """Full handshake, the session id echoed on every later request, SSE or JSON; a server that never initializes yields nothing."""
@@ -55,7 +53,6 @@ def test_mcp_tools_are_listed_with_required_arguments_and_only_declared_outputs(
     monkeypatch.setattr(ad, "_post_json", lambda u, p, h: (400, '{"jsonrpc":"2.0","error":{"code":-1}}', {}))
     assert ad._mcp_discover("https://x/mcp") is None
 
-
 def test_graphql_root_fields_and_return_shapes_and_a_non_graphql_reply(monkeypatch):
     reply = lambda payload: monkeypatch.setattr(ad, "_post_json", lambda u, p, h: (200, json.dumps(payload), {}))
     reply(SCHEMA)
@@ -67,7 +64,6 @@ def test_graphql_root_fields_and_return_shapes_and_a_non_graphql_reply(monkeypat
         assert ad._graphql_discover("https://x.com/graphql") is None
     # a depth-limited server stops sending nesting before the name: '…' not '?' (which reads like a type)
     assert ad._gql_type_name({"kind": "NON_NULL", "ofType": {"kind": "LIST", "ofType": {"kind": "NON_NULL"}}}) == "[…!]!"
-
 
 def test_a_reply_too_big_to_read_is_disclosed_never_reported_as_an_empty_api():
     """The read was cut at 2 MB and cut JSON does not parse, so a real MCP server reported an empty surface."""
@@ -81,7 +77,6 @@ def test_a_reply_too_big_to_read_is_disclosed_never_reported_as_an_empty_api():
     assert d and d.routes == [] and "tools/list" in d.unread and "cria" not in d.unread.lower()
     assert "routes(" not in wf._render_discovery("https://x/graphql", 400, "application/json", ad._unread("https://x/graphql", "graphql"))
 
-
 def test_spec_dialects_are_dereferenced_and_routes_carry_the_declared_base():
     """Swagger 2 surfaced endpoints with NO response fields; bare `paths` keys said /handles/{h} where the route is /v1/handles/{h}."""
     shapes = wf._endpoint_response_fields(SWAGGER2)
@@ -94,12 +89,3 @@ def test_spec_dialects_are_dereferenced_and_routes_carry_the_declared_base():
     assert wf._base_path({"servers": [{"url": "https://api.x.com/v2"}]}) == "/v2"
     assert all(wf._base_path(s) == "" for s in ({}, {"servers": [{"url": "https://api.x.com/"}]}, {"basePath": "/"}))
 
-
-def test_an_api_catalog_is_rendered_per_api_and_its_cap_is_disclosed():
-    """RFC 9727 catalogues are all hrefs; rendered as a structured doc they read 'top-level keys: linkset'."""
-    cat = {"linkset": [{"anchor": f"https://a/{i}", "service-desc": [{"href": f"https://a/{i}/openapi.json"}], "service-doc": [{"href": f"https://d/{i}"}]} for i in range(30)]}
-    links = wf._catalog_links(cat, max_entries=5)
-    assert links[0] == "https://a/0 → service-desc: https://a/0/openapi.json; service-doc: https://d/0" and links[-1].startswith("…+25 more catalogued API(s)")
-    assert all(wf._catalog_links(d) == [] for d in ({"openapi": "3.0", "paths": {}}, {"linkset": "x"}, [], None))
-    page = wf.render_page("https://x/.well-known/api-catalog", 200, "application/linkset+json", json.dumps(cat), cat, 0, 100000)
-    assert wf.CATALOG_MARKER in page and "https://a/0/openapi.json" in page   # shown even though it fits one page

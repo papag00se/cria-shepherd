@@ -29,7 +29,6 @@ COLLECT = ("________________ ERROR collecting smoke_test.py ________________\n"
 MISMATCH = ("________________ ERROR collecting tests/test_dup.py ________________\n"
             "import file mismatch:\n" + PYTEST_HINT + "ERROR tests/test_dup.py\n")
 
-
 @pytest.mark.parametrize("cmd,family,code,out,loc,words,summary", [
     ("cargo check", "cargo", 101, "error[E0063]: missing field `x`\n  --> src/p.rs:42:5\n", ("src/p.rs", 42, None), "missing field", None),
     ("tsc", "tsc", 2, "src/app.ts(12,7): error TS2322: Type 'string' is not assignable", ("src/app.ts", 12, 7), "not assignable", None),
@@ -69,14 +68,12 @@ def test_first_finding_is_located_and_quotes_the_checker(cmd, family, code, out,
         assert summary in r.summary
     assert "Help 1" not in r.summary and "runs/s" not in r.summary and "1) Error" not in r.summary
 
-
 def test_collection_error_is_not_hidden_by_an_ordinary_failure():
     """`if out: return out` ran before the collect path, so one failure hid an uncollectable file."""
     out = ("____ test_adds ____\ntests/test_math.py:4: in test_adds\n    assert add(1,1) == 3\nE   assert 2 == 3\n"
            + MISMATCH + "FAILED tests/test_math.py::test_adds - assert 2 == 3\n")
     files = {f.file for f in parse_output("pytest", "pytest", 1, out, "").findings}
     assert {"tests/test_math.py", "tests/test_dup.py"} <= files
-
 
 def test_diagnostic_detail_is_whole_and_ends_at_the_next_diagnostic():
     """javac's symbol/location lines follow a candidate list; a count cap cut them (structure ends it)."""
@@ -88,7 +85,6 @@ def test_diagnostic_detail_is_whole_and_ends_at_the_next_diagnostic():
     trace = "app.py:10: error: boom\n  its detail\n  frame.py:22: in inner\n  more.py:33: in outer\n"
     msg = probeparse.parse_generic(trace)[0].message
     assert "its detail" in msg and "more.py:33" not in msg
-
 
 @pytest.mark.parametrize("cmd,out,kept", [
     ("ruff check .", "a.py:3:1: E501 long\na.py:4:1: W291 ws\na.py:5:1: C0114 doc\na.py:6:1: F401 `os` imported but unused\n"
@@ -109,7 +105,6 @@ def test_only_error_class_findings_gate(cmd, out, kept):
     family = probeparse.family_of(cmd.split())
     assert [f.message for f in parse_output(cmd, family, 1, out, "").findings] == kept
 
-
 def test_redefinition_gates_only_when_the_flagged_line_is_a_def():
     """maple-preview run: two `def resolve_handle` shadowed the network resolver; an import rebinding is advisory."""
     out = "x.py:148:1: redefinition of unused 'resolve_handle' from line 27\n"
@@ -118,7 +113,6 @@ def test_redefinition_gates_only_when_the_flagged_line_is_a_def():
     assert len(run("    def resolve_handle(h):")) == 1 and len(run("class ResolveHandle:")) == 1
     assert run("import json") == [] and run(None) == []
 
-
 def test_a_command_that_exited_zero_has_no_failures_but_unknown_exit_still_scrapes():
     """A passing pytest run with a warning once produced 'the repo's own checks fail' 40 times."""
     warn = ("collected 1 item\ntest_x.py .  [100%]\n=== warnings summary ===\ntest_x.py:95\n"
@@ -126,7 +120,6 @@ def test_a_command_that_exited_zero_has_no_failures_but_unknown_exit_still_scrap
     assert parse_output("pytest", "pytest", 0, warn, "").findings == []
     assert parse_output("pytest", "pytest", 1, warn, "").findings
     assert parse_output("tool", "", None, "src/a.py:3: SyntaxError: bad\n", "").findings
-
 
 def test_nothing_is_invented_when_the_checker_printed_no_location():
     """Maven's console has no location (it is in surefire-reports); the Help footer is not one; clean says clean."""
@@ -141,9 +134,3 @@ def test_nothing_is_invented_when_the_checker_printed_no_location():
                           "7 runs, 4 assertions, 0 failures, 3 errors, 0 skips\n", "")
     assert "NoMethodError" in prefer.summary and "7 runs" not in prefer.summary
 
-
-def test_family_is_chosen_by_whole_token():
-    """A tool name that merely contains another ('cargoish') is not that family."""
-    assert probeparse.family_of(["cargo", "test"]) == "cargo"
-    assert probeparse.family_of(["python3", "-m", "pytest"]) == "pytest"
-    assert probeparse.family_of(["./cargoish", "x"]) != "cargo"

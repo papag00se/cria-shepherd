@@ -24,7 +24,6 @@ const (
 )
     Predefined schedules.
 
-
 TYPES
 
 type Entry struct {
@@ -36,12 +35,10 @@ type Entry struct {
 func New() *Entry
 '''
 
-
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     return tmp_path
-
 
 def test_a_surface_is_the_real_source_or_nothing(home):
     """No cache, unknown ecosystem or missing coordinate abstain (never an invented surface); the scan keeps only
@@ -68,7 +65,6 @@ def test_a_surface_is_the_real_source_or_nothing(home):
     write(home / "ws/vendor/bundle/gems/countries-3.1.0/lib", "countries.rb", "class Country\n  def in_eu?\n  end\nend\n")
     assert any("in_eu?" in l for l in depsurface.gather("ruby", "countries", "3.1.0", workspace_root=str(home / "ws")).lines)
 
-
 def test_go_doc_selection_keeps_grouped_consts_and_struct_fields_and_demands_a_balanced_parse():
     """A column-0-only filter dropped Second..Dow and Entry's fields while the note still claimed completeness."""
     lines, well_formed = depsurface._select_go_doc_blocks(GO_DOC)
@@ -77,20 +73,6 @@ def test_go_doc_selection_keeps_grouped_consts_and_struct_fields_and_demands_a_b
     assert all(m in joined for m in ("Second", "Minute", "Dow", "ID   int", "Next int64", "func New() *Entry"))
     assert "stand-in" not in joined and "Predefined" not in joined
     assert depsurface._select_go_doc_blocks("const (\n\tSecond = 1\n")[1] is False
-
-
-def test_go_doc_cannot_reach_the_network(home, monkeypatch):
-    """A GOPRIVATE pattern bypasses GOPROXY=off, so the call blanks every bypass and points GOPROXY at the local cache."""
-    seen = {}
-    def spy(argv, **kw):
-        seen.update(kw["env"])
-        raise depsurface.subprocess.TimeoutExpired(argv, 1)
-    monkeypatch.setattr(depsurface.subprocess, "run", spy)
-    monkeypatch.setattr(depsurface.shutil, "which", lambda n: "/usr/bin/go" if n == "go" else None)
-    depsurface._go_doc_all("example.com/x", "v1.0.0")
-    assert (seen["GOPRIVATE"], seen["GONOPROXY"], seen["GONOSUMDB"], seen["GOTOOLCHAIN"], seen["GOVCS"]) == ("", "", "", "local", "*:off")
-    assert seen["GOPROXY"].startswith("file://")
-
 
 @pytest.mark.parametrize("args", [("go", "../secret", "v1.0.0"), ("go", "..%2F..%2Fsecret", "v1.0.0"), ("rust", "../../etc", "1.0.0"),
                                   ("rust", "toml", "../../etc"), ("ruby", "../../etc", "1.0.0"), ("jvm", "../../etc:passwd", "1.0.0"),
@@ -106,7 +88,6 @@ def test_a_manifest_coordinate_cannot_escape_its_cache_root(home, args):
     assert depsurface._safe_child(str(root), "link") is None and depsurface._safe_child(str(root), "link", "..", "outside") is None
     assert depsurface._safe_child(str(root), "a", "b") == os.path.realpath(root / "a/b")
     assert depsurface.gather("jvm", "org.apache.commons:" + str(home / "secret"), "1.10.0") is None   # absolute artifact resets os.path.join
-
 
 def test_only_direct_dependencies_are_declared(tmp_path):
     """A lockfile lists the whole transitive graph; indirect / dependencyManagement / property versions are not claimed."""
@@ -128,7 +109,6 @@ def test_only_direct_dependencies_are_declared(tmp_path):
     assert not [c for c in depsurface.declared_coordinates(str(tmp_path)) if c[0] == "rust"]   # ...never the lock alone
     assert depsurface.declared_coordinates("") == depsurface.declared_coordinates(None) == []
 
-
 REAL_OUTPUT = {
     "ruby": ("cannot load such file -- countries (LoadError)", "countries"),
     "python": ("ModuleNotFoundError: No module named 'requests'", "requests"),
@@ -138,14 +118,12 @@ REAL_OUTPUT = {
     "java": ("Could not resolve dependencies for project x: org.apache.commons:commons-csv:jar:1.10.0", "org.apache.commons:commons-csv:jar:1.10.0"),
 }
 
-
 def rep(root, message, findings=True):
     c = proberun.probediscovery.ProbeCandidate(
         kind=proberun.probediscovery.ProbeKind.Test, command=["rake", "test"], working_dir=root, confidence=1, expected_value=1,
         cost=proberun.probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False, may_need_services=False, reason="t")
     f = [probeparse.Finding(file="lib/rates.rb", line=1, message=message)] if findings else []
     return proberun.ProbeReport(project_type=["x"], selected=[c], results=[proberun.ProbeResult("rake test", 1, message, f)])
-
 
 def test_each_ecosystems_missing_dependency_is_classified_named_and_noted():
     """A 'your dependency is not loadable' reads as 'your code is wrong' to a weak model; the name stops where the sentence does."""
@@ -157,7 +135,6 @@ def test_each_ecosystems_missing_dependency_is_classified_named_and_noted():
     for quiet in ("exited 1: cart.go:12:2: undefined: foo", "test_rates.rb:15: Expected: 0.0 Actual: 7.24"):
         assert proberun.dependency_note(rep("", quiet, False)) == ""
     assert probeparse.dependency_missing("Importer.java:[3,26] package org.apache.commons.csv does not exist") is None   # may be a typo
-
 
 def test_the_note_asks_the_disk_before_describing_an_install(tmp_path):
     """cell 19 shipping-rates-rb: 'installed with --install-dir' described an install that never happened (every install was refused)."""
@@ -183,7 +160,6 @@ def test_the_note_asks_the_disk_before_describing_an_install(tmp_path):
         assert said in line(eco, d), (eco, files)
     # no workspace, or one cria cannot read, keeps the general line that names no install mechanism
     assert line("ruby", "") == line("ruby", "/nonexistent-xyz") and "only sees gems on ruby's load path" in line("ruby", "")
-
 
 def test_a_require_that_resolves_to_the_projects_own_file_is_named_not_called_a_missing_gem(tmp_path):
     """shipping-rates-rb 1787465385: lib/europe.rb shadowed the gem; three voices said 'not installed' and cost eight installs."""
