@@ -42,13 +42,14 @@ def test_a_session_runs_its_image_through_provenance_task_change_cancel_and_fres
 
 
 def test_replacement_retires_the_old_session_and_closure_refuses_everything_afterwards(tmp_path):
-    authority = object(); store = ImageStore(tmp_path / 'p', close_authority=authority)
+    authority = object(); ticks = iter(range(100)); store = ImageStore(tmp_path / 'p', close_authority=authority, clock=lambda: next(ticks))
     old = store.session('k'); new = store.session('k', replace=True)
     assert new is not old
     for call in (lambda: old.prepare(USER, TASK), old.acquire, lambda: old.select_route(None)):
         with pytest.raises(ImageUnavailable, match='closed, closing or replaced'): call()
     new.prepare(USER, TASK); lease = new.acquire()
-    new.confirm_close(authority); new.confirm_close(authority)                                      # the second confirmation keeps the first timestamp
+    new.confirm_close(authority); stamp = new._confirmed_at; new.confirm_close(authority)
+    assert new._confirmed_at == stamp                                                                 # the TTL runs from the FIRST confirmation
     assert not new.ready_to_close
     with pytest.raises(ImageUnavailable, match='closed, closing'): new.prepare(USER, TASK)
     with pytest.raises(ImageUnavailable, match='drained'): new.cleanup_descriptor()
