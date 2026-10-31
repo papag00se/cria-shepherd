@@ -155,6 +155,54 @@ def test_an_irreducible_core_is_sent_but_reported_over_budget():
     assert anchor in kept   # sacrificing an anchor to a fit that is still unreachable buys nothing
 
 
+def _cat(result, extra=()):
+    return [{"role": "system", "content": "sys"}, u("count the ERROR lines in app.log"), *extra,
+            a("", "c1", "exec_command", '{"cmd":"cat app.log"}'),
+            tool("c1", result, **{bodykeys.READ_OBSERVATION: (len(result), "d" * 64)})]
+
+
+LOG = "\n".join(f"12:00:{i % 60:02d} worker-{i % 7} batch {i}" + (" ERROR" if i % 50 == 0 else "") for i in range(3000))
+
+
+def test_a_tool_result_no_lever_can_shrink_is_withheld_with_a_sized_note_not_left_to_end_the_session():
+    """wave 10 OVFL (real Codex, rc 0 after one call): the active tool result alone exceeded the window, plain text is never
+    clipped by content_reduce, and the floor reported over_budget; the final answer to that was a stop message. Now the result is
+    swapped for a not-delivered note carrying what was measured and a next step sized from it, the call stays, the read-claim
+    hint is gone (nothing in it was seen), and fitting the note's own output again changes nothing (stateless: the harness
+    resends the oversized result on every later turn)."""
+    msgs = _cat(LOG)
+    out, _, rep = cf.fit(msgs, None, window=6000, reserve=1000, safety=1.5)
+    note = out[-1]["content"]
+    assert rep.results_withheld == 1 and not rep.over_budget and cf.est_total(out, None) * 1.5 <= 5000
+    assert note.startswith("⟦ctx:result-not-delivered⟧") and f"{len(LOG):,} bytes in 3,000 line(s)" in note
+    assert "6,000-token context window" in note and "Do not repeat the same call" in note
+    piece = int(note.split("about ")[1].split(" lines")[0].replace(",", ""))
+    cost = cf.est_tokens("\n".join(LOG.split("\n")[:piece])) * 1.5                # one suggested piece, at the density in force
+    assert 0.8 * 1250 <= cost <= 1250 and f"`head -n {piece}`" in note               # about a quarter of the 5,000 tokens of room and "cria" not in note.lower()
+    assert out[-2] == msgs[-2] and out[-1]["tool_call_id"] == "c1" and bodykeys.READ_OBSERVATION not in out[-1]
+    assert cf.fit(out, None, window=6000, reserve=1000, safety=1.5)[0] == out
+    assert msgs[-1]["content"] == LOG                                            # the caller's list is untouched
+
+
+def test_withholding_is_the_last_resort_and_touches_only_what_it_must():
+    """A fitting request is byte-identical; the largest result goes first and alone when that is enough; a result the producer
+    named protected, a user message and a lone very long line are each handled by their own rule, never by this one."""
+    out, _, rep = cf.fit(_cat(LOG[:2000]), None, window=49152, reserve=4096)
+    assert out == _cat(LOG[:2000]) and not rep.applied and rep.results_withheld == 0
+    small = ["x" * 700]
+    two = _cat(LOG, extra=[a("", "c0", "exec_command", "{}"), tool("c0", small[0])])
+    out, _, rep = cf.fit(two, None, window=6000, reserve=1000, safety=1.5)
+    assert rep.results_withheld == 1 and out[-1]["content"].startswith("⟦ctx:result-not-delivered⟧") and out[3]["content"] == small[0]
+    out, _, rep = cf.fit(_cat(LOG), None, window=6000, reserve=1000, safety=1.5, protected_call_ids=("c1",))
+    assert rep.results_withheld == 0 and rep.over_budget and out[-1]["content"] == LOG
+    user = [{"role": "system", "content": "sys"}, u("summarise:\n" + LOG)]
+    out, _, rep = cf.fit(user, None, window=6000, reserve=1000, safety=1.5)
+    assert rep.results_withheld == 0 and rep.over_budget and out[-1]["content"] == user[-1]["content"]
+    blob = "A" * 30000
+    note = cf.fit(_cat(blob), None, window=6000, reserve=1000, safety=1.5)[0][-1]["content"]
+    assert "30,000 bytes in 1 line(s)" in note and "Line 1, the longest, is 30,000 bytes" in note and "head -c 4000" in note
+
+
 @pytest.mark.parametrize("count,desc,window,fits", [(60, 600, 20000, True), (120, 900, 49152, True), (100, 200, 512, False)])
 def test_a_fat_tool_menu_is_compressed_never_deleted(count, desc, window, fits):
     """qwopus-9: 34K tokens of connector tools overflowed because the schema was irreducible. Descriptions

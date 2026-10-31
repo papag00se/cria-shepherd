@@ -55,7 +55,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import bodykeys, imageprotocol
-from . import denial, editrecovery, prompts, selfcompact, toolargs, windowcaps
+from . import denial, editrecovery, prompts, readshape, selfcompact, toolargs, windowcaps
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -205,6 +205,7 @@ class FloorReport:
     orphans_removed: int = 0
     restored_reduced: int = 0   # lever 2c: the restored file-text block swapped for a labelled stand-in
     caller_reduced: int = 0     # lever 2b: harness-instruction spans swapped for a labelled stand-in
+    results_withheld: int = 0   # lever 6: a tool result no lever could fit, swapped for a labelled not-delivered note
     image_tokens_unknown: bool = False  # text fitting cannot measure vision embeddings
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
     wire_overhead: int = 0     # measured estimate-space growth from subsequent wire transforms
@@ -222,6 +223,7 @@ class FloorReport:
             "orphans_removed": self.orphans_removed, "over_budget": self.over_budget,
             **({"caller_reduced": self.caller_reduced} if self.caller_reduced else {}),
             **({"restored_reduced": self.restored_reduced} if self.restored_reduced else {}),
+            **({"results_withheld": self.results_withheld} if self.results_withheld else {}),
             **({"wire_overhead": self.wire_overhead} if self.wire_overhead else {}),
         }
 
@@ -547,11 +549,76 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         if required <= window:
             rep.reserve = min(reserve, window - required)
             over = False
+    if over:
+        # --- Lever 6 (the last one): what remains is a TOOL RESULT no lever above can shrink (plain text
+        # content_reduce will not cut, and the active span never drops it). Ending the session over it
+        # (an assistant "not delivered" message) is the one outcome a non-interactive harness cannot
+        # survive, so the result is swapped for a labelled not-delivered note and the coder, which
+        # holds the tools, goes on by reading a part. A USER message is never touched here: a person
+        # is there to answer it (Upstream raises InputOverflow, a truthful message with sizes).
+        work, rep.results_withheld = _withhold_oversized_results(
+            work, tools, window=window, reserve=reserve, safety=safety,
+            overhead=rep.wire_overhead, **protected)
+        if rep.results_withheld:
+            rep.msg_tokens_after = _msgs_tokens(work)
+            over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
     rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
     rep.over_budget = over
     return work, tools, rep
+
+
+def _withhold_oversized_results(messages: list[dict], tools, *, window: int, reserve: int, safety: float,
+                                overhead: int, protected_call_ids=()) -> tuple[list[dict], int]:
+    """Lever 6, the last: swap the LARGEST tool results for a labelled not-delivered note, one at a time, until
+    the request fits (or none is left). Nothing else is touched, and a request that already fits never reaches it.
+
+    Why a note and not a clipped copy: content_reduce refuses to cut plain text (rule 5, and the prose tier it
+    removed), so no lossless form of such a result exists; any slice of it would be a half-result the coder could
+    mistake for the whole. The note says what was measured (bytes, lines, the window), that none of it counts as
+    seen, and the next step SIZED from those measurements, so the coder reads it in pieces itself — the pattern
+    ``multipart_fit_overflow`` set for a read that cannot fit. It is derived from the result alone, so every later
+    request carrying the same result (the harness keeps it in its history) is answered the same way — no state.
+
+    Left alone: a protected read (its own overflow path), a result carrying an image, cria's own gate output, and
+    any result too small to be the reason (a stand-in must save something)."""
+    preserved = _preserved_indices(messages, protected_call_ids)
+    sized = sorted(((est_tokens(_msg_text(m)), i) for i, m in enumerate(messages)
+                    if m.get("role") == "tool" and i not in preserved and not _has_protect_marker(m)),
+                   reverse=True)
+    out, n = list(messages), 0
+    for size, i in sized:
+        if (est_total(out, tools) + overhead) * safety <= window - reserve:
+            break
+        text = _msg_text(out[i])
+        note = _not_delivered_note(text, window=window, reserve=reserve, safety=safety)
+        if est_tokens(note) >= size:
+            break                      # sorted largest first: no later one can save more
+        out[i] = {k: v for k, v in out[i].items() if k not in _READ_CLAIMS} | {"content": note}
+        n += 1
+    return out, n
+
+
+# The producer hints that say "this result's bytes are the file / the output". A withheld result carries none of
+# them: nothing it held was seen, so nothing it held may earn a read credit or be attributed to a payload boundary.
+_READ_CLAIMS = (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.PAYLOAD_BOUNDARY)
+
+
+def _not_delivered_note(text: str, *, window: int, reserve: int, safety: float) -> str:
+    """The note that stands for a withheld tool result: measured size, window, and the sized next step."""
+    raw = text.encode("utf-8", "surrogatepass")
+    shape = readshape.measure(raw)
+    routes = prompts.load_map("result_not_delivered_next")
+    if readshape.line_bound(shape):
+        nxt = prompts.fill(routes["long_line"], longest_line=shape.longest_line, longest=f"{shape.longest:,}")
+    else:
+        # One piece costs about a quarter of the room the window leaves, at the density in force (est x safety).
+        per_line = max(est_tokens(text), 1) * safety / max(shape.lines, 1)
+        piece = max(1, int(max(window - reserve, 0) / 4 / per_line))
+        nxt = prompts.fill(routes["lines"], piece=f"{piece:,}")
+    return prompts.render("result_not_delivered", bytes=f"{shape.size:,}", lines=f"{shape.lines:,}",
+                          window=f"{window:,}", next=nxt)
 
 
 def _reduce_caller_spans(messages: list[dict]) -> tuple[list[dict], int]:

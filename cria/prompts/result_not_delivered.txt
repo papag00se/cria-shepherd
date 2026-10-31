@@ -1,0 +1,1 @@
+⟦ctx:result-not-delivered⟧ This tool result was not delivered: it is {{BYTES}} bytes in {{LINES}} line(s), and with everything else the request must carry it does not fit the {{WINDOW}}-token context window, so none of it was shown and none of it counts as seen. Do not repeat the same call. {{NEXT}}

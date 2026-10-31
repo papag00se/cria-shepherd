@@ -231,6 +231,41 @@ def test_a_final_input_larger_than_the_window_is_answered_not_a_502(wire, mode):
     assert "Nothing was cut, summarised or dropped" in text
 
 
+def tool_result_request(mode, result, **kw):
+    """The task, the model's own `cat` call, and what the harness returned for it, in that wire mode's shape."""
+    path = "/v1/chat/completions" if mode.startswith("chat") else "/v1/responses"
+    stream, call = mode.endswith("stream"), {"cmd": "cat logs/app.log"}
+    if mode.startswith("chat"):
+        return path, {"model": "m", "stream": stream, "messages": [
+            {"role": "user", "content": "count the ERROR lines in logs/app.log"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function", "function": {
+                "name": "exec_command", "arguments": json.dumps(call)}}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": result}], **kw}
+    return path, {"model": "m", "stream": stream, "prompt_cache_key": "sid-1", **kw, "input": [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "count the ERROR lines in logs/app.log"}]},
+        {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": json.dumps(call)},
+        {"type": "function_call_output", "call_id": "call_1", "output": result}]}
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_tool_result_larger_than_the_window_continues_the_task_instead_of_ending_it(wire, mode):
+    """wave 10 OVFL: `cat` of a log bigger than the whole window was answered with a final assistant message, which ends a
+    non-interactive harness session (real Codex: rc 0 after one call, no answer). The coder now receives the request with that
+    result swapped for a labelled not-delivered note (measured size + a sized next step) and answers; a result that fits is
+    delivered byte for byte."""
+    log = "\n".join(f"2026-10-31 12:00:{i % 60:02d} worker-{i % 7} batch {i}" + (" ERROR timeout" if i % 97 == 0 else "") for i in range(9000))
+    status, raw = wire.post(*tool_result_request(mode, log))
+    assert status == 200 and reply_text(mode, raw) in ("Hi", "Hello world")        # the fake coder answered: nothing ended the turn
+    sent = json.dumps(wire.fake.chats[-1][1]["messages"], ensure_ascii=False)
+    assert "⟦ctx:result-not-delivered⟧" in sent and "input-not-delivered" not in sent and "worker-3 batch 3 " not in sent
+    assert f"{len(log):,} bytes in 9,000 line(s)" in sent and f"{WINDOW:,}-token context window" in sent
+    assert "call_1" in sent and "cat logs/app.log" in sent                          # the call the note answers is still on the wire
+    small = log[:3000]
+    wire.fake.chats.clear()
+    status, raw = wire.post(*tool_result_request(mode, small))
+    assert small.replace("\n", "\\n") in json.dumps(wire.fake.chats[-1][1]["messages"]) and "not-delivered" not in json.dumps(wire.fake.chats[-1][1], ensure_ascii=False)
+
+
 @pytest.mark.parametrize("mode", ["chat-buffered", "responses-buffered"])
 def test_cria_status_banners_in_history_never_reach_the_model(wire, mode):
     """Codex echoed cria's own banner lines back inside a compaction thread; both wire modes strip them before the model reads."""
