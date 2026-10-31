@@ -37,6 +37,20 @@ cheatsheet = true                  # inject per-tool usage note
 # a backstop for a fledgling, untrusted model. Governs FILE access outside the workspace:
 external_dir_permission = "none"   # none = no external reads/writes | read = external reads only | write = unrestricted
 
+[retention]
+# cria keeps private state for multipart reads (~/.cria/multipart) and image sessions (~/.cria/images) and has no
+# trusted signal from any harness that a conversation is over (measured: Codex sends nothing on exit, /clear,
+# compaction or cancel). So by default cria deletes NOTHING and the state grows until you run
+#   python -m cria.retention list|prune [--older-than 14d] [--apply]
+# Setting auto_prune_after is YOUR standing instruction to delete: cria then removes retained state whose last touch
+# is older than this, once at start and then every auto_prune_every, with exactly the safety of
+# `python -m cria.retention prune --apply --older-than` (symlinks refused, live holders and a held lock skipped,
+# corrupt entries never removed, one log event per removal and skip). A conversation that resumes after its state
+# was removed fails closed (an "unverified/unavailable" note, never a fabricated read). Age is your judgment, not
+# cria's: choose longer than any conversation you will resume. Minimums: 1h and 1m. Unset = off.
+# auto_prune_after = "14d"
+# auto_prune_every = "1h"
+
 [context]
 focus_trim = true                  # collapse duplicate tool calls
 self_compact = true                # summarize the old history middle (when is derived from the measured window; no knob)

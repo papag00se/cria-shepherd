@@ -575,6 +575,46 @@ class SafetyConfig:
 
 
 @dataclass(frozen=True)
+class RetentionConfig:
+    """``[retention]`` - the OPERATOR's standing authority to delete cria's retained private state
+    (multipart reads under ~/.cria/multipart, image sessions under ~/.cria/images). cria has no trusted
+    harness session-close signal, so it never decides on its own that a conversation is over: unless
+    ``auto_prune_after`` is set (the default), cria deletes nothing. Set it (e.g. ``"14d"``) and cria
+    removes retained state whose last touch is older than that, once at start and then every
+    ``auto_prune_every`` (default ``"1h"``), with exactly the safety of
+    ``python -m cria.retention prune --apply --older-than``. Both are ``<n><s|m|h|d|w>`` strings;
+    ``auto_prune_after`` must be at least ``1h`` and ``auto_prune_every`` at least ``1m``."""
+
+    auto_prune_after: str | None = None
+    auto_prune_every: str = "1h"
+
+    def __post_init__(self):
+        from .retention import AUTO_MIN_AGE, AUTO_MIN_EVERY, parse_age
+        for name, floor in (("auto_prune_after", AUTO_MIN_AGE), ("auto_prune_every", AUTO_MIN_EVERY)):
+            value = getattr(self, name)
+            if value is None and name == "auto_prune_after":
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f'[retention] {name} must be an age string like "14d", got {value!r}')
+            try:
+                seconds = parse_age(value)
+            except ValueError as exc:
+                raise ValueError(f"[retention] {name} {value!r}: {exc}") from None
+            if seconds < floor:
+                raise ValueError(f"[retention] {name} {value!r} is below the minimum of {floor // 60}m")
+
+    @property
+    def after_seconds(self) -> int | None:
+        from .retention import parse_age
+        return None if self.auto_prune_after is None else parse_age(self.auto_prune_after)
+
+    @property
+    def every_seconds(self) -> int:
+        from .retention import parse_age
+        return parse_age(self.auto_prune_every)
+
+
+@dataclass(frozen=True)
 class PlannerConfig:
     """The reasoned planner. Runs on a fresh coding task when a ``reasoner`` role is configured;
     drafts the plan. The loop drives execution from the plan in memory and mirrors it to cria's OWN
@@ -651,6 +691,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    retention: RetentionConfig = field(default_factory=RetentionConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     assists: AssistConfig = field(default_factory=AssistConfig)
     system1: System1Config = field(default_factory=System1Config)
@@ -704,6 +745,7 @@ class Config:
                 satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
             ),
             safety=_safety(data.get("safety", {})),
+            retention=_retention(data.get("retention", {})),
             assists=_assists(data.get("assists", {})),
             system1=_system1(data.get("system1", {})),
             planner=PlannerConfig(
@@ -743,6 +785,12 @@ def _system1(data: dict) -> System1Config:
     if not isinstance(data, dict) or set(data) - {"enabled", "bundle_dir", "threads"}:
         raise ValueError("[system1] supports only enabled, bundle_dir and threads")
     return System1Config(**data)
+
+
+def _retention(data: dict) -> RetentionConfig:
+    if not isinstance(data, dict) or set(data) - {"auto_prune_after", "auto_prune_every"}:
+        raise ValueError("[retention] supports only auto_prune_after and auto_prune_every")
+    return RetentionConfig(**data)
 
 
 def _read_toml(p: Path) -> dict:

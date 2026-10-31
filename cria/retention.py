@@ -4,10 +4,13 @@
     python -m cria.retention prune [--home DIR] [--kind ...] [--tmp DIR] [--older-than 14d]
                                    [--session ID] [--apply]
 
-Nothing here runs automatically and nothing in cria imports it. cria has no trusted
-harness session-close signal, so the operator's deliberate invocation IS the
-authority: idleness, LRU, eviction, compaction and "history stopped mentioning it"
-remain forbidden inferences. `prune` is a dry run unless `--apply` is given and it
+cria has no trusted harness session-close signal (measured against real Codex: it sends
+none on exit, /clear, compaction or cancel), so deletion authority is always the
+OPERATOR's: either this command, or the explicit `[retention] auto_prune_after` setting,
+which runs the same selection and removal code (`AutoPruner` below) on the operator's
+behalf. Unset (the default) means cria never deletes anything itself. Idleness, LRU,
+eviction, compaction and "history stopped mentioning it" remain forbidden inferences;
+the configured age is the operator's judgment, not cria's. `prune` is a dry run unless `--apply` is given and it
 needs `--older-than` and/or `--session` so a bare invocation can never select
 everything. Same-UID forgery is not authentication: any process of this user can
 fake or remove these files; the checks below stop mistakes and hostile names, not a
@@ -39,6 +42,7 @@ import os
 import re
 import stat
 import sys
+import threading
 import time
 import uuid
 import fcntl
@@ -561,17 +565,7 @@ def main(argv=None, out=None, now=None):
     try:
         for n in notes:
             out.write(f'note: {n}\n')
-        picked = select(entries, older_than=older, session=args.session, now=now)
-        plan, skipped = [], []
-        for e in picked:
-            if e.refused:
-                skipped.append((e, 'refused: ' + (e.detail or 'unsafe entry')))
-            elif e.state == 'active':
-                skipped.append((e, 'skipped: held by a live cria process'))
-            elif e.state == 'corrupt' and args.session is None:
-                skipped.append((e, 'skipped: corrupt (' + e.detail + '); select it with --session ID --apply'))
-            else:
-                plan.append(e)
+        plan, skipped = plan_prune(entries, older_than=older, session=args.session, now=now)
         out.write(('APPLY: will remove' if args.apply else 'DRY RUN: would remove') + f' {len(plan)} entr{"y" if len(plan)==1 else "ies"}\n')
         for e in plan:
             out.write(f'  remove {e.kind} {e.id} [{e.state}] {_size_text(e.size)} age {_fmt_age(now - e.mtime)}: '
@@ -581,23 +575,155 @@ def main(argv=None, out=None, now=None):
         if not args.apply:
             out.write('nothing was removed; re-run with --apply to delete exactly the entries above\n')
             return 0
-        authority = object()
-        for e in plan:
-            try:
-                if e.kind == 'multipart':
-                    _delete_multipart(fds['multipart'], e)
-                elif e.kind == 'snapshot':
-                    _delete_snapshot(fds['snapshot'], e)
-                else:
-                    _delete_image(str(_roots(args.home)['image']), e, authority,
-                                  force=args.session is not None)
+
+        def report(e, exc):
+            nonlocal code
+            if exc is None:
                 out.write(f'removed {e.kind} {e.id}\n')
-            except (OSError, ImageUnavailable, BridgeError, KeyError, TypeError) as exc:
+            else:
                 code = 1
                 out.write(f'FAILED {e.kind} {e.id}: {exc}; safe to re-run\n')
+        apply_plan(args.home, plan, fds, force=args.session is not None, report=report)
         return code
     finally:
         _close(fds)
+
+
+# ------------------------------------------------------- shared plan / apply
+
+def plan_prune(entries, *, older_than, session, now):
+    """The ONE selection rule for every prune (CLI and automatic): (plan, skipped[(entry, why)]).
+    Refused, live-held and (unless named by `session`) corrupt entries are never planned."""
+    plan, skipped = [], []
+    for e in select(entries, older_than=older_than, session=session, now=now):
+        if e.refused:
+            skipped.append((e, 'refused: ' + (e.detail or 'unsafe entry')))
+        elif e.state == 'active':
+            skipped.append((e, 'skipped: held by a live cria process'))
+        elif e.state == 'corrupt' and session is None:
+            skipped.append((e, 'skipped: corrupt (' + e.detail + '); select it with --session ID --apply'))
+        else:
+            plan.append(e)
+    return plan, skipped
+
+
+def apply_plan(home, plan, fds, *, force, report):
+    """Remove each planned entry through its owner's machinery; `report(entry, None|exception)` per entry.
+    The multipart state lock (taken by `collect(lock_multipart=True)`) is released as soon as the last
+    multipart entry is done, so image removal never holds up a request using multipart state."""
+    authority = object()
+    pending = sum(e.kind == 'multipart' for e in plan)
+
+    def release_lock():
+        fd = fds.pop('multipart-lock', None)
+        if fd is not None:
+            os.close(fd)
+    if not pending:
+        release_lock()
+    for e in plan:
+        try:
+            if e.kind == 'multipart':
+                try:
+                    _delete_multipart(fds['multipart'], e)
+                finally:
+                    pending -= 1
+                    if not pending:
+                        release_lock()
+            elif e.kind == 'snapshot':
+                _delete_snapshot(fds['snapshot'], e)
+            else:
+                _delete_image(str(_roots(home)['image']), e, authority, force=force)
+        except (OSError, ImageUnavailable, BridgeError, KeyError, TypeError) as exc:
+            report(e, exc)
+        else:
+            report(e, None)
+
+
+# ------------------------------------------------- operator-authorized automatic prune
+
+AUTO_MIN_AGE = _UNITS['h']      # `auto_prune_after` below an hour is refused: a typo must not be able to eat a live conversation
+AUTO_MIN_EVERY = _UNITS['m']
+
+
+class AutoPruner:
+    """Prune retained multipart and image state older than `older` seconds, on the OPERATOR's standing
+    instruction (`[retention] auto_prune_after`). It is the CLI's `prune --apply --older-than` with the same
+    `collect` / `plan_prune` / `apply_plan`: symlink and escape refusal, live image holders and a held multipart
+    lock skipped, corrupt entries never removed (only `--session` removes those), sealed cleanups retried.
+    It never infers closure from anything a request or harness did. `run_once` never raises; `start` runs it
+    once immediately and then every `every` seconds on a daemon thread that shares nothing with request handling
+    except the filesystem locks the owners already use. One structured event per removal and per skip (a
+    skipped entry is announced once per process and again only if the reason changes)."""
+
+    def __init__(self, home, older, every, emit, *, clock=time.time, kinds=('multipart', 'image')):
+        self.home, self.older, self.every, self.emit, self.clock, self.kinds = home, older, every, emit, clock, kinds
+        self._announced = {}
+        self._stop = threading.Event()
+        self._thread = None
+
+    def run_once(self):
+        removed = skipped = failed = 0
+        try:
+            entries, _ignored, fds, notes = collect(self.home, self.kinds, lock_multipart=True)
+            try:
+                for n in notes:
+                    self._once(('note', n), 'retention.auto_prune.note', note=n)
+                plan, skips = plan_prune(entries, older_than=self.older, session=None, now=self.clock())
+                for e, why in skips:
+                    skipped += 1
+                    self._once((e.kind, e.id), 'retention.auto_prune.skip', entry_kind=e.kind, entry_id=e.id, why=why,
+                               age_seconds=int(self.clock() - e.mtime))
+
+                def report(e, exc):
+                    nonlocal removed, failed
+                    if exc is None:
+                        removed += 1
+                        self.emit('retention.auto_prune.removed', entry_kind=e.kind, entry_id=e.id, label=e.label, size=e.size,
+                                  age_seconds=int(self.clock() - e.mtime), names=list(e.names))
+                    else:
+                        failed += 1
+                        self.emit('retention.auto_prune.failed', level='warn', entry_kind=e.kind, entry_id=e.id, error=str(exc))
+                apply_plan(self.home, plan, fds, force=False, report=report)
+            finally:
+                _close(fds)
+        except Exception as exc:  # noqa: BLE001 — a background janitor must never take the service down
+            failed += 1
+            try:
+                self.emit('retention.auto_prune.error', level='error', error=f'{type(exc).__name__}: {exc}')
+            except Exception:  # noqa: BLE001 — not even a broken logger may escape
+                pass
+        return {'removed': removed, 'skipped': skipped, 'failed': failed}
+
+    def _once(self, key, event, **fields):
+        why = fields.get('why') or fields.get('note')
+        if self._announced.get(key) != why:
+            self._announced[key] = why
+            self.emit(event, **fields)
+
+    def _loop(self):
+        try:
+            self.emit('retention.auto_prune.enabled', older_than_seconds=self.older, every_seconds=self.every,
+                      home=str(self.home), kinds=list(self.kinds))
+        except Exception:  # noqa: BLE001
+            pass
+        while True:
+            try:
+                self.run_once()
+            except BaseException:  # noqa: BLE001 — run_once already contains Exception; this is the last wall
+                pass
+            if self._stop.wait(self.every):
+                return
+
+    def start(self):
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._loop, name='cria-retention', daemon=True)
+            self._thread.start()
+        return self
+
+    def stop(self, timeout=5.0):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout)
 
 
 if __name__ == '__main__':

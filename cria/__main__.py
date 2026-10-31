@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, _on_sigterm)
     log.emit("server.start", host=cfg.server.host, port=cfg.server.port, upstream=cfg.upstream.base_url)
+    server.start_retention()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -110,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         drained = server.drain_streams()
         log.emit("server.stop", reason="interrupt", drained_streams=drained)
     finally:
+        if server.retention is not None:
+            server.retention.stop()
         server.server_close()
         log.close()
     return 0

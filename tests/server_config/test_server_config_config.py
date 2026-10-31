@@ -27,7 +27,7 @@ def test_defaults_are_sane_planner_off_and_env_file_confined_to_the_cria_dir(tmp
     with patch.object(cfgmod, "HOME_CONFIG", str(tmp_path / "none-h.toml")), patch.object(cfgmod, "CWD_CONFIG", str(tmp_path / "none-c.toml")):
         nothing = Config.load()
     for cfg in (Config(), nothing, load(tmp_path, "[planner]\nmax_gather_rounds = 3\n"), Config.load(EXAMPLE)):
-        assert not cfg.planner.enabled and cfg.system1.enabled is False
+        assert not cfg.planner.enabled and cfg.system1.enabled is False and cfg.retention.auto_prune_after is None and cfg.retention.after_seconds is None
         assert cfg.env_file in (None, "~/.cria/.env")
     assert (Config().server.port, Config().upstream.base_url) == (18085, "http://127.0.0.1:18084")
     assert load(tmp_path, "[planner]\nenabled = true\n").planner.enabled  # explicit opt-in survives
@@ -57,6 +57,12 @@ def test_toml_layers_merge_cwd_over_home_and_defaults_normalize(tmp_path):
     ('[system1]\nenabled = true\nbundle_dir = "/b"\nunknown = 1\n', "system1"),
     ('[system1]\nenabled = true\n', "bundle_dir is required"),
     ('[system1]\nthreads = 0\n', "threads must be"),
+    ('[retention]\nauto_prune_after = 14\n', "auto_prune_after must be an age string"),
+    ('[retention]\nauto_prune_after = "soon"\n', "age must look like"),
+    ('[retention]\nauto_prune_after = "30m"\n', "below the minimum of 60m"),
+    ('[retention]\nauto_prune_after = "14d"\nauto_prune_every = "10s"\n', "auto_prune_every.*below the minimum"),
+    ('[retention]\nauto_prune_after = "14d"\nauto_prune_every = 3600\n', "auto_prune_every must be an age string"),
+    ('[retention]\nauto_prune_after = "14d"\nidle_days = 3\n', "supports only auto_prune_after and auto_prune_every"),
     ('[roles.coder]\nbackend = "nope"\n', "no matching"),
     ('[backends.g]\ntransport = "http"\napi_key_env = "K"\n[roles.coder]\nbackend = "g"\n', "needs a base_url"),
     ('[backends.cx]\ntransport = "cli"\ntool = "codex"\n[roles.r]\nbackend = "cx"\n', "codex exec"),

@@ -866,6 +866,7 @@ class CriaServer(ThreadingHTTPServer):
         self.compactor_role = roles.get("compactor") or roles.get("reasoner")
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
+        self.retention = None   # AutoPruner, only when the operator configured [retention] auto_prune_after
         from .multipart_bridge import Bridge
         self.multipart_bridge = Bridge(os.path.expanduser('~/.cria/multipart'))
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
@@ -978,6 +979,18 @@ class CriaServer(ThreadingHTTPServer):
     def unregister_stream(self, hb) -> None:
         with self._streams_lock:
             self.active_streams.pop(hb, None)
+
+    def start_retention(self, home=None):
+        """Start the operator-authorized background prune of retained private state, or do nothing.
+        Only an explicit ``[retention] auto_prune_after`` enables it; the thread cannot reach a request."""
+        after = self.cfg.retention.after_seconds
+        if after is None or self.retention is not None:
+            return None
+        from . import privatepaths
+        from .retention import AutoPruner
+        self.retention = AutoPruner(home or privatepaths.CRIA_HOME, after, self.cfg.retention.every_seconds,
+                                    self.log.emit).start()
+        return self.retention
 
     def drain_streams(self) -> int:
         """On shutdown, END every in-flight SSE stream with a terminal, RETRYABLE response.failed so
