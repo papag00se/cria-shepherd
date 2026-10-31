@@ -1,12 +1,14 @@
 """Scenario2 (LA2): the loop trusts a selected assist's typed answer only when it is the typed contract - an evidence-summary or completion-
 confirmation replacement that answers wrongly stops the turn loudly instead of being believed. Real loop functions under a real runtime
 whose one definition is swapped for a scripted double; the unselected arms (no definition) pass the text through untouched."""
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from cria import assistruntime, completionconfirmation as cc, evidencesummary as es, loop
 from loop_rest_helpers import Rlog, loop_rest_local_view  # noqa: F401
+from test_loop_rest_judge_protocol import ROLE
 
 LOG = "step 1: wrote app.py\nstep 2: ran pytest\n"
 
@@ -71,3 +73,24 @@ def test_a_confirmation_answer_is_accepted_only_when_status_flag_authority_and_o
                   cc.Result(cc.Status.REJECTED, observed=1)]:
         with pytest.raises(ValueError, match="Completion confirmation replacement"):
             confirm(wrong)
+
+
+@pytest.mark.parametrize("reply,asked", [('{"missing_file": false}', 1), ("garbage", 1), ("", 1)])
+def test_the_task_deliverable_observer_stays_silent_unless_the_observer_affirms(reply, asked, tmp_path):
+    """Not-missing, unreadable and empty observer answers are silence; with no reasoner nobody is even asked; with the policy unselected
+    the observer is never reached."""
+    questions = []
+
+    def chat(body, log):
+        questions.append(log.phase)
+        return json.dumps({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": reply}}]}).encode()
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        seen = loop.observe_task_missing_file("create app.py with main", workspace_root=str(tmp_path), reasoner_chat=chat,
+                                              reasoner_role=ROLE, rlog=Rlog())
+        offline = loop.observe_task_missing_file("create app.py", workspace_root=str(tmp_path), reasoner_chat=None,
+                                                 reasoner_role=ROLE, rlog=Rlog())
+    with assistruntime.bound(runtime(completion_diagnosis=None)):
+        unselected = loop.observe_task_missing_file("create app.py", workspace_root=str(tmp_path), reasoner_chat=chat,
+                                                    reasoner_role=ROLE, rlog=Rlog())
+    assert seen == offline == unselected == loop.VerdictNudge() and not seen.action
+    assert questions == ["deliverable-observation"] * asked
