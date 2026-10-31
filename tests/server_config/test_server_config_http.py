@@ -259,7 +259,9 @@ def test_a_keyed_backend_secret_is_sent_upstream_but_never_logged_or_captured(tm
 
 
 def test_level_zero_forwards_tools_and_history_untouched_and_logs_only_transport(tmp_path):
-    """Engagement level 0 is a pure proxy: only the harness persona is dropped; no menu/context surgery (a campaign once ran a 'model on its own' arm with 1,011 menu edits)."""
+    """Engagement level 0 is a pure proxy: no menu/context surgery (a campaign once ran a 'model on its own' arm with 1,011 menu edits).
+    The caller's system message is forwarded as sent (it was silently dropped here until a Chat caller's system/developer text was
+    carried like Responses `instructions`); a request with no system message ships exactly its history."""
     tools = [{"type": "function", "function": {"name": n, "parameters": {"type": "object"}}} for n in ("shell", "apply_patch")]
     history = [{"role": "user", "content": "do x"},
                {"role": "assistant", "content": None, "tool_calls": [
@@ -268,11 +270,14 @@ def test_level_zero_forwards_tools_and_history_untouched_and_logs_only_transport
     w = Wire(tmp_path, lambda url: RoutingConfig(engagement_level=0))
     try:
         w.post("/v1/chat/completions", chat_body(tools=tools) | {"messages": [{"role": "system", "content": "persona"}, *history]})
+        w.post("/v1/chat/completions", chat_body(tools=tools) | {"messages": history}, sid="sid-2")
+        bare = w.fake.chats[-1][1]
         kinds = {e["kind"] for e in w.events()}
     finally:
         w.close()
-    sent = w.fake.chats[-1][1]
-    assert sent["tools"] == tools and sent["messages"] == history
+    sent = w.fake.chats[-2][1]
+    assert sent["tools"] == tools and sent["messages"] == [{"role": "system", "content": "persona"}, *history]
+    assert bare["tools"] == tools and bare["messages"] == history
     assert kinds <= {"config.warn", "context.prefix", "ctx.estimate", "http.access", "request.recv",
                      "response.sent", "upstream.request", "upstream.done", "context.window"}
 

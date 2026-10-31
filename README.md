@@ -4,7 +4,7 @@
 
 cria-shepherd sits between a coding harness and its model server. It manages context, repairs supported tool-call formats, and requests checks when the agent reports completion.
 
-The harness still runs commands, edits files and controls workspace permissions. cria works on the requests and responses passing between the harness and the model. It supports the OpenAI Chat Completions and Responses APIs, with local models as the default backend.
+The harness still runs commands, edits files and controls workspace permissions. cria works on the requests and responses passing between the harness and the model. It supports the OpenAI Chat Completions and Responses APIs, with local models as the default backend. A caller's own instructions (Responses `instructions`/developer items, Chat `system`/`developer` messages) are carried behind cria's own coder prompt and reduced with a visible label only when the window requires it; they are never dropped silently.
 
 [Tool-call repair](#tool-call-repair) · [Assists](#what-cria-does) · [L0 vs L5](#l0-vs-l5) · [Getting started](#getting-started)
 

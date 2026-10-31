@@ -318,14 +318,61 @@ def _remember_session_cwd(sess_key: str, cwd: str) -> str:
     return cwd
 
 
+def carry_chat_system(body: dict) -> None:
+    """Chat Completions: carry the caller's system/developer text as CALLER INSTRUCTIONS, exactly as the
+    Responses translation (`responses.to_chat_body`) carries `instructions` and developer items.
+
+    Until now a Chat caller's system message was removed twice — `_proxy_body` on the relay path and
+    `steppreparation.assemble_base` on the coder path, both of which keep only messages carrying
+    `bodykeys.CALLER_INSTRUCTIONS` — and nothing told the model. A 100-token persona and a 60,000-token
+    rulebook vanished identically while the same text sent as Responses `instructions` reached the
+    model. One owner now marks it at the Chat edge: every system/developer message is folded, in order,
+    into ONE leading `system` message with the marker (a second leading system message breaks strict
+    chat templates). The text of the first `system`-role message is the harness's base prompt and rides
+    as `CALLER_PERSONA`, the only part the context floor may swap for its labelled stand-in under window
+    pressure; `developer` messages are the caller's configured constraints and are never reducible.
+    cria's own coder system leads and cria's safety/tool rules are not displaced (`assemble_base`).
+
+    A body with no system/developer message, an already-marked one (Responses), or no usable text is
+    left byte-for-byte as it was."""
+    msgs = body.get("messages")
+    if not isinstance(msgs, list):
+        return
+    carried, rest, persona, at, used = [], [], "", 0, 0
+    for m in msgs:
+        if not isinstance(m, dict) or m.get("role") not in ("system", "developer"):
+            rest.append(m)
+            continue
+        if m.get(bodykeys.CALLER_INSTRUCTIONS):
+            return                      # Responses translation already did this
+        content = m.get("content")
+        text = ("\n".join(p.get("text") or "" for p in content if isinstance(p, dict))
+                if isinstance(content, list) else content if isinstance(content, str) else "")
+        if not text.strip():
+            rest.append(m)
+            continue
+        if not persona and m["role"] == "system":
+            persona, at = text, used
+        carried.append(text)
+        used += len(text) + 2
+    if not carried:
+        return
+    # The span lets the context floor reduce the persona on the relay path too (the coder path anchors its own
+    # span in `assemble_base`); without it an oversized one is refused whole rather than reduced with its label.
+    body["messages"] = [{"role": "system", "content": "\n\n".join(carried), bodykeys.CALLER_INSTRUCTIONS: True,
+                         **({bodykeys.CALLER_PERSONA: persona, bodykeys.CALLER_SPAN: {"start": at, "text": persona}}
+                            if persona else {})}, *rest]
+
+
 def _proxy_body(body: dict) -> dict:
     """The proxy (relay) path — used when cria isn't orchestrating (a question, or an aux
     harness call the loop declined, e.g. Codex's UI title-generation) — still DROPS the
-    harness's agent system/developer prompt. That persona is harness-specific and often
-    absurd overhead (Codex prepends its ~5.6K-token "You are Codex" boilerplate even to a
-    36-char title call). The request's own instructions live in its user messages and still
-    drive it; cria imposes no orchestration prompt of its own here. (The coder path drops it
-    separately, in loop._frame_for_item, and leads with cria's coder system prompt.)"""
+    harness's agent system/developer prompt unless it is marked caller instructions (Responses
+    `instructions`/developer items, and a Chat caller's system/developer text via
+    :func:`carry_chat_system`). The request's own instructions live in its user messages and still
+    drive it; cria imposes no orchestration prompt of its own here. (The coder path replaces any
+    UNMARKED system text separately, in loop._frame_for_item, and leads with cria's coder system
+    prompt; marked caller instructions ride behind it.)"""
     msgs = body.get("messages")
     if not isinstance(msgs, list):
         return body
@@ -1028,6 +1075,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"invalid JSON body: {e}"})
             return
 
+        carry_chat_system(body)
         self._multipart_original_body = copy.deepcopy(body)
         sk = session_key(self.headers, body.get('messages', []))
         if self._multipart_inbound(body, sk, rlog, api='chat', stream=bool(body.get('stream'))):

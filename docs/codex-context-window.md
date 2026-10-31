@@ -73,9 +73,9 @@ At L1-L5 the existing usage facade reports **estimated continuing model-visible 
   the model is shown (post focus-trim), or, for a compaction request, of the conversation being
   compacted (not the summary prompt cria rebuilds it into).
 - **Out of the number:** cria's completion-gate plumbing and results that `clean_gate_results`
-  removes (survey/launch/poll arguments, base64 pages), blanked `⟦cria⟧` status turns, and the
-  harness's own agent prompt. **In:** cria's coder system prompt, the Responses `instructions`
-  (folded into it), the tool hint, the cleaned gate verdicts, and the tool schema.
+  removes (survey/launch/poll arguments, base64 pages) and blanked `⟦cria⟧` status turns. **In:** cria's
+  coder system prompt, the caller's instructions (the Responses `instructions`/developer items and a
+  Chat caller's `system`/`developer` messages, folded into it), the tool hint, the cleaned gate verdicts, and the tool schema.
 - **Not multiplied by `tokenratio`** — that is the floor's conservative safety factor (rise fast, ~1.6 on
   tiny judge calls), not a calibrated estimate; phi4's coder frames measure 1.02x chars/4.
 - **Not in it:** per-turn steers/facts a coder call appends after framing, and (planner ON only) the
