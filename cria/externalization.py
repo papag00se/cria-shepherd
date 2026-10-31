@@ -331,5 +331,5 @@ DEFINITION = Definition(Policy(
     state="session/task operations; reset invalidates pending delivery; exact owner settlement",
     services=("cached-document-facts", "guarded-spill-transport", "retained-delivery-observation"),
     hooks=(Reference("cria/externalization.py", "externalize"),),
-    regressions=(Reference("tests-before-reset-20261031:tests/test_externalization_policy.py", "test_retry_and_selected_owner"),),
+    regressions=(Reference("tests/research_discovery/test_research_discovery_externalization.py", "test_a_claim_needs_checked_storage_and_a_retained_original_and_settles_once"),),
     migrated=False), externalize, State.settle, State.cancel, State.reset)

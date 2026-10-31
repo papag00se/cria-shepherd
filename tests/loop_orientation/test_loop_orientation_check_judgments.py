@@ -1,5 +1,6 @@
 """A failed declared runner / Go test gets ONE definitive judgment per distinct facts; unknown answers never settle it
 and an unknown workspace fact is stated as unknown."""
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,3 +60,13 @@ def test_an_unknown_node_modules_is_stated_as_unknown_never_as_absent():
         judge = Judge("runner")
         judge("ON_TRACK", node_modules=present)
         assert words in judge.asked[0]
+
+def test_an_unselected_runner_contract_gathers_nothing_and_a_selected_replacement_runs_instead_of_the_stock_judgment():
+    class NoStateReads:
+        signature = property(lambda self: pytest.fail("an unselected stage inspected state"))
+    gathered = []
+    assert rc.run_selected(None, lambda: gathered.append(1), NoStateReads()) == rc.RunnerResult(rc.RunnerStatus.NOT_SELECTED) and not gathered
+    judge, ran = Judge("runner"), []
+    replacement = replace(rc.DEFINITION, execute=lambda source, state: ran.append((source, state)) or rc.RunnerResult(rc.RunnerStatus.ON_TRACK))
+    source = rc.RunnerInput(judge.outcome, lambda: "checks", lambda: None, lambda: ("the task", "session"), lambda *a, **k: pytest.fail("stock judge asked"), judge.log)
+    assert rc.run_selected(replacement, lambda: source, judge.state).status is rc.RunnerStatus.ON_TRACK and ran == [(source, judge.state)]

@@ -1,5 +1,7 @@
 """The rolling engine (selfcompact.rolling): when it fires, what it folds, and what it never loses."""
 import json
+from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -75,6 +77,27 @@ def test_an_empty_or_all_echo_briefing_folds_nothing_and_leaves_history_verbatim
     msgs = history(30)
     res, seen = run(msgs, answer, force=force, keep_tail_tokens=120)
     assert len(seen) == 1 and res.effect is Effect.WITHHELD and res.messages == msgs and res.state.summary == ""
+
+def test_a_disabled_rolling_stage_measures_nothing_asks_nobody_and_keeps_a_pending_force_and_a_replacement_owns_the_legacy_entry():
+    source = sc.RollingInput(history(16), lambda mm, **k: pytest.fail("writer ran"), room_tokens=100, keep_tail_tokens=100,
+                             recompact_tokens=100, force=True)
+    state = sc.CompactState("prior", 3, 5)
+    with patch.object(sc, "_msg_tokens", side_effect=AssertionError("detection ran")):
+        off = sc.DEFINITION.execute(source, state, enabled=False)
+    assert off.messages is source.messages and off.state is state and off.effect is Effect.NO_OP and off.force_pending
+    assert state == sc.CompactState("prior", 3, 5)
+    received = []
+
+    def replacement(src, current, *, enabled=True):
+        received.append((src, current, enabled))
+        return sc.RollingResult(src.messages, current, Effect.WITHHELD)
+    msgs = history(16)
+    with patch.object(sc, "DEFINITION", replace(sc.DEFINITION, execute=replacement)), patch.object(
+            sc, "_msg_tokens", side_effect=AssertionError("stock algorithm bypassed the replacement")):
+        out, returned, applied = sc.compact(msgs, lambda mm: "unused", state, pinned_task="original", force=True)
+    assert out is msgs and returned is state and not applied
+    assert len(received) == 1 and received[0][0].pinned_task == "original" and received[0][0].force and received[0][2]
+
 
 def test_a_rejected_increment_keeps_the_standing_rollup_and_is_not_asked_again_until_a_new_band_grows():
     """ornith1.5_9b / Java run07: a rejected writer made coder call 0077 carry 47 raw messages and no rollup."""

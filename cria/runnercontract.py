@@ -153,8 +153,8 @@ DEFINITION = RunnerDefinition(
                   Reference('cria/loop.py', 'Loop._drive_single_item')),
            regressions=(Reference('tests/loop_orientation/test_loop_orientation_check_judgments.py',
                                   'test_one_judgment_per_distinct_failure_facts_and_unreadable_answers_never_settle'),
-                        Reference('tests-before-reset-20261031:tests/test_runner_contract_policy.py',
-                                  'test_disabled_stage_never_constructs_input_or_observes_state')),
+                        Reference('tests/loop_orientation/test_loop_orientation_check_judgments.py',
+                                  'test_an_unselected_runner_contract_gathers_nothing_and_a_selected_replacement_runs_instead_of_the_stock_judgment')),
            migrated=False),
     judge_runner_contract)
 

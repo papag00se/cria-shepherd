@@ -327,9 +327,11 @@ POLICY = Policy(
     hooks=(Reference("cria/server.py", "_recognize_compaction"),
            Reference("cria/server.py", "_compaction_body"),
            Reference("cria/server.py", "_harden_compaction_reply")),
-    regressions=(Reference("tests-before-reset-20261031:tests/test_harness_memory_source.py", "test_source_matches_server"),
-                 Reference("tests-before-reset-20261031:tests/test_harness_memory_source.py", "test_disabled_does_not_touch_evidence_judgment_or_state"),
-                 Reference("tests-before-reset-20261031:tests/test_harness_memory_boundaries.py", "test_producer_authentication_survives_real_continuation_and_final_wire")),
+    regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accepted_one_ships_untouched"),
+                 Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_cut_off_briefing_is_retried_once_and_only_the_retry_is_judged_and_shipped"),
+                 Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_compaction_the_selection_leaves_out_touches_no_evidence_judge_or_state"),
+                 Reference("tests/compaction_handoff/test_compaction_handoff_asum_producer_lifecycle.py", "test_a_decorated_drop_keeps_its_producer_record_and_the_next_turn_reads_the_ledger_as_retained_fact"),
+                 Reference("tests/compaction_handoff/test_compaction_handoff_asum_producer_lifecycle.py", "test_a_quoted_or_altered_copy_of_the_reply_is_never_authenticated")),
     migrated=False,
 )
 

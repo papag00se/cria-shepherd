@@ -1592,9 +1592,9 @@ DEFINITION = RollingDefinition(
                      "workspace-inventory", "compaction-evidence", "three-lens-validator"),
            hooks=(Reference("cria/loop.py", "Loop._self_compact"),
                   Reference("cria/loop.py", "Loop._self_compact_single")),
-           regressions=(Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical"),
-                        Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_disabled_rolling_does_not_detect_call_or_consume_force"),
-                        Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage"),
+           regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_rolling.py", "test_the_old_middle_rolls_into_a_labelled_rollup_and_the_newest_turn_stays_verbatim"),
+                        Reference("tests/compaction_handoff/test_compaction_handoff_rolling.py", "test_a_disabled_rolling_stage_measures_nothing_asks_nobody_and_keeps_a_pending_force_and_a_replacement_owns_the_legacy_entry"),
+                        Reference("tests/compaction_handoff/test_compaction_handoff_rolling.py", "test_a_rejected_increment_keeps_the_standing_rollup_and_is_not_asked_again_until_a_new_band_grows"),
                         Reference("tests/compaction_handoff/test_compaction_handoff_rolling.py", "test_a_summary_past_the_refold_threshold_is_condensed_once_and_a_failed_refold_keeps_the_increment")),
            migrated=False), rolling)
 

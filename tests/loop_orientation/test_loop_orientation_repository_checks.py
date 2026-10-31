@@ -1,5 +1,6 @@
 """The periodic repository check-in: when it is due, and that a refused, cut or unreadable run is never read as green."""
 import copy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -68,3 +69,21 @@ def test_a_passing_tally_regression_is_per_command_and_a_runner_without_a_tally_
                                      [parse_output("go", "go test ./...", 0, "ok example/project 0.1s", "")])
     assert rcheck.passing_test_regression(state, untallied) == ""
     assert rcheck.passing_test_regression(state, proberun.ProbeReport([], [], [])) == ""
+
+def test_an_unselected_check_lifecycle_calls_no_service_and_leaves_state_alone_and_a_selected_replacement_owns_the_stage():
+    def forbidden(*args):
+        raise AssertionError("an unselected stage called a service")
+    state = loop.GuardState(coder_turns=20, periodic_probe=True)
+    before = copy.deepcopy(vars(state))
+    off = rcheck.Selected(None)
+    for result in (off.admit(forbidden, state, forbidden), off.resume(forbidden, state, forbidden, forbidden, forbidden),
+                   off.completion(forbidden, state, forbidden), off.replan(forbidden, state, forbidden),
+                   off.reissue(forbidden, state, forbidden, forbidden)):
+        assert result.status is rcheck.Status.NOT_SELECTED
+    off.observe(state, acting=True)
+    assert vars(state) == before
+    calls = []
+    owned = replace(rcheck.DEFINITION, execute=lambda src, st, svc: calls.append((src, st, svc)) or rcheck.Result(rcheck.Status.SILENT, text="replacement-owned"))
+    src = rcheck.Input(body(), Log(), 5)
+    out = rcheck.Selected(owned).admit(lambda: src, state, probes)
+    assert out.text == "replacement-owned" and len(calls) == 1 and calls[0][:2] == (src, state) and vars(state) == before   # the stock due-clock never ran

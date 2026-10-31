@@ -17,6 +17,8 @@ def test_a_claim_needs_checked_storage_and_a_retained_original_and_settles_once(
     assert result.payload == "pointer" and e.externalize(source, state) is result   # offered once, identical on retry
     assert state.settle(result, outcome, stored=stored) is recorded
     assert state.settle(result, outcome, stored=stored) is False and events == (["p"] if recorded else [])
+    with pytest.raises(ValueError, match="identity reused"):      # the same call id cannot be reused for different bytes
+        e.externalize(inp("x", raw="different")[0], state)
 
 def test_no_offer_or_a_declined_offer_or_absence_retains_every_inline_byte():
     """The model keeps all of the original when nothing was stored (no spill found, offer declined, feature absent)."""

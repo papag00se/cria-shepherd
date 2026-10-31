@@ -1,8 +1,9 @@
 """The real driver's reorientation: what the author is shown, and what the coder is finally told."""
+import json
 from unittest.mock import Mock
 
 import pytest
-from cria import assistruntime, loop
+from cria import assistruntime, loop, prompts
 from cria.config import Role
 from loop_orientation_helpers import Log, driver, local_workspace_view  # noqa: F401
 
@@ -111,3 +112,30 @@ def test_a_gap_named_by_the_scheduled_review_reaches_the_coder_turn_it_precedes_
     assert run is reply and len(offered) == 1
     assert "still lacks the required content" in "\n".join(str(m.get("content", "")) for m in offered[0]["messages"])
     assert not sess.nudge_reason
+
+
+@pytest.mark.parametrize("task,amendment,worked,allowed", [
+    ("Do not inspect any files. Make the first requested edit immediately.", None, False, False),
+    ("Inspect the relevant files before editing.", "Actually do not inspect; make the edit immediately.", False, False),
+    ("Inspect the relevant files before making changes, then complete the requested edit.", None, False, True),
+    ("Inspect the relevant files before editing.", "Actually do not inspect; make the edit immediately.", True, False),
+    ("Do not inspect any files. Make the first requested edit immediately.", "Actually inspect the relevant files first.", True, True),
+    ("Inspect the relevant files before editing.", f"{loop.CONTINUATION_MARKER} Actually do not inspect; make the edit immediately.", True, False),
+], ids=["negative-task", "negative-amendment", "positive-inspection", "negative-post-work", "positive-post-work", "negative-marker"])
+def test_the_current_task_and_any_later_amendment_decide_whether_the_coder_is_told_to_inspect(monkeypatch, task, amendment, worked, allowed):
+    """The authored steer is delivered only when the AUTHOR is given the task and the user's latest word and still answers; a marker
+    on a later user turn is text, not an owned continuation. The coder keeps the task and the amendment verbatim either way."""
+    messages = [{"role": "user", "content": task}, {"role": "user", "content": SUMMARY}]
+    if worked:
+        messages.append({"role": "assistant", "content": "Earlier work."})
+    if amendment:
+        messages.append({"role": "user", "content": amendment})
+    answer = "Inspect the relevant files before making changes." if allowed else "KEEP_TASK"
+    origin = loop._HandoffOrigin("Earlier account", "", False, continuation=SUMMARY)
+    framed, author = prepare(monkeypatch, messages, answer=answer, origin=origin)
+    text = str(framed["messages"])
+    assert task in text and (not amendment or amendment in text)
+    assert steers(framed) == ([prompts.render("nudge", reason=answer)] if allowed else [])
+    assert author.call_count == 1
+    if amendment:       # the author is told which user turn is the producer's own continuation: never one that merely carries the marker
+        assert json.dumps([amendment, False], ensure_ascii=False) in author.call_args.args[3]

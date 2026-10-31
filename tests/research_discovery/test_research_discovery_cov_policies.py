@@ -2,6 +2,7 @@
 (fetch/failure/spill admissions on typed facts) and cria.discoverypolicy (best-effort protocol admission that never blocks the GET)."""
 import asyncio
 import pytest
+import dataclasses
 from cria import discoverypolicy as dp, researchpolicies as rs
 from cria.searchloop import first_domain_in, normalize_search, searches_match
 
@@ -96,6 +97,9 @@ def test_discovery_substitutes_the_get_body_only_for_a_truthy_observed_contract_
     assert dp.observation(VALUE, services(mcp=lambda u: falsy)) is None and dp.observation(VALUE, services()).kind == 'mcp'            # the observed object itself, or None
     def never(*a): raise AssertionError('classified without a selection')
     assert dp.selected_discovery(None, VALUE, dp.DiscoveryServices(never, never, never, never, ValueError, never)).text is None
+    svc, seen = services(), []
+    owned = dataclasses.replace(dp.DEFINITION, execute=lambda v, sv: seen.append((v, sv)) or dp.DiscoveryResult('replacement'))
+    assert dp.selected_discovery(owned, VALUE, svc).text == 'replacement' and seen[0][0] is VALUE and seen[0][1] is svc    # the selected replacement, with the caller's own objects
 
 def test_async_discovery_follows_the_same_admission_and_lets_cancellation_propagate():
     """The awaited adapters give the same answers; cancellation is not an adapter failure."""
