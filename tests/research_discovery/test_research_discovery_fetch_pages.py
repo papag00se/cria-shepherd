@@ -92,7 +92,7 @@ def test_a_find_on_a_document_that_fits_never_deletes_it(served):
     url = served(small, url="https://x/small")
     for q in ("paths", "zzznope"):
         out = wf.fetch_nav(url, find=q)
-        assert '"title": "tiny"' in out or "tiny" in out, q
+        assert out.endswith('\n{"paths":{"/a":{}},"info":{"title":"tiny"}}\n') and "no match" not in out, q
     cut = served('{"a":1}', truncated=True, url="https://x/cut")
     out = wf.fetch_nav(cut, find="nonexistentkey")
     assert "no match" in out and "fetch limit" in out   # a miss on a cut body may be a cut, not an absence
