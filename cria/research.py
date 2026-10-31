@@ -112,7 +112,9 @@ def _call_paths(fn: dict) -> set:
         d = jsontext.loads(args) if isinstance(args, str) else (args or {})
     except (ValueError, TypeError, AttributeError):
         d = {}
-    path = (d or {}).get("path") or (d or {}).get("file") or (d or {}).get("filename")
+    if not isinstance(d, dict):                         # `["a"]`, `3`, `"x"` parse fine and are still not an argument object
+        return set()
+    path = d.get("path") or d.get("file") or d.get("filename")
     return {path.strip()} if isinstance(path, str) and path.strip() else set()
 
 
