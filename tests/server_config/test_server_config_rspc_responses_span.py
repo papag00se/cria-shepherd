@@ -15,7 +15,7 @@ TASK = "write hello.py"
 RULES = "HOUSE RULE: every Python file starts with a module docstring."
 
 
-def sent_messages(tmp_path, instructions, level=0, **kw):
+def sent_messages(tmp_path, instructions, level=3, **kw):
     w = Wire(tmp_path, lambda url: RoutingConfig(engagement_level=level))
     try:
         status, raw = w.post("/v1/responses", resp_body(TASK, instructions=instructions, **kw))
@@ -37,7 +37,7 @@ def test_to_chat_body_anchors_the_persona_span_at_the_head_of_the_folded_system_
 
 
 def test_a_persona_over_the_window_on_a_proxied_turn_is_reduced_with_its_label_and_the_turn_is_answered(tmp_path):
-    status, raw, sent = sent_messages(tmp_path, BIG, level=0)
+    status, raw, sent = sent_messages(tmp_path, BIG, level=3)
     assert status == 200 and "input-not-delivered" not in raw and json.loads(raw)["output"]
     assert BIG not in sent[0]["content"] and sent[0]["content"].startswith("⟦ctx:reduced⟧")
     assert sent[-1] == {"role": "user", "content": TASK}
@@ -46,7 +46,7 @@ def test_a_persona_over_the_window_on_a_proxied_turn_is_reduced_with_its_label_a
 
 def test_only_the_persona_is_reduced_a_developer_constraint_survives_whole(tmp_path):
     dev = {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": RULES}]}
-    w = Wire(tmp_path, lambda url: RoutingConfig(engagement_level=0))
+    w = Wire(tmp_path, lambda url: RoutingConfig(engagement_level=3))
     try:
         body = resp_body(TASK, instructions=BIG)
         body["input"].insert(0, dev)
@@ -60,5 +60,5 @@ def test_only_the_persona_is_reduced_a_developer_constraint_survives_whole(tmp_p
 def test_a_persona_that_fits_ships_the_same_wire_body_as_before(tmp_path):
     """Byte-identical where nothing was over the window: the span is stripped at the wire and nothing is reduced."""
     persona = "You are a coding agent. " * 40
-    _, _, sent = sent_messages(tmp_path, persona, level=0)
+    _, _, sent = sent_messages(tmp_path, persona, level=3)
     assert sent == [{"role": "system", "content": persona}, {"role": "user", "content": TASK}]
