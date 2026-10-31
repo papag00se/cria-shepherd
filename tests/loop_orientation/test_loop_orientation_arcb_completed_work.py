@@ -251,3 +251,65 @@ def test_a_harness_rewrite_keeps_the_harness_summary_for_the_planner_and_stacks_
     assert carried.followup() == cw.FollowupContext("Prior work", "Prior work")
     assert carried.followup("") == cw.FollowupContext("", "Prior work")           # an empty rewrite: the planner gets none, the coder keeps it
     assert carried.followup("Harness summary.").planner_prior_work == "" and cw.read_history([]).followup("") == cw.FollowupContext("", "")
+
+def held(verdict_reasoner):
+    """A finished-looking task whose release is a HELD claim waiting on the repo's own checks, whose green reading is in the history."""
+    import base64, hashlib
+    from cria import probegate, probediscovery
+    driver, session, body, calls = finished()
+    driver._ctx.reasoner_chat = verdict_reasoner
+    session.plan.items[0].done = False
+    session.done_probe, session.pending_done_parts, session.pending_done = True, ("The requested CLI work is complete.",), "The held claim."
+    session.probe_call_id = "held-release-check"
+    candidate = probediscovery.ProbeCandidate(probediscovery.ProbeKind.Test, ["pytest", "-q"], "", 90, 80, probediscovery.ProbeCost.Cheap,
+                                              False, False, False, "fixture")
+    plan = session.gate_plan = probegate.GatePlan(workspace="/offline", candidates=[candidate], transport_required=True,
+                                                  script=probegate._gate_sentinel(["pytest -q"]))
+    raw = f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n2 passed\nEXIT:0\n"
+    data, offset, sections = raw.encode(), 0, {}
+    for line in data.splitlines(keepends=True):
+        if line.strip().startswith(probegate.SECTION_PREFIX.encode()):
+            sections[line.strip()[len(probegate.SECTION_PREFIX):-len(probegate.SECTION_SUFFIX)].decode()] = offset
+        offset += len(line)
+    b64 = lambda raw_bytes: base64.b64encode(raw_bytes).decode()                                  # noqa: E731
+    page = "\n".join([probegate._transport_marker(plan.transport_id), "path\t" + b64(f"/tmp/.cria-gate-{plan.transport_id}.spool".encode()),
+                      "offset\t0", f"total\t{len(data)}", "sha256\t" + hashlib.sha256(data).hexdigest(),
+                      "bounds\t" + b64(json.dumps(dict(checker_end=len(data), report_end=len(data), total=len(data), sections=sections)).encode()),
+                      "data\t" + b64(data), probegate._transport_marker(plan.transport_id, end=True)])
+    body["messages"] += [{"role": "assistant", "tool_calls": [{"id": "held-release-check", "type": "function", "function": {
+                              "name": "exec_command", "arguments": json.dumps({"cmd": plan.script})}}]},
+                         {"role": "tool", "tool_call_id": "held-release-check", "content": page}]
+    return driver, session, body, calls
+
+class FlakyLog(Log):
+    """A run log whose write fails once at the moment the summary has just been produced (before any closing exists)."""
+    def emit(self, kind, **fields):
+        if kind == "loop.compacted" and not getattr(self, "failed", False):
+            self.failed = True
+            raise OSError("log write failed")
+        super().emit(kind, **fields)
+
+def test_a_held_claim_released_by_a_green_probe_is_briefed_and_a_failure_before_the_closing_replays_with_fresh_memory():
+    """The held-probe release exit: the repo's own green reading settles the held claim, the whole-task review releases it and the
+    briefing is written from that release. If anything fails after the summary but before the closing exists, the original held
+    claim and its reading survive for a checked replay, and the replay writes new memory (the abandoned one is never reused)."""
+    reasoner, _ = judged(True)
+    summaries = []
+
+    def numbered(body, log):
+        if log.phase.startswith(("satisfaction", "test-")):
+            return reasoner(body, log)
+        summaries.append(log.phase)
+        return json.dumps(completion("Abandoned first memory." if len(summaries) == 1 else MEMORY)).encode()
+    driver, session, body, calls = held(numbered)
+    parts, plan = session.pending_done_parts, session.gate_plan
+    log = FlakyLog()
+    with pytest.raises(OSError):
+        driver.drive(body, "sid:done", None, log)
+    assert driver._store.get("sid:done") is session and plan.transport_complete and not plan.transport_error
+    assert session.done_probe and session.pending_done_parts is parts and session.pending_done == "The held claim."
+    assert session.probe_call_id == "held-release-check" and session.last_gate_ran and not session.last_gate_red
+    out = driver.drive(body, "sid:done", None, log)
+    message = out["choices"][0]["message"]
+    assert len(summaries) == 2 and cw.read_history([message]).text == MEMORY and "Abandoned" not in message["content"]
+    assert not message.get("tool_calls") and driver._store.get("sid:done") is None

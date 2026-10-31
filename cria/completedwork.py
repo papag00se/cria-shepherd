@@ -290,9 +290,7 @@ DEFINITION = BriefingDefinition(Policy(
                  Reference("tests/loop_orientation/test_loop_orientation_arcb_completed_work.py", "test_a_release_that_stops_standing_while_the_summary_is_written_embeds_no_briefing"),
                  Reference("tests/loop_orientation/test_loop_orientation_arcb_completed_work.py", "test_a_planner_off_follow_up_reads_the_carried_briefing_from_history_and_asks_for_no_new_one"),
                  Reference("tests/loop_orientation/test_loop_orientation_arcb_completed_work.py", "test_an_interrupted_summary_keeps_the_finishing_session_and_the_retry_writes_fresh_memory"),
-                 # Not yet re-expressed live: the held-probe release exit and replay after an interrupted embedding.
-                 Reference("tests-before-reset-20261031:tests/test_completed_work_production_binding.py", "test_public_alternate_release_runs_selected_generation_and_embedding"),
-                 Reference("tests-before-reset-20261031:tests/test_completed_work_production_binding.py", "test_public_held_embedding_interruption_preserves_original_claim_for_checked_replay")),
+                 Reference("tests/loop_orientation/test_loop_orientation_arcb_completed_work.py", "test_a_held_claim_released_by_a_green_probe_is_briefed_and_a_failure_before_the_closing_replays_with_fresh_memory")),
     migrated=False), generate, embed)
 DEFINITIONS = (DEFINITION,)
 
