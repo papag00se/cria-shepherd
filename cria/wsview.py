@@ -355,7 +355,9 @@ class View:
 
     def _folded_under(self, rel: str) -> bool:
         for d in self._folded:
-            if rel == d or rel.startswith(d + "/"):
+            # "" is a view whose OWN root was folded in its parent (see `_subview`): everything
+            # under it is folded.
+            if d == "" or rel == d or rel.startswith(d + "/"):
                 return True
         return False
 
@@ -611,6 +613,8 @@ class View:
         if start is None or not self._surveyed:
             return None
         if start != "" and start not in self._dirs:
+            return None
+        if self._folded_under(start):
             return None
         names, prefixes = set(skip_names or ()), tuple(skip_prefixes or ())
         out: list[tuple[str, list[str], list[str]]] = []
@@ -1298,6 +1302,11 @@ def _subview(v: View, sub: str) -> View:
     out._files = {p[n:]: t for p, t in v._files.items() if p.startswith(pre)}
     out._dirs = {d[n:] for d in v._dirs if d.startswith(pre)}
     out._folded = {d[n:] for d in v._folded if d.startswith(pre)}
+    # A root that is ITSELF folded in the parent was surveyed as a count, not a listing: mark the
+    # new root folded ("" — see `_folded_under`) so `listdir`/`scandir`/`walk`/`listed_everything`
+    # answer unknown instead of an empty directory (R1: "could not see" read as "nothing there").
+    if sub in v._folded or v._folded_under(sub):
+        out._folded.add("")
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
     out._observed_bodies = {p[n:]: b for p, b in v._observed_bodies.items() if p.startswith(pre)}
     out._body_revisions = {p[n:]: r for p, r in v._body_revisions.items() if p.startswith(pre)}
@@ -1324,7 +1333,7 @@ def _subview(v: View, sub: str) -> View:
     # three-valued contract this class exists for, undone by a missing field copy. `sub` itself
     # being folded is the same loss by another door: "src" does not start with "src/", so the
     # marker for the directory being rerooted into never matched and its interior read as absent.
-    out._complete = v._complete and sub not in v._folded
+    out._complete = v._complete and "" not in out._folded
     out._undeliverable = {p[n:]: size for p, size in v._undeliverable.items() if p.startswith(pre)}
     out._outside = dict(v._outside)
     return out

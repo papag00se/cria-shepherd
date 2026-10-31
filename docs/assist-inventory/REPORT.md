@@ -484,7 +484,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/ownedfiles.py:ATOMIC_REPLACE_PROGRAM`](../../cria/ownedfiles.py#L5)
 - [`cria/ownedfiles.py:DIRECTORY_PROGRAM`](../../cria/ownedfiles.py#L84)
 - [`cria/editsequence.py:PROGRAM`](../../cria/editsequence.py#L8)
-- [`cria/wsview.py:View.note_unknown_mutation`](../../cria/wsview.py#L1047)
+- [`cria/wsview.py:View.note_unknown_mutation`](../../cria/wsview.py#L1051)
 
 **Historical families:** F11.
 
@@ -933,9 +933,9 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/wsview.py:View.program`](../../cria/wsview.py#L716)
-- [`cria/wsview.py:strip_survey`](../../cria/wsview.py#L1791)
-- [`cria/wsview.py:View.note_written`](../../cria/wsview.py#L940)
+- [`cria/wsview.py:View.program`](../../cria/wsview.py#L720)
+- [`cria/wsview.py:strip_survey`](../../cria/wsview.py#L1800)
+- [`cria/wsview.py:View.note_written`](../../cria/wsview.py#L944)
 - [`cria/writeproxy.py:represent_inbound`](../../cria/writeproxy.py#L1792)
 
 **Historical families:** F26.

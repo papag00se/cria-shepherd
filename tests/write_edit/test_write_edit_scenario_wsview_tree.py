@@ -19,6 +19,7 @@ def tree(tmp_path):
     (tmp_path / "big").mkdir()
     for i in range(wsview.FOLD_AT + 5):
         (tmp_path / "big" / f"f{i:04}.txt").write_text("x")
+    (tmp_path / "empty").mkdir()
     (tmp_path / "many").mkdir()
     for i in range(61):
         (tmp_path / "many" / f"file_{i}.py").write_text("x = 1\n")
@@ -66,6 +67,10 @@ def test_a_surveyed_view_answers_what_the_disk_holds_and_unknown_where_it_did_no
     sub = v.reroot("src")
     assert sub.root == f"{v.root}/src" and sub.listdir(".") == ["pkg"] and sub.isfile("pkg/a.py") and sub.read("pkg/a.py") == "print(1)\n"
     assert v.reroot("/else/elsewhere").listdir(".") is None and v.reroot("big").isfile("f0001.txt") is None and not v.reroot("big").complete and v.listed_everything("src")
+    # R1: a FOLDED directory seen from inside is unknown, never an empty directory; a genuinely empty one still answers []
+    big = v.reroot("big")
+    assert big.listdir(".") is None and big.scandir(".") is None and big.walk(".") is None and not big.listed_everything() and big.isdir("x") is None
+    assert v.listdir("empty") == [] and v.reroot("empty").listdir(".") == [] and v.reroot("empty").walk(".")[0][1:] == ([], []) and v.reroot("empty").listed_everything()
     # the same questions asked of the disk itself agree for everything the survey looked at
     d = wsview.DirectView(str(tree))
     assert all(d.isfile(v.abs(p)) == v.isfile(p) and d.size(v.abs(p)) == v.size(p) for p in ("README.md", "huge.bin", "src/pkg/a.py", "nope"))
