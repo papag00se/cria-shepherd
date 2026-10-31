@@ -120,10 +120,24 @@ the history, so nothing is ordered by a witness's position.
   (3) A writer from an EARLIER turn still running when a later turn writes the same file: the later program waits (bounded by
   `EDIT_SEQ_WAIT_SECONDS`, outside the directory lock, never forever) for the earlier writer's mark, and if the bound passes it runs and its
   record declares `late`, which the loop already reads as an unestablished touch. The set of earlier writers is cria's in-memory registry of
-  composed-but-unresolved calls, so a cria restart forgets it and falls back to the unknown that existed before the marks.
+  composed-but-unresolved calls, REBUILT from every re-presented history (`writeproxy._adopt_marks` -> `completionmarks.adopt`: the stored
+  sentinel of each lowered write/edit declares its receipt, its mark's nonce `cm` and its target, so a restart does not forget a write whose
+  reply is still outstanding). What a restart still loses: gate witnesses held only in `GuardState.gate_marks`, calls beyond the newest
+  64, and a call that never reached a history.
+  (4) The other carriers. The query is not only the next write's: the completion gate's worker (`gatecleanup`, request key `marks`) reads
+  every unresolved call's mark before the checks start and after they end, and declares `{receipt: [state, sha256, final_before]}` in the
+  completed transport's metadata (`probegate._declared_marks`; checker output can supply nothing). `probegate.unsettled_writes` leaves
+  a write open when it has no mark or its mark appeared only after the checks began (the checks may have read the old tree); a witnessed
+  `did_not_run` is proof it did not land; a mark final before the checks started leaves a verified tree. An open write makes the gate partial
+  (never recorded as a clean reading) and holds completion with `prompts/gate_unsettled_writes.txt`, bounded by `MAX_COMPLETION_CHECKS` like
+  an unknown reading. A lowered `read_file` / `list_dir` composed while something is outstanding carries ONE extra survey-kind record
+  (`wsview.marks_ride`: no body, typed `pm`) in the slot the sentinel's `sv` declares; with nothing outstanding the call is unchanged.
+  Release: the gate removes, through the authenticated reader, the marks cria has learned, and retires its own empty certified directory
+  through the owned retirement - only when nothing is outstanding and nothing but the certificate is in it. A `web_fetch`, a search and a
+  native command carry no query.
   (1) A NATIVE shell writer (`> f`, `mv`, `sed -i`, a build) is still unattributable: cria composed no program, so no mark exists, and a
   finished writer and a still-running one print the same text. It stays `unestablished`; no wrapper is added to native commands.
   Still indistinguishable, even with marks: a program killed by SIGKILL (no handler runs) versus one that never started versus one still
   running; an unwritable marks directory (the program runs, no mark is left, the state is `incomplete`). Only the marks of calls whose
   outcome is known are removed (by the next program, through the authenticated reader); the directory is never garbage-collected by prefix, so
-  the last marks of a session remain, bounded (`MAX_OUTSTANDING`), in a 0700 directory of the harness's own TMPDIR until it is cleared.
+  the marks cria learns only at the last gate remain, bounded (`MAX_OUTSTANDING`), in a 0700 directory of the harness's own TMPDIR until it is cleared.

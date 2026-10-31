@@ -183,3 +183,20 @@ def test_a_session_with_nothing_outstanding_composes_the_gate_it_always_did(tmp_
     plan, raw, out = gate(tmp_path, monkeypatch)
     assert plan.marks_paths == {} and "completionmarks" not in plan.script and '"marks"' not in plan.script
     assert out.unsettled_writes == [] and out.witnessed == {}
+
+
+def test_the_gate_never_retires_the_marks_directory_under_a_writer_that_is_still_running(tmp_path, monkeypatch):
+    """x is mid-way through a slow step when a gate runs (nothing learned, nothing to release): the directory holds only its certificate,
+    but x is outstanding, so it is not retired - x's mark lands in it afterwards and the next gate reads it."""
+    (x,) = lowered(tmp_path, [("x", "f.txt", "AAA\n")])
+    proc = subprocess.Popen(["bash", "-c", command(x, 2.5)], cwd=str(tmp_path),
+                            env={"PATH": os.environ["PATH"], "TMPDIR": str(harness_dir(tmp_path))},
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    time.sleep(0.5)
+    directory = os.path.join(harness_dir(tmp_path), completionmarks.DIR_PREFIX + completionmarks.credential(SESSION))
+    assert os.listdir(directory) == [".owner"]                                            # x opened it and is still running
+    plan, raw, out = gate(tmp_path, monkeypatch)
+    assert [s for _r, _p, s in out.unsettled_writes] == ["incomplete"] and os.path.isdir(directory)
+    proc.communicate()
+    plan2, raw2, out2 = gate(tmp_path, monkeypatch)
+    assert out2.unsettled_writes == [] and [s for s, _d in out2.witnessed.values()] == ["landed"]

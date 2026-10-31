@@ -1720,19 +1720,6 @@ def _learn_completions(token: str, rep: "dict | None") -> None:
             completionmarks.settle(receipt)
 
 
-def _merged_marks(first: "dict | None", second: dict) -> dict:
-    """The completion marks two records of ONE result report, merged per receipt: a final state outranks ``incomplete``, and two
-    different final states for one receipt (they cannot both be true) leave that receipt out - it is witnessed by nothing."""
-    out: dict = {receipt: list(state) for receipt, state in (first or {}).items()}
-    for receipt, state in second.items():
-        have = out.get(receipt)
-        if have is None or have[0] == "incomplete":
-            out[receipt] = list(state)
-        elif state[0] != "incomplete" and list(state) != have:
-            out[receipt] = ["__conflict__", ""]
-    return {receipt: state for receipt, state in out.items() if state[0] != "__conflict__"}
-
-
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
     result after it) and whose STORED command declared a receipt in cria's sentinel.
@@ -1771,7 +1758,7 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                 at = second.end
                 if second.rep and second.rep.get("pm"):
                     _learn_completions(token, second.rep)
-                    rep = {**(first.rep or {}), "pm": _merged_marks((first.rep or {}).get("pm"), second.rep["pm"])}
+                    rep = {**(first.rep or {}), "pm": (first.rep or {}).get("pm") or second.rep["pm"]}   # a write's own read-back is the first record's
                 if second.body is not None:
                     try:
                         survey = second.body.decode("utf-8")
