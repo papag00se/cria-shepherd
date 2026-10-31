@@ -743,11 +743,12 @@ STEP_THRASH_REPLAN = livingplan.STEP_THRASH_REPLAN
 def _note_write_results(gs: GuardState, messages) -> None:
     """Remember which registered write calls have had a result come back (landed or failed). A result counts only
     through the ONE call/result correlation owner (`denial.paired_results`): an orphan, a result that precedes its
-    call, a second result or a reused id answers nothing. The raw set is sticky; whether an id still counts is
-    decided at use (`writeobservation.answered_ids`)."""
+    call, a second result or a reused id answers nothing. A call with no reply at all also counts once its own executor-side
+    completion mark was read back as final (`denial.witnessed_completed_ids`): its program is finished, so it is no longer a
+    pending write. The raw set is sticky; whether an id still counts is decided at use (`writeobservation.answered_ids`)."""
     answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
     registered = set(getattr(gs, "write_call_ids", None) or [])
-    answered |= registered & set(denial.paired_results(messages or []))
+    answered |= registered & (set(denial.paired_results(messages or [])) | denial.witnessed_completed_ids(messages or []))
 
 
 def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
