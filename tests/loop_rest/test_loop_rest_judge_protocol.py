@@ -154,3 +154,38 @@ def test_the_toolless_retry_of_the_whole_task_judge_still_holds_the_current_work
     assert result[0] is False and len(bodies) == 2
     assert bodies[0].get("tools") and not bodies[1].get("tools") and bodies[1]["chat_template_kwargs"]["enable_thinking"] is False
     assert all(current in "\n".join(m.get("content") or "" for m in b["messages"]) for b in bodies)
+
+
+@pytest.mark.parametrize("reply,want", [
+    ('{"query_on_target": true, "results_on_target": false, "recommended_query": " europe gem "}', (True, False, "europe gem")),
+    ('{"query_on_target": "no", "results_on_target": null}', (True, True, "")),     # only a definite false strips: anything else fails OPEN
+    ("the results look fine to me", (True, True, "")),                                  # unparseable: fails open, never strips real results
+])
+def test_the_search_judge_strips_only_on_a_definite_false_and_otherwise_fails_open(reply, want):
+    chat, bodies = scripted([completion(reply)])
+    assert loop.judge_search(chat, ROLE, "charge EU VAT", "eu gem", "some hits", Rlog()) == want
+    assert len(bodies) == 1
+    for role, task, results in [(None, "t", "r"), (ROLE, "  ", "r"), (ROLE, "t", " ")]:    # nothing to judge, nobody to ask
+        assert loop.judge_search(chat, role, task, "q", results, Rlog()) == (True, True, "") and len(bodies) == 1
+
+
+@pytest.mark.parametrize("obj,filled", [
+    ({"satisfied": True, "reason": "x"}, {"satisfied": True, "reason": "x"}),          # a readable verdict is returned as written
+    ({"satisfied": "yes"}, None),                                                       # a non-bool flag is never coerced
+    ({"diagnosis_kind": "missing_file", "subject": "a.py", "task_quote": "q", "evidence_source": "s", "evidence_quote": "e"},
+     {"diagnosis_kind": "missing_file", "subject": "a.py", "task_quote": "q", "evidence_source": "s", "evidence_quote": "e", "satisfied": False}),
+    ({"diagnosis_kind": "missing_file", "subject": "a.py", "proposed_fix": "edit a.py"}, None),     # a partial shape (or free-form prose) is no discriminator
+])
+def test_a_missing_verdict_flag_is_inferred_false_only_from_the_complete_typed_diagnosis(obj, filled):
+    log = Rlog()
+    assert loop._fill_missing_verdict_flag(obj, "satisfied", log, "p") == filled
+    assert ("loop.verdict_flag_inferred" in log.kinds()) is (filled is not None and "satisfied" not in obj)
+
+
+@pytest.mark.parametrize("summary,names", [
+    ("TOOLS:\n  - exec_command\n  - read_file", ["exec_command", "read_file"]),         # the format the summary is written in
+    ("  - exec_command \u2014 runs ANY shell command", ["exec_command"]),                # `command` is not harvested out of the prose
+    ("write_file(path, content)", ["write_file"]),                                      # an older callable rendering
+])
+def test_tool_names_are_read_from_the_summary_format_not_from_prose_around_them(summary, names):
+    assert loop._tool_names(summary) == names

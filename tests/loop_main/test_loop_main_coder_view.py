@@ -123,3 +123,19 @@ def test_a_shell_call_is_written_into_the_field_the_harness_tools_schema_names(t
     """Codex's exec_command carries the command in `cmd`; producing `command` stalled the plan loop ('missing cmd field')."""
     args = shell_args(tool, "ls")
     assert list(args) == [field] and "ls" in str(args[field])
+
+
+def test_the_context_usage_reported_for_a_request_counts_what_the_coder_is_shown_not_what_the_harness_sent():
+    """visible_context_tokens is sized from the coder's own framing: the harness's agent prompt is out, real work is in, and a
+    live session's gate plan is consulted without a model call."""
+    from cria.loop import LoopStore
+    from loop_main_helpers import body, plan_off_loop
+    loop = plan_off_loop(lambda b, r: b"{}", store=LoopStore())
+    task = body("fix the failing parser test")
+    bare = loop.visible_context_tokens(task, "sid:t")
+    harness = {**task, "messages": [{"role": "system", "content": "You are the harness agent. " * 400}] + task["messages"]}
+    work = {**task, "messages": task["messages"] + [{"role": "assistant", "content": "z" * 6000},
+                                                    {"role": "user", "content": "w" * 6000}]}
+    assert bare > 0 and loop.visible_context_tokens(harness, "sid:t") <= bare + 20
+    assert loop.visible_context_tokens(work, "sid:t") >= bare + 1500
+    assert loop.visible_context_tokens(work, "sid:t", fold=True) > 0

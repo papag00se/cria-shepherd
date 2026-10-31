@@ -1,8 +1,11 @@
 """LoopStore: the session registry, the conversation-shape memory behind rewrite detection, and what survives a restart."""
 
+from types import SimpleNamespace
+
 import pytest
 
-from cria.loop import _MAX_SHAPES, LoopStore, PlanSession
+from cria import refusalledger
+from cria.loop import _MAX_SESSIONS, _MAX_SHAPES, LoopStore, PlanSession, SurveyBootstrap
 from cria.plan import Plan, PlanItem
 
 
@@ -58,3 +61,55 @@ def test_a_garbage_state_file_loads_as_an_empty_store_instead_of_crashing_the_se
     path.write_text(garbage)
     store = LoopStore(state_path=str(path))
     assert not store.shape_done("k") and not store.knows("k")
+
+
+class _Offer:
+    """An outstanding externalization offer: all the store may do with it is cancel and reset it."""
+    def __init__(self):
+        self.calls = []
+    cancel = lambda self: self.calls.append("cancel")      # noqa: E731
+    reset = lambda self: self.calls.append("reset")        # noqa: E731
+
+
+def _session():
+    sess = PlanSession(plan=Plan(id="p", task="t", created="c", items=[PlanItem("s")]))
+    sess.externalization_offers = {"o": SimpleNamespace(delivery=_Offer())}
+    return sess
+
+
+def test_a_session_leaving_the_store_cancels_its_offers_and_a_replacing_put_inherits_the_refusal_history():
+    """drop, replacement and the recency bound all retire the departing owner's outstanding offers (never the new owner's);
+    a replacing put on a stable key keeps the dependency refusals the conversation already earned (ledger or legacy set), a
+    task: key inherits nothing; survey bootstraps are bounded by recency and droppable."""
+    store, old = LoopStore(), _session()
+    old.refusal_events = refusalledger.RefusalLedger.from_legacy({"left-pad"})
+    new = _session()
+    new.refused_names = {"is-odd"}
+    store.put("sid:a", old)
+    store.put("sid:a", new)
+    assert new.refused_names == {"left-pad", "is-odd"} and isinstance(new.refusal_events, refusalledger.RefusalLedger)
+    assert old.externalization_offers is None and old.externalization_state is None and new.externalization_offers
+    legacy, plain = _session(), _session()
+    legacy.refused_names = {"left-pad"}
+    plain.refused_names = {"is-odd"}
+    store.put("sid:b", legacy)
+    store.put("sid:b", plain)
+    assert plain.refused_names == {"left-pad", "is-odd"}
+    keyed, other = _session(), _session()
+    keyed.refused_names = {"x"}
+    store.put("task:k", keyed)
+    store.put("task:k", other)
+    assert not other.refused_names
+    offer = new.externalization_offers["o"].delivery
+    store.drop("sid:a")
+    assert offer.calls == ["cancel", "reset"] and store.get("sid:a") is None
+    first = store.get_guard("sid:g", create=True)
+    first.externalization_offers = {"o": SimpleNamespace(externalization=_Offer())}
+    for i in range(_MAX_SESSIONS):
+        store.put(f"sid:fill{i}", _session())
+    assert store.get_guard("sid:g") is None and first.externalization_offers is None
+    for i in range(_MAX_SESSIONS + 1):
+        store.put_bootstrap(f"b{i}", SurveyBootstrap())
+    assert store.get_bootstrap("b0") is None and store.get_bootstrap(f"b{_MAX_SESSIONS}") is not None
+    store.drop_bootstrap(f"b{_MAX_SESSIONS}")
+    assert store.get_bootstrap(f"b{_MAX_SESSIONS}") is None

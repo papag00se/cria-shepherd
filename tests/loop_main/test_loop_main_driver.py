@@ -63,3 +63,23 @@ def test_a_completion_leaves_the_driver_as_a_well_formed_chat_response_that_stre
     assert out["id"].startswith("chatcmpl-") and isinstance(out["created"], int) and out["model"] == "m1"
     stream = b"".join(completion_to_sse(out))
     assert out["id"].encode() in stream and b"tool_calls" in stream and stream.endswith(b"data: [DONE]\n\n")
+
+
+def test_with_an_image_in_the_request_the_coder_call_goes_through_the_image_workflow_on_the_servers_loaded_model():
+    """The loop does not call the coder directly while a request holds an image: the workflow gets the selected provider and role,
+    and a body with no model is given the one the provider reports loaded (the workflow refuses a capability/model mismatch)."""
+    from types import SimpleNamespace
+    from cria import imageworkflow
+    routed = []
+    coder = Chat(acting())
+    coder.upstream = SimpleNamespace(loaded_model=lambda log: "served-vlm")
+    workflow = SimpleNamespace(chat=lambda provider, role, prepared, context, log, call: (
+        routed.append((provider, prepared.get("model"), context)), call(prepared, log))[1])
+    context = SimpleNamespace(workflow=workflow)
+    token = imageworkflow.current.set(context)
+    try:
+        out = plan_off_loop(coder).drive(body(), "sid:i", CODING, Rlog())
+    finally:
+        imageworkflow.current.reset(token)
+    assert out["choices"][0]["message"]["tool_calls"] and routed and all(r == (coder.upstream, "served-vlm", context) for r in routed)
+    assert all(b["model"] == "served-vlm" for b in coder.bodies)

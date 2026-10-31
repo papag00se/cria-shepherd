@@ -111,3 +111,27 @@ def test_the_redirect_never_re_supplies_the_body_of_a_refused_write():
              bodykeys.RESULT_OUTCOME: denial.REFUSED}]
     n, last = loop._refusals_in_window(msgs)
     assert n == 1 and len(last) < 400 and body not in last and "handle_resolver.py" in last
+
+
+@pytest.mark.parametrize("ran,says", [(True, "verified by the completion check and the repo's own checks"),
+                                      (False, "could not be run here, so nothing has verified")])
+def test_the_done_note_claims_verification_only_when_the_repos_checks_ran(ran, says):
+    note = loop.satisfaction_done_note("all four endpoints answer", checks_ran=ran)
+    assert says in note and note.endswith("all four endpoints answer")
+    assert ("verified by the completion check" in note) is ran
+
+
+@pytest.mark.parametrize("briefing,named", [
+    ("The Python script resolver.py has not been written. Unit tests have not been added.", ["resolver.py"]),  # maple 1786218955
+    ("Nothing was created yet for the Review.md file.", []),                              # no denial sentence shape: left alone
+    ("Never written: test_a.py. The README is fine.", ["tests/test_a.py"]),               # the negation leads; a bare name resolves to the listed path
+    ("resolver.py has not been written. resolver.py has not been created.", ["resolver.py"]),   # named once, not twice
+    ("ghost.py has not been written.", []),                                              # a file cria cannot see is not contradicted
+])
+def test_a_briefing_that_denies_a_file_on_disk_is_corrected_additively_and_never_edited(briefing, named):
+    """The briefing keeps its words; cria appends what its own listing observed (the real spelling), once, with an event."""
+    log = Rlog()
+    out = loop._briefing_disk_truth(briefing, "resolver.py\ntests/test_a.py\nREVIEW.md\n", log)
+    assert out.startswith(briefing)
+    assert (out != briefing) is bool(named) and all(out[len(briefing):].count(n) == 1 for n in named)
+    assert ("context.briefing_denies_disk" in log.kinds()) is bool(named)
