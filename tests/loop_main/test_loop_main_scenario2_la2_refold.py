@@ -54,8 +54,9 @@ def test_the_accumulated_rollup_is_refolded_only_when_the_refold_is_written_and_
 
 def test_a_rung_without_the_compaction_policy_ships_the_history_untouched_and_asks_nobody(tmp_path):
     asked = []
+    rung3 = assistruntime.AssistRuntime.select(level=3)
     driver = Loop(LoopContext(planner=None, coder_chat=None, reasoner_chat=lambda b, r: asked.append(b),
-                              runs_dir="", reasoner_role=Role(name="reasoner", backend="local"),
-                              pilot_runtime=assistruntime.AssistRuntime.select(level=3)))
+                              runs_dir="", reasoner_role=Role(name="reasoner", backend="local"), pilot_runtime=rung3))
     view = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(60)]
-    assert driver._self_compact(view, synthetic("build it"), 1, Rlog()) is view and not asked
+    with assistruntime.bound(rung3):
+        assert driver._self_compact(view, synthetic("build it"), 1, Rlog()) is view and not asked
