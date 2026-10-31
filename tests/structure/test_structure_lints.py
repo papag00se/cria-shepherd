@@ -96,9 +96,8 @@ def test_no_new_fixed_size_stands_in_for_the_context_window():
     check_ratchet(fixed_sizes(), allowed, "fixed size")
 
 NOT_A_RESHAPE = {  # measurement or abstention: nothing was rewritten, so nothing for the operator's ledger
-    "context.floor_skipped", "context.window", "context.overflow", "context.calibrated", "context.refit",
-    "context.measured", "context.image_fit_unknown", "context.image_density_unknown",
-    "context.briefing_symbols_unreachable"}
+    "context.floor_skipped", "context.window", "context.calibrated", "context.refit",
+    "context.measured", "context.image_fit_unknown", "context.image_density_unknown"}
 
 def emits():
     for name, tree in trees():
@@ -110,6 +109,7 @@ def emits():
 def test_every_context_event_declares_reshape_at_its_fire_site():
     """context.{ledger,repeat,anchor}_dedup and deorphaned rewrote model-visible content but never reached the operator's turn
     line (the label lived in a hand-kept map elsewhere): each context.* emit declares `reshape=` or is a measurement."""
+    assert NOT_A_RESHAPE <= {k for _, _, k, _ in emits()}, "dead allowlist entries (NOT_A_RESHAPE): delete them"
     assert [f"{f}:{ln} {k}" for f, ln, k, kw in emits()
             if k.startswith("context.") and k not in NOT_A_RESHAPE and not kw & {"reshape", "steer"}] == []
 
