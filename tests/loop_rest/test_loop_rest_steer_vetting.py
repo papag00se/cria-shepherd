@@ -55,6 +55,7 @@ def test_a_grounded_directive_is_delivered_untouched(ws):
     grounded = [
         ("Run go get github.com/shopspring/decimal, then go mod tidy.", GO_SUM, {}),
         ("go.mod must require decimal v1.4.0 and rebuild.", GO_SUM + "go list -m: decimal v1.4.0\n", {}),  # a reported version
+        ("Pin it to v1.4.0.", GO_SUM + "go list -m: decimal v1.4.0\n", {}),            # the sentence-ending period is not the version
         ("Total is 48.58 but you print 44.98; 7 tests ran in 0.42 seconds.", "", {}),                       # not versions
         ("Pin it to 1.2.3 and rebuild.", "disk usage 1.2.3 GB high", {}),                                   # 'usage' inside a word
         ("Read /usr/bin/env semantics.", "", {}), ("Rename `zone_for` in rates.py; see rates.py:2.", "", {}),

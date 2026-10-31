@@ -15,14 +15,12 @@ LINES = [(n, i, ln) for n, body in TEXTS.items() for i, ln in enumerate(body.spl
 TOKEN = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 CODE = "\n".join(p.read_text(encoding="utf-8") for t in ("cria", "suite", "scripts") for p in (ROOT / t).rglob("*.py") if "tasks" not in p.parts)
 LITERALS = set(re.findall(r"""["']([a-z][a-z0-9_]*)["']""", CODE))
-KNOWN_DEAD = {"evidence_summary_note", "large_read_window", "oversize_refusal", "trim_error_squash",
-              "red_gate_deliverable_observation", "red_gate_deliverable_observation_user", "suite_patch_smoke"}
 
 def test_every_prompt_file_is_referenced_by_a_reader():
-    """Referenced = quoted name, `prompts/NAME.txt` path, f-string prefix, or {{FRAGMENT}}; KNOWN_DEAD had no reader at the 2026-10-31 reset."""
+    """Referenced = quoted name, `prompts/NAME.txt` path, f-string prefix, or {{FRAGMENT}}; an orphan is deleted, never allow-listed."""
     prefixes = set(re.findall(r"""f["']([a-z][a-z0-9_]*_)\{""", CODE))
     named = LITERALS | set(re.findall(r"prompts/([a-z0-9_.]+)\.txt", CODE)) | {t.lower() for b in TEXTS.values() for t in TOKEN.findall(b)}
-    assert {n for n in TEXTS if n not in named and not n.startswith(tuple(prefixes))} == KNOWN_DEAD
+    assert {n for n in TEXTS if n not in named and not n.startswith(tuple(prefixes))} == set()
 
 def test_every_placeholder_has_somewhere_to_come_from():
     """`{{EXEC_FINDING}}` shipped raw to coders for 3 days after its filler was deleted (render leaves unknown tokens for

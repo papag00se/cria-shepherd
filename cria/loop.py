@@ -10129,55 +10129,6 @@ def _dedupe_doubled(text: str) -> str:
 # (not a real function) sailed through, because that code was inline in prose with no fence and no
 # line-leading keyword. Chasing inline code with more pattern is the deterministic-code-doing-a-
 # judgment's-job that principle 9's corollary forbids.
-# WHETHER A DIRECTIVE CONTAINS CODE, BY SHAPE. This is a TRIGGER — its only job is to decide
-# whether one focused reasoner call is worth making, and the reasoner still rules quote-versus-
-# dictation — so over-firing is cheap and a miss is not.
-#
-# It used to be spelled in Python and POSIX: `def `, `import `, `pip install`, `pytest`, `sudo`,
-# `sed -i`, `cat `. Java, Rust, Go and Node are half the battery and none of them match any of that,
-# so the guard simply never ran on them. Measured, ternary-bonsai/java 0040 — steer: "drop the
-# dependency entirely and handle CSV parsing inline in Importer.java"; the task: "Use a third-party
-# Java CSV library ... do not write a CSV parser." The steer shipped unchecked and the coder built
-# exactly what it said.
-#
-# The shapes below are language-neutral: a statement terminator or a brace at end of line covers
-# C-family and Rust; a call at the start of a line covers everything; a bare word followed by a
-# flag-shaped argument covers any shell command in any ecosystem. The Python keywords are kept
-# because they cost nothing and still fire first on Python.
-_CODE_SHAPED = re.compile(
-    r"```"                                              # a fenced block of any kind
-    r"|^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"   # python
-    r"|^[ \t]*\S.*[;{}]\s*$"                            # a statement or brace line: java/rust/go/c/js
-    r"|^[ \t]*\w+(?:[.:]{1,2}\w+)*[?!]?\s*\([^)\n]*\)"   # a call at the head of a line
-    r"|^[ \t]*\$?\s*[\w./-]+(?:\s+[\w./=-]+)*\s+--?[\w-]+"  # a command with a flag: `mvn -q test`
-    r"|\b\w+(?:(?:\.|::)\w+)+[?!]?\s*\([^)\n]*\)",       # an inline CALL: `pkg.fn(a)`, `mod::fn(a)`
-    re.M)
-# …AND `::` IS NOT DECORATION EITHER. The head-of-line shape has accepted `[.:]{1,2}` since it was
-# written; the INLINE one accepted only `.`, so `serde_json::to_string(&value)` sitting mid-sentence
-# was invisible — and Rust, C++ and PHP write their calls that way. Measured on
-# rust-toml-cli x nemotron-elastic 1787257904: the reasoner authored a directive ending in `;`, the
-# guard answered DICTATES, cria's own restater returned the SAME two code lines with " must be true."
-# appended, and that four-word suffix moved the `;` off end-of-line. The line-end shape stopped
-# matching, the inline shape could not see `::`, and `_dictates_code` then returned False WITHOUT
-# MAKING A MODEL CALL — so the reasoned judge never ruled and the raw code shipped. cria's restater
-# defeating cria's guard.
-#
-# …AND THE `[?!]` IS NOT DECORATION. Without it this pattern cannot see `ZONE_BASE.key?(x)`,
-# `rec.save!(x)` or `println!("x")` — Ruby's predicate and bang methods, which are the ordinary way
-# Ruby is written, and Rust's macros. A detector whose entire job is to be language-agnostic (#20)
-# was blind to a whole language's most common call shape.
-#
-# What that cost, measured on `shipping-rates-rb x ternary-bonsai` 1787111689. cria's [REDIRECT]
-# steer shipped two paste-ready lines:
-#
-#     # Instead of: zone = zone_or_code.is_a?(String) && … ? zone_for(zone_or_code) : zone_or_code
-#     # Use this:   zone = ZONE_BASE.key?(zone_or_code) ? zone_or_code : zone_for(zone_or_code)
-#
-# `_dictates_code` returned False, so `_invented_code_spans` never ran and no
-# `loop.steer_dictated_code` event was emitted — the guard was silent because it could not see. The
-# model adopted the line verbatim and `test_unknown_zone_rejected`, a REPO test that had been green,
-# went red and stayed red: `"moon"` is not a ZONE_BASE key, so it falls through to `zone_for` and
-# returns `"international"` instead of raising. One of the run's three final failures.
 
 # THE SENTINEL THE MATCHER ACTUALLY COMPARES AGAINST. The named constant used to be "DICTATES",
 # the answer the code never tests for — it fails CLOSED, so anything that is not DESCRIBES stands.
@@ -10645,29 +10596,8 @@ def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str |
     return _grounded_actions()._symbol_not_in_the_file(directive, workspace_root)
 
 
-# A VERSION IS A FACT ABOUT THE WORLD, AND THE AUTHOR CANNOT KNOW ONE IT WAS NOT TOLD.
-#
-# Shape, not ecosystem (a rule keyed to Go's pseudo-versions is inert on npm and Maven): three or
-# more dot-separated numbers, or a `v`-prefixed number, or a version after `@` — which covers semver,
-# Go pseudo-versions, gem and wheel versions, Maven coordinates and `pkg@1.2.3` alike. Two-component
-# numbers are NOT versions here: `48.58` is a cart total and `3.11` is a language line, and neither
-# is something an author invents to be pasted into a manifest.
-_VERSION_SHAPED = re.compile(
-    r"(?<![\w.-])(?:v\d+(?:\.\d+)+[\w.+-]*|\d+\.\d+\.\d+[\w.+-]*|@\s*v?\d+(?:\.\d+)+[\w.+-]*)")
-
 def _invented_version(directive: str, evidence: str) -> str | None:
     return _grounded_actions()._invented_version(directive, evidence)
-
-
-# A TOOL'S OWN SYNOPSIS IS NOT EVIDENCE ABOUT THIS REPO. Every command-line tool answers a malformed
-# argument by printing the SHAPE of a well-formed one, and the placeholder it prints is version-
-# shaped:
-#
-#     go.mod:4:5: usage: require module/path v1.2.3
-#
-# `v1.2.3` is go's stand-in for "a version goes here", exactly as `module/path` stands in for the
-# module. It is not a version anything publishes.
-_SYNOPSIS_LINE = re.compile(r"(?i)(?<![\w-])(?:usage|synopsis)\s*:")
 
 
 def _grounds_a_version(tok: str, evidence: str) -> bool:

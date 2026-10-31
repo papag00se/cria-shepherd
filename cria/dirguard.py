@@ -1965,15 +1965,27 @@ def _root_delete_in_flat(text: str, mark: str = "") -> str | None:
     return 'POSSIBLE' if possible else None
 
 
+def _script_between(text: str, lo: int, hi: int) -> str:
+    """The script a substitution body ``text[lo:hi]`` holds. Inside a backtick pair the shell removes a
+    backslash that precedes `$`, a backtick or another backslash BEFORE it reads the body as a script,
+    so `\\$(…)` there is a live `$(…)`."""
+    inner = text[lo:hi]
+    if text[lo - 1:lo] == '`' and text[hi:hi + 1] == '`':
+        inner = re.sub(r'\\([\\`$])', r'\1', inner)
+    return inner
+
+
 def _root_delete_assessment(command: str) -> str | None:
     """Narrow direct-shell root deletion backstop, independent of directory permission.
 
     Tokenize rather than matching prose in echo/grep/comments. This is not a shell
-    interpreter: wrappers, heredoc bodies and expansions the substitution owner cannot
-    delimit are outside its scope. A command substitution it CAN delimit (`$( … )`, a
-    backtick pair, quoted or not) is a command the shell runs, so its body is judged too.
+    interpreter: wrappers and expansions the substitution owner cannot delimit are outside
+    its scope. A command substitution it CAN delimit (`$( … )`, a backtick pair, quoted or
+    not) is a command the shell runs, so its body is judged too. A heredoc BODY is data (the
+    layout owner finds it): the commands around it are judged, and an UNQUOTED body's own
+    substitutions are judged like any other — a `<<` anywhere never makes this abstain.
     """
-    if not command or '<<' in command:
+    if not command:
         return None
     # A shell text is read in ITS OWN CONTEXT, and a command substitution is a context of its own: a
     # fresh script (word start, no quote) whose comments end at ITS newlines and whose quote characters
@@ -1995,6 +2007,13 @@ def _root_delete_assessment(command: str) -> str | None:
         # Each text is read with its ANSI-C strings ended where bash ends them (same length, so every
         # extent below still indexes it): `echo $'\'' ; rm -rf / #'` runs the rm.
         original = pending.pop()
+        lay = shellinput.layout(original)
+        if lay.documents:
+            for doc in lay.documents:
+                if not doc.quoted:           # bash expands an unquoted body: its substitutions are commands
+                    body_text = doc.text(original)
+                    pending.extend(_script_between(body_text, *b.body) for b in shellinput.expansions(body_text)[0])
+            original = lay.without_documents()
         raw = shellinput.layout(original).literal_shell
         bodies, _unknown = shellinput.expansions(raw, shell=True)
         mark = next((chr(c) for c in range(0xE000, 0xF8FF) if chr(c) not in raw), "\ue000")
@@ -2028,12 +2047,7 @@ def _root_delete_assessment(command: str) -> str | None:
                         found.append(((joined_origin[first] if first < len(joined_origin) else len(raw),
                                        (joined_origin[last_ - 1] + 1) if last_ > first else len(raw)), joined))
         for (lo, hi), source in found:
-            inner = raw[lo:hi]
-            if (raw[lo - 1:lo] == '`' and raw[hi:hi + 1] == '`'):
-                # Inside a backtick pair the shell removes a backslash that precedes `$`, a backtick or
-                # another backslash BEFORE it reads the body as a script, so `\$(…)` there is a live `$(…)`.
-                inner = re.sub(r'\\([\\`$])', r'\1', inner)
-            pending.append(inner)
+            pending.append(_script_between(raw, lo, hi))
     return 'POSSIBLE' if possible else None
 
 
@@ -2186,7 +2200,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         return installing
     # Same class, judged in the same place: a selector that reaches outside the workspace without
     # naming a path, so the scan below can never see it.
-    killing = kill_refusal(command, level)
+    # Judged on the layout's view, which keeps every substitution: `kill $(lsof -t -i :8081)` IS the selector,
+    # and the `outer_shell` above has already replaced its body with an opaque word.
+    killing = kill_refusal(layout.shell, level)
     if killing:
         return killing
     # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a

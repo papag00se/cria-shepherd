@@ -1,7 +1,5 @@
 """dirguard.command_refusal, the workspace-boundary backstop for a raw shell command. BEST-EFFORT AND LEXICAL, not
 containment or a sandbox. Rows are analysed, never run. Expectation reads none/read/write: `R` refused, `.` admitted."""
-import pytest
-
 from cria import dirguard
 from shell_safety_helpers import WS
 
@@ -23,7 +21,10 @@ ACCESS = [
     ("...", "echo ${base}/etc/x"), ("...", "curl http://$(hostname)/a/b"), ("...", "/usr/bin/python3 script.py"),
     ("...", f"javap -classpath {M2} com.opencsv.CSVParserBuilder"), ("...", "cat /home/jesse/.cargo/registry/src/x/serde-1.0/src/lib.rs"),
     ("...", "pip install -t ./vendor x"), ("...", "python3 -m venv .venv && ./.venv/bin/pip install x"), ("...", "npm install"),
-    ("...", "kill -9 4242"),
+    ("...", "kill -9 4242"), ("...", "kill 4242 && echo $(date)"), ("...", "cat <<'EOF'\nkill $(lsof -t -i :8081)\nEOF"),
+    # orders-api-py / nemotron-elastic: a kill whose pid comes from a substitution took down the operator's services;
+    # `outer_shell` had blanked the substitution body before the kill reader saw the `$(`.
+    ("RR.", "kill $(lsof -t -i :8081)"), ("RR.", "kill `pgrep -f node`"), ("RR.", 'echo "$(kill $(pgrep -f node))"'),
 ]
 ROOT_CASES = [   # harness-declared writable roots: READ-ONLY commands may read them; anything that could write stays refused
     (".", f"find {INSTALL}/m2/repository -iname '*opencsv*'"), (".", f"unzip -l {INSTALL}/m2/x.jar | head"), (".", f"cd sub && ls {INSTALL}/m2"),
@@ -62,13 +63,3 @@ def test_refusal_texts_say_what_can_be_changed_and_never_say_offline_or_the_prop
     assert f"({WS})" in moved and "ss -ltnp" in kill
     texts = [cache, plain, moved, kill, dirguard.command_refusal("pip install x", "none", WS), dirguard.root_recursive_delete_refusal("rm -rf /")]
     assert all(t and "cria" not in t.lower() for t in texts)
-
-
-@pytest.mark.xfail(strict=True, reason="source defects reported to Main: kill_refusal never sees a substitution body; a heredoc "
-                   "anywhere makes the root-delete backstop abstain")
-def test_known_gaps_in_the_backstop_stay_visible_until_repaired():
-    """orders-api-py / nemotron-elastic: `kill $(lsof -t -i :8081)` stopped the operator's services; `rm -rf /` after a
-    heredoc is admitted even at write. kill_refusal itself knows the kill form; command_refusal never gets to ask."""
-    assert dirguard.kill_refusal("kill $(lsof -t -i :8081)", "none")
-    assert all(dirguard.command_refusal(c, lv, WS) for c, lv in [("kill $(lsof -t -i :8081)", "none"),
-               ("kill `pgrep -f node`", "none"), ("cat <<'EOF'\nx\nEOF\nrm -rf /", "write")])

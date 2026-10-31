@@ -1,3 +1,0 @@
-
-
-First call read_file with the same path, start_line=1 end_line={{FITS}}. If you need more, continue with start_line={{NEXT}}.

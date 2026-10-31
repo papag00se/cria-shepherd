@@ -9,11 +9,15 @@ REFUSED = [   # recursive deletion of `/` however spelled; refused even at exter
     "echo ok; rm -fr --no-preserve-root /", "rm -rf $'\\x2f'", "rm -rf $'\\057'", "echo $(rm -rf /)", "echo `rm -rf /`",
     "diff <(rm -rf /) x", "rm -rf " + BS + "\n/", "r" + BS + "\nm -rf /", "echo ok # note\nrm -rf /",
     "echo $'\\'' ; rm -rf / #'", "rm -?f --no-preserve-root /", "sudo -n rm -?f /",
+    # a `<<` once made the backstop abstain for the whole command: only the heredoc BODY is data
+    "cat <<'EOF'\nx\nEOF\nrm -rf /", "rm -rf / <<'EOF'\nx\nEOF", "cat <<'EOF' > f; rm -rf /\nx\nEOF", "echo $((1 << 2)); rm -rf /",
+    "cat <<EOF\n$(rm -rf /)\nEOF", "cat <<EOF\n`rm -rf /`\nEOF",           # an UNQUOTED body's substitutions run
 ]
 ADMITTED = [   # text, data, literals and project paths that merely look close
     "rm -rf build", "rm -rf ./node_modules", "rm -rf $(pwd)/build", "rm -rf $'\\x2f'tmp", "echo $'\\x2f'", "rm -- -?f /",
     "find / \"-del*\"", "echo 'rm -rf /'", "echo '$(rm -rf /)'", "# rm -rf /", "echo hi # c; rm -rf /", "echo $# ; rm -rf build",
-    "cat <<'EOF'\nrm -rf /\nEOF", "echo a#c " + BS + "\nrm -rf /", 'echo "$(rm -rf /',   # unbalanced: abstains, as before
+    "cat <<'EOF'\nrm -rf /\nEOF", "cat <<EOF\nrm -rf /\nEOF", "cat <<-EOF\n\trm -rf /\n\tEOF", "cat <<'EOF'\n$(rm -rf /)\nEOF",
+    "cat <<EOF\n\\$(rm -rf /)\nEOF", "echo $((1 << 2))", "echo a#c " + BS + "\nrm -rf /", 'echo "$(rm -rf /',   # unbalanced: abstains, as before
 ]
 
 

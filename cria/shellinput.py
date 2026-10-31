@@ -66,6 +66,13 @@ class Layout:
             ranges.extend(((doc.operator, doc.word_end), doc.body, doc.terminator))
         return _project(self.source, ranges)
 
+    def without_documents(self) -> str:
+        """The source with every heredoc operator+delimiter word, body and terminator line blanked (newlines
+        kept, same length): the commands AROUND the documents, with the documents read as the data they are
+        (an unquoted body's own `$( … )` is still reachable through ``HereDoc.text`` + ``expansions``)."""
+        return _project(self.source, [r for doc in self.documents
+                                      for r in ((doc.operator, doc.word_end), doc.body, doc.terminator)])
+
     @property
     def literal_shell(self) -> str:
         """The source with ONLY the escaped quotes inside ANSI-C strings blanked: every other byte,
