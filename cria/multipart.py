@@ -44,6 +44,31 @@ def _nat(value):
     return type(value) is int and value >= 0
 
 
+def _identity(value):
+    """A source identity as the producer reports it: [dev, ino, size, mtime_ns], or None (absent)."""
+    return value is None or (type(value) is list and len(value) == 4 and all(_nat(v) for v in value))
+
+
+def _snapshot(value):
+    """The typed `snapshot` object of a page. mode `snapshot`: the page was served from (or took) the private snapshot,
+    `taken` is the source identity when it was taken and `now` the path's identity as of this page. mode `live`: no snapshot
+    (single page, or `reason` says why not: over_cap | unavailable) and nothing else is claimed."""
+    if not isinstance(value, dict) or set(value) != {'mode', 'reason', 'taken', 'now'}:
+        raise InvalidPage('invalid snapshot object')
+    mode, reason, taken, now = value['mode'], value['reason'], value['taken'], value['now']
+    if not _identity(taken) or not _identity(now):
+        raise InvalidPage('invalid snapshot identity')
+    if mode == 'snapshot':
+        if reason is not None or taken is None:
+            raise InvalidPage('invalid snapshot object')
+    elif mode == 'live':
+        if reason not in (None, 'over_cap', 'unavailable') or taken is not None or now is not None:
+            raise InvalidPage('invalid snapshot object')
+    else:
+        raise InvalidPage('invalid snapshot mode')
+    return mode, reason, None if taken is None else tuple(taken), None if now is None else tuple(now)
+
+
 @dataclass
 class MultipartRead:
     token: str
@@ -54,6 +79,8 @@ class MultipartRead:
     result_outcome: str | None = None
     exit_code: int | None = None
     write_outcome: str | None = None
+    snapshot: tuple | None = None       # (mode, reason, taken) as the FIRST page declared; later pages must repeat mode and taken
+    snapshot_now: tuple | None = None   # the path's identity as of the LAST page; compared with `taken` at delivery
     _parts: list[bytes] = field(default_factory=list, repr=False)
     _failed: bool = False
     _complete: bool = False
@@ -79,7 +106,7 @@ class MultipartRead:
         obj = json.loads(wire[:-1].removesuffix(b'\r').decode('ascii'), object_pairs_hook=_pairs)
         keys = {'v','token','outcome','semantics','source_length','source_sha256',
                 'stream_length','stream_sha256','offset','length','page_sha256','data',
-                'exit_code','write_outcome'}
+                'exit_code','write_outcome','snapshot'}
         if not isinstance(obj, dict) or set(obj) != keys or type(obj['v']) is not int or obj['v'] != 1:
             raise InvalidPage('invalid schema')
         if obj['token'] != self.token or not self.token or obj['semantics'] != self.semantics:
@@ -97,8 +124,9 @@ class MultipartRead:
             or not all(_nat(obj[k]) for k in ('stream_length','offset','length','exit_code'))
             or not all(_hash(obj[k]) for k in ('stream_sha256','page_sha256'))):
             raise InvalidPage('invalid lengths or digests')
+        mode, reason, taken, now = _snapshot(obj['snapshot'])
         identity = (obj['source_length'],obj['source_sha256'],obj['stream_length'],obj['stream_sha256'],
-                    obj['outcome'],obj['exit_code'],obj['write_outcome'])
+                    obj['outcome'],obj['exit_code'],obj['write_outcome'],mode,taken)
         if self.identity is not None and identity != self.identity:
             raise InvalidPage('snapshot or stream changed')
         if obj['offset'] != self.offset:
@@ -110,6 +138,9 @@ class MultipartRead:
         if end > obj['stream_length'] or (not data and end != obj['stream_length']):
             raise InvalidPage('invalid page extent')
         self.identity = identity
+        if self.snapshot is None:
+            self.snapshot = (mode, reason, taken)      # the first page owns the reason; later live pages claim nothing
+        self.snapshot_now = now
         self.result_outcome = obj['outcome']
         self.exit_code = obj['exit_code']
         self.write_outcome = obj['write_outcome']
@@ -121,6 +152,16 @@ class MultipartRead:
                 raise InvalidPage('assembled stream digest mismatch')
             self._complete = True
         return self._complete
+
+    @property
+    def live_pages(self) -> bool:
+        """True when the first page took no snapshot, so later pages read the path itself."""
+        return self.snapshot is not None and self.snapshot[0] == 'live'
+
+    @property
+    def source_changed(self) -> bool:
+        """The path's identity at the last page differs from the one the snapshot was taken from (absent counts)."""
+        return self.snapshot is not None and self.snapshot[0] == 'snapshot' and self.snapshot_now != self.snapshot[2]
 
     def finish(self) -> bytes:
         if self._failed or not self._complete:

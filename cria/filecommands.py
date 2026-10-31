@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 from shlex import quote as _qbash, split as _shell_split
 
-from . import content_reduce as content_reduce_mod, denial, prompts, resultpacket
+from . import content_reduce as content_reduce_mod, denial, ownedfiles, prompts, resultpacket, windowcaps
 from .privatepaths import CRIA_HOME
 from .toolargs import parse_args as _parse_tool_args, tool_path as _tool_path
 from .toolwire import _refusal_command, _sentinel
@@ -94,6 +94,11 @@ def _guarded_path(name: str, args: dict) -> str | None:
 
 READ_INLINE_MAX = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 READ_TRANSPORT_STDOUT_BYTES = 10_000
+# The largest source a multipart read snapshots: the bytes the reference window (windowcaps.REFERENCE_WINDOW tokens) holds at the
+# repo's chars/4 estimate. A file past it cannot be delivered whole to that window at all (a measured overflow), so it keeps the live,
+# detect-and-fail-closed paging. Not a new bound: the reference window and the estimate already exist.
+MULTIPART_SNAPSHOT_MAX_BYTES = windowcaps.REFERENCE_WINDOW * 4
+MULTIPART_SNAPSHOT_DIR = ".cria-mpsnap-"        # under the harness's $TMPDIR (else /tmp) - never in the user's tree
 
 
 def _read_display_path(path: str) -> str:
@@ -409,17 +414,32 @@ class MultipartReadSpec:
     not_read: str = ''
 
 
-# Each page rereads the source once; the consumer must compare both source and
-# stream identities across pages before crediting any read. Metadata checks catch
-# many writes during a read, but do not establish an atomic filesystem snapshot.
+# THE READ IS ATOMIC WITH RESPECT TO WRITERS. The first page reads the source once (one fd, fstat before and after, the
+# length checked against the size), and when the stream needs more pages it copies those very bytes into a PRIVATE snapshot
+# inside an authenticated owned directory under the harness's own $TMPDIR (`ownedfiles.DIRECTORY_PROGRAM`, the same
+# capability the edit-sequence and gate scratch use), re-reads the copy through its owned name and compares its digest with
+# the bytes it was written from. Every later page is served from the snapshot, never from the path: the logical read is
+# exactly the file as of the first page, whatever a writer does between the pages (rewrite in place, append, truncate,
+# replace by rename, change and revert; a snapshot altered in place changes the digest every page reports, and the consumer
+# compares that with the first page's). The page record says so in a typed `snapshot` object (mode, reason, the source
+# identity taken at snapshot time, and the path's CURRENT identity as of this page) and the consumer compares the last
+# page's current identity with the one taken: a source that changed is labelled to the coder, never delivered as current.
+# The snapshot is removed by the page that carries the last extent. A source larger than MULTIPART_SNAPSHOT_MAX_BYTES (or a
+# snapshot that cannot be made) is read live on every page, with the typed reason in the record: the old detect-and-fail-
+# closed behaviour (hash and metadata checked per page), which cannot distinguish a change-and-revert.
 _MULTIPART_PAGE_PY = r'''
 import base64, hashlib, json, os, stat, sys
 s = json.loads(base64.b64decode('%%CONFIG%%'))
 offset = %%OFFSET%%
+mode = '%%MODE%%'
 sha = lambda x: hashlib.sha256(x).hexdigest()
+identity = lambda x: [x.st_dev, x.st_ino, x.st_size, x.st_mtime_ns]
 semantics = 'range' if s['start'] else 'whole'
 write_outcome = 'not_run' if s['read_instead'] else 'not_applicable'
 source = None
+taken = None
+context = None
+stream = None
 exit_code = 0
 outcome = 'read-instead' if s['read_instead'] else 'read'
 
@@ -428,8 +448,64 @@ def failure(key):
     outcome, exit_code = 'error', 1
     return (s['failure_lead'] + s['failures'][key]).encode('utf8')
 
+def snapshot_get(name):
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=context['fd'])
+    with os.fdopen(descriptor, 'rb') as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise OSError('snapshot file is not regular')
+        return f.read()
+
+def snapshot_release(remove):
+    global context
+    held, context = context, None
+    if held is None:
+        return
+    try:
+        if remove and _owned_valid(held):
+            for name in ('snap', 'meta'):
+                try: os.unlink(name, dir_fd=held['fd'])
+                except FileNotFoundError: pass
+            _owned_retire(held)
+    except OSError:
+        pass
+    finally:
+        _owned_close(held)
+
+def snapshot_serve():
+    global context
+    context = _owned_open(s['token'], s['snapshot_prefix'], ['snapshot'], time.monotonic(), create=False)
+    # No digest check here: the page reports the sha-256 of what it served and the consumer compares it with the first page's.
+    return snapshot_get('snap'), json.loads(snapshot_get('meta'))['taken']
+
+def snapshot_take():
+    global context
+    context = _owned_open(s['token'], s['snapshot_prefix'], ['snapshot'], time.monotonic() + 5)
+    try:
+        meta = json.dumps({'taken': taken}).encode()
+        for name, payload in (('snap', source), ('meta', meta)):
+            descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=context['fd'])
+            with os.fdopen(descriptor, 'wb') as f:
+                f.write(payload)
+        if sha(snapshot_get('snap')) != sha(source):
+            raise OSError('snapshot copy differs from the bytes read')
+    except BaseException:
+        snapshot_release(True)
+        raise
+
+def now_identity():
+    try:
+        return identity(os.stat(s['path']))
+    except OSError:
+        return None
+
 if s['inverted']:
     stream = failure('inverted')
+elif mode == 'serve':
+    try:
+        source, taken = snapshot_serve()
+    except (OSError, ValueError, KeyError, TypeError):
+        source = None
+        stream = failure('unreadable')
 else:
     try:
         fd = os.open(s['path'], os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0))
@@ -443,53 +519,79 @@ else:
         if signature(before) != signature(after) or len(source) != after.st_size:
             source = None
             stream = failure('unreadable')
+        else:
+            taken = identity(before)
     except FileNotFoundError:
         stream = failure('missing')
     except IsADirectoryError:
         stream = failure('is_directory')
     except OSError:
         stream = failure('unreadable')
-    else:
-        if source is not None:
-            if semantics == 'range':
-                lines = source.split(b'\n')
-                if lines and lines[-1] == b'': lines.pop()
-                first, end = s['start'], s['end']
-                if first > len(lines):
-                    stream = (json.dumps({'v':1,'r':s['receipt'],'k':'ran'}, separators=(',', ':')) + '\n' + s['past'].replace('%N%', str(len(lines)))).encode('utf8')
-                else:
-                    window = lines[first-1:end] if end else lines[first-1:]
-                    body = b''.join(b'%d: %s\n' % (first+i, ln) for i, ln in enumerate(window))
-                    stream = _record(s['receipt'], 'ran', body, 'range')
-            else:
-                stream = _record(s['receipt'], 'refused' if s['read_instead'] else 'ran', source, 'whole', s['pre'])
 
-if offset < 0 or offset > len(stream): sys.exit(2)
+if stream is None:
+    if semantics == 'range':
+        lines = source.split(b'\n')
+        if lines and lines[-1] == b'': lines.pop()
+        first, end = s['start'], s['end']
+        if first > len(lines):
+            stream = (json.dumps({'v':1,'r':s['receipt'],'k':'ran'}, separators=(',', ':')) + '\n' + s['past'].replace('%N%', str(len(lines)))).encode('utf8')
+        else:
+            window = lines[first-1:end] if end else lines[first-1:]
+            body = b''.join(b'%d: %s\n' % (first+i, ln) for i, ln in enumerate(window))
+            stream = _record(s['receipt'], 'ran', body, 'range')
+    else:
+        stream = _record(s['receipt'], 'refused' if s['read_instead'] else 'ran', source, 'whole', s['pre'])
+
+if offset < 0 or offset > len(stream):
+    snapshot_release(False)
+    sys.exit(2)
 source_hash = sha(source) if source is not None else None
 stream_hash = sha(stream)
-def encoded(n):
+def encoded(n, snapshot):
     chunk = stream[offset:offset+n]
     rec = {'v':1, 'token':s['token'], 'outcome':outcome, 'semantics':semantics,
            'source_length':len(source) if source is not None else None,
            'source_sha256':source_hash,
            'stream_length':len(stream), 'stream_sha256':stream_hash, 'offset':offset,
            'length':len(chunk), 'page_sha256':sha(chunk), 'data':base64.b64encode(chunk).decode('ascii'),
-           'exit_code':exit_code, 'write_outcome':write_outcome}
+           'exit_code':exit_code, 'write_outcome':write_outcome, 'snapshot':snapshot}
     return (json.dumps(rec, separators=(',', ':')) + '\n').encode('ascii')
-# Base64 and the decimal length are monotone; digest widths are fixed. The
-# JSON line is ASCII and only its final LF can expand under a normal PTY.
-low, high, best = 0, min(len(stream)-offset, 10000), -1
-while low <= high:
-    mid = (low + high) // 2
-    wire = encoded(mid)
-    if len(wire) + 1 <= 10000:
-        best, low = mid, mid + 1
+def fit(snapshot):
+    # Base64 and the decimal length are monotone; digest widths are fixed. The
+    # JSON line is ASCII and only its final LF can expand under a normal PTY.
+    low, high, best = 0, min(len(stream)-offset, 10000), -1
+    while low <= high:
+        mid = (low + high) // 2
+        if len(encoded(mid, snapshot)) + 1 <= 10000:
+            best, low = mid, mid + 1
+        else:
+            high = mid - 1
+    return best
+snapshot = {'mode': 'live', 'reason': None, 'taken': None, 'now': None}
+if mode == 'serve' and source is not None:
+    snapshot = {'mode': 'snapshot', 'reason': None, 'taken': taken, 'now': now_identity()}
+best = fit(snapshot)
+if mode == 'take' and source is not None and offset + max(best, 0) < len(stream):
+    # More pages follow: take the snapshot they will be served from, or say why not.
+    reason = None
+    if len(source) > s['snapshot_cap']:
+        reason = 'over_cap'
     else:
-        high = mid - 1
+        try:
+            snapshot_take()
+        except (OSError, ValueError):
+            reason = 'unavailable'
+    snapshot = ({'mode': 'live', 'reason': reason, 'taken': None, 'now': None} if reason
+                else {'mode': 'snapshot', 'reason': None, 'taken': taken, 'now': now_identity()})
+    best = fit(snapshot)
 if best < 0 or (best == 0 and offset < len(stream)):
+    snapshot_release(snapshot['mode'] == 'snapshot')
     print('multipart page metadata exceeds stdout budget', file=sys.stderr)
     sys.exit(3)
-sys.stdout.buffer.write(encoded(best))
+sys.stdout.buffer.write(encoded(best, snapshot))
+sys.stdout.buffer.flush()
+# The page that carries the last extent retires the snapshot; every earlier page only closes its handle.
+snapshot_release(snapshot['mode'] == 'snapshot' and offset + best >= len(stream) and mode == 'serve')
 '''
 
 
@@ -531,7 +633,9 @@ class MultipartCommandTooLarge(ValueError):
     """A known harness command limit cannot carry this request unchanged."""
 
 
-def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_bytes: int | None = None) -> str:
+def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_bytes: int | None = None, live: bool = False) -> str:
+    """One page command. Offset 0 takes the snapshot; later pages serve from it, or read the path live when the first page said
+    (typed, in its record) that no snapshot was taken (`live`)."""
     if not isinstance(spec, MultipartReadSpec) or not spec.call_id or not spec.token or not spec.receipt:
         raise ValueError('call, token and receipt are required')
     if len(spec.token.encode('utf8')) > 128 or len(spec.receipt.encode('utf8')) > 128:
@@ -557,10 +661,12 @@ def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_by
                 failures = {k: denial.mark(prompts.fill(v, path=display)) for k, v in prompts.load_map('read_failed').items()}
     s = {'path':spec.path, 'token':spec.token, 'receipt':spec.receipt, 'start':start, 'end':spec.end_line,
          'pre':spec.pre, 'read_instead':spec.read_instead, 'inverted':inverted, 'failures':failures, 'failure_lead':lead,
-         'past':f'(no lines in that range — {display} has %N% lines; line {start} is past the end of the file)\n'}
+         'past':f'(no lines in that range — {display} has %N% lines; line {start} is past the end of the file)\n',
+         'snapshot_cap':MULTIPART_SNAPSHOT_MAX_BYTES, 'snapshot_prefix':MULTIPART_SNAPSHOT_DIR}
     cfg = base64.b64encode(json.dumps(s, ensure_ascii=True).encode()).decode()
-    script = _MULTIPART_PAGE_PY.replace('%%CONFIG%%', cfg).replace('%%OFFSET%%', str(offset))
-    command = "python3 - <<'__CRIA_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + script + '\n__CRIA_MULTIPART_PAGE__\n'
+    page_mode = 'take' if offset == 0 else 'live' if live else 'serve'
+    script = _MULTIPART_PAGE_PY.replace('%%CONFIG%%', cfg).replace('%%OFFSET%%', str(offset)).replace('%%MODE%%', page_mode)
+    command = "python3 - <<'__CRIA_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + ownedfiles.DIRECTORY_PROGRAM + script + '\n__CRIA_MULTIPART_PAGE__\n'
     if command_max_bytes is not None:
         if type(command_max_bytes) is not int or command_max_bytes < 0:
             raise ValueError('invalid command byte limit')

@@ -304,7 +304,7 @@ class Bridge:
                         or (entry.calls and entry.pending not in entry.calls)):
                     raise ValueError('invalid call sequence')
                 for cid, call in entry.calls.items():
-                    command=filecommands.build_multipart_page(spec,assembly.offset)
+                    command=filecommands.build_multipart_page(spec,assembly.offset,live=assembly.live_pages)
                     if cid == spec.call_id:
                         command=writeproxy._sentinel(fn['name'],fn['arguments'],spec.receipt,False)+'\n'+command
                     if call != writeproxy._shell_call(cid,entry.shell,command,0):
@@ -461,6 +461,17 @@ class Bridge:
         return readshape.overflow_next(shape, entry.spec.path, menu,
                                        window=bool(entry.spec.start_line or entry.spec.end_line))
 
+    @staticmethod
+    def _changed_note(entry):
+        """What is known about the path now, from the producer's own typed `now` identity (never a re-stat by cria)."""
+        _, _, taken = entry.assembly.snapshot
+        now = entry.assembly.snapshot_now
+        details = prompts.load_map('multipart_source_changed_detail')
+        detail = (details['missing'] if now is None
+                  else prompts.fill(details['resized'], bytes=now[2]) if now[2] != taken[2]
+                  else details['replaced'])
+        return prompts.render('multipart_source_changed', bytes=entry.assembly.identity[0], path=entry.spec.path, detail=detail)
+
     def incoming(self, session, messages, tools=None):
         """Return (projected history, private continuation calls), or identity.
 
@@ -559,7 +570,7 @@ class Bridge:
                         e.failure_code = None
                 else:
                     next_id = 'ctxread_' + uuid.uuid4().hex
-                    cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset)
+                    cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset, live=e.assembly.live_pages)
                     call = writeproxy._shell_call(next_id, e.shell, cmd, 0)
                     e.pending = next_id
                     e.private.add(next_id)
@@ -587,6 +598,13 @@ class Bridge:
                     if tid in private: continue
                     if tid in originals:
                         m['content'] = originals[tid]
+                        moved = next((e for e in active if e.spec.call_id == tid and e.result is not None
+                                      and e.failure_id is None and e.fallback_kind is None and e.assembly.source_changed), None)
+                        if moved is not None:
+                            # The verified bytes are the file as of the first page; the path holds something else now.
+                            # The note rides AFTER the record, so the proof owner reads a tail it cannot attribute to
+                            # the file: the text is shown, labelled, and earns no read credit (never "current").
+                            resultnotes.append_note(m, self._changed_note(moved))
                         failed = next((e for e in active if e.spec.call_id == tid
                                        and (e.failure_id is not None or e.fallback_kind is not None)), None)
                         if failed is not None:
@@ -628,7 +646,7 @@ class Bridge:
                 if e.result is not None and e.fallback_kind is None and e.assembly.exit_code != 0:
                     facts.append(ResultFact(e.spec.call_id, e.assembly.exit_code))
                 record = resultpacket.read_record(e.result, 0, e.spec.receipt) if e.result is not None else None
-                if ((not e.offered or replay) and e.fallback_kind is None and record is not None and record.body is not None and record.observe in ('whole', 'range')
+                if ((not e.offered or replay) and e.fallback_kind is None and not e.assembly.source_changed and record is not None and record.body is not None and record.observe in ('whole', 'range')
                         and record.end == len(e.result)):
                     facts.append(ReadFact(e.spec.call_id, (e.assembly.identity[0], e.assembly.identity[1]),
                                           record.body, e.spec.read_instead, record.pre))
