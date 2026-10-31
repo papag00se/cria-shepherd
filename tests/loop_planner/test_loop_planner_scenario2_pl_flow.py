@@ -7,12 +7,14 @@ critic refuse until the stuck-step rescue re-derives the tail."""
 import json
 import re
 import subprocess
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from cria import assistruntime, completedwork, loop, planner, wsview
 from cria.config import Role
+from cria.plan import Plan, PlanItem
 
 from loop_planner_helpers import Rlog
 
@@ -146,3 +148,23 @@ def test_a_critic_that_keeps_refusing_a_step_renudges_then_rederives_the_tail_an
     assert "living" in reasoner.asked and fields(rlog, "loop.stuck_replan")[0]["before"] == 2 and fields(rlog, "loop.stuck_replan")[0]["after"] == 1
     assert [e["text"] for e in fields(rlog, "loop.item")][-1] == "Write test_report.py" and fields(rlog, "loop.item")[-1]["total"] == 1
     assert "loop.done" in rlog.kinds() and "plan complete" in final
+
+
+@pytest.mark.parametrize("answer,summary,status,text", [
+    ("It works.", "", completedwork.BriefingStatus.GENERATED, "It works."),
+    (None, "running summary", completedwork.BriefingStatus.RUNNING_SUMMARY, "running summary"),     # no compactor answer: carry what we had
+    ("", "", completedwork.BriefingStatus.CHECKLIST, "1. [done] Write report.py\n2. [incomplete] Write test_report.py"),
+])
+def test_the_briefing_falls_back_to_the_running_summary_then_the_checklist_and_is_stale_once_the_plan_moves(answer, summary, status, text):
+    plan = Plan(id="p", task="t", created="c", items=[PlanItem("Write report.py", done=True), PlanItem("Write test_report.py")])
+    scope = completedwork.CompletionScope("sid:b", 1)
+    source = completedwork.BriefingInput(scope, plan, [], completedwork.Services(lambda *a, **k: "", lambda q, log: answer), Rlog(),
+                                         release_authorized=True, planner_enabled=True, summary=summary)
+    result = completedwork.generate(source)
+    assert (result.status, result.text) == (status, text)
+    assert completedwork.embed("base", source, result).text == f"base\n\n{completedwork.BRIEFING_OPEN}\n{text}\n{completedwork.BRIEFING_CLOSE}"
+    plan.items[1].done = True
+    stale = completedwork.embed("base", source, result)
+    assert (stale.status, stale.text) == (completedwork.EmbeddingStatus.STALE, "base")
+    for off in (dict(planner_enabled=False), dict(synthetic=True), dict(release_authorized=False)):
+        assert completedwork.generate(replace(source, **off)).status is completedwork.BriefingStatus.NOT_APPLICABLE
