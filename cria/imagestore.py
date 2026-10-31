@@ -243,6 +243,18 @@ class ImageSession:
             if prepared.token is not self._token:raise ImageUnavailable('Image preparation belongs to a different session')
             return any(self._records[b.ref].observation is not None for b in prepared.bindings)
 
+    def attachment_observations(self,prepared):
+        """Labelled observation texts of the observed images the USER attached (a tool-result packet is already in
+        the action log, where review_view puts its observation). One text per observed occurrence, in order."""
+        with self._lock:
+            viewed=self.render(prepared)
+            texts=[]
+            for binding in prepared.bindings:
+                if prepared.messages[binding.message].get('role')=='tool':continue
+                part=viewed[binding.message]['content'][binding.part]
+                if part.get('type')=='text':texts.append(part['text'])
+            return texts
+
     def project(self,prepared,framed_messages):
         """Outbound view only, AFTER raw task/root identity and frame construction.
 

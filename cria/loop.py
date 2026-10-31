@@ -50,7 +50,8 @@ from pathlib import Path
 
 from .upstream import UpstreamProtocolError
 from .imageworkflow import (current as _image_current, review_view as _image_review_view,
-                            has_observation as _image_has_observation)
+                            has_observation as _image_has_observation,
+                            attachment_observations as _image_attachment_observations)
 
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
@@ -1856,6 +1857,12 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # where the request holds an image occurrence with a completed observation (typed store provenance, never
     # message text): the observation is then the evidence the judge checks it against. With no observation
     # nothing can ground the claim, so it stays out, exactly as every other closing reply does.
+    # An image the user ATTACHED to the task arrived in the task message, which the judge reads as plain text; the
+    # action log holds only tool results. Without this block the judge sees a claim about an image and no
+    # observation of it (measured: ~2 of 3 gemma4_12b verdicts called an observed image unobserved).
+    if _image_has_observation() and (attached := _image_attachment_observations()):
+        evidence = "\n\n".join(part for part in (evidence, prompts.render(
+            "satisfaction_image_observation", observations="\n\n".join(attached))) if part)
     if (closing_claim or "").strip() and _image_has_observation():
         evidence = "\n\n".join(part for part in (evidence, prompts.render(
             "satisfaction_closing_claim", claim=closing_claim.strip())) if part)

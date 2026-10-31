@@ -28,6 +28,14 @@ def has_observation():
     try:return context.session.observed(context.prepared)
     except ImageUnavailable:return False
 
+def attachment_observations():
+    """The labelled observations of images the user attached to this request, for a reader whose evidence is the
+    action log (which holds tool results, not the task message the image arrived in). [] when none is observed."""
+    context=current.get()
+    if context is None or not context.prepared.bindings:return []
+    try:return context.session.attachment_observations(context.prepared)
+    except ImageUnavailable:return []
+
 @dataclass(frozen=True)
 class SourceImageContext:
     workflow: object
