@@ -545,8 +545,12 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None, m
     so the whole command is ONE argv string and Linux caps a single argument at MAX_ARG_STRLEN =
     128 KiB. A heredoc does not get around that — its bytes are in the same string. A write past
     :data:`COMMAND_ARG_BUDGET` therefore dies in the harness with "Argument list too long (os error
-    7)" before any of this runs. Not observed from a model yet (see docs/open-threads.md); the
-    fetch-spill path, where it WAS observed, states its own bound and cuts with disclosure."""
+    7)" before any of this runs. MEASURED, not assumed (2026-11-01, every capture under ~/.cria/calls):
+    6,161 well-formed write_file/edit_file/apply_patch calls, largest 21.7 KB, none past 24 KB; the
+    only calls past 48 KB were 31 runaway generations cut at finish_reason length/rumination, which the
+    loop refuses BEFORE lowering (and tells the model to build the file in pieces). The command's fixed
+    overhead is ~13 KB, so the ceiling is ~88 KB of content. The fetch-spill path, where the cap WAS
+    observed, states its own bound and cuts with disclosure."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX,
                                            # Both are REFUSALS decided inside the lowered heredoc —

@@ -119,6 +119,19 @@ def test_a_spill_lands_a_whole_document_exactly_and_cuts_an_oversize_one_while_s
         assert whole or ("could not be delivered" in saved and "first" in saved and "y" * 1000 in saved and len(saved) < size)
 
 
+def test_a_model_write_far_past_the_largest_one_ever_observed_still_fits_one_command_and_lands_exactly(tmp_path):
+    """The write ceiling is the harness's one-argument cap (MAX_ARG_STRLEN = 128 KiB), not the heredoc's. Measured over every capture (6,161 well-formed
+    write_file/edit_file/apply_patch calls) the largest was 21.7 KB and none reached 24 KB; the only calls past 48 KB were 31 runaway generations cut at
+    finish_reason length/rumination, which are refused before lowering. So the claim worth pinning is that the fixed overhead of the lowered program
+    leaves headroom: a 4x-the-largest (88 KB) write is under the cap and lands byte for byte, so growing the program cannot quietly eat the ceiling."""
+    body = "".join(f"row {i},{'x' * 40}\n" for i in range(1800))[:88_000]
+    command = writeproxy._write_command("big.csv", body)
+    assert len(command) < 128 * 1024 and len(command) - len(body) * 4 // 3 < 20_000   # overhead stays small: ceiling ~ (128 KiB - overhead) * 3/4
+    done = subprocess.run(["bash", "-c", command], cwd=tmp_path, env=harness_env(tmp_path), capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr[-300:]
+    assert (tmp_path / "big.csv").read_text() == body
+
+
 def test_a_spilled_document_is_claimed_to_exist_only_while_the_workspace_listing_says_so():
     """The claim 'its full text is on disk at ...' was recorded at compose time, before the exec ran. Unknown (no listing yet), a listing that omits
     the file, and another workspace all withdraw it; a listing that names it keeps it."""
