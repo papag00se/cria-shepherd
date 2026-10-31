@@ -75,7 +75,7 @@ def test_custody_the_guard_cannot_prove_is_refused_not_waved_through(command):
 
 # (rm command, refused as a possible/proven root delete): the glob in the OPTION position can expand to -r
 GLOBS = [("rm -*f /", 1), ("rm -?f /", 1), ("rm -[!a]f /", 1), ("rm -[^a]f /", 1), ("rm -[]a]f /", 1), ("rm -[!]a]f /", 1), ("rm -[a-z]f /", 1),
-         ("rm -[a\\]f /", 1), ("rm -[a[b]f /", 1), ("rm --rec* /", 1), ("rm --rx* /", 0), ("rm -[ab]f /", 0), ("rm -[r]f /", 1), ("rm -[Rx]f /", 1),
+         ("rm -[a\\]f /", 1), ("rm -[a[b]f /", 1), ("rm --rec* /", 1), ("rm --rx* /", 0), ("rm -[ab]f /", 0), ("rm -[r]f /", 1), ("rm -Rf /", 1), ("rm --recursive /", 1), ("rm -f /", 0), ("rm -[Rx]f /", 1),
          ("rm -*\U000f0000 /", 1), ('rm "-*f" /', 0), ("rm -'*'f /", 0), ("rm foo* /", 0), ("rm ./-*f /", 0), ("rm -*f /tmp", 0),
          ("sudo -n rm -rf /", 1), ("sudo -- rm -rf /", 1), ("find / -delete", 1), ("find /tmp -delete", 0), ("rm -rf \\\n/", 1), (" ", 0), ("", 0)]
 
