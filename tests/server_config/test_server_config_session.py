@@ -50,6 +50,7 @@ def test_the_announced_workspace_is_carried_as_a_name_and_remembered_for_the_ses
     # a root learned from somewhere other than <cwd> is recorded under the same key; '.' is never remembered
     assert server._remember_session_cwd("s4", ".") == "." and server._session_cwd("s4", []) is None
     assert server._remember_session_cwd("s4", "/w2") == "/w2" and server._session_cwd("s4", []) == "/w2"
+    assert server._remember_session_cwd("s4", "/w3") == "/w3" and server._session_cwd("s4", []) == "/w3"   # newest wins here too
 
 
 TOOLS = [{"type": "function", "function": {"name": "exec_command", "parameters": {"type": "object"}}}]
