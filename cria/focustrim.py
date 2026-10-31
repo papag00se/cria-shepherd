@@ -301,7 +301,7 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     #
     # So the note is not decoration — it is the difference between the model being told what it did
     # and being asked the same question again. This mirrors what rule B has always done for the
-    # failures it folds away (`trim_error_squash`); rule A collapsing in silence was the asymmetry.
+    # failures it folds away (`work_log_denied`); rule A collapsing in silence was the asymmetry.
     # Only for the group that ends at the FINAL tool call: an old duplicate deep in the history is
     # genuinely stale and folding it away is what this rule is for (#3 — silence over noise).
     last_call_id = None
