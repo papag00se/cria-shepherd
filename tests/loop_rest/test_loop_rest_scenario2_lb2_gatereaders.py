@@ -106,3 +106,26 @@ def test_a_finished_completion_streams_back_as_sse_with_its_calls_and_the_eviden
     assert payloads[-1]["choices"][0]["finish_reason"] == "tool_calls" and payloads[0]["model"] == "m"
     bare = [json.loads(f[6:]) for f in loop.completion_to_sse({"choices": [{"message": {"content": "plain"}}]}) if f != b"data: [DONE]\n\n"]
     assert bare[-1]["choices"][0]["finish_reason"] == "stop" and len(bare) == 3
+
+
+def test_the_ground_truth_the_coder_gets_is_the_failure_or_a_neutral_clean_note_and_silence_when_less_was_read_than_asked():
+    clean = probegate.GateOutcome(ran=True, report=report(ProbeKind.Test, "pytest -q", 0, "no problems reported"))
+    unlaunched = probegate.GateOutcome(ran=True, report=report(ProbeKind.Test, "pytest -q", None, "failed to launch: not found"))
+    failed = probegate.GateOutcome(ran=True, report=report(ProbeKind.Test, "pytest -q", 1, "boom"))
+    assert loop.guard_ground_truth(probegate.GateOutcome(ran=False)) == ""
+    assert loop.guard_ground_truth(unlaunched) == ""                                  # cria's own setup gap is never a signal to the model
+    assert loop.guard_ground_truth(clean) == loop.prompts.load("ground_truth_clean") != ""
+    assert "$ pytest -q — boom" in loop.guard_ground_truth(failed)
+
+
+def test_the_check_note_names_what_was_written_since_the_checks_ran_newest_first_and_claims_nothing_else():
+    gate = {"role": "tool", "tool_call_id": "g", "content": f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\nx"}
+    write = lambda cid, path: {"role": "assistant", "tool_calls": [{"id": cid, "function": {"name": "write_file", "arguments": json.dumps({"path": path, "content": "1"})}}]}   # noqa: E731
+    msgs = [write("1", "old.py"), gate, write("2", "a.py"), write("3", "b.py"), write("4", "a.py"), "junk"]
+    assert loop._writes_since_last_gate(msgs) == ["b.py", "a.py"] and loop._writes_since_last_gate(msgs, 1) == ["b.py"]
+    assert loop._writes_since_last_gate(msgs[:1]) == ["old.py"]                              # no gate seen: every write since the start
+    assert loop._checks_ran_before([]) == "" and loop._checks_ran_before(["a.py"]) == " before your change to a.py"
+    assert loop._checks_ran_before(["a.py", "b.py", "c.py"]) == " before your changes to a.py, b.py, c.py"
+    assert loop._gate_commands("header\n$ pytest -q — 2 failed\n$ ruff .\nnoise $ x") == ["pytest -q", "ruff ."]
+    shown = {"messages": [{"role": "user", "content": "the checks: FAILED x"}, {"role": "tool", "content": None}]}
+    assert loop._checks_already_visible(shown, "FAILED x") and not loop._checks_already_visible(shown, "FAILED y") and loop._checks_already_visible(shown, "  ")
