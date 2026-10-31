@@ -6,7 +6,7 @@ import json
 import re
 from shlex import quote as _qbash
 
-from . import denial, prompts
+from . import denial, jsontext, prompts
 from .shelltool import _CMD_FIELDS, shell_args, with_output_budget
 from .toolargs import parse_args as _parse
 
@@ -165,6 +165,46 @@ def is_crias_own(command: str) -> bool:
         return isinstance(json.loads(base64.b64decode(m.group(1)).decode("utf-8")), list)
     except (json.JSONDecodeError, ValueError, TypeError):
         return False
+
+
+def gate_probes_of(cmd: str) -> list[str] | None:
+    """The probe list a gate command declares, or None when this is not a cria-authored gate.
+
+    THE DECLARATION LIVES AT ONE POSITION — the very first line of the command, exactly as `toolwire` reads cria's own
+    lowering sentinel (``is_crias_own``). A model's OWN command that merely carries the stamp on a later line (a heredoc,
+    an echo, a file it writes) declares nothing: found on any line, it made the model's `rm -rf build && make` a "gate
+    call" whose text `_strip_command_plumbing` then REWROTE, in the history the model re-reads, to whatever probe list the
+    quoted stamp named, and whose result every `gate_call_ids` reader attributed to cria instead of the coder."""
+    m = _GATE_LINE.match(cmd or "")
+    if m is None:
+        return None
+    try:
+        got = json.loads(base64.b64decode(m.group(1).encode()).decode("utf-8"))
+    except Exception:                           # noqa: BLE001 — an unreadable stamp is not a gate
+        return None
+    return [str(x) for x in got] if isinstance(got, list) else None
+
+
+def gate_command_text(value) -> str:
+    """The command a shell tool's ``cmd``/``command`` field carries. A string is itself; for an argv array it is the ELEMENT that
+    opens with the declaration (cria's own is ``["bash", "-lc", script]``, `shelltool.shell_args`), else the last element: the
+    position rule is per command text, and joining the whole array would put a real declaration after `bash\\n-lc`."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value:
+        return next((str(x) for x in value if _GATE_LINE.match(str(x))), str(value[-1]))
+    return ""
+
+
+def gate_call(call) -> bool:
+    """Is this assistant tool call cria's own gate command, by the stamp at its command's first line?"""
+    function = call.get("function") if isinstance(call, dict) else None
+    raw = (function or {}).get("arguments")
+    try:
+        args = jsontext.loads(raw) if isinstance(raw, str) else None
+    except (ValueError, TypeError):
+        args = None
+    return isinstance(args, dict) and any(gate_probes_of(gate_command_text(args.get(f))) is not None for f in ("cmd", "command"))
 
 
 def original_call(command: str, call_id=None) -> dict | None:

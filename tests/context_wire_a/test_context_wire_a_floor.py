@@ -12,7 +12,7 @@ import pytest
 from cria import bodykeys, contextfloor as cf, prompts
 from cria.content_reduce import content_reduce, digest_reduce, est_tokens
 from cria.loop import BRIEFING_OPEN
-from cria.probegate import SECTION_PREFIX
+from cria.probegate import SECTION_PREFIX, _gate_sentinel
 
 
 def u(text):
@@ -123,13 +123,29 @@ def test_anchors_and_the_steer_before_the_last_user_turn_survive_the_drop_in_ord
     steer = "⟦ctx:steer⟧ The repo's automated checks pass; the task is not finished."
     facts = "⟦ctx:facts⟧ FILES YOU HAVE ALREADY READ " + "f" * 3000
     msgs = ([{"role": "system", "content": "sys"}, u("Fix the importer"), u(briefing),
-             a("", "g", "shell"), tool("g", gate)] + pairs(12, 900, "step") + [u(steer), u(facts)])
+             a("", "g", "shell", json.dumps({"cmd": _gate_sentinel(["pytest -q"]) + "\ncd /ws && pytest -q"})), tool("g", gate)]
+            + pairs(12, 900, "step") + [u(steer), u(facts)])
     out, _, rep = cf.fit(msgs, None, window=2200, reserve=300, pinned_task="Fix the importer")
     texts = [m.get("content") for m in out]
     assert rep.turns_dropped >= 10
     assert briefing in texts and gate in texts and "Fix the importer" in texts
     assert texts[-2:] == [steer, facts]
     assert not any("automated checks pass" in t for t in notes(out))
+
+
+@pytest.mark.parametrize("quoted", [f"{SECTION_PREFIX}probe-0___\nEXIT:0", "see ⟦ctx:facts⟧ in the docs", "⟦ctx:rollup⟧ all done", "⟦ctx:briefing⟧ x ⟦/ctx:briefing⟧"])
+def test_a_marker_quoted_inside_a_tool_result_or_a_written_file_protects_nothing(quoted):
+    """RED1, wave 10b: an anchor is cria's by provenance (role + position), not because its bytes appear anywhere in a message. A read of
+    any file that quotes a marker (cria's own sources do) was un-reducible and un-droppable, so the floor reported over budget for
+    a conversation that was only large. Control: the same marker OPENING a user message is still an anchor."""
+    big = "line of tool output\n" * 400
+    quoting = [{"role": "system", "content": "perm"}, u("root task"), a("", "c1", "read_file"), tool("c1", big + quoted + "\n" + big),
+               a("", "c2", "write_file", json.dumps({"content": quoted})), tool("c2", "Wrote x"), u("now what")]
+    out, _, rep = cf.fit(copy.deepcopy(quoting), None, window=1500, reserve=200, safety=1.0, pinned_task="root task")
+    assert not rep.over_budget and sum(len(m.get("content") or "") for m in out) < 3000
+    anchored = [{"role": "system", "content": "perm"}, u("root task"), u(quoted + "\n" + big), u("now what")]
+    out, _, rep = cf.fit(anchored, None, window=1500, reserve=200, safety=1.0, pinned_task="root task")
+    assert any(quoted in (m.get("content") or "") for m in out)
 
 
 def test_protected_overflow_drops_oldest_of_the_active_span_and_leaves_no_orphan_results():

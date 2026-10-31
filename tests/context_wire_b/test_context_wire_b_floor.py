@@ -1,11 +1,12 @@
 """The context floor: a fitting body is untouched, pressure is shed in a fixed order with labels, and the task survives."""
+import json
 from copy import deepcopy
 
 from context_wire_b_helpers import rows
-from cria import bodykeys, contextfloor
+from cria import bodykeys, contextfloor, probegate
 
 TASK = "Fix the rounding bug causing totals to be one cent low. Stop using float64 for money."
-GATE_PAIR = [{"role": "assistant", "content": "", "tool_calls": [{"id": "gate", "function": {"name": "shell", "arguments": "{}"}}]},
+GATE_PAIR = [{"role": "assistant", "content": "", "tool_calls": [{"id": "gate", "function": {"name": "shell", "arguments": json.dumps({"cmd": probegate._gate_sentinel(["pytest -q"]) + "\npytest -q"})}}]},   # cria's gate call: its stamp leads the command
              {"role": "tool", "tool_call_id": "gate", "content": "___CRIA_GATE_ exact checker result"}]
 u = lambda text: {"role": "user", "content": text}
 a = lambda text: {"role": "assistant", "content": text}

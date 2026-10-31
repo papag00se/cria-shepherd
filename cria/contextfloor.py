@@ -55,7 +55,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import bodykeys, imageprotocol
-from . import denial, editrecovery, prompts, readshape, selfcompact, toolargs, windowcaps
+from . import denial, editrecovery, prompts, readshape, selfcompact, toolargs, toolwire, windowcaps
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -135,9 +135,49 @@ def _preserved_indices(messages, protected_call_ids=()):
     return keep
 
 
+_USER_ROLES = ("user", "system", "developer")
+
+
 def _has_protect_marker(m: dict) -> bool:
-    t = _msg_text(m)
-    return any(mk in t for mk in _PROTECT_MARKERS)
+    """Is this message one of cria's own anchors, by PROVENANCE — role and position — never by the bytes a tool returned?
+
+    The marker is cria's voice only where cria speaks: it OPENS a line of a user/system message (every anchor cria injects is
+    one), the briefing envelope opens a line of an assistant reply, and a gate command carries its stamp on its first line
+    (`toolwire.gate_call`; its result is protected through the pair rule). The same string INSIDE a tool result, a tool call's
+    arguments or mid-line prose is somebody's file or page: matching it anywhere made a read of cria's own source (or any
+    file that quotes a marker) un-reducible and un-droppable, and the floor then reported over budget for a conversation
+    that was only large."""
+    role = m.get("role")
+    if role in _USER_ROLES:
+        marks = _PROTECT_MARKERS
+        lines = (_content_text(m) or "").splitlines()
+    elif role == "assistant":
+        if any(toolwire.gate_call(tc) for tc in m.get("tool_calls") or []):
+            return True
+        marks = ("⟦ctx:briefing⟧",)
+        lines = (_content_text(m) or "").splitlines()
+    else:
+        return False
+    return any(ln.lstrip().startswith(marks) for ln in lines)
+
+
+def _marker_protected(messages: list[dict]) -> set[int]:
+    """Indices of cria's anchors: each message `_has_protect_marker` names, plus the RESULT of a gate call (a result carries no
+    stamp of its own; it is cria's because the call it answers is)."""
+    gate_ids = {tc.get("id") for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
+                for tc in m.get("tool_calls") or [] if toolwire.gate_call(tc) and tc.get("id")}
+    return {i for i, m in enumerate(messages)
+            if isinstance(m, dict) and (_has_protect_marker(m) or (m.get("role") == "tool" and m.get("tool_call_id") in gate_ids))}
+
+
+def _content_text(m: dict) -> str:
+    """The message's own content text (str or content parts), without its tool-call arguments."""
+    c = m.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join((p.get("text") or p.get("content") or "") for p in c if isinstance(p, dict))
+    return ""
 
 # Real rendered tokens exceed the chars/4 estimate for code/JSON/tool-arg-heavy transcripts.
 # This is the DEFAULT inflation before the density is measured; the caller passes a LEARNED
@@ -584,8 +624,9 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
     Left alone: a protected read (its own overflow path), a result carrying an image, cria's own gate output, and
     any result too small to be the reason (a stand-in must save something)."""
     preserved = _preserved_indices(messages, protected_call_ids)
+    marked = _marker_protected(messages)
     sized = sorted(((est_tokens(_msg_text(m)), i) for i, m in enumerate(messages)
-                    if m.get("role") == "tool" and i not in preserved and not _has_protect_marker(m)),
+                    if m.get("role") == "tool" and i not in preserved and i not in marked),
                    reverse=True)
     out, n = list(messages), 0
     for size, i in sized:
@@ -770,6 +811,7 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int, *, protected_cal
         return messages, 0
     # (index, est size), tool outputs only, in conversation order → oldest reduced first.
     preserved = _preserved_indices(messages, protected_call_ids)
+    marked = _marker_protected(messages)
     sized = [(i, est_tokens(_msg_text(m))) for i, m in enumerate(messages)
              if m.get("role") == "tool" and i not in preserved]
     out = list(messages)
@@ -780,7 +822,7 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int, *, protected_cal
         if sz < 256:  # not worth reducing a small output
             continue
         m = out[i]
-        if _has_protect_marker(m):  # never truncate cria's own ground-truth gate output
+        if i in marked:  # never truncate cria's own ground-truth gate output
             continue
         content = m.get("content")
         text = content if isinstance(content, str) else _msg_text(m)
@@ -915,6 +957,7 @@ def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_ca
     active = _active_start(messages, last_user) if last_user >= 0 else -1
     preserved = _preserved_indices(messages, protected_call_ids)
     prot = [i in roots or i in preserved for i in range(n)]
+    marked = _marker_protected(messages)
     for i, m in enumerate(messages):
         if _historical_annotation(m):
             continue  # relocation cannot promote historical wording into an active request/anchor
@@ -922,7 +965,7 @@ def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_ca
             prot[i] = True
         if last_user >= 0 and i >= active:
             prot[i] = True
-        if _has_protect_marker(m) or _is_restored_stand_in(m):  # the briefing / gate anchor / "no copy" label
+        if i in marked or _is_restored_stand_in(m):  # the briefing / gate anchor / "no copy" label
             prot[i] = True
     # PAIR protection (M18): a MARKER-protected tool RESULT and its issuing assistant tool_call are a
     # UNIT. A gate result whose shell command carries the marker, but whose assistant call does not, would
@@ -944,9 +987,9 @@ def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_ca
         ri = result_at.get(cid)
         if ri is None:
             continue
-        if _has_protect_marker(messages[ri]):
+        if ri in marked:
             prot[ai] = True   # a marker-protected RESULT → keep its issuing call (else the result orphans)
-        if _has_protect_marker(messages[ai]):
+        if ai in marked:
             prot[ri] = True   # a marker-protected CALL → keep its result (else the call dangles)
     return prot
 
@@ -977,8 +1020,9 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
             return (i not in preserved and ((_historical_annotation(m) or (i > last_user and i not in tail))
                     and m.get("role") not in ("system", "developer")))
         # Prefer an unmarked victim; fall back to a protect-marked one only if nothing else is left.
+        marked = _marker_protected(work)
         victim = next((i for i, m in enumerate(work)
-                       if _droppable(i, m) and not _has_protect_marker(m)), None)
+                       if _droppable(i, m) and i not in marked), None)
         if victim is None:
             if (sacrifice_budget is not None and _msgs_tokens(work + ([note] if note else []))
                     <= sacrifice_budget):
