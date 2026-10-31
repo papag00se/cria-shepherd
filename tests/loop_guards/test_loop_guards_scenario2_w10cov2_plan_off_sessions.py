@@ -7,6 +7,7 @@ import json
 from cria.loop import LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
 from loop_guards_helpers import Chat, reply
+from loop_guards_gatefixture import gate_page
 from test_loop_guards_scenario_lb_sessions import GREEN, SHELL, TASK, WRITE, Run, local_view, steer_seen  # noqa: F401
 
 EVIDENCE = "README.md is still absent from the workspace"
@@ -55,3 +56,27 @@ def test_without_a_shell_the_persisted_negative_verdict_steers_on_the_claim_itse
     heard = steer_seen(coder, 2)
     assert EVIDENCE in heard and "checks could NOT be run here, so nothing has verified the work" in heard
 
+
+
+def deliver(run, content):
+    """The harness answers cria's last call with ``content`` (one page) and the loop is driven once more."""
+    call = run.out["choices"][0]["message"]["tool_calls"][0]
+    run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [call]},
+                             {"role": "tool", "tool_call_id": call["id"], "content": content}]
+    run.out = run.driver.drive(json.loads(json.dumps(run.body)), "sid:k", None, run.log)
+    return run.out["choices"][0]["message"]
+
+
+def test_a_done_probe_whose_output_arrives_in_pages_is_pulled_to_the_last_page_before_anything_steers_the_coder(tmp_path):
+    """A long checker output comes back from the harness one page at a time: the first page steers nobody (the coder is not called again, the
+    session still holds the claim), cria asks for the rest, and only the COMPLETE red output reaches the coder in the checker's own words."""
+    coder = Chat(reply("All done."), reply("All done."), WRITE_README)
+    run = Run(tmp_path, coder, tools=(SHELL, WRITE))
+    run.turn()
+    raw = "___CRIA_GATE_probe-0___\napp.py:3: undefined name 'x'\n" + "".join(f"noise {i}\n" for i in range(60)) + "EXIT:1\n___CRIA_GATE_git___\nabc\n"
+    plan = run.sess.gate_plan
+    ask = deliver(run, gate_page(plan, raw, 0, 90))
+    assert "receiving the repo's complete check output" in ask["content"] and ask["tool_calls"] and run.sess.done_probe and len(coder.bodies) == 2
+    step = deliver(run, gate_page(plan, raw, 90))
+    assert step["tool_calls"][0]["function"]["name"] == "write_file" and not run.sess.done_probe
+    assert "undefined name 'x'" in steer_seen(coder, 2) and "not done yet" in steer_seen(coder, 2)
