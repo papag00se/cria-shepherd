@@ -190,6 +190,9 @@ def split_chain(cmd: str) -> list[str]:
         elif ch == '"':
             in_double = True
             cur.append(ch)
+        elif ch == "\\" and cmd[i + 1:i + 2] in (";", "&", "|"):
+            cur.append(cmd[i:i + 2])  # an escaped operator is a word character, not a split
+            i += 1
         elif ch == "\n" or ch == ";":
             segs.append("".join(cur))
             cur = []
@@ -237,6 +240,8 @@ def top_level_operators(cmd: str) -> set[str]:
             in_single = True
         elif ch == '"':
             in_double = True
+        elif ch == "\\" and cmd[i + 1:i + 2] in (";", "&", "|"):
+            i += 1  # escaped operator: same rule as split_chain
         elif ch == "\n":
             ops.add("\n")
         elif ch == ";":
@@ -467,6 +472,15 @@ def strip_wrapper(argv: list[str], project_dir: Path | None, depth: int,
         if d.is_probe():
             d.reasons.insert(0, f"unwrapped `{argv[0]} {argv[1]}`")
         return d  # returned even if Unknown
+
+    # (b0) leading NAME=VAL [NAME=VAL ...] <cmd> — the shell's own per-command environment.
+    if is_env_assignment(argv[0]):
+        j = 1
+        while j < len(argv) and is_env_assignment(argv[j]):
+            j += 1
+        if j >= len(argv):
+            return ProbeDetection.unknown(" ".join(argv))  # a bare assignment runs nothing
+        return wrap_reason(classify_segment(argv[j:], project_dir, depth + 1, lookup), "env")
 
     # (b) env [NAME=VAL ...] <cmd>
     if base == "env":

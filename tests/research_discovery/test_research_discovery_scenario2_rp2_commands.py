@@ -44,6 +44,15 @@ def test_chains_split_only_at_real_operators_and_a_quoted_operator_is_text():
     assert has_unsafe_segment("pytest && pip install x") and not has_unsafe_segment("pytest && echo 'pip install x'")
 
 
-@pytest.mark.xfail(strict=True, reason="defect: a leading NAME=VAL (CI=true pytest, PYTHONPATH=. python -m pytest) is not stripped; only `env NAME=VAL cmd` is")
-def test_a_leading_env_assignment_does_not_hide_the_check_behind_it():
-    assert classify_command("CI=true pytest -q").kind is T
+@pytest.mark.parametrize("cmd,kind", [("CI=true pytest -q", T), ("PYTHONPATH=. python -m pytest", T), ("A=1 B=2 cargo test", T), ("CI=1 env X=2 pytest", T),
+                                      ("CI=true ls", U), ("A=1", U), ("A=1 B=2", U)])
+def test_a_leading_env_assignment_does_not_hide_the_check_behind_it(cmd, kind):
+    assert classify_command(cmd).kind is kind
+
+
+def test_a_backslash_escaped_operator_is_a_word_character_not_a_split():
+    """`find . -exec grep x {} \\;` ends its -exec with an escaped `;`; `echo a\\;b` is one word. A quoted or unescaped operator still splits."""
+    assert split_chain("find . -exec grep x {} \\;") == ["find . -exec grep x {} \\;"] and split_chain("echo a\\;b") == ["echo a\\;b"]
+    assert split_chain("pytest \\| cat") == ["pytest \\| cat"] and split_chain("pytest && echo a\\;b; ls") == ["pytest", "echo a\\;b", "ls"]
+    assert top_level_operators("find . -exec grep x {} \\;") == set() and top_level_operators("echo a\\;b; ls") == {";"}
+    assert not has_unsafe_segment("pytest && find . -exec grep x {} \\;")
