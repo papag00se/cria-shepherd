@@ -221,7 +221,8 @@ if lines and lines[-1] == b"":
 if start > len(lines):
     if receipt:
         sys.stdout.write(json.dumps({"v": 1, "r": receipt, "k": "ran"}, separators=(",", ":")) + "\n")
-    sys.stdout.write(past.replace("%N%", str(len(lines))))
+    head, _, tail = past.rpartition("%N%")      # the LAST placeholder is the count: a path may spell "%N%" itself
+    sys.stdout.write(head + str(len(lines)) + tail)
     sys.exit(0)
 window = lines[start - 1:end] if end else lines[start - 1:]
 body = b"".join(b"%d: %s\n" % (start + i, ln) for i, ln in enumerate(window))
@@ -536,7 +537,7 @@ if stream is None:
         if lines and lines[-1] == b'': lines.pop()
         first, end = s['start'], s['end']
         if first > len(lines):
-            stream = (json.dumps({'v':1,'r':s['receipt'],'k':'ran'}, separators=(',', ':')) + '\n' + s['past'].replace('%N%', str(len(lines)))).encode('utf8')
+            stream = (json.dumps({'v':1,'r':s['receipt'],'k':'ran'}, separators=(',', ':')) + '\n' + (lambda h, _, t: h + str(len(lines)) + t)(*s['past'].rpartition('%N%'))).encode('utf8')
         else:
             window = lines[first-1:end] if end else lines[first-1:]
             body = b''.join(b'%d: %s\n' % (first+i, ln) for i, ln in enumerate(window))
