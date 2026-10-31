@@ -42,7 +42,7 @@ class TailStartsAtAnExchangeTests(unittest.TestCase):
     def test_a_budget_cut_between_call_and_result_keeps_the_pair_together(self):
         msgs = _history()
         out, _state, applied = compact(msgs, lambda mm, **kw: "ROLLUP", CompactState(),
-                                       trigger_tokens=100, keep_tail_tokens=145, recompact_tokens=20)
+                                       room_tokens=100, keep_tail_tokens=145, recompact_tokens=20)
         self.assertTrue(applied)
         calls, results = _pairing(out)
         self.assertEqual(results - calls, set(), "a tool result rode on without its call")
@@ -52,7 +52,7 @@ class TailStartsAtAnExchangeTests(unittest.TestCase):
     def test_the_wire_has_nothing_to_repair_on_a_compacted_view(self):
         msgs = _history()
         out, _state, _applied = compact(msgs, lambda mm, **kw: "ROLLUP", CompactState(),
-                                        trigger_tokens=100, keep_tail_tokens=145, recompact_tokens=20)
+                                        room_tokens=100, keep_tail_tokens=145, recompact_tokens=20)
         _fixed, repaired = contextfloor.ensure_tool_integrity(out)
         self.assertEqual(repaired, 0)
 
@@ -60,21 +60,21 @@ class TailStartsAtAnExchangeTests(unittest.TestCase):
         msgs = _history()
         seen = []
         compact(msgs, lambda mm, **kw: (seen.append(mm), "ROLLUP")[1], CompactState(),
-                trigger_tokens=100, keep_tail_tokens=145, recompact_tokens=20)
+                room_tokens=100, keep_tail_tokens=145, recompact_tokens=20)
         calls, results = _pairing(seen[0])
         self.assertEqual(calls, results, "the summarized middle must hold whole exchanges")
 
     def test_a_tail_that_would_swallow_the_whole_history_folds_nothing(self):
         msgs = [{"role": "system", "content": "sys"}, _call("only"), _result("only", "z" * 600)]
         out, _state, applied = compact(msgs, lambda mm, **kw: "ROLLUP", CompactState(),
-                                       trigger_tokens=10, keep_tail_tokens=40, recompact_tokens=5)
+                                       room_tokens=10, keep_tail_tokens=40, recompact_tokens=5)
         self.assertFalse(applied)
         self.assertIs(out, msgs)
 
     def test_a_step_boundary_still_keeps_no_tail(self):
         msgs = _history()
         out, _state, applied = compact(msgs, lambda mm, **kw: "ROLLUP", CompactState(), force=True,
-                                       trigger_tokens=100, keep_tail_tokens=145, recompact_tokens=20,
+                                       room_tokens=100, keep_tail_tokens=145, recompact_tokens=20,
                                        boundary_keep_tail_tokens=0)
         self.assertTrue(applied)
         self.assertFalse([m for m in out if m.get("role") in ("tool",) or m.get("tool_calls")])

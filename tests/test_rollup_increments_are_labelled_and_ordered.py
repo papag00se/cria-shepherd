@@ -10,6 +10,7 @@ order and count of the entries, and how many entries a refold condensed. Fake up
 import copy
 import json
 
+from tests.window_fakes import with_room
 from cria import prompts, selfcompact
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore
@@ -33,8 +34,8 @@ def make_loop(writer_replies, refold_reply="Condensed: SKU-0007 parsed into 4 fi
 
     ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
                       compactor_role=Role(name="compactor", backend="local"),
-                      planner_enabled=False, runs_dir="", self_compact=True, trigger_compaction=100)
-    return Loop(ctx, LoopStore())
+                      planner_enabled=False, runs_dir="", self_compact=True)
+    return with_room(Loop(ctx, LoopStore()))
 
 
 def band(start, n):

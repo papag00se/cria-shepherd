@@ -1,6 +1,7 @@
 import json
 import unittest
 
+from tests.window_fakes import with_room
 from cria import selfcompact
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore, PlanSession
@@ -27,7 +28,7 @@ def _validation_reply(system):
     return None
 
 
-def _loop(self_compact=True, chat_reply="ROLLUP SUMMARY", trigger=100):
+def _loop(self_compact=True, chat_reply="ROLLUP SUMMARY"):
     # The single-item self-compaction rides the COMPACTOR endpoint (compactor_chat), same summarize
     # primitive the loop's completion compaction uses.
     def chat(body, rlog):
@@ -36,8 +37,8 @@ def _loop(self_compact=True, chat_reply="ROLLUP SUMMARY", trigger=100):
     ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
                       compactor_role=Role(name="compactor", backend="local"), coder_role=None,
                       planner_enabled=False, runs_dir="",
-                      self_compact=self_compact, trigger_compaction=trigger)
-    return Loop(ctx, LoopStore())
+                      self_compact=self_compact)
+    return with_room(Loop(ctx, LoopStore()))
 
 
 def _synth():
@@ -75,9 +76,8 @@ class SelfCompactWiringTests(unittest.TestCase):
 
         ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
                           compactor_role=Role(name="compactor", backend="local"), coder_role=None,
-                          planner_enabled=False, runs_dir="", self_compact=True,
-                          trigger_compaction=100)
-        loop = Loop(ctx, LoopStore())
+                          planner_enabled=False, runs_dir="", self_compact=True)
+        loop = with_room(Loop(ctx, LoopStore()))
         task = "Fix rounding, load discounts.json, use decimal money, and log totals."
         loop._self_compact_single(_big(150), _synth(), _Rlog(), root_task=task)
 

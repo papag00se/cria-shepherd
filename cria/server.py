@@ -895,7 +895,6 @@ class CriaServer(ThreadingHTTPServer):
                     runs_dir=cfg.logging.capture_dir,
                     focus_trim=cfg.context.focus_trim,
                     self_compact=cfg.context.self_compact,
-                    trigger_compaction=cfg.context.trigger_compaction,
                     assists=cfg.routing.assists_enabled,
                     pilot_runtime=self.pilot_runtime,
                     system1=self.system1,

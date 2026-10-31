@@ -139,11 +139,11 @@ class TheRatchetTests(unittest.TestCase):
         """A row in the table that nothing reads is a bound that was never wired (or one that was removed)."""
         sources = {p: p.read_text(encoding="utf-8") for p in _ROOT.rglob("*.py") if p.name != "windowcaps.py"}
         for const in ("JUDGE_REPLY", "SUMMARY_REPLY", "CRITIC_REPLY", "PLAN_REPLY", "EXTRACT_REPLY", "GEN_RESERVE",
-                      "SELFCOMPACT_TRIGGER", "SELFCOMPACT_KEEP_TAIL", "SELFCOMPACT_RECOMPACT", "DEPENDENCY_SURFACE", "DEPENDENCY_NOTES",
+                      "SELFCOMPACT_KEEP_TAIL", "SELFCOMPACT_RECOMPACT", "DEPENDENCY_SURFACE", "DEPENDENCY_NOTES",
                       "SELFCOMPACT_REFOLD", "EVIDENCE_BLOCK"):
             with self.subTest(const):
                 self.assertTrue(any(f"windowcaps.{const}" in text for text in sources.values()), const)
-        self.assertEqual(len(windowcaps.NAMES), 13)
+        self.assertEqual(len(windowcaps.NAMES), 12)
 
 
 if __name__ == "__main__":

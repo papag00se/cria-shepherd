@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "suite"))
 from sampling import (CADENCE_MAX_START, CADENCE_UNKNOWN, apply,  # noqa: E402
                       cadence_for_active, gguf_experts)
 
-SKELETON = ('[context]\ntrigger_compaction = 20000\n\n[roles.coder]\nbackend = "local"\n\n'
+SKELETON = ('[context]\nfocus_trim = false\n\n[roles.coder]\nbackend = "local"\n\n'
             '[roles.reasoner]\nbackend = "local"\n\n[roles.classifier]\nbackend = "local"\n\n'
             '[roles.compactor]\nbackend = "local"\n')
 
@@ -106,7 +106,7 @@ class ItLandsOnEverySwapTests(unittest.TestCase):
         t = Path(tempfile.mkdtemp()) / "cria.toml"
         t.write_text(SKELETON)
         apply("gemma4", t)
-        self.assertIn("trigger_compaction = 20000", t.read_text())
+        self.assertIn("focus_trim = false", t.read_text())
 
     def test_the_roles_still_get_their_sampling(self):
         t = Path(tempfile.mkdtemp()) / "cria.toml"

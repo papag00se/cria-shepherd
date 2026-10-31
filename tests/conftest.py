@@ -56,3 +56,16 @@ def _local_workspace_view():
     token = wsview.bind(wsview.DirectView())
     yield
     wsview.unbind(token)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_token_densities():
+    """Learned token densities are process-global; a test that primes one (tests.window_fakes.windowed)
+    must not leak it into the next."""
+    from cria import tokenratio
+    with tokenratio._lock:
+        saved = dict(tokenratio._ratios)
+    yield
+    with tokenratio._lock:
+        tokenratio._ratios.clear()
+        tokenratio._ratios.update(saved)

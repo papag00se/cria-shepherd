@@ -11,6 +11,7 @@ from pathlib import Path
 
 from cria.probegate import GATE_SENTINEL
 from tests.resultshape import fetch_pair
+from tests.window_fakes import with_room
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key,
@@ -2058,9 +2059,9 @@ class LoopSelfCompactTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         from cria.config import Role
-        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100,
-                      reasoner_role=Role(name="reasoner", backend="local"))  # low trigger
-        loop = Loop(ctx)
+        ctx = replace(_ctx(coder=None, reasoner=reasoner),
+                      reasoner_role=Role(name="reasoner", backend="local"))
+        loop = with_room(Loop(ctx))   # a room the 50-turn fixture overflows
         sess = PlanSession(plan=_plan(1))
         # total must exceed the 6000-token default tail so there's a middle to roll up (~50 * 250 tok)
         big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
@@ -2081,13 +2082,13 @@ class LoopSelfCompactTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         from cria.config import Role
-        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100,
+        ctx = replace(_ctx(coder=None, reasoner=reasoner),
                       reasoner_role=Role(name="reasoner", backend="local"))
         sess = PlanSession(plan=_plan(1))
         sess.last_gate_red = True
         sess.last_gate_flag = "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"
         big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
-        rollup = next(m["content"] for m in Loop(ctx)._self_compact(big, sess, 1, _Rlog())
+        rollup = next(m["content"] for m in with_room(Loop(ctx))._self_compact(big, sess, 1, _Rlog())
                       if "⟦ctx:rollup⟧" in str(m.get("content")))
         self.assertIn("all 7 tests now pass", rollup)    # model claim is preserved, not deleted
         self.assertIn(sess.last_gate_flag, rollup)       # exact real check output also survives

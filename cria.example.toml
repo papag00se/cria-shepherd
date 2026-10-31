@@ -39,8 +39,7 @@ external_dir_permission = "none"   # none = no external reads/writes | read = ex
 
 [context]
 focus_trim = true                  # collapse duplicate tool calls
-self_compact = true                # summarize the old history middle
-trigger_compaction = 16384         # tokens before self-compact
+self_compact = true                # summarize the old history middle (when is derived from the measured window; no knob)
 satisfaction_check_start = 100     # first "task done?" check at drive N
 satisfaction_check_every = 25      # then re-check every N (0 disables)
 

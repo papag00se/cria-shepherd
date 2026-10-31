@@ -30,15 +30,12 @@ OLD = {
     "planner.ASK_MAX_TOKENS": (planner.ASK_MAX_TOKENS, 16384),
     "loop.SUMMARIZE_MAX_TOKENS": (loop.SUMMARIZE_MAX_TOKENS, 8192),
     "loop.ROLLUP_MAX_TOKENS": (loop.ROLLUP_MAX_TOKENS, 8192),
-    "selfcompact.TRIGGER_TOKENS_DEFAULT": (selfcompact.TRIGGER_TOKENS_DEFAULT, 16384),
     "selfcompact.KEEP_TAIL_TOKENS": (selfcompact.KEEP_TAIL_TOKENS, 6000),
     "selfcompact.RECOMPACT_TOKENS": (selfcompact.RECOMPACT_TOKENS, 4000),
     "selfcompact.REFOLD_TOKENS": (selfcompact.REFOLD_TOKENS, 6000),
     "evidencesummary.EVIDENCE_BLOCK_CHARS": (evidencesummary.EVIDENCE_BLOCK_CHARS, 6000),
     "handoffdistill.EXTRACT_REPLY_TOKENS": (handoffdistill.EXTRACT_REPLY_TOKENS, 4096),
     "contextfloor.DEFAULT_GEN_RESERVE": (contextfloor.DEFAULT_GEN_RESERVE, 4096),
-    "config.ContextConfig.trigger_compaction": (config.ContextConfig().trigger_compaction, 16384),
-    "loop.LoopContext.trigger_compaction": (LoopContext(planner=None, coder_chat=None, reasoner_chat=None).trigger_compaction, 16384),
 }
 # The two bare literals the sweep found, which had no constant to compare: the planner's plan reply and
 # the critic's default reply, both 8,192 before.
@@ -50,22 +47,22 @@ BY_NAME = {name: getattr(windowcaps, name.upper().replace("SELFCOMPACT_", "SELFC
 # name -> {window: expected}. Written out, not recomputed, so a change to a spec shows up here.
 EXPECTED = {
     16384: {"judge_reply": 6144, "summary_reply": 3072, "critic_reply": 3072, "plan_reply": 3072,
-            "extract_reply": 2048, "gen_reserve": 2048, "selfcompact_trigger": 5461,
+            "extract_reply": 2048, "gen_reserve": 2048,
             "selfcompact_keep_tail": 2000, "selfcompact_recompact": 1333, "selfcompact_refold": 2000,
             "dependency_surface": 4800, "dependency_notes": 8000,
             "evidence_block": 2000},
     32768: {"judge_reply": 10922, "summary_reply": 5461, "critic_reply": 5461, "plan_reply": 5461,
-            "extract_reply": 2730, "gen_reserve": 2730, "selfcompact_trigger": 10922,
+            "extract_reply": 2730, "gen_reserve": 2730,
             "selfcompact_keep_tail": 4000, "selfcompact_recompact": 2666, "selfcompact_refold": 4000,
             "dependency_surface": 4800, "dependency_notes": 16000,
             "evidence_block": 4000},
     131072: {"judge_reply": 32768, "summary_reply": 21845, "critic_reply": 21845, "plan_reply": 21845,
-             "extract_reply": 10922, "gen_reserve": 10922, "selfcompact_trigger": 43690,
+             "extract_reply": 10922, "gen_reserve": 10922,
              "selfcompact_keep_tail": 16000, "selfcompact_recompact": 10666, "selfcompact_refold": 16000,
              "dependency_surface": 12000, "dependency_notes": 64000,
              "evidence_block": 16000},
     262144: {"judge_reply": 32768, "summary_reply": 32768, "critic_reply": 32768, "plan_reply": 32768,
-             "extract_reply": 16384, "gen_reserve": 16384, "selfcompact_trigger": 87381,
+             "extract_reply": 16384, "gen_reserve": 16384,
              "selfcompact_keep_tail": 32000, "selfcompact_recompact": 21333, "selfcompact_refold": 32000,
              "dependency_surface": 12000, "dependency_notes": 96000,
              "evidence_block": 32000},
@@ -103,7 +100,6 @@ class TheReferenceWindowIsUnchanged(unittest.TestCase):
         self.assertEqual(values["summary_reply"], old["loop.SUMMARIZE_MAX_TOKENS"])
         self.assertEqual(values["extract_reply"], old["handoffdistill.EXTRACT_REPLY_TOKENS"])
         self.assertEqual(values["gen_reserve"], old["contextfloor.DEFAULT_GEN_RESERVE"])
-        self.assertEqual(values["selfcompact_trigger"], old["selfcompact.TRIGGER_TOKENS_DEFAULT"])
         self.assertEqual(values["selfcompact_keep_tail"], old["selfcompact.KEEP_TAIL_TOKENS"])
         self.assertEqual(values["selfcompact_recompact"], old["selfcompact.RECOMPACT_TOKENS"])
         self.assertEqual(values["selfcompact_refold"], old["selfcompact.REFOLD_TOKENS"])
@@ -156,7 +152,7 @@ class TheCapsScaleWithTheWindow(unittest.TestCase):
                     self.assertEqual(windowcaps.scaled(cap, unknown), int(cap))
 
     def test_an_explicit_value_is_never_rescaled(self):
-        for explicit in (28884, 100, 0, None):
+        for explicit in (16384, 100, 0, None):
             self.assertIs(windowcaps.resolve(explicit, 16384), explicit)
 
     def test_a_cap_survives_copy_and_pickle(self):
@@ -258,18 +254,21 @@ class _Writer:
             "role": "assistant", "content": "RETROSPECTIVE"}}]}).encode()
 
 
-def _loop(window, trigger):
+def _loop(window):
     def coder(body, rlog):
         return b""
     coder.upstream = SimpleNamespace(_resolve_window=lambda rlog: window, _window_guessed=window is None,
                                      loaded_model=lambda rlog: "m")
     ctx = LoopContext(planner=None, coder_chat=coder, reasoner_chat=_Writer(),
                       reasoner_role=Role(name="reasoner", backend="local"), runs_dir="")
-    return Loop(replace(ctx, trigger_compaction=trigger, coder_role=Role(name="coder", backend="local")))
+    return Loop(replace(ctx, coder_role=Role(name="coder", backend="local")))
 
 
-class TheSelfCompactionThresholdsFollowTheCodersWindow(unittest.TestCase):
-    def _thresholds(self, window, trigger=windowcaps.SELFCOMPACT_TRIGGER):
+class TheSelfCompactionWorkingSetFollowsTheCodersWindow(unittest.TestCase):
+    """There is no trigger to scale (tests/test_compaction_room.py owns the predicate); the tail, recompact
+    band and refold size are the window-sized caps."""
+
+    def _sizes(self, window):
         seen = {}
         real = selfcompact.RollingInput
 
@@ -280,34 +279,22 @@ class TheSelfCompactionThresholdsFollowTheCodersWindow(unittest.TestCase):
         sess = PlanSession(plan=Plan(id="p", task="t", created="2026-10-30T00:00:00+00:00",
                                      items=[PlanItem("s")]))
         with patch.object(selfcompact, "RollingInput", spy):
-            _loop(window, trigger)._self_compact([{"role": "system", "content": "s"},
-                                                  {"role": "user", "content": "t"}], sess, None, _Rlog(),
-                                                 pinned_task="t")
-        return tuple(seen[k] for k in ("trigger_tokens", "keep_tail_tokens", "recompact_tokens", "refold_tokens"))
+            _loop(window)._self_compact([{"role": "system", "content": "s"},
+                                         {"role": "user", "content": "t"}], sess, None, _Rlog(),
+                                        pinned_task="t")
+        self.assertNotIn("trigger_tokens", seen)
+        return tuple(seen[k] for k in ("keep_tail_tokens", "recompact_tokens", "refold_tokens"))
 
-    def test_the_four_thresholds_at_each_window(self):
-        self.assertEqual(self._thresholds(49152), (16384, 6000, 4000, 6000))
-        self.assertEqual(self._thresholds(None), (16384, 6000, 4000, 6000))   # unknown/guessed
-        self.assertEqual(self._thresholds(16384), (5461, 2000, 1333, 2000))
-        self.assertEqual(self._thresholds(262144), (87381, 32000, 21333, 32000))
+    def test_the_three_sizes_at_each_window(self):
+        self.assertEqual(self._sizes(49152), (6000, 4000, 6000))
+        self.assertEqual(self._sizes(None), (6000, 4000, 6000))   # unknown/guessed
+        self.assertEqual(self._sizes(16384), (2000, 1333, 2000))
+        self.assertEqual(self._sizes(262144), (32000, 21333, 32000))
 
-    def test_an_operator_trigger_is_never_rescaled(self):
-        trigger = self._thresholds(16384, trigger=28884)[0]
-        self.assertEqual(trigger, 28884)
-        self.assertIs(type(trigger), int)
-
-    def test_the_config_default_is_the_scaling_cap_and_a_pinned_value_is_the_operators(self):
-        import tempfile, pathlib
-        def load(text):
-            with tempfile.TemporaryDirectory() as d:
-                p = pathlib.Path(d) / "cria.toml"
-                p.write_text(text)
-                return config.Config.load(str(p)).context.trigger_compaction
-        self.assertIsInstance(load("[context]\nself_compact = true\n"), windowcaps.Cap)
-        self.assertIsInstance(load("[context]\ntrigger_compaction = 0\n"), windowcaps.Cap)
-        pinned = load("[context]\ntrigger_compaction = 28884\n")
-        self.assertEqual(pinned, 28884)
-        self.assertNotIsInstance(pinned, windowcaps.Cap)
+    def test_there_is_no_trigger_cap_left(self):
+        self.assertNotIn("selfcompact_trigger", windowcaps.NAMES)
+        self.assertFalse(hasattr(windowcaps, "SELFCOMPACT_TRIGGER"))
+        self.assertFalse(hasattr(selfcompact, "TRIGGER_TOKENS_DEFAULT"))
 
 
 class TheOwnerIsTheOnlyWindowReader(unittest.TestCase):

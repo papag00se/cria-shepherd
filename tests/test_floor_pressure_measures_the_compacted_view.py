@@ -75,7 +75,7 @@ def _coder_chat(window: int):
 def _loop(reasoner: _Reasoner, window: int | None = None) -> Loop:
     ctx = LoopContext(planner=None, coder_chat=_coder_chat(window or WINDOW), reasoner_chat=reasoner,
                       reasoner_role=Role(name="reasoner", backend="local"), runs_dir="")
-    return Loop(replace(ctx, trigger_compaction=100,
+    return Loop(replace(ctx,
                         coder_role=Role(name="coder", backend="local", output_reserve=RESERVE)))
 
 

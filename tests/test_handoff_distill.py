@@ -169,6 +169,9 @@ def test_briefing_retry_reframes_with_distillation_too():
     assert seen, "the retry framing must also distill"
 
 
+ROOM = 16_384          # a view room these 60 x 1,200-word fixtures overflow
+
+
 def OVERFLOWS(view):
     """Every view this test offers overflows the coder window (no summary is ever accepted)."""
     return True
@@ -182,21 +185,21 @@ def test_floor_pressure_summarizes_through_the_rejection_throttle():
         asked.append(len(mm))
         return ""                                                # rejected again
     state = selfcompact.CompactState()
-    first = selfcompact.DEFINITION.execute(selfcompact.RollingInput(msgs, summarize), state)
-    again = selfcompact.DEFINITION.execute(selfcompact.RollingInput(msgs, summarize), first.state)
+    first = selfcompact.DEFINITION.execute(selfcompact.RollingInput(msgs, summarize, room_tokens=ROOM), state)
+    again = selfcompact.DEFINITION.execute(selfcompact.RollingInput(msgs, summarize, room_tokens=ROOM), first.state)
     assert len(asked) == 1                                       # identical evidence is not re-asked
     grown = msgs + [{"role": "assistant", "content": f"g{i} " + "w " * 1200} for i in range(3)]
-    later = selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize), again.state)
+    later = selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, room_tokens=ROOM), again.state)
     assert len(asked) == 1                                       # under 4000 new tokens: throttled
-    selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, floor_pressure=OVERFLOWS),
+    selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, room_tokens=ROOM, floor_pressure=OVERFLOWS),
                                    later.state)
     assert len(asked) == 2                                       # floor pressure: fold, don't drop
     for n in range(5):                                           # still rejected, still pressured:
         grown = grown + [{"role": "assistant", "content": f"h{n} " + "w " * 1200}]
-        selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, floor_pressure=OVERFLOWS),
+        selfcompact.DEFINITION.execute(selfcompact.RollingInput(grown, summarize, room_tokens=ROOM, floor_pressure=OVERFLOWS),
                                        later.state if n == 0 else state_n)
         state_n = selfcompact.DEFINITION.execute(
-            selfcompact.RollingInput(grown, summarize, floor_pressure=OVERFLOWS),
+            selfcompact.RollingInput(grown, summarize, room_tokens=ROOM, floor_pressure=OVERFLOWS),
             later.state if n == 0 else state_n).state
     assert len(asked) <= 4      # one pressure retry per rejection run, not one per coder turn
 

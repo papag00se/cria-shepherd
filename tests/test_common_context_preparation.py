@@ -7,6 +7,7 @@ import json
 import copy
 
 import pytest
+from tests.window_fakes import with_room
 from cria import assistruntime, bodykeys, config, contextfloor, denial, focustrim, loop, selfcompact, wsview
 from cria.memoryeffects import Effect
 from test_generation_driver_policy import setup_driver
@@ -361,7 +362,7 @@ def test_required_prefix_survives_copy_and_canonical_rolling_once(monkeypatch, s
                          {'role': 'user', 'content': 'current historical followup'}]
     driver._ctx.self_compact = producer == 'real-rolling'
     driver._ctx.focus_trim = producer == 'lossless-copy'
-    driver._ctx.trigger_compaction = 100
+    with_room(driver)   # the fixture overflows a pinned room; the room computation has its own tests
     called = []
     def focus(messages):
         called.append('focus')

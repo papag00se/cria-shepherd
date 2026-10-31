@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.window_fakes import with_room
 from cria import config, loop, prompts, server, system1, system1wiring
 from cria.config import Config, Role, System1Config
 from cria.loop import Loop, LoopContext, LoopStore
@@ -157,8 +158,8 @@ def test_an_oversized_briefing_reaches_the_classifier_whole_so_it_alone_can_say_
 def _compaction_loop(runtime, reasoner):
     ctx = LoopContext(planner=None, coder_chat=reasoner, reasoner_chat=reasoner, compactor_chat=reasoner,
                       compactor_role=Role(name="compactor", backend="local"), planner_enabled=False,
-                      runs_dir="", self_compact=True, trigger_compaction=100, system1=runtime)
-    return Loop(ctx, LoopStore())
+                      runs_dir="", self_compact=True, system1=runtime)
+    return with_room(Loop(ctx, LoopStore()))
 
 
 def _writer_reasoner(**kw):

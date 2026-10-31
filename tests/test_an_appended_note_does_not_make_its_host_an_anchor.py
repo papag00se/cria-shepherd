@@ -66,11 +66,11 @@ class _Reasoner:
 def _loop(reasoner) -> Loop:
     def coder(body, rlog):
         return _reply("")
-    coder.upstream = SimpleNamespace(_resolve_window=lambda rlog: 49_152, _window_guessed=False,
+    coder.upstream = SimpleNamespace(_resolve_window=lambda rlog: 8_192, _window_guessed=False,
                                      loaded_model=lambda rlog: MODEL)
     ctx = LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner,
                       reasoner_role=Role(name="reasoner", backend="local"), runs_dir="")
-    return Loop(replace(ctx, trigger_compaction=100, coder_role=Role(name="coder", backend="local")))
+    return Loop(replace(ctx, coder_role=Role(name="coder", backend="local")))
 
 
 def _session() -> PlanSession:
@@ -210,7 +210,7 @@ class AppendedNoteIsNotAHostAnchor(unittest.TestCase):
 
 
 class AnchorIdentityControls(unittest.TestCase):
-    KW = dict(trigger_tokens=100, keep_tail_tokens=6_000, recompact_tokens=20)
+    KW = dict(room_tokens=100, keep_tail_tokens=6_000, recompact_tokens=20)
     NOTE = "⟦ctx:facts⟧ THE VERSION OF example.invalid/nonexistent v1.4.0 DECLARED IN go.mod — func NewFromString"
 
     def _host(self, call_id, output):

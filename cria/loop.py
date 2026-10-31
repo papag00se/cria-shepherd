@@ -2472,9 +2472,9 @@ class LoopContext:
     # Focus-trim the OUTBOUND coder view (collapse exact-duplicate tool calls). [context] focus_trim.
     focus_trim: bool = True
     # Roll the OLD middle of a long coder view into a reasoner summary (mid-STEP transcript bloat —
-    # orthogonal to `summary`, which only summarizes COMPLETED steps). [context] self_compact / trigger.
+    # orthogonal to `summary`, which only summarizes COMPLETED steps). [context] self_compact. WHEN it
+    # compacts is derived (Loop._compaction_room), not configured.
     self_compact: bool = True
-    trigger_compaction: int = windowcaps.SELFCOMPACT_TRIGGER   # an explicit [context] value is never rescaled
     # Is the planner stage ON? False = plan-off: the loop synthesizes a degenerate 1-item plan
     # (PlanSession.synthetic) and drives it through _drive_single_item — the relocated plan-off path.
     # `synthetic` means DEGENERATE, not "the planner is off": it is set from len(plan.items) == 1
@@ -3909,13 +3909,21 @@ class Loop:
                 return ""
             return candidate
 
-        # The thresholds are shares of the window of the model whose VIEW is being compacted (the coder's),
-        # not of whichever model writes the summary. Unknown/guessed window = the old constants; an explicit
-        # [context] trigger_compaction is an int and is never rescaled.
+        # WHEN to compact is a predicate over measured room, not a configured number: the largest view the
+        # compaction calls can read WHOLE and the coder request can hold without the floor dropping turns
+        # (_compaction_room), against one more turn of the growth this session's own recent turns measured
+        # (selfcompact.expected_growth). The working-set sizes (tail, recompact band, refold) do a different job
+        # — the coder's live working set, a throttle against re-summarizing a sliver, a bound on the standing
+        # rollup — so they stay shares of the window of the model whose VIEW is compacted (the coder's).
+        # Unknown window = no room to compute: only floor pressure compacts.
         coder_window = windowcaps.window_of(self._ctx.coder_chat, rlog)
+        room, evidence_room = self._compaction_room(
+            rlog, chat_fn, frame_tokens,
+            facts_text="\n".join(t for t in (inventory_for_writer, checks_fact, task_fact) if t))
         result = selected.execute(selfcompact.RollingInput(
             msgs, make_summary, force=force,
-            trigger_tokens=windowcaps.resolve(self._ctx.trigger_compaction, coder_window),
+            room_tokens=room,
+            evidence_room_tokens=evidence_room,
             keep_tail_tokens=windowcaps.resolve(selfcompact.KEEP_TAIL_TOKENS, coder_window),
             recompact_tokens=windowcaps.resolve(selfcompact.RECOMPACT_TOKENS, coder_window),
             refold_tokens=windowcaps.resolve(selfcompact.REFOLD_TOKENS, coder_window),
@@ -5436,6 +5444,27 @@ class Loop:
             return False
         window, reserve, density = sizing
         return (contextfloor.est_total(msgs, None) + frame_tokens) * density + reserve > window
+
+    def _compaction_room(self, rlog, chat_fn, frame_tokens: int, *, facts_text: str) -> tuple[int | None, int | None]:
+        """The room the view has, ``(coder_room, evidence_room)`` in estimated tokens (:func:`selfcompact.view_room`):
+        the largest raw view the coder request holds without the floor dropping turns, and the largest evidence
+        the compaction calls read whole — from numbers cria already measures: each model's
+        window, the coder's reply reserve and learned density, the learned density of SUMMARY requests (the floor's
+        own number for them: flattened transcripts tokenize denser than the coder's tool traffic, 1.33 against 1.1
+        in run 1792480002, and an unmeasured kind starts at the conservative default — measured here, a room sized
+        by the coder's 1.2 let the floor drop 35 turns from the first compaction call at 32K), the writer's reply cap,
+        the one-word verdict reserve, the prompt frame and the authoritative facts every lens also reads.
+        Each None when its window is not measured."""
+        coder = self._coder_sizing(rlog)
+        window = windowcaps.window_of(chat_fn, rlog)
+        compaction, fixed = None, 0
+        if window:
+            density = tokenratio.observed_kind("summary")
+            fixed = (handoffdistill.FRAME_TOKENS + windowcaps.resolve(ROLLUP_MAX_TOKENS, window)
+                     + COMPACTION_VERDICT_RESERVE + int(selfcompact.est_tokens(facts_text) * density))
+            compaction = (window, density)
+        return selfcompact.view_room(coder=coder, frame_tokens=frame_tokens,
+                                     compaction=compaction, compaction_fixed=fixed)
 
     def _coder_sizing(self, rlog) -> tuple[int, int, float] | None:
         """The coder request's real window, reply reserve and learned density (real tokens per chars/4 estimated

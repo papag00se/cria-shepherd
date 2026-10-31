@@ -67,7 +67,7 @@ class WiringTests(unittest.TestCase):
 
         state = selfcompact.CompactState()
         _, state, applied = selfcompact.compact(
-            self._msgs(), summarize, state, trigger_tokens=10, keep_tail_tokens=10, refold=None)
+            self._msgs(), summarize, state, room_tokens=10, keep_tail_tokens=10, refold=None)
         self.assertTrue(applied)
         self.assertNotIn(echo, state.summary)
         self.assertIn(real, state.summary)
@@ -85,7 +85,7 @@ class WiringTests(unittest.TestCase):
         state = selfcompact.CompactState(summary="z" * 30000, covered=2)
         _, state, applied = selfcompact.compact(
             self._msgs(), lambda mm: "plain new delta, no echo", state,
-            trigger_tokens=10, keep_tail_tokens=10, recompact_tokens=1,
+            room_tokens=10, keep_tail_tokens=10, recompact_tokens=1,
             refold=refold, refold_tokens=6000)
         self.assertTrue(applied)
         self.assertNotIn(echo, state.summary)

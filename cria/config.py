@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import bodykeys, windowcaps
+from . import bodykeys
 from .privatepaths import CRIA_HOME
 from . import jsontext, prompts, reasoning
 
@@ -543,13 +543,10 @@ class ContextConfig:
 
     focus_trim: bool = True
     # Roll the OLD middle of a long plan-off coder history into a reasoner summary (information-
-    # preserving) instead of letting the floor drop-oldest lose it. Fires once the coder view
-    # exceeds `trigger_compaction` TOKENS; stable sessions only. See selfcompact.py.
+    # preserving) instead of letting the floor drop-oldest lose it. WHEN it compacts is not configurable: it
+    # is a predicate over the coder's measured window, reserves and recent turn growth (selfcompact.view_room,
+    # selfcompact.expected_growth), so there is no size knob; stable sessions only. See selfcompact.py.
     self_compact: bool = True
-    # Estimated-token size above which the plan-off view is self-compacted. The default is a window-sized
-    # Cap (16,384 at the 49,152-token window, a third of whatever window the coder really has); an explicit
-    # value here is the operator's and is never rescaled. 0 / absent = the default.
-    trigger_compaction: int = windowcaps.SELFCOMPACT_TRIGGER
     # Periodic SATISFACTION check (plan-off): the reasoner judges whether the WHOLE task is done, and
     # if so ends the session (objectively gated by the repo's checks). Starts at drive
     # `satisfaction_check_start`, then re-runs every `satisfaction_check_every` drives. Operator-tunable
@@ -694,10 +691,8 @@ class Config:
                 workspace_image_tool=data.get("tools", {}).get("workspace_image_tool"),
             ),
             context=ContextConfig(
-                focus_trim=bool(data.get("context", {}).get("focus_trim", True)),
+                focus_trim=bool(_context(data.get("context", {})).get("focus_trim", True)),
                 self_compact=bool(data.get("context", {}).get("self_compact", True)),
-                trigger_compaction=(int(data.get("context", {}).get("trigger_compaction") or 0)
-                                    or windowcaps.SELFCOMPACT_TRIGGER),
                 satisfaction_check_start=int(data.get("context", {}).get("satisfaction_check_start", 100)),
                 satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
             ),
@@ -711,6 +706,21 @@ class Config:
             env_file=(str(data["env_file"]) if data.get("env_file") else None),
             source=source,
         )
+
+
+#: Keys that were once accepted under [context] and are now REMOVED. Named, never aliased or ignored:
+#: a config still carrying one fails at startup (docs/open-threads.md D3: zero aliases).
+_REMOVED_CONTEXT_KEYS = {
+    "trigger_compaction": "when to compact is derived from the coder's measured window, reserves and recent "
+                          "turn growth (selfcompact.view_room / expected_growth), not configured; delete the line",
+}
+
+
+def _context(data: dict) -> dict:
+    gone = sorted(set(data) & set(_REMOVED_CONTEXT_KEYS))
+    if gone:
+        raise ValueError("[context] " + "; ".join(f"{k} was removed: {_REMOVED_CONTEXT_KEYS[k]}" for k in gone))
+    return data
 
 
 def _assists(data: dict) -> AssistConfig:

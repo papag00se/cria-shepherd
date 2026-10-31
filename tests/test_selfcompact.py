@@ -5,7 +5,7 @@ from cria.selfcompact import CompactState, compact
 
 # Small token budgets so tiny fixtures exercise the real token paths. boundary_keep_tail_tokens matches
 # keep_tail here so the existing force tests behave as before; the boundary-vs-trigger test sets its own.
-_KW = dict(trigger_tokens=100, keep_tail_tokens=30, recompact_tokens=20, boundary_keep_tail_tokens=30)
+_KW = dict(room_tokens=100, keep_tail_tokens=30, recompact_tokens=20, boundary_keep_tail_tokens=30)
 
 
 def _m(role, text):
@@ -58,7 +58,7 @@ class SelfCompactTests(unittest.TestCase):
         # the facts — none present in this minimal fixture). This is "why keep a tail?" answered: we don't.
         m = _msgs(30)  # system + 29 work turns, no anchors, no pinned task
         out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(),
-                                  trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20, force=True)
+                                  room_tokens=100, keep_tail_tokens=120, recompact_tokens=20, force=True)
         self.assertTrue(applied)
         self.assertEqual(out[0], m[0])                                              # system kept
         self.assertTrue(any(selfcompact.SUMMARY_MARKER in str(x.get("content")) for x in out))
@@ -73,7 +73,7 @@ class SelfCompactTests(unittest.TestCase):
         m = _msgs(30)
         for force in (True, False):
             out, state, applied = compact(m, lambda mm: "   ", CompactState(), force=force,
-                                          trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20)
+                                          room_tokens=100, keep_tail_tokens=120, recompact_tokens=20)
             self.assertFalse(applied, f"force={force}")
             self.assertEqual(out, m, f"force={force}")     # every turn kept VERBATIM — the floor sizes it
             self.assertEqual(state.summary, "")            # and no empty summary is latched into the state
@@ -84,7 +84,7 @@ class SelfCompactTests(unittest.TestCase):
         task = "Resolve an Ada Handle to its Cardano address via api.handle.me, with tests and a README"
         m = _msgs(30)
         out, _, applied = compact(m, lambda mm: "ROLLUP", CompactState(), pinned_task=task,
-                                  trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20, force=True)
+                                  room_tokens=100, keep_tail_tokens=120, recompact_tokens=20, force=True)
         self.assertTrue(applied)
         self.assertTrue(any(task in str(x.get("content")) for x in out))           # task survives the fold
 
@@ -93,7 +93,7 @@ class SelfCompactTests(unittest.TestCase):
         # A boundary keeps only boundary_keep_tail (small); a size-trigger compaction keeps the full tail. So
         # the boundary view is LEANER — the ~14KB that grew between step 1 and step 2 rolls up instead.
         m = _msgs(60)  # ~360 tokens
-        kw = dict(trigger_tokens=100, keep_tail_tokens=120, recompact_tokens=20, boundary_keep_tail_tokens=24)
+        kw = dict(room_tokens=100, keep_tail_tokens=120, recompact_tokens=20, boundary_keep_tail_tokens=24)
         trig_out, _, a1 = compact(m, lambda mm: "R", CompactState(), **kw)             # size-trigger
         bnd_out, _, a2 = compact(m, lambda mm: "R", CompactState(), force=True, **kw)  # step boundary
         self.assertTrue(a1 and a2)
@@ -364,7 +364,7 @@ class CompactedViewTests(unittest.TestCase):
                 + [{"role": "user", "content": f"{FILES_MARKER} stale list"}]
                 + [{"role": "user", "content": f"turn {i}: {pad}"} for i in range(40)])
         out, _, applied = compact(msgs, lambda mm: "did early work", CompactState(),
-                                  trigger_tokens=100, keep_tail_tokens=80,
+                                  room_tokens=100, keep_tail_tokens=80,
                                   pinned_task="build it",
                                   files_list=f"{FILES_MARKER} FRESH\n  a.py (10 B)")
         self.assertTrue(applied)
@@ -396,13 +396,13 @@ class RollingSummaryTests(unittest.TestCase):
 
         msgs = [{"role": "system", "content": "sys"}] + self._msgs(30, "early")
         out, st, applied = compact(msgs, summ, CompactState(),
-                                   trigger_tokens=100, keep_tail_tokens=60, pinned_task="t")
+                                   room_tokens=100, keep_tail_tokens=60, pinned_task="t")
         self.assertTrue(applied)
         self.assertEqual(st.summary, "summary#1")
         # session grows: the SAME raw history plus new turns (the harness resends raw turns)
         msgs2 = msgs + self._msgs(30, "late")
         out2, st2, applied2 = compact(msgs2, summ, st,
-                                      trigger_tokens=100, keep_tail_tokens=60, pinned_task="t",
+                                      room_tokens=100, keep_tail_tokens=60, pinned_task="t",
                                       recompact_tokens=100)   # cross the re-summarize throttle
         self.assertTrue(applied2)
         self.assertEqual(st2.summary, "summary#1\n\nsummary#2")   # APPENDED, not replaced
@@ -427,7 +427,7 @@ class RollingSummaryTests(unittest.TestCase):
         msgs = [{"role": "system", "content": "sys"}] + self._msgs(30, "x")
         # covered index beyond the list = unusable state → whole-middle fallback
         out, st, applied = compact(msgs, summ, CompactState(summary="old", covered=9999),
-                                   trigger_tokens=100, keep_tail_tokens=60, pinned_task="t")
+                                   room_tokens=100, keep_tail_tokens=60, pinned_task="t")
         self.assertTrue(applied)
         self.assertEqual(st.summary, "whole")                     # replaced, not appended to stale
 
@@ -450,7 +450,7 @@ class RejectedSummaryThrottleTests(unittest.TestCase):
 
         msgs = self._msgs(12)
         out, state, applied = selfcompact.compact(
-            msgs, reject, selfcompact.CompactState(), trigger_tokens=100,
+            msgs, reject, selfcompact.CompactState(), room_tokens=100,
             keep_tail_tokens=120, recompact_tokens=100, pinned_task="task")
         self.assertFalse(applied)
         self.assertIs(out, msgs)
@@ -460,7 +460,7 @@ class RejectedSummaryThrottleTests(unittest.TestCase):
         # One tiny new turn is not new evidence worth regenerating and re-judging the same briefing.
         slightly_newer = msgs + [{"role": "assistant", "content": "tiny update"}]
         out2, state2, applied2 = selfcompact.compact(
-            slightly_newer, reject, state, trigger_tokens=100,
+            slightly_newer, reject, state, room_tokens=100,
             keep_tail_tokens=120, recompact_tokens=100, pinned_task="task")
         self.assertFalse(applied2)
         self.assertIs(out2, slightly_newer)
@@ -469,7 +469,7 @@ class RejectedSummaryThrottleTests(unittest.TestCase):
         # A real new band reaches the existing recompact threshold and earns one fresh attempt.
         much_newer = slightly_newer + self._msgs(6, "new")[1:]
         _, state3, _ = selfcompact.compact(
-            much_newer, reject, state2, trigger_tokens=100,
+            much_newer, reject, state2, room_tokens=100,
             keep_tail_tokens=120, recompact_tokens=100, pinned_task="task")
         self.assertEqual(len(calls), 2)
         self.assertGreater(state3.attempted, state2.attempted)
@@ -494,7 +494,7 @@ class SummaryRefoldTests(unittest.TestCase):
                 + self._msgs(40, "new"))
         out, st, applied = compact(
             msgs, lambda mm: "increment", CompactState(summary=big_summary, covered=11),
-            trigger_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
+            room_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
             refold=lambda text: "FOLDED: " + text[:20], refold_tokens=800)
         self.assertTrue(applied)
         self.assertTrue(st.summary.startswith("FOLDED:"))          # folded, not just appended
@@ -507,7 +507,7 @@ class SummaryRefoldTests(unittest.TestCase):
                 + self._msgs(40, "new"))
         out, st, applied = compact(
             msgs, lambda mm: "increment", CompactState(summary="small prior", covered=11),
-            trigger_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
+            room_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
             refold=lambda text: calls.append(1) or "FOLDED", refold_tokens=6000)
         self.assertTrue(applied)
         self.assertEqual(calls, [])                                # rare by design
@@ -521,7 +521,7 @@ class SummaryRefoldTests(unittest.TestCase):
                 + self._msgs(40, "new"))
         out, st, applied = compact(
             msgs, lambda mm: "increment", CompactState(summary=big, covered=11),
-            trigger_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
+            room_tokens=100, keep_tail_tokens=60, recompact_tokens=100, pinned_task="t",
             refold=lambda text: "", refold_tokens=800)             # refold model failed
         self.assertTrue(applied)
         self.assertIn("increment", st.summary)                     # too long beats gone

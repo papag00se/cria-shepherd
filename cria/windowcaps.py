@@ -13,15 +13,14 @@ window of the model that will actually ANSWER:
   ``Upstream._prep`` against that Upstream's own measured window — the last point before
   serialization, so a classifier or reasoner role on a different server is sized by ITS window
   (principle 24: a wire invariant is enforced at the wire);
-* in-process arithmetic (the self-compaction thresholds, the distiller's piece size) calls
+* in-process arithmetic (the self-compaction tail / recompact / refold sizes, the distiller's piece size) calls
   :func:`resolve` with the window it already measured.
 
 ``cap = clamp(reference * window // REFERENCE_WINDOW, floor, ceiling)``. At the 49,152-token window the
 caps were tuned on, that is EXACTLY the old constant (``tests/test_window_caps.py`` proves it for the
 whole table). An UNKNOWN window — never discovered, or only a guess — yields the reference value, i.e.
-the old behaviour: unknown is not small (docs/principles.md). An operator override (an explicit
-``[context] trigger_compaction``, a role's ``max_tokens`` / ``output_reserve``) is an ``int`` and is
-never rescaled.
+the old behaviour: unknown is not small (docs/principles.md). An operator override (a role's
+``max_tokens`` / ``output_reserve``) is an ``int`` and is never rescaled.
 
 What does NOT belong here, and why, is written down next to the lint that enforces it
 (``tests/test_no_new_unmarked_bounds.py``): harness/OS transport limits, safety/time/resource bounds,
@@ -77,8 +76,9 @@ _SPECS: dict[str, tuple[int, int, int]] = {
     # Reply room the floor holds back when a request names neither output_reserve nor max_tokens
     # (contextfloor.DEFAULT_GEN_RESERVE).
     "gen_reserve": (4_096, 2_048, 16_384),
-    # The self-compaction thresholds, in ESTIMATED tokens (chars/4) — selfcompact.*_TOKENS.
-    "selfcompact_trigger": (16_384, 4_096, 98_304),
+    # The self-compaction working-set sizes, in ESTIMATED tokens (chars/4) — selfcompact.*_TOKENS. There is
+    # deliberately NO trigger here: when to compact is a predicate over measured room (selfcompact.view_room /
+    # expected_growth), not a share of the window.
     "selfcompact_keep_tail": (6_000, 1_500, 36_000),
     "selfcompact_recompact": (4_000, 1_000, 24_000),
     "selfcompact_refold": (6_000, 1_500, 36_000),
@@ -106,7 +106,6 @@ CRITIC_REPLY = _cap("critic_reply")
 PLAN_REPLY = _cap("plan_reply")
 EXTRACT_REPLY = _cap("extract_reply")
 GEN_RESERVE = _cap("gen_reserve")
-SELFCOMPACT_TRIGGER = _cap("selfcompact_trigger")
 SELFCOMPACT_KEEP_TAIL = _cap("selfcompact_keep_tail")
 SELFCOMPACT_RECOMPACT = _cap("selfcompact_recompact")
 SELFCOMPACT_REFOLD = _cap("selfcompact_refold")

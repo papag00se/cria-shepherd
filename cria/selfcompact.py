@@ -35,11 +35,11 @@ from .memoryeffects import Effect
 from . import bodykeys, denial, jsontext, probegate, prompts, resultnotes, shelltool, toolargs, toolwire, windowcaps
 from .content_reduce import clip, est_tokens
 
-# Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction (an explicit value is
-# never rescaled); the four window-sized ones are windowcaps.Caps: these names carry the value tuned on the
-# 49,152-token window, and the caller that drives compaction resolves them against the window of the model
-# whose view is being compacted (Loop._self_compact). An unknown window is exactly these values.
-TRIGGER_TOKENS_DEFAULT = windowcaps.SELFCOMPACT_TRIGGER   # start compacting a plan-off view once it exceeds this many tokens
+# Tunables in TOKENS. There is NO size trigger: whether to compact now is a PREDICATE over measured room
+# (see :func:`expected_growth` and ``RollingInput.room_tokens``), not a number anyone sets. The three
+# below are windowcaps.Caps: these names carry the value tuned on the 49,152-token window, and the caller
+# that drives compaction resolves them against the window of the model whose view is being compacted
+# (Loop._self_compact) and holds them under that same measured room. An unknown window is exactly these.
 KEEP_TAIL_TOKENS = windowcaps.SELFCOMPACT_KEEP_TAIL       # keep the most recent turns verbatim, up to this many tokens
 BOUNDARY_KEEP_TAIL_TOKENS = 0    # at a verified STEP BOUNDARY keep NO verbatim tail — the completed step's raw
 #                                  turns fold ENTIRELY into the rollup. Nothing is lost: the NEXT step rides in
@@ -1228,6 +1228,80 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
     return prompts.fill(labels["header"], signature=labels["signature"], scope=labels["scope"], lines=lines)
 
 
+# How many of the session's most recent turns the growth measurement looks at.
+GROWTH_TURNS = 5
+
+
+def _turns(messages: list[dict]) -> list[list[dict]]:
+    """The history as TURNS, oldest first: an assistant message plus everything that answered it (tool
+    results, a user message) up to the next assistant message. Whatever precedes the first assistant
+    message (system, task, environment) is not a turn and is not growth."""
+    turns: list[list[dict]] = []
+    for m in messages:
+        if m.get("role") == "assistant":
+            turns.append([m])
+        elif turns:
+            turns[-1].append(m)
+    return turns
+
+
+def turn_sizes(messages: list[dict], measure: Callable[[list[dict]], int] | None = None) -> list[int]:
+    """What each turn added to the history, oldest first, in estimated tokens (``measure`` renders a turn's
+    messages to tokens: the raw view by default, :func:`evidence_tokens` for what the compaction calls read)."""
+    measure = measure or (lambda ms: sum(_msg_tokens(m) for m in ms))
+    return [measure(t) for t in _turns(messages)]
+
+
+def expected_growth(messages: list[dict], measure: Callable[[list[dict]], int] | None = None) -> int:
+    """How many estimated tokens ONE more turn is expected to add — MEASURED, never configured: the largest
+    of the last :data:`GROWTH_TURNS` turns this view actually grew by (the largest, not the mean: one big
+    read is what breaks a fit). With no assistant turn in the view yet, the largest single message in it
+    (the size of the biggest thing this conversation has already delivered)."""
+    sizes = turn_sizes(messages, measure)
+    if sizes:
+        return max(sizes[-GROWTH_TURNS:])
+    measure = measure or (lambda ms: sum(_msg_tokens(m) for m in ms))
+    return max((measure([m]) for m in messages), default=0)
+
+
+def evidence_tokens(messages: list[dict], newer_from: int | None = None) -> int:
+    """Estimated tokens the writer and every validator read for ``messages``: each public turn rendered as its
+    own labelled evidence block (:func:`compaction_request_parts`) — NOT the raw message size, which leaves out
+    the per-turn role/label framing (~13 tokens a turn, ~34 on a retained-tail turn). ``newer_from`` is the
+    index from which turns are the retained tail; None renders every turn as work being replaced."""
+    if newer_from is None:
+        parts = compaction_request_parts(messages, newer_messages=[])
+    else:
+        parts = compaction_request_parts(messages[:newer_from], newer_messages=messages[newer_from:])
+    return sum(est_tokens(p) for p in parts)
+
+
+def view_room(*, coder: tuple[int, int, float] | None, frame_tokens: int,
+              compaction: tuple[int, float] | None, compaction_fixed: int) -> tuple[int | None, int | None]:
+    """The room the view has, in ESTIMATED tokens: ``(coder_room, evidence_room)``, each None when its window
+    is not measured (nothing to compute from; unknown is never read as large or small).
+
+    * ``coder_room`` — the largest raw view the coder request holds without the floor DROPPING turns:
+      ``(view + frame) x density + reply reserve <= window`` (``coder`` is that window, reserve and the
+      coder's learned density; ``frame_tokens`` is the system frame, root task and tool list the caller
+      keeps outside the view);
+    * ``evidence_room`` — the largest EVIDENCE (:func:`evidence_tokens`) the compaction calls read whole.
+      The writer and every validator read the whole view, so ``evidence x density + compaction_fixed <=
+      window`` where ``compaction`` is the compactor's own window and the density of its requests, and
+      ``compaction_fixed`` is the REAL tokens around the evidence — the prompt frame, the largest reply cap
+      (the candidate briefing the fidelity lens reads and the writer's own reply), the one-word verdict
+      reserve and the authoritative facts. Distillation can shrink the writer's evidence but nothing shrinks
+      a validator's, so this is the bound that matters."""
+    coder_room = evidence_room = None
+    if coder is not None:
+        window, reserve, density = coder
+        coder_room = int((window - reserve) / max(density, 1.0)) - frame_tokens
+    if compaction is not None:
+        window, density = compaction
+        evidence_room = int((window - compaction_fixed) / max(density, 1.0))
+    return coder_room, evidence_room
+
+
 @dataclass(frozen=True)
 class RollingInput:
     messages: list[dict]
@@ -1235,7 +1309,12 @@ class RollingInput:
     # keyword-only newer_messages scope. Evidence and three-lens validation stay
     # shared services, not alternate parsers or new judgments in this engine.
     summarize: Callable[..., str]
-    trigger_tokens: int = TRIGGER_TOKENS_DEFAULT
+    # THE LARGEST VIEW, in estimated tokens, that the coder request can still hold without the floor dropping
+    # turns — computed by the caller from the measured window, density and reserves (:func:`view_room`).
+    # The view is compacted NOW iff one more turn of MEASURED growth (:func:`expected_growth`) would no
+    # longer fit it. None = no measured window, so nothing to predict from: only floor pressure (which also
+    # needs a window) and a step boundary compact.
+    room_tokens: int | None = None
     keep_tail_tokens: int = KEEP_TAIL_TOKENS
     recompact_tokens: int = RECOMPACT_TOKENS
     pinned_task: str = ""
@@ -1252,6 +1331,10 @@ class RollingInput:
     # When that view overflows, summarize now rather than wait out the rejection throttle:
     # folding loses less than dropping. None (no sized window) never bypasses the throttle.
     floor_pressure: Callable[[list[dict]], bool] | None = None
+    # The largest EVIDENCE (:func:`evidence_tokens`) the compaction calls can read whole, beside ``room_tokens``.
+    # Two bounds because they measure different things: the coder's is on the raw view, this one on what is
+    # rendered for the writer and the validators. None = that window is not measured.
+    evidence_room_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1281,8 +1364,9 @@ class RollingDefinition:
 
 def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) -> RollingResult:
     """Return typed messages/state/effect. ``summarize(list[dict]) -> str`` folds the old middle into
-    a briefing (injected so this is testable without a model). No-op (same list) at/below the token
-    trigger, or when there is no middle to compact (the recent tail already spans everything).
+    a briefing (injected so this is testable without a model). No-op (same list) while one more turn of
+    measured growth still fits ``room_tokens``, or when there is no middle to compact (the recent tail
+    already spans everything).
 
     Opting into ``with_grounding`` calls summarize/refold with the keyword-only
     ``newer_messages=messages[tail_start:]``: a separate read-only grounding scope,
@@ -1290,7 +1374,7 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
     Old one-argument callbacks remain unchanged by default. No coverage, throttle,
     increment or tail budget is derived from the grounding scope.
 
-    ``force`` (the plan loop passes it at a STEP BOUNDARY) both lowers the trigger AND shrinks the kept tail
+    ``force`` (the plan loop passes it at a STEP BOUNDARY) compacts without waiting for the room to run out AND shrinks the kept tail
     to ``boundary_keep_tail_tokens`` (0 by default → NO verbatim tail) — so the just-verified step's work
     folds ENTIRELY into the ⟦ctx:rollup⟧ (it IS the working-set tail, which a mere trigger drop left verbatim,
     so the view grew step over step). Nothing is lost at a boundary: the next step rides in the caller's
@@ -1307,20 +1391,40 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
     if not enabled:
         return RollingResult(source.messages, state, Effect.NO_OP, source.force)
     messages, summarize = source.messages, source.summarize
-    trigger_tokens, keep_tail_tokens = source.trigger_tokens, source.keep_tail_tokens
+    room_tokens, keep_tail_tokens = source.room_tokens, source.keep_tail_tokens
     recompact_tokens, pinned_task, force = source.recompact_tokens, source.pinned_task, source.force
     boundary_keep_tail_tokens = source.boundary_keep_tail_tokens
     files_list, refold, refold_tokens = source.files_list, source.refold, source.refold_tokens
     rlog, with_grounding = source.rlog, source.with_grounding
     # At a STEP BOUNDARY keep only a SMALL verbatim tail (boundary_keep_tail_tokens) so the just-finished
-    # step's work FOLDS into the rollup; otherwise keep the full working-set tail. force also lowers the
-    # trigger so a boundary compacts even below the size trigger (but never a trivial view that fits the tail).
+    # step's work FOLDS into the rollup; otherwise keep the full working-set tail. force also compacts
+    # before the room runs out, so a boundary compacts even a small view (but never a trivial view that
+    # fits the tail).
     eff_keep_tail = boundary_keep_tail_tokens if force else keep_tail_tokens
-    threshold = eff_keep_tail if force else trigger_tokens
-    if sum(_msg_tokens(m) for m in messages) <= threshold:
-        return RollingResult(messages, state, Effect.NO_OP)
+    view_tokens = sum(_msg_tokens(m) for m in messages)
     head_end = 1 if messages and messages[0].get("role") == "system" else 0
     tail_start = _tail_start(messages, head_end, eff_keep_tail)
+    # THE PREDICATE (replaces a configured size trigger): would the NEXT turn, at the growth this
+    # session's own recent turns measured, no longer fit the room the coder request has, or the room the
+    # compaction calls need to read the view whole? Measured on the raw history, which only grows, so once
+    # true it stays true and the throttles below (recompact band, rejection memory, floor pressure) alone
+    # set the cadence.
+    fires = False
+    if room_tokens is not None:
+        fires = view_tokens + expected_growth(messages) > room_tokens
+    if not fires and source.evidence_room_tokens is not None:
+        fires = (evidence_tokens(messages[head_end:], max(tail_start - head_end, 0))
+                 + expected_growth(messages[head_end:], evidence_tokens) > source.evidence_room_tokens)
+    standing = bool(state.summary.strip())
+    if force:
+        if view_tokens <= eff_keep_tail:
+            return RollingResult(messages, state, Effect.NO_OP)
+    elif not fires and not standing:
+        # Nothing predicted. The one remaining reason to compact is the floor ALREADY having to drop turns
+        # from what would be sent (a view whose growth was under-measured); it needs a measured window.
+        if source.floor_pressure is None or not source.floor_pressure(messages):
+            return RollingResult(messages, state, Effect.NO_OP)
+    crossed = force or fires or standing
     if tail_start <= head_end:
         return RollingResult(messages, state, Effect.NO_OP)
 
@@ -1333,8 +1437,8 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
     band_tokens = (sum(_msg_tokens(m) for m in messages[base:tail_start])
                    if head_end <= base <= tail_start else None)
     never_attempted = state.attempted <= head_end
-    due = ((not state.summary and never_attempted) or band_tokens is None
-           or band_tokens >= recompact_tokens)
+    due = crossed and ((not state.summary and never_attempted) or band_tokens is None
+                       or band_tokens >= recompact_tokens)
     # FLOOR PRESSURE IS MEASURED ON WHAT WOULD BE SENT. It was measured on the raw history, which
     # only grows: once that passed the window, pressure stayed true even while the compacted view
     # fitted comfortably, and because an accepted briefing restores the bypass, almost every coder
@@ -1488,7 +1592,7 @@ DEFINITION = RollingDefinition(
 
 
 def compact(messages: list[dict], summarize, state: CompactState, *,
-            trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
+            room_tokens: int | None = None, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
             recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
             boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
             files_list: str = "", refold=None,
@@ -1500,7 +1604,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     definition owns the actual algorithm, attempted state and reduction effect.
     """
     result = DEFINITION.execute(RollingInput(
-        messages, summarize, trigger_tokens, keep_tail_tokens, recompact_tokens,
+        messages, summarize, room_tokens, keep_tail_tokens, recompact_tokens,
         pinned_task, force, boundary_keep_tail_tokens, files_list, refold,
         refold_tokens, rlog, with_grounding), state)
     return result.messages, result.state, result.applied

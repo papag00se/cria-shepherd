@@ -30,7 +30,7 @@ def history(n=16):
 
 
 def rolling_input(messages, writer, **kw):
-    return selfcompact.RollingInput(messages, writer, trigger_tokens=100,
+    return selfcompact.RollingInput(messages, writer, room_tokens=100,
                                    keep_tail_tokens=100, recompact_tokens=100, **kw)
 
 
@@ -63,7 +63,7 @@ def test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical():
     assert not result.force_pending and result.refold_effect is Effect.NO_OP
     # Adapter equality below is additional wiring coverage, not the semantic oracle.
     legacy = selfcompact.compact(messages, source.summarize, selfcompact.CompactState(),
-                                 trigger_tokens=100, keep_tail_tokens=100,
+                                 room_tokens=100, keep_tail_tokens=100,
                                  recompact_tokens=100, pinned_task="ORIGINAL TASK")
     assert result.effect is Effect.REDUCED
     assert legacy == (result.messages, result.state, True)

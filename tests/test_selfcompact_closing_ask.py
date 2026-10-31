@@ -6,6 +6,7 @@ import unittest.mock
 
 from dataclasses import replace
 
+from tests.window_fakes import with_room
 from cria import loop, rumination
 
 
@@ -32,15 +33,14 @@ def _plan_with_one_step():
                 items=[PlanItem("step 1")])
 
 
-def _low_trigger_ctx(reasoner_chat=None, compactor_chat=None):
+def _ctx_for_compaction(reasoner_chat=None, compactor_chat=None):
     from cria.config import Role
     from cria.loop import LoopContext
     reasoner_role = Role(name="reasoner", backend="local") if reasoner_chat else None
     compactor_role = Role(name="compactor", backend="local") if compactor_chat else None
-    return replace(LoopContext(planner=None, coder_chat=None, reasoner_chat=reasoner_chat,
-                               reasoner_role=reasoner_role, runs_dir="", compactor_chat=compactor_chat,
-                               compactor_role=compactor_role),
-                   trigger_compaction=100)  # low trigger so the fixture's tail actually rolls up
+    return LoopContext(planner=None, coder_chat=None, reasoner_chat=reasoner_chat,
+                       reasoner_role=reasoner_role, runs_dir="", compactor_chat=compactor_chat,
+                       compactor_role=compactor_role)
 
 
 def _big_transcript():
@@ -102,9 +102,9 @@ class SelfCompactionAskTests(unittest.TestCase):
                 return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
             from cria.loop import PlanSession
-            ctx = _low_trigger_ctx(reasoner_chat=reasoner)
+            ctx = _ctx_for_compaction(reasoner_chat=reasoner)
             sess = PlanSession(plan=_plan_with_one_step())
-            Loop(ctx)._self_compact(_big_transcript(), sess, 1, _RLog())
+            with_room(Loop(ctx))._self_compact(_big_transcript(), sess, 1, _RLog())
 
         self.assertGreaterEqual(len(calls), 2, "both entry points must delegate to the one composer")
         self.assertIsNone(calls[0][1], "the harness default keeps its existing whole-history scope")
@@ -221,10 +221,10 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
         sentinel = [{"role": "user", "content": "SENTINEL FROM _self_compact"}]
         with unittest.mock.patch.object(Loop, "_self_compact",
                                         lambda self, msgs, sess, idx, rlog, **kw: sentinel):
-            ctx = _low_trigger_ctx()
+            ctx = _ctx_for_compaction()
             sess = PlanSession(plan=_plan_with_one_step())
             framed = {"messages": [{"role": "user", "content": "hi"}], "tools": []}
-            out = Loop(ctx)._self_compact_single(framed, sess, _RLog(), root_task="do it")
+            out = with_room(Loop(ctx))._self_compact_single(framed, sess, _RLog(), root_task="do it")
         # the adapter's output IS whatever _self_compact returned — proof it delegates rather than
         # running its own (now-deleted) copy of the fold
         self.assertIs(out["messages"], sentinel)
@@ -242,9 +242,9 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
                     or "FROM COMPACTOR")
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
-        ctx = _low_trigger_ctx(reasoner_chat=reasoner, compactor_chat=compactor)
+        ctx = _ctx_for_compaction(reasoner_chat=reasoner, compactor_chat=compactor)
         sess = PlanSession(plan=_plan_with_one_step())
-        out = Loop(ctx)._self_compact(_big_transcript(), sess, 1, _RLog())
+        out = with_room(Loop(ctx))._self_compact(_big_transcript(), sess, 1, _RLog())
         rollup = next(m["content"] for m in out if "⟦ctx:rollup⟧" in str(m.get("content")))
         self.assertIn("FROM COMPACTOR", rollup, "a configured compactor endpoint must be used")
         self.assertNotIn("FROM REASONER", rollup, "the reasoner endpoint must not be used instead")
@@ -259,11 +259,11 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
                     or "all 7 tests now pass")
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
-        ctx = _low_trigger_ctx(reasoner_chat=reasoner)
+        ctx = _ctx_for_compaction(reasoner_chat=reasoner)
         sess = PlanSession(plan=_plan_with_one_step())
         sess.last_gate_red = True
         sess.last_gate_flag = "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"
-        rollup = next(m["content"] for m in Loop(ctx)._self_compact(_big_transcript(), sess, 1, _RLog())
+        rollup = next(m["content"] for m in with_room(Loop(ctx))._self_compact(_big_transcript(), sess, 1, _RLog())
                       if "⟦ctx:rollup⟧" in str(m.get("content")))
         self.assertIn("all 7 tests now pass", rollup)    # the unverified claim is not silently deleted
         self.assertIn(sess.last_gate_flag, rollup)       # exact real gate finding overrides the claim

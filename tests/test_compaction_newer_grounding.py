@@ -38,6 +38,7 @@ import json
 
 import pytest
 
+from tests.window_fakes import with_room
 from cria import loop, selfcompact, server
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore
@@ -77,9 +78,8 @@ def make_loop(calls, *, reject=False, enabled=True):
         return json.dumps({"choices": [{"message": {"content": answer}}]}).encode()
     ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
                       compactor_role=Role(name="compactor", backend="local"),
-                      planner_enabled=False, runs_dir="", self_compact=enabled,
-                      trigger_compaction=100)
-    return Loop(ctx, LoopStore())
+                      planner_enabled=False, runs_dir="", self_compact=enabled)
+    return with_room(Loop(ctx, LoopStore()))
 
 
 @pytest.mark.parametrize("reject", (False, True))
@@ -209,7 +209,7 @@ def test_engine_optional_grounding_preserves_boundary_tail_increment_and_throttl
         return "" if reject else "New increment."
     boundary = selfcompact._tail_start(messages, 1, 0 if force else selfcompact.KEEP_TAIL_TOKENS)
     lo = 3 if incremental else 1
-    out, after, applied = selfcompact.compact(messages, summarize, state, trigger_tokens=100,
+    out, after, applied = selfcompact.compact(messages, summarize, state, room_tokens=100,
                                               force=force, with_grounding=True)
     assert calls == [(messages[lo:boundary], messages[boundary:])]
     assert messages == before
@@ -228,7 +228,7 @@ def test_engine_optional_grounding_preserves_boundary_tail_increment_and_throttl
         assert after.summary == (("Prior increment.\n\n" if incremental else "") + "New increment.")
         if not force:
             assert out[-len(messages[boundary:]):] == messages[boundary:]
-    selfcompact.compact(messages, summarize, after, trigger_tokens=100,
+    selfcompact.compact(messages, summarize, after, room_tokens=100,
                         force=force, with_grounding=True)
     assert len(calls) == 1
 
@@ -244,7 +244,7 @@ def test_engine_refold_receives_the_same_read_only_grounding():
         assert text == "An accepted increment."
         return "Condensed earlier work."
     out, state, applied = selfcompact.compact(messages, summarize, selfcompact.CompactState(),
-                                              trigger_tokens=100, refold=refold,
+                                              room_tokens=100, refold=refold,
                                               refold_tokens=1, with_grounding=True)
     boundary = selfcompact._tail_start(messages, 1, selfcompact.KEEP_TAIL_TOKENS)
     assert seen == [("middle", messages[boundary:]), ("refold", messages[boundary:])]
@@ -262,7 +262,7 @@ def test_engine_legacy_one_argument_callbacks_stay_compatible():
         seen.append("refold")
         return "Condensed earlier work."
     _, state, applied = selfcompact.compact(history(), summarize, selfcompact.CompactState(),
-                                            trigger_tokens=100, refold=refold, refold_tokens=1)
+                                            room_tokens=100, refold=refold, refold_tokens=1)
     assert seen == ["middle", "refold"] and applied
     assert state.summary == "Condensed earlier work."
 
