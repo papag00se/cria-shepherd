@@ -69,13 +69,24 @@ class _Record:
 class ImageSession:
     def __init__(self,root,session_key,*,close_authority,clock=time.monotonic):
         self._lock=threading.RLock();self._token=object();self._closed=False;self._retired=False;self._confirmed_at=None;self._cleanup_complete=False;self._authority=close_authority
-        self._root=Path(tempfile.mkdtemp(prefix='image-session-',dir=root));os.chmod(self._root,0o700)
-        self._generation=uuid.uuid4().hex;self._close_seal=None;self._cleanup_sealed=False;self._confirmed_wall=None;self._recovered_observations=set()
-        self._key=session_key;self._records={};self._occurrences={};self._route=None;self._leases=set();self._attempts={}
-        self._clock=clock;self.last_used=clock()
-        self._hold=imagepersist.Hold(self._root)
-        self._save()
-        imagepersist.create_marker(self._root,self._generation)
+        self._root=Path(tempfile.mkdtemp(prefix='image-session-',dir=root))
+        try:
+            os.chmod(self._root,0o700)
+            self._generation=uuid.uuid4().hex;self._close_seal=None;self._cleanup_sealed=False;self._confirmed_wall=None;self._recovered_observations=set()
+            self._key=session_key;self._records={};self._occurrences={};self._route=None;self._leases=set();self._attempts={}
+            self._clock=clock;self.last_used=clock()
+            self._hold=imagepersist.Hold(self._root)
+            self._save()
+            imagepersist.create_marker(self._root,self._generation)
+        except BaseException:
+            # A session that never finished being created (a full disk, a refused write) must not leave an
+            # unmarked directory behind per attempt: retention treats an unmarked directory as corrupt and
+            # never removes it on its own, and the next request would simply make another.
+            hold=getattr(self,'_hold',None)
+            if hold is not None:hold.close()
+            shutil.rmtree(self._root,ignore_errors=True)
+            Path(str(self._root)+'.owner.json').unlink(missing_ok=True)
+            raise
 
     def _state(self):
         return {'version':1,'generation':self._generation,'key':self._key,

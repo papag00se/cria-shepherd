@@ -111,17 +111,20 @@ def _du(dirfd):
     total = 0
     newest = os.fstat(dirfd).st_mtime
     for name in os.listdir(dirfd):
-        st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
-        total += st.st_size
-        newest = max(newest, st.st_mtime)
-        if stat.S_ISDIR(st.st_mode):
-            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
-            try:
-                size, mtime = _du(child)
-            finally:
-                os.close(child)
-            total += size
-            newest = max(newest, mtime)
+        try:    # a live session replaces its state file atomically: a name listed a moment ago may be gone
+            st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+            total += st.st_size
+            newest = max(newest, st.st_mtime)
+            if stat.S_ISDIR(st.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
+                try:
+                    size, mtime = _du(child)
+                finally:
+                    os.close(child)
+                total += size
+                newest = max(newest, mtime)
+        except FileNotFoundError:
+            continue
     return total, newest
 
 
@@ -259,14 +262,21 @@ def _scan_images(dirfd, root):
         else:
             ignored.append(name)
             continue
-        st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+        try:
+            st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+        except FileNotFoundError:    # its owner finished closing it since the listing: nothing left to select
+            continue
         e = Entry('image', name, names=[name], mtime=st.st_mtime)
         entries[name] = e
         if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
             e.refused, e.state = True, 'corrupt'
             e.detail = 'not an owned private directory (symlink, file or wrong mode); never touched'
             continue
-        child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
+        try:
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
+        except FileNotFoundError:
+            del entries[name]
+            continue
         try:
             e.size, e.mtime = _du(child)
         finally:
@@ -286,6 +296,9 @@ def _scan_images(dirfd, root):
             continue
         if marker is None:
             e.state, e.detail = 'corrupt', 'no owner generation marker'
+            continue
+        if not isinstance(marker, dict):
+            e.state, e.detail = 'corrupt', 'owner marker is not a JSON object'
             continue
         handle = {'owner': 'session-images', 'directory': name, 'generation': marker.get('generation')}
         e.raw = {'marker': marker, 'handle': handle}
@@ -491,8 +504,8 @@ def collect(home, kinds, *, lock_multipart=False, tmp=None):
             entries.extend(found)
             ignored.extend(f'{kind}/{n}' for n in ign)
             fds[kind] = os.dup(dirfd)
-        except (OSError, ValueError, BridgeError, ImageUnavailable) as exc:
-            notes.append(f'{kind}: scan failed: {exc}')
+        except Exception as exc:  # noqa: BLE001 — one kind's unreadable entry must neither hide the other kind nor skip the caller's cleanup of `fds`
+            notes.append(f'{kind}: scan failed: {type(exc).__name__}: {exc}')
         finally:
             os.close(dirfd)
     return entries, ignored, fds, notes
@@ -663,14 +676,17 @@ class AutoPruner:
 
     def run_once(self):
         removed = skipped = failed = 0
+        seen = set()
         try:
             entries, _ignored, fds, notes = collect(self.home, self.kinds, lock_multipart=True)
             try:
                 for n in notes:
+                    seen.add(('note', n))
                     self._once(('note', n), 'retention.auto_prune.note', note=n)
                 plan, skips = plan_prune(entries, older_than=self.older, session=None, now=self.clock())
                 for e, why in skips:
                     skipped += 1
+                    seen.add((e.kind, e.id))
                     self._once((e.kind, e.id), 'retention.auto_prune.skip', entry_kind=e.kind, entry_id=e.id, why=why,
                                age_seconds=int(self.clock() - e.mtime))
 
@@ -686,6 +702,7 @@ class AutoPruner:
                 apply_plan(self.home, plan, fds, force=False, report=report)
             finally:
                 _close(fds)
+                self._announced = {k: v for k, v in self._announced.items() if k in seen}
         except Exception as exc:  # noqa: BLE001 — a background janitor must never take the service down
             failed += 1
             try:
