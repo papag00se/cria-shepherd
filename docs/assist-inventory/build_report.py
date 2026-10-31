@@ -7,6 +7,7 @@ import ast
 import inspect
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,7 +65,36 @@ def declarations(path: Path) -> dict[str, int]:
     return found
 
 
+ARCHIVE_TAG = "tests-before-reset-20261031"
+
+
+class ArchivedPath:
+    """A file of the pre-reset suite, read from the git tag that preserves it.
+
+    The old suite no longer lives in the working tree; an assist whose regression is not
+    yet re-expressed in ``tests/`` names it as ``<tag>:tests/<file>.py``. Resolution is
+    git's, so a missing tag or file fails loudly like any other missing owner.
+    """
+    suffix = ".py"
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def read_text(self) -> str:
+        shown = subprocess.run(["git", "-C", str(ROOT), "show", self.path],
+                               capture_output=True, text=True, check=False)
+        if shown.returncode:
+            raise ValueError("Missing archived implementation owner " + self.path)
+        return shown.stdout
+
+
+def is_archived(path: str) -> bool:
+    return path.startswith(ARCHIVE_TAG + ":")
+
+
 def source_path(path: str) -> Path:
+    if is_archived(path):
+        return ArchivedPath(path)
     result = ROOT / path
     if Path(path).is_absolute() or not result.resolve().is_relative_to(ROOT):
         raise ValueError("Implementation owner must be repository-relative " + path)
@@ -82,6 +112,14 @@ def reference_line(reference: Reference) -> int:
     if path.suffix != ".py" or reference.symbol not in declarations(path):
         raise ValueError("Missing policy source reference: " + reference.path + ":" + reference.symbol)
     return declarations(path)[reference.symbol]
+
+
+def link(path: str, symbol: str, line: int | None) -> str:
+    """Working-tree files link to their line; archived ones are `git show` names, not links."""
+    label = f"`{path}:{symbol}`" if symbol else f"`{path}`"
+    if is_archived(path):
+        return label + " (archived)"
+    return f"[{label}](../../{path}" + (f"#L{line})" if line else ")")
 
 
 def executable_owner(definition):
@@ -277,17 +315,15 @@ def render(families: tuple[AssistFamily, ...] = FAMILIES, history: dict | None =
                       f"  Structural migration claim: {'declared (not behavioral acceptance)' if p.migrated else 'pending integration'}.",
                       f"  Prompts: {', '.join(p.prompts) or 'none'}. Dependencies: {', '.join(p.dependencies) or 'none'}."]
             for title, references in (("Hooks", p.hooks), ("Regressions", p.regressions)):
-                rendered = ", ".join(
-                    f"[`{ref.path}:{ref.symbol}`](../../{ref.path}#L{reference_line(ref)})"
-                    for ref in references)
+                rendered = ", ".join(link(ref.path, ref.symbol, reference_line(ref))
+                                     for ref in references)
                 lines.append(f"  {title}: {rendered or 'not declared; migration pending'}.")
         if not members:
             lines.append("- None (not an acceptance claim).")
         lines += ["", "**Principal navigation/support owners (not exhaustive stage bindings):**"]
         for owner in f.owners:
-            label = owner.path + (":" + owner.symbol if owner.symbol else "")
-            anchor = "#L" + str(owner_lines[owner.path, owner.symbol]) if owner.symbol else ""
-            lines.append(f"- [`{label}`](../../{owner.path}{anchor})")
+            lines.append("- " + link(owner.path, owner.symbol,
+                                       owner_lines[owner.path, owner.symbol] if owner.symbol else None))
         lines += ["", "**Historical families:** " + ", ".join(f.lineage) + ".", "",
                   "**Historical detail lineage:** " + ", ".join(f"`{d}`" for d in f.details) + ".", "",
                   "**Preserved contract distinctions:** " + f.contract, ""]
@@ -296,7 +332,10 @@ def render(families: tuple[AssistFamily, ...] = FAMILIES, history: dict | None =
               "[Mechanisms](../heuristic-assists.md) and [principles](../principles.md) describe behavior and constraints.", "",
               "Run `python docs/assist-inventory/build_report.py` to regenerate this view; use `--check` to verify agreement. "
               "Validation checks structure, frozen lineage, source declarations, definition ownership, dependencies/order and scopes. "
-              "It does not judge English uniqueness, deployment, behavioral benefit or complete production migration.", ""]
+              "It does not judge English uniqueness, deployment, behavioral benefit or complete production migration.", "",
+              f"A reference marked *(archived)* names a test of the pre-reset suite that `tests/` does not yet re-express: "
+              f"read it with `git show {ARCHIVE_TAG}:tests/<file>.py`. The assist it guards has no live regression until a new "
+              "test is written and the reference repointed.", ""]
     return "\n".join(lines)
 
 

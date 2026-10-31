@@ -183,8 +183,8 @@ EXACT_FORM = ExactFormDefinition(
                   Reference("cria/loop.py", "judge_satisfaction")),
            regressions=(
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_exact_form_contradicts_only_a_grounded_requirement_against_measured_bytes"),
-               Reference("tests_backup/test_completion_approval_policies.py", "test_measurement_lifecycle_matches_current_mutation_invalidation"),
-               Reference("tests_backup/test_completion_approval_policies.py", "test_current_workspace_bytes_win_but_later_native_edit_silences_them")),
+               Reference("tests-before-reset-20261031:tests/test_completion_approval_policies.py", "test_measurement_lifecycle_matches_current_mutation_invalidation"),
+               Reference("tests-before-reset-20261031:tests/test_completion_approval_policies.py", "test_current_workspace_bytes_win_but_later_native_edit_silences_them")),
            migrated=False), exact_form, written_file_facts)
 # Preserve current short-circuit order: participation first, exact form second.
 PRE_RELEASE = (PARTICIPATION, EXACT_FORM)

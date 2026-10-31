@@ -57,7 +57,7 @@ python -m cria --config ./cria.toml
 
 The example uses a model server at `http://127.0.0.1:18084` and serves cria on port `18085`. Point your harness at `http://127.0.0.1:18085/v1`. For Codex, follow the [setup and context-window instructions](docs/codex-context-window.md).
 
-Automatic multipart synthetic reads require a harness that can execute successive shell calls and return their paired results. A stable, unique `X-Cria-Session-Id` for Chat Completions (or `prompt_cache_key` for Responses) identifies a conversation; without one, cria correlates its own issued calls through a private durable index rather than assuming identical task text identifies a session. Ambiguous or unavailable state is not credited as a read. Multipart state is retained privately under `~/.cria/multipart`; automatic cleanup is not available because a trusted session-close signal and shared lease fence have not been integrated. Retained multipart and image state is removed only by the explicit operator command `python -m cria.retention list` / `prune [--older-than 14d] [--session ID] [--kind multipart|image|all] [--apply]` (dry run unless `--apply`; see [docs/image-workflow.md](docs/image-workflow.md)); `--kind snapshot [--tmp DIR]` (never part of `all`) removes the private source snapshots abandoned multipart reads leave in the harness temp directory.
+Automatic multipart synthetic reads require a harness that can execute successive shell calls and return their paired results. A stable, unique `X-Cria-Session-Id` for Chat Completions (or `prompt_cache_key` for Responses) identifies a conversation; without one, cria correlates its own issued calls through a private durable index rather than assuming identical task text identifies a session. Ambiguous or unavailable state is not credited as a read. Multipart state is retained privately under `~/.cria/multipart`; no harness sends a trustworthy session-close signal (measured against real Codex), so cria never decides on its own that a conversation is over and deletes nothing by default. Retained multipart and image state is removed only on the operator's authority: either the explicit command `python -m cria.retention list` / `prune [--older-than 14d] [--session ID] [--kind multipart|image|all] [--apply]` (dry run unless `--apply`; see [docs/image-workflow.md](docs/image-workflow.md)), or the standing instruction `[retention] auto_prune_after = "14d"` in `cria.toml` (default unset = off), which runs the same prune in the background at start and hourly; `--kind snapshot [--tmp DIR]` (never part of `all`) removes the private source snapshots abandoned multipart reads leave in the harness temp directory.
 
 ### Optional CPU decision classifier
 
@@ -107,7 +107,7 @@ python -m pytest -q tests          # the whole suite, under a minute
 python -m pytest -q tests/shell_safety   # one domain
 ```
 
-The suite is small on purpose and organised by domain under `tests/<domain>/`. See [docs/testing.md](docs/testing.md) for what a test here must be, how the pre-reset suite is preserved in `tests_backup/`, and how to add a test.
+The suite is small on purpose and organised by domain under `tests/<domain>/`. See [docs/testing.md](docs/testing.md) for what a test here must be, how the pre-reset suite is preserved as the git tag `tests-before-reset-20261031`, and how to add a test.
 
 ## Documentation
 

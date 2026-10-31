@@ -265,11 +265,11 @@ DEFINITION = StepDefinition(Policy(
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_passive_prior_work_survives_with_planning_off_exactly_once"),
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_presence_is_asked_anew_on_every_red_frame_and_never_becomes_an_approval"),
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_a_remediation_directive_replaces_the_step_cursor_without_running_step_policy"),
-                 Reference("tests_backup/test_step_preparation.py", "test_visible_usage_keeps_the_original_raw_base_budget_without_step_detection"),
+                 Reference("tests-before-reset-20261031:tests/test_step_preparation.py", "test_visible_usage_keeps_the_original_raw_base_budget_without_step_detection"),
                  Reference("tests/loop_guards/test_loop_guards_step_preparation.py", "test_consent_to_step_preparation_must_be_explicit_and_exact"),
-                 Reference("tests_backup/test_step_preparation.py", "test_nonplanned_or_suspended_frames_never_detect_artifacts_or_render_steps"),
-                 Reference("tests_backup/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
-                 Reference("tests_backup/test_common_context_preparation.py", "test_disabled_step_framing_keeps_required_remediation_and_raw_task_nudge")),
+                 Reference("tests-before-reset-20261031:tests/test_step_preparation.py", "test_nonplanned_or_suspended_frames_never_detect_artifacts_or_render_steps"),
+                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
+                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_disabled_step_framing_keeps_required_remediation_and_raw_task_nudge")),
     migrated=False), prepare_step)
 DEFINITIONS = (DEFINITION,)
 

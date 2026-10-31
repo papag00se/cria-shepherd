@@ -496,7 +496,7 @@ DEFINITION = Definition(Policy(
         "guard_periodic_gate", "guard_periodic_result", "guard_gate_verdict", "record_gate_state", "guard_probe_reissue",
         "passing_test_regression",
         "Loop._work_item", "Loop._verify_after_probe", "Loop._drive_single_item")),
-    regressions=tuple(Reference("tests_backup/test_repository_check_policy.py", name) for name in (
+    regressions=tuple(Reference("tests-before-reset-20261031:tests/test_repository_check_policy.py", name) for name in (
         "test_admission_matches_current_periodic_owner", "test_periodic_result_matches_current_owner",
         "test_shared_settlement_matches_current_owner", "test_task_and_step_rewrite_order",
         "test_disabled_and_replacement_do_not_touch_unselected_state")) + (

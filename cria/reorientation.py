@@ -222,10 +222,10 @@ DEFINITION = Definition(Policy(
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "Loop._reasoned_reanchor"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
-    regressions=(Reference("tests_backup/test_reorientation_task_authority_current.py", "test_current_task_authority_driver_and_wire"),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_reorientation_task_authority_current.py", "test_current_task_authority_driver_and_wire"),
                  Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py",
                            "test_author_gets_the_task_apart_from_the_history_and_the_coder_keeps_the_task"),
-                 Reference("tests_backup/test_context_reorientation_policy.py", "test_reasoned_source_parity"),
-                 Reference("tests_backup/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
+                 Reference("tests-before-reset-20261031:tests/test_context_reorientation_policy.py", "test_reasoned_source_parity"),
+                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection"),
                  Reference("tests/loop_orientation/test_loop_orientation_reorientation.py", "test_owned_handoff_with_unusable_guidance_adds_nothing")),
     migrated=False), reorient)

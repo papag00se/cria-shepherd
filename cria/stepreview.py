@@ -366,11 +366,11 @@ DEFINITION = StepDefinition(Policy(
            Reference("cria/loop.py", "Loop._periodic_step_check"),
            Reference("cria/loop.py", "Loop._periodic_observation_after_probe")),
     regressions=(Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_an_unreadable_verdict_gets_one_reasoning_off_retry_and_a_positive_retry_fails_closed"),
-                 Reference("tests_backup/test_optional_step_policy.py", "test_probe_settlement_preserves_step_not_task_authority"),
+                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_probe_settlement_preserves_step_not_task_authority"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_pending_or_periodic_probe_never_reaches_the_critic"),
-                 Reference("tests_backup/test_optional_step_policy.py", "test_shared_reader_rejects_truncation_and_uses_step_key"),
+                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_shared_reader_rejects_truncation_and_uses_step_key"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_scheduled_positive_never_advances_without_its_own_observed_confirmation"),
-                 Reference("tests_backup/test_optional_step_policy.py", "test_observation_discards_positive_and_rejudges_fresh_facts")),
+                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_observation_discards_positive_and_rejudges_fresh_facts")),
     migrated=False), review_step)
 DEFINITIONS = (DEFINITION,)
 

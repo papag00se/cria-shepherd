@@ -277,12 +277,12 @@ DEFINITION = ClassificationDefinition(
                   Reference("cria/server.py", "CriaHandler._classify"),
                   Reference("cria/classify.py", "Classifier.classify")),
            regressions=(Reference("tests/loop_guards/test_loop_guards_classify.py", "test_a_good_classification_is_cached_per_task_and_bad_enums_fall_to_the_bias"),
-                        Reference("tests_backup/test_classification_policy.py", "test_disabled_registered_execution_has_no_detection_calls_cache_or_log_changes"),
+                        Reference("tests-before-reset-20261031:tests/test_classification_policy.py", "test_disabled_registered_execution_has_no_detection_calls_cache_or_log_changes"),
                         Reference("tests/loop_guards/test_loop_guards_classify.py", "test_an_unparseable_classifier_defaults_to_the_bias_is_never_cached_and_escalates_when_persistent"),
                         Reference("tests/loop_guards/test_loop_guards_classify.py", "test_a_classifier_that_spent_its_budget_thinking_gets_one_retry_with_thinking_off"),
-                        Reference("tests_backup/test_classification_policy.py", "test_public_classifier_obeys_real_bound_root_before_reading_history_or_state"),
-                        Reference("tests_backup/test_classification_policy.py", "test_public_classifier_runs_exact_real_root_replacement_even_when_it_returns_none"),
-                        Reference("tests_backup/test_classification_policy.py", "test_bound_selection_and_shared_instance_state_are_thread_local_and_safe")),
+                        Reference("tests-before-reset-20261031:tests/test_classification_policy.py", "test_public_classifier_obeys_real_bound_root_before_reading_history_or_state"),
+                        Reference("tests-before-reset-20261031:tests/test_classification_policy.py", "test_public_classifier_runs_exact_real_root_replacement_even_when_it_returns_none"),
+                        Reference("tests-before-reset-20261031:tests/test_classification_policy.py", "test_bound_selection_and_shared_instance_state_are_thread_local_and_safe")),
            migrated=False),
     Classifier._execute)
 

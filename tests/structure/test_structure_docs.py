@@ -1,6 +1,7 @@
 """Generated inventory agrees with the registry; walk process docs and walk output stay consistent."""
 import hashlib
 import importlib.util
+import pytest
 import re
 import sys
 from pathlib import Path
@@ -18,6 +19,20 @@ def test_generated_assist_inventory_agrees_with_the_registry(monkeypatch, capsys
     spec.loader.exec_module(report)
     monkeypatch.setattr(sys, "argv", ["build_report.py", "--check"])
     assert report.main() == 0, capsys.readouterr().err
+
+def test_an_archived_reference_resolves_through_the_tag_and_a_wrong_one_fails_loudly():
+    """An assist whose regression still lives only in the pre-reset suite names it `<tag>:tests/<file>.py`: it must resolve to
+    the preserved file and its symbol, and a missing file or symbol must raise instead of being rendered as protection."""
+    spec = importlib.util.spec_from_file_location("report", DOCS / "assist-inventory/build_report.py")
+    report = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(report)
+    from cria.assistcontract import Reference
+    tag = report.ARCHIVE_TAG
+    assert report.reference_line(Reference(f"{tag}:tests/test_writeproxy.py", "EditRecoveryTests")) > 0
+    for ref in (Reference(f"{tag}:tests/test_no_such_file_ever.py", "X"),
+                Reference(f"{tag}:tests/test_writeproxy.py", "NoSuchSymbol")):
+        with pytest.raises(ValueError):
+            report.reference_line(ref)
 
 def call(tmp_path, number, phase, prompt):
     stem = tmp_path / f"{number:04d}-{phase}"

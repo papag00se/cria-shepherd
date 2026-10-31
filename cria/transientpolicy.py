@@ -144,7 +144,7 @@ TRANSIENT_RECOVERY = Definition(Policy(
     services=("parsed failure facts", "cancellation", "relative backoff sleeper"),
     hooks=(Reference("cria/transientpolicy.py", "choose"),),
     regressions=(Reference("tests/loop_orientation/test_loop_orientation_small_owners.py", "test_a_transient_failure_is_retried_routed_or_failed_by_its_kind"),
-                 Reference("tests_backup/test_transient_recovery_production_binding.py", "test_original_chat_timeout_bytes")),
+                 Reference("tests-before-reset-20261031:tests/test_transient_recovery_production_binding.py", "test_original_chat_timeout_bytes")),
 ), choose)
 DEFINITIONS = (TRANSIENT_RECOVERY,)
 

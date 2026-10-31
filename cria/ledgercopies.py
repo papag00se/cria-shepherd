@@ -59,5 +59,5 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "Loop._work_item"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
     regressions=(Reference("tests/context_wire_a/test_context_wire_a_repeats.py", "test_a_ledger_copy_elsewhere_collapses_to_a_pointer_leaving_exactly_one_authoritative_copy"),
-                 Reference("tests_backup/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
     migrated=False), elide)

@@ -383,13 +383,13 @@ DEFINITION = LivingDefinition(Policy(
            Reference("cria/loop.py", "Loop._renudge_or_replan"), Reference("cria/loop.py", "Loop._replan_if_thrashing"),
            Reference("cria/loop.py", "Loop._advance"), Reference("cria/loop.py", "_session_to_dict"),
            Reference("cria/loop.py", "_session_from_dict")),
-    regressions=(Reference("tests_backup/test_living_plan_policy.py", "test_absent_empty_and_replaced_are_distinct"),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_absent_empty_and_replaced_are_distinct"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_rescue_replans_fire_only_past_their_threshold_and_once_per_step"),
-                 Reference("tests_backup/test_living_plan_policy.py", "test_coverage_includes_completed_and_raw_task_is_persisted"),
-                 Reference("tests_backup/test_living_plan_policy.py", "test_coverage_preserves_the_complete_authoritative_completed_item"),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_coverage_includes_completed_and_raw_task_is_persisted"),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_coverage_preserves_the_complete_authoritative_completed_item"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_pending_empty_confirmation_goes_stale_when_the_work_moves_on"),
-                 Reference("tests_backup/test_living_plan_policy.py", "test_resume_discards_transient_questions_and_rescue_flags_without_releasing_tail"),
-                 Reference("tests_backup/test_living_plan_policy.py", "test_source_reuses_legacy_questions_parsers_and_exact_reask_counts")),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_resume_discards_transient_questions_and_rescue_flags_without_releasing_tail"),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_source_reuses_legacy_questions_parsers_and_exact_reask_counts")),
     migrated=False), rederive_tail, settle_empty)
 DEFINITIONS = (DEFINITION,)
 

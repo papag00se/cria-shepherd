@@ -696,7 +696,7 @@ def _definition(id, family, stage, execute, regression, needs_menu=True, stream_
     regressions = (regression,)
     if stream_start is not None:
         hooks += (Reference('cria/massage.py', 'massage_stream'),)
-        regressions += (Reference('tests_backup/test_output_selection_boundary.py',
+        regressions += (Reference('tests-before-reset-20261031:tests/test_output_selection_boundary.py',
                                   'test_bound_handler_selection_overrides_legacy_library_gate'),)
     return CompletionDefinition(Policy(id, stage, default_level, family_id=family, hooks=hooks,
         regressions=regressions, migrated=False), execute, needs_menu, stream_start)
@@ -704,7 +704,7 @@ def _definition(id, family, stage, execute, regression, needs_menu=True, stream_
 
 RECOVERY = (
     _definition('text-call-recovery', 'F01', 'output-recovery', recover_text_calls,
-                Reference('tests_backup/test_tool_policy_stages.py', 'test_recovery_replacement_and_bypass_are_used_by_public_production_entry'),
+                Reference('tests-before-reset-20261031:tests/test_tool_policy_stages.py', 'test_recovery_replacement_and_bypass_are_used_by_public_production_entry'),
                 stream_start=stream_leak_position),
     _definition('reasoning-call-recovery', 'F01', 'output-recovery', recover_reasoning_tool_calls,
                 Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_text_recovered_arguments_get_the_declared_type_only_on_an_exact_match')),
@@ -725,7 +725,7 @@ REPAIR = (
     _definition('patch-normalization', 'F05', 'output-repair', normalize_apply_patch,
                 Reference('tests/context_wire_b/test_context_wire_b_massage.py', 'test_apply_patch_input_is_normalized_to_the_native_envelope_without_losing_content'), False),
     _definition('reasoning-text-recovery', 'F08', 'output-repair', recover_reasoning_text,
-                Reference('tests_backup/test_a_finished_turn_keeps_its_words.py', 'AFinishedTurnKeepsItsWordsTests'), False),
+                Reference('tests-before-reset-20261031:tests/test_a_finished_turn_keeps_its_words.py', 'AFinishedTurnKeepsItsWordsTests'), False),
 )
 # Unlike apply(), the existing server's tool-free answer path is not L1-gated.
 # Preserve that applicability; changing L0 behavior is not part of this movement.
