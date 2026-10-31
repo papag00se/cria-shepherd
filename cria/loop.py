@@ -406,6 +406,8 @@ class GuardState:
     # Consecutive check readings that came back UNKNOWN for the same stated reason (see repositorychecks._count_unknown).
     gate_unknown_streak: int = 0
     gate_unknown_sig: str = ""
+    gate_unsettled_streak: int = 0   # consecutive gate readings that left an unreplied write call unsettled
+    gate_marks: dict | None = None   # {receipt: (state, sha256)} completion marks a gate read back (`completionmarks`)
     # A gate planned before the workspace survey can return only that survey.  Once it lands, probe
     # discovery has new facts and completion must wait for one newly planned gate.  Separate from
     # ``gate_fresh`` so an already-surveyed project with no applicable probe keeps the bounded
@@ -748,7 +750,8 @@ def _note_write_results(gs: GuardState, messages) -> None:
     pending write. The raw set is sticky; whether an id still counts is decided at use (`writeobservation.answered_ids`)."""
     answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
     registered = set(getattr(gs, "write_call_ids", None) or [])
-    answered |= registered & (set(denial.paired_results(messages or [])) | denial.witnessed_completed_ids(messages or []))
+    answered |= registered & (set(denial.paired_results(messages or []))
+                              | denial.witnessed_completed_ids(messages or [], getattr(gs, "gate_marks", None)))
 
 
 def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
@@ -811,7 +814,7 @@ def _observe_history(gs, messages) -> int:
     recovery is selected, the gate registrar, and — inside `record` — the history that precedes a forwarded reply."""
     messages = messages or []
     writeobservation.observe_history(writeobservation.HistoryInput(
-        messages, frozenset(_unlanded_call_ids(messages)), gs, _note_write_results, _is_write_call))
+        messages, frozenset(_unlanded_call_ids(messages, getattr(gs, "gate_marks", None))), gs, _note_write_results, _is_write_call))
     return len(gs.write_call_ids)
 
 
@@ -7275,7 +7278,7 @@ def _record_dispatch(gs, coder, messages):
                   for ch in coder.get('choices', [])
                   for tc in (ch.get('message') or {}).get('tool_calls') or [])
     return writeobservation.record(writeobservation.WriteInput(
-        calls, messages or [], frozenset(_unlanded_call_ids(messages or [])), gs, _note_write_results,
+        calls, messages or [], frozenset(_unlanded_call_ids(messages or [], getattr(gs, "gate_marks", None))), gs, _note_write_results,
         _is_write_call))
 
 
@@ -7351,12 +7354,13 @@ def _refused_call_ids(messages: list) -> set:
     return denial.refused_call_ids(messages)
 
 
-def _unlanded_call_ids(messages: list) -> set:
+def _unlanded_call_ids(messages: list, extra=None) -> set:
     """Tool call ids of writes/edits cria PROVED did not change the file: its own refusal branch ran, or its
     edit program reported the edit not applied. A write that never reached disk is not a rewrite (phi4 A4 CALL
     0039: nine refused edits read as "rewritten at least 5 times" while the file was byte-identical). A result
-    that merely QUOTES a marker, a reused call id, or a result with no hint is unknown, never unlanded."""
-    return denial.unlanded_call_ids(messages)
+    that merely QUOTES a marker, a reused call id, or a result with no hint is unknown, never unlanded. ``extra`` is the
+    completion marks a gate read back (`GuardState.gate_marks`): a witnessed ``did_not_run`` is proof too."""
+    return denial.unlanded_call_ids(messages, extra)
 
 
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:

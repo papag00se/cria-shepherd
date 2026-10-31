@@ -59,15 +59,18 @@ class Entry:
     nonce: str
     keys: frozenset
     generation: int
+    path: str = ""
 
 
 _OUTSTANDING: dict[str, dict[str, Entry]] = {}    # session -> receipt -> entry, in dispatch order
 _RELEASE: dict[str, list] = {}                    # session -> [(receipt, nonce)] whose outcome is known: marks to remove
 _GENERATION: dict[str, int] = {}
+_KNOWN: dict[str, set] = {}        # session -> {(receipt, nonce)} this process has already registered or adopted
 
 
 def _reset() -> None:
     with _LOCK:
+        _KNOWN.clear()
         _OUTSTANDING.clear()
         _RELEASE.clear()
         _GENERATION.clear()
@@ -123,13 +126,71 @@ def plan(session: str | None, receipt: str, path: str, root: str | None = None) 
             release.append((older.receipt, older.nonce))
         watch = tuple((e.receipt, e.nonce) for e in mine.values())
         wait = tuple((e.receipt, e.nonce) for e in mine.values() if e.generation < generation and e.keys & keys)[-8:]
-        mine[receipt] = Entry(receipt, nonce, keys, generation)
+        mine[receipt] = Entry(receipt, nonce, keys, generation, str(path))
+        _KNOWN.setdefault(session, set()).add((receipt, nonce))
         while len(mine) > MAX_OUTSTANDING:
             forgotten = mine.pop(next(iter(mine)))
             release.append((forgotten.receipt, forgotten.nonce))
         out = tuple(release[:MAX_RELEASE])
         del release[:MAX_RELEASE]
     return Plan(credential(session), nonce, watch[-MAX_OUTSTANDING:], wait, out)
+
+
+@dataclass(frozen=True)
+class Query:
+    """What a NON-writing program (the completion gate's worker, a survey) must do about marks: who to ask about and what to remove."""
+    credential: str
+    watch: tuple          # ((receipt, nonce), ...) every call of the session whose outcome cria has not learned
+    release: tuple        # ((receipt, nonce), ...) marks whose outcome cria has learned
+    paths: tuple          # ((receipt, path), ...) what each watched call targets (cria's own words for the coder)
+
+
+def query(session: str | None, *, release: bool = True) -> Query | None:
+    """The mark query a read-only carrier puts to the harness for this session; ``None`` when the session has nothing outstanding
+    (and, with ``release``, nothing to release): the carrier is then byte-for-byte what it was. ``release=True`` (the gate) consumes
+    the release list, exactly as :func:`plan` does; ``release=False`` (a read's record) only asks and leaves every removal to the
+    next program that can authenticate it."""
+    if not session:
+        return None
+    with _LOCK:
+        mine = _OUTSTANDING.get(session) or {}
+        release_list = _RELEASE.setdefault(session, [])
+        if not mine and not (release and release_list):
+            return None
+        watch = tuple((e.receipt, e.nonce) for e in mine.values())[-MAX_OUTSTANDING:]
+        paths = tuple((e.receipt, e.path) for e in mine.values())[-MAX_OUTSTANDING:]
+        out = tuple(release_list[:MAX_RELEASE]) if release else ()
+        if release:
+            del release_list[:MAX_RELEASE]
+    return Query(credential(session), watch, out, paths)
+
+
+def adopt(session: str | None, declared: list, unresolved: set, root: str | None = None) -> None:
+    """Rebuild the registry STATELESSLY from a re-presented history (a restart forgot it): ``declared`` is
+    ``[(receipt, nonce, path)]`` read from the sentinels of the lowered write/edit calls in the history, ``unresolved`` the receipts
+    of those whose outcome the history does not establish. An unresolved call this process does not hold is registered (as an
+    EARLIER turn's writer: nothing in a history is of the current turn); a resolved one is only queued for release, so its mark
+    leaves the harness. Each (receipt, nonce) is taken once per process, and the newest MAX_OUTSTANDING / MAX_RELEASE are kept."""
+    if not session or not declared:
+        return
+    with _LOCK:
+        known = _KNOWN.setdefault(session, set())
+        if len(known) > 4096:
+            known.clear()
+        mine = _OUTSTANDING.setdefault(session, {})
+        release = _RELEASE.setdefault(session, [])
+        fresh = [item for item in declared if (item[0], item[1]) not in known]
+        for receipt, nonce, path in fresh[-MAX_OUTSTANDING * 2:]:
+            known.add((receipt, nonce))
+            if receipt in unresolved:
+                if receipt not in mine:
+                    mine[receipt] = Entry(receipt, nonce, _keys(path, root), 0, str(path))
+            else:
+                release.append((receipt, nonce))
+        while len(mine) > MAX_OUTSTANDING:
+            forgotten = mine.pop(next(iter(mine)))
+            release.append((forgotten.receipt, forgotten.nonce))
+        del release[:-MAX_RELEASE * 4]
 
 
 def settle(receipt: str) -> None:
@@ -195,6 +256,34 @@ def _cm_write(context,receipt,nonce,state,digest):
         try: os.unlink(temporary,dir_fd=context['fd'])
         except OSError: pass
 
+def _cm_observe(context,pairs):
+    # What each named invocation's authenticated mark says RIGHT NOW: {receipt: [state, sha256]}; a call with no authentic mark
+    # (running, killed, never started, or no certified directory at all) is 'incomplete' - never claimed to be anything else.
+    seen={}
+    for receipt,nonce in pairs:
+        mark=_cm_read(context,receipt,nonce)
+        seen[receipt]=list(mark) if mark else ['incomplete','']
+    return seen
+
+def _cm_open_existing(credential):
+    # The certified directory of a session that ALREADY has one; never creates it (a reader must not allocate what it only asks about).
+    try:
+        return _owned_open(credential,'%%PREFIX%%',[],time.monotonic(),create=False)
+    except (OSError,ValueError):
+        return None
+
+def _cm_retire_when_empty(context):
+    # Gate-time disposal: only when nothing is outstanding AND the authenticated directory holds nothing but its own certificate
+    # (no mark, no in-flight temporary). It goes through the owned retirement (the certificate leaves for the instant of removal and
+    # goes back if the directory cannot be removed); no listing by prefix, no name outside the authenticated directory is touched.
+    try:
+        if context is None or not _owned_valid(context): return False
+        if sorted(_owned_names(context))!=['.owner']: return False
+        _owned_retire(context)
+        return True
+    except (OSError,ValueError):
+        return False
+
 def _cm_release(context,pairs):
     # Remove ONLY marks that authenticate as the named invocations'.
     for receipt,nonce in pairs:
@@ -221,10 +310,7 @@ def _rec(kind,**rep):
     global _cm_kind
     _cm_kind=kind
     try:
-        seen={}
-        for _r,_n in _cm_watch:
-            _m=_cm_read(_cm_context,_r,_n)
-            seen[_r]=list(_m) if _m else ['incomplete','']
+        seen=_cm_observe(_cm_context,_cm_watch)
         if seen: rep['pm']=seen
     except Exception:
         pass
@@ -257,6 +343,24 @@ if %%WAIT%%:
     if _cm_context is None or _cm_missing(): _late=True
 atexit.register(_cm_finish)
 '''
+
+
+RIDE = r'''import json,sys
+_ctx=_cm_open_existing(%%CREDENTIAL%%)
+_pm=_cm_observe(_ctx,%%WATCH%%)
+try:
+    if _ctx is not None: _owned_close(_ctx)
+except Exception: pass
+sys.stdout.write(json.dumps({"v":1,"r":%%RECEIPT%%,"k":"survey","rep":{"pm":_pm}},separators=(",",":"))+"\n")
+'''
+
+
+def ride(query: "Query", receipt: str) -> str:
+    """The program a READ-ONLY lowered call carries after its own first record: ONE body-less survey-kind record whose typed
+    report ``pm`` is what the session's unreplied writes' marks say now (see :data:`FUNCTIONS`). Nothing else is printed and nothing
+    is created or removed."""
+    return (directory_program() + RIDE.replace('%%CREDENTIAL%%', repr(query.credential)).replace('%%WATCH%%', repr(list(query.watch)))
+            .replace('%%RECEIPT%%', repr(receipt)))
 
 
 def head(marks: Plan, receipt: str) -> str:

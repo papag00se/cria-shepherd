@@ -1,0 +1,5 @@
+# Which write calls the completion checks could not account for (probegate.unsettled_text). Parsed by prompts.load_map.
+lead = ⟦ctx:checks⟧ the checks above do not cover every write you sent: the harness returned no result for {{PATHS}}, and the write is not established.
+running = Its program left no completion record when the checks finished (it is still running, was interrupted, or never started).
+overlapped = Its program finished only while the checks were running, so the checks may have read the file before it changed.
+tail = Read the file to see what it holds now before you finish; if it is not what you intended, write it again.

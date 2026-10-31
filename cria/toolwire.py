@@ -96,7 +96,7 @@ _SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ 
 _GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
-def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False) -> str:
+def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, marks: str = "") -> str:
     """The leading comment line that lets inbound rebuild the original tool call, statelessly.
 
     It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound) and
@@ -109,6 +109,8 @@ def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False) -> 
         body["rcpt"] = receipt
         if survey:
             body["sv"] = 1          # the command carries a survey record, on the line after its first record
+        if marks:
+            body["cm"] = marks      # the program leaves a completion mark under this nonce (`completionmarks`)
     payload = base64.b64encode(json.dumps(body).encode("utf-8")).decode("ascii")
     return f"# {_SENTINEL}{payload}"
 
@@ -219,6 +221,13 @@ def survey_declared(command: str, call_id=None) -> bool:
     """Did the compiler of this stored command declare a survey record? (Only a receipt-bearing sentinel can.)"""
     d = _declaration(command, call_id)
     return bool(d is not None and d.get("rcpt") and d.get("sv") == 1)
+
+
+def marks_declared(command: str, call_id=None) -> str:
+    """The nonce of the completion mark the compiler of this stored command declared ("" when none, or not this call's)."""
+    d = _declaration(command, call_id)
+    nonce = d.get("cm") if d is not None and d.get("rcpt") else ""
+    return nonce if isinstance(nonce, str) and re.fullmatch(r"[0-9a-f]{16}", nonce) else ""
 
 
 def receipt_of(command: str, call_id=None) -> str:

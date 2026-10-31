@@ -17,7 +17,7 @@ import json
 from typing import Callable, Protocol
 import uuid
 
-from . import participation, probegate, proberun, prompts
+from . import completionmarks, participation, probegate, proberun, prompts
 from .assistcontract import Policy, Reference
 from .shelltool import find_shell_tool, shell_args, with_time_budget, tool_declares_time_budget
 
@@ -51,6 +51,8 @@ class State(Protocol):
     last_gate_testless: bool
     gate_unknown_streak: int
     gate_unknown_sig: str
+    gate_unsettled_streak: int
+    gate_marks: dict | None
     last_gate_skipped: int
     tests_passed_high: dict[str, int]
     last_regression: tuple[str, int, int] | None
@@ -319,9 +321,22 @@ def _count_unknown(state: State, outcome: probegate.GateOutcome) -> None:
     state.gate_unknown_sig = sig
 
 
+def _learn_marks(state: State, outcome: probegate.GateOutcome) -> None:
+    """The gate read the completion marks of the session's unreplied write calls (`completionmarks`): every FINISHED one is now a
+    known state (held on the session for the history readers, and queued for release), and a reading that left one unsettled
+    counts toward the same bound as an unknown one."""
+    witnessed = getattr(outcome, "witnessed", None) or {}
+    if witnessed:
+        state.gate_marks = {**(state.gate_marks or {}), **witnessed}
+        for receipt in witnessed:
+            completionmarks.settle(receipt)
+    state.gate_unsettled_streak = state.gate_unsettled_streak + 1 if outcome.unsettled_writes else 0
+
+
 def record(source: Input, state: State, outcome: probegate.GateOutcome, findings: str,
            evidence: EvidenceServices) -> None:
     """Single shared check-state settlement; F44 progress bookkeeping stays shared."""
+    _learn_marks(state, outcome)
     state.last_gate_ran = bool(outcome.ran)
     state.last_gate_participation = outcome.participation
     state.gate_replan_required = bool(outcome.replan_after_survey)
@@ -417,6 +432,15 @@ def completion_result(source: Input, state: State, evidence: EvidenceServices) -
             return Result(Status.SILENT, outcome=outcome)
         return Result(Status.OBSERVED, text=probegate.transport_unknown_text(outcome.transport_reported),
                       outcome=outcome)
+    if outcome.unsettled_writes:
+        if state.gate_unsettled_streak > MAX_COMPLETION_CHECKS:
+            # The notice has been delivered MAX_COMPLETION_CHECKS times with the write still unestablished (a program that was
+            # killed leaves no mark, ever): the same bounded, said exit as the unknown-evidence veto above. Real findings stay.
+            _event(source, "loop.done_unverified", level="warn", checks=state.gate_unsettled_streak,
+                   why="an unreplied write call stayed unestablished, repeatedly")
+            return Result(Status.OBSERVED if findings else Status.SILENT, text=findings or None, outcome=outcome)
+        notice = probegate.unsettled_text(outcome)
+        return Result(Status.OBSERVED, text="\n".join(part for part in (findings, notice) if part), outcome=outcome)
     if not outcome.ran:
         _event(source, "loop.gate", plan_off=True, blocked=False, gate_ran=False,
                replan_after_survey=bool(outcome.replan_after_survey))

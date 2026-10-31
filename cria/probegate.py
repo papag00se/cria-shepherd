@@ -40,7 +40,7 @@ import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
+from . import completionmarks, denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
 from . import participation, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -349,7 +349,8 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
 
 
 def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], survey: str,
-                       poll_wait_s: float = GATE_POLL_WAIT_S, scope_dirs: tuple[str, ...] = ()) -> list[str]:
+                       poll_wait_s: float = GATE_POLL_WAIT_S, scope_dirs: tuple[str, ...] = (),
+                       marks: "completionmarks.Query | None" = None) -> list[str]:
     """Launch one authenticated private harness resource, idempotently.
 
     A detached Python supervisor owns the entire lifetime: native commands with
@@ -362,7 +363,7 @@ def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], surv
     unrelated path is never adopted. Source files are neither copied nor deleted.
     """
     launch = gatecleanup.launch_command(helper_runner(), transport_id, workspace,
-        "\n".join(parts) if parts else ":", survey, _marker(LITTER_REMOVED_SECTION), scope_dirs)
+        "\n".join(parts) if parts else ":", survey, _marker(LITTER_REMOVED_SECTION), scope_dirs, marks)
     opening, closing = shlex.quote(_transport_marker(transport_id)), shlex.quote(_transport_marker(transport_id, end=True))
     error_encoder = shlex.quote('import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')
     return [
@@ -459,6 +460,11 @@ class GatePlan:
     # False only for historical transports whose originating request facts are unavailable.
     # A receipt cannot authenticate itself by supplying its own workspace claim.
     transport_scope_known: bool = True
+    # THE SESSION'S UNRESOLVED WRITE CALLS this gate asked the harness about (`completionmarks`): ``{receipt: target path}``, composed
+    # with the plan from the session's own registry; empty when nothing was outstanding. And what the completed transport DECLARED
+    # about them (`gatecleanup`): ``{receipt: (state, sha256, final_before_the_checks)}``, or None when it declared none.
+    marks_paths: dict = field(default_factory=dict)
+    transport_marks: "dict[str, tuple] | None" = None
 
 
 @dataclass
@@ -485,6 +491,11 @@ class GateOutcome:
     transport_unknown: bool = False  # transport ended incomplete/invalid; never a clean result
     transport_reported: str = ""  # the harness's own last line about why (see GatePlan.transport_reported)
     scope_unknown: bool = False  # original source identity or owned auxiliary closure not established
+    # Write calls whose reply cria never had and whose completion this gate could NOT establish before its checks ran: ``[(receipt,
+    # path, state)]``. A gate that verified a tree some write may still change (or that changed under it) has not verified it.
+    unsettled_writes: list = field(default_factory=list)
+    # What the completed transport DECLARED about every watched call: ``{receipt: (state, sha256)}`` (see `GatePlan.transport_marks`).
+    witnessed: dict = field(default_factory=dict)
 
 
 def _marker(section_id: str) -> str:
@@ -700,6 +711,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     plan.transport_sha256 = digest
     plan.transport_bounds = _declared_bounds(fields.get("bounds"), total)
     plan.transport_sections = _declared_sections(fields.get("bounds"))
+    plan.transport_marks = _declared_marks(fields.get("bounds"))
     plan.transport_data.extend(chunk)
     if len(plan.transport_data) < total:
         return "pending"
@@ -732,6 +744,47 @@ def _declared_bounds(field: "str | None", total: int) -> "tuple[int, int] | None
             and 0 <= checker_end <= report_end <= total):
         return checker_end, report_end
     return None
+
+
+def _declared_marks(field: "str | None") -> "dict[str, tuple] | None":
+    """The completion marks the gate worker declared (`gatecleanup._gate_marks_report`): ``{receipt: (state, sha256, final_before)}``,
+    or None when it declared none or anything is malformed (then nothing about the watched writes is established)."""
+    if not field:
+        return None
+    try:
+        declared = json.loads(base64.b64decode(field, validate=True).decode("utf-8"))["marks"]
+    except (ValueError, UnicodeError, KeyError, TypeError):
+        return None
+    if not isinstance(declared, dict) or len(declared) > completionmarks.MAX_OUTSTANDING:
+        return None
+    out: dict = {}
+    hexdigits = set("0123456789abcdef")
+    for receipt, item in declared.items():
+        if not (isinstance(receipt, str) and len(receipt) == 16 and set(receipt) <= hexdigits
+                and isinstance(item, list) and len(item) == 3 and item[0] in completionmarks.OBSERVED
+                and isinstance(item[1], str) and item[2] in (0, 1) and not isinstance(item[2], bool)):
+            return None
+        digest = item[1]
+        if (item[0] == "landed") != (len(digest) == 64 and set(digest) <= hexdigits) or (item[0] != "landed" and digest):
+            return None
+        out[receipt] = (item[0], digest, item[2])
+    return out
+
+
+def unsettled_writes(plan: "GatePlan") -> list:
+    """The watched write calls this gate could not establish: no mark, or one that appeared only AFTER the checks had started (the
+    program was still running while they read the tree). A witnessed ``did_not_run`` is proof the write did not land, and a mark
+    that was final before the checks began leaves the tree they read established. Nothing declared at all leaves every one open."""
+    if not plan.marks_paths:
+        return []
+    declared = plan.transport_marks or {}
+    out = []
+    for receipt, path in plan.marks_paths.items():
+        item = declared.get(receipt)
+        state = item[0] if item else "incomplete"
+        if item is None or state == "incomplete" or (state in ("landed", "uncertain") and not item[2]):
+            out.append((receipt, path, state))
+    return out
 
 
 def _declared_sections(field: "str | None") -> "dict[str, int] | None":
@@ -911,6 +964,11 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
     # harness result and therefore needs no per-gate byte arithmetic.
     survey_command = wsview.survey_command(session, cd=workspace, helper=helper_runner())
+    # THE SESSION'S UNRESOLVED WRITES RIDE THE SAME ROUND TRIP: the worker reads their completion marks before the checks start and
+    # after they end, so a write whose reply was lost is a KNOWN state before completion is judged (`completionmarks`).
+    marks = completionmarks.query(session)
+    if marks is not None:
+        plan.marks_paths = dict(marks.paths)
     # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
     # manifest check cria composed is a multi-line inline program. The distinction is free here and
     # unrecoverable downstream — see GATE_SENTINEL.
@@ -934,7 +992,8 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
         *([spool_cleanup] if spool_cleanup else []),
         *_gate_launch_guard(plan.transport_id, workspace, parts, survey_command, plan.transport_poll_wait_s,
-                           tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else ()),
+                           tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else (),
+                           marks=marks),
     ])
     return plan
 
@@ -956,7 +1015,8 @@ def gate_is_partial(outcome) -> bool:
     return bool(getattr(outcome, "unran", None)
                 or getattr(outcome, "transport_pending", False)
                 or getattr(outcome, "transport_unknown", False)
-                or getattr(outcome, "scope_unknown", False))
+                or getattr(outcome, "scope_unknown", False)
+                or bool(getattr(outcome, "unsettled_writes", None)))
 
 
 def gate_sections(stream: str, plan: "GatePlan | None") -> "tuple[dict[str, str], str]":
@@ -2512,6 +2572,21 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     return removed
 
 
+def unsettled_text(outcome) -> str:
+    """The notice for write calls this gate could not account for (``GateOutcome.unsettled_writes``): which files, and which of the
+    two facts left each open. Built from the producer's declared marks and the call's own target path - no judgment, no model."""
+    items = list(getattr(outcome, "unsettled_writes", None) or [])
+    if not items:
+        return ""
+    fills = prompts.load_map("gate_unsettled_writes")
+    paths = list(dict.fromkeys(path for _receipt, path, _state in items if path))
+    named = ", ".join(f"`{p}`" for p in paths) if paths else "an earlier file write"
+    lead = prompts.fill(fills["lead"], paths=named)
+    running = any(state == "incomplete" for _r, _p, state in items)
+    overlapped = any(state != "incomplete" for _r, _p, state in items)
+    return " ".join(part for part in (lead, fills["running"] if running else "", fills["overlapped"] if overlapped else "", fills["tail"]) if part)
+
+
 def transport_unknown_text(reported: str = "") -> str:
     """The notice for a check whose evidence did not arrive. When the harness said why, its own last line rides along
     verbatim (selected from what it printed, never paraphrased) so the coder can act on the real cause."""
@@ -2547,6 +2622,12 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             rlog.emit("gate.undeclared_transport_unknown", level="warn", reason="extents or section offsets not declared")
         return GateOutcome(ran=False, transport_unknown=True)
     result_text = transported_result(plan)
+    unsettled = unsettled_writes(plan)
+    witnessed = {r: (state, digest) for r, (state, digest, _final) in (plan.transport_marks or {}).items()
+                 if state != "incomplete" and r in plan.marks_paths}
+    if unsettled and rlog is not None:
+        rlog.emit("gate.writes_unsettled", level="warn", count=len(unsettled),
+                  states=sorted({state for _r, _p, state in unsettled}))
     # The workspace survey rode home on this result (see plan_gate). Take it off first — it is
     # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
     # whichever section happened to be open when it started.
@@ -2587,8 +2668,10 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             replan_after_survey=bool(survey_applied and not plan.surveyed_before),
             participation=plan.participation,
             scope_unknown=scope_unknown,
+            unsettled_writes=unsettled,
+            witnessed=witnessed,
         )
-    out = GateOutcome(ran=True, swept=swept, scope_unknown=scope_unknown)
+    out = GateOutcome(ran=True, swept=swept, scope_unknown=scope_unknown, unsettled_writes=unsettled, witnessed=witnessed)
 
     results = []
     for i, c in enumerate(plan.candidates):

@@ -56,7 +56,7 @@ from .filecommands import (
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
     _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
-    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration,
+    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration, marks_declared,
     GATE_SENTINEL)
 
 from .resultnotes import (
@@ -1368,6 +1368,8 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         if mutation.error:
             return ShellCommand(_file_mutation_refusal(name, mutation, request.injected, source.log))
         marks = completionmarks.plan(request.session, denial.active_receipt(), str(mutation.path), request.workspace_root)
+        if marks is not None:
+            denial.declare_marks(marks.nonce)
         if name in _WRITE_NAMES:
             command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content), seq=source.sequence, marks=marks)
         else:
@@ -1489,6 +1491,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             cmd = effect.command if effect is not None else None
             proposed_write = cmd if isinstance(cmd, WriteCommand) else None
             read_in_place = effect.read_in_place if effect is not None else False
+            bridged = False
             if cmd is not None:
                 if (multipart_command is not None and direct_synthetic_read
                         and effect.multipart_kind and receipt == denial.receipt_for(tc.get('id'), name, fn.get('arguments'))):
@@ -1507,12 +1510,13 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit('multipart.register_failed', level='warn', error=str(exc))
                     if replacement is not None:
                         cmd = replacement
+                        bridged = True
                         if observe_multipart_fallback is not None:
                             fallback = original_cmd
                             if ti in edit_seq and EDIT_SEQ_DIR not in fallback:
                                 fallback = _seq_release(edit_seq[ti]) + fallback
                             fallback_call = _shell_call(original_tc.get('id'), shell_tool,
-                                f"{_sentinel(name, fn.get('arguments'), original_receipt, declaration.survey)}\n{fallback}", 0)
+                                f"{_sentinel(name, fn.get('arguments'), original_receipt, declaration.survey, declaration.marks)}\n{fallback}", 0)
                             observe_multipart_fallback(tc.get('id'), fallback_call)
                 # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
                 # workspace a question only by putting a command in the reply it is already
@@ -1543,10 +1547,17 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
+                elif name in _READ_NAMES | _LIST_NAMES and not read_in_place and not bridged and isinstance(cmd, str):
+                    # A READ-ONLY call learns what a lost-reply write did: the session's unreplied writes' completion marks ride
+                    # the survey slot as a body-less record (`wsview.marks_ride`), only when something is outstanding.
+                    with denial.receipt_scope(receipt, declaration):
+                        marks_ride = wsview.marks_ride(completionmarks.query(session, release=False), cd=workspace_root or '')
+                    if marks_ride:
+                        cmd = _survey_after_first_record(cmd, marks_ride)
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
                     cmd = _seq_release(edit_seq[ti]) + cmd
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool,
-                                           f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey)}\n{cmd}",
+                                           f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey, declaration.marks)}\n{cmd}",
                                            0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
@@ -1704,6 +1715,19 @@ def _learn_completions(token: str, rep: "dict | None") -> None:
             completionmarks.settle(receipt)
 
 
+def _merged_marks(first: "dict | None", second: dict) -> dict:
+    """The completion marks two records of ONE result report, merged per receipt: a final state outranks ``incomplete``, and two
+    different final states for one receipt (they cannot both be true) leave that receipt out - it is witnessed by nothing."""
+    out: dict = {receipt: list(state) for receipt, state in (first or {}).items()}
+    for receipt, state in second.items():
+        have = out.get(receipt)
+        if have is None or have[0] == "incomplete":
+            out[receipt] = list(state)
+        elif state[0] != "incomplete" and list(state) != have:
+            out[receipt] = ["__conflict__", ""]
+    return {receipt: state for receipt, state in out.items() if state[0] != "__conflict__"}
+
+
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
     result after it) and whose STORED command declared a receipt in cria's sentinel.
@@ -1737,9 +1761,12 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             if first is None:
                 continue
             _learn_completions(token, first.rep)
-            at, survey = first.end, ""
+            at, survey, rep = first.end, "", first.rep
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
                 at = second.end
+                if second.rep and second.rep.get("pm"):
+                    _learn_completions(token, second.rep)
+                    rep = {**(first.rep or {}), "pm": _merged_marks((first.rep or {}).get("pm"), second.rep["pm"])}
                 if second.body is not None:
                     try:
                         survey = second.body.decode("utf-8")
@@ -1752,13 +1779,13 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                     # so no payload byte can stand in for it
                     tail = ((EDIT_ORDER_LATE + "\n" if first.rep.get("late") else "")
                             + editrecovery.EDITFAIL + first.rep["ef"] + "\n" + tail)
-                out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, survey, first.rep)
+                out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, survey, rep)
                 continue
             try:
                 text, exact = first.body.decode("utf-8"), True
             except UnicodeDecodeError:
                 text, exact = first.body.decode("utf-8", "replace"), False
-            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", survey, first.rep, first.observe, first.pre)
+            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", survey, rep, first.observe, first.pre)
     return out
 
 
@@ -2118,9 +2145,39 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         view.note_possible_effect()
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
+    _adopt_marks(messages, out, sess_key, workspace_root)
     toolstages.current().returned_history(
         ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog, window))
     return out
+
+
+def _adopt_marks(messages: list[dict], out: list[dict], session: str, root: str | None) -> None:
+    """Re-derive the registry of unresolved lowered writes from the history in hand (`completionmarks.adopt`): a restart forgot it,
+    and the stored sentinel of every lowered write/edit names its receipt, its mark's nonce and its target. A call whose outcome the
+    history establishes (its own terminal record, or a mark a later program or the gate read back) is not unresolved."""
+    if not session:
+        return
+    declared = []
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+            cid = tc.get("id") if isinstance(tc, dict) else None
+            if not cid or not is_shell_tool_name(fn.get("name")):
+                continue
+            command = _command_of(fn.get("arguments"))
+            nonce = marks_declared(command, cid)
+            if nonce:
+                d = _declaration(command, cid)
+                declared.append((d["rcpt"], nonce, str(_tool_path(_parse(d.get("arguments") or "{}")) or ""), cid))
+    if not declared:
+        return
+    paired, witnessed = denial.paired_results(out), denial.witnessed_completions(out)
+    closed = (denial.REFUSED, denial.UNAPPLIED, denial.LANDED, denial.UNCERTAIN)
+    unresolved = {receipt for receipt, _n, _p, cid in declared
+                  if denial.proof(paired.get(cid)) not in closed and witnessed.get(cid, ("incomplete",))[0] == "incomplete"}
+    completionmarks.adopt(session, [item[:3] for item in declared], unresolved, root)
 
 
 # The dependency-note budgets (one surface inline, and the sum of all notes per request) live in

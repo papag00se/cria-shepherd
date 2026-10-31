@@ -1,7 +1,7 @@
 """Private harness gate resources; NEVER infer ownership of workspace output."""
 import json
 import shlex
-from . import ownedfiles
+from . import completionmarks, ownedfiles
 
 PRIVATE_PREFIX = '.gate-private-'
 
@@ -45,7 +45,7 @@ def _gate_bounds(context,token):
     except FileNotFoundError:
         return b''
     with os.fdopen(descriptor,'rb') as stream:
-        return stream.read(4096) if stat.S_ISREG(os.fstat(stream.fileno()).st_mode) else b''
+        return stream.read(16384) if stat.S_ISREG(os.fstat(stream.fileno()).st_mode) else b''
 
 def _gate_reader_wait(context,token,wait_s):
     deadline=time.monotonic()+wait_s
@@ -55,7 +55,7 @@ def _gate_reader_wait(context,token,wait_s):
 
 '''.replace('%%PREFIX%%', PRIVATE_PREFIX)
 
-OPERATIONS_PROGRAM = NAMESPACE_PROGRAM + r'''import hashlib,subprocess,sys,shutil
+OPERATIONS_PROGRAM = NAMESPACE_PROGRAM + completionmarks.FUNCTIONS + r'''import hashlib,subprocess,sys,shutil
 
 def _gate_create(context,name,data=b''):
     if not _owned_valid(context): raise ValueError('namespace_identity_changed')
@@ -112,6 +112,21 @@ def _gate_aux_cleanup(context):
         failed.append(dict(path='aux',error=str(error)))
     return dict(removed=removed,failed=failed)
 
+def _gate_marks_report(context,marks,before):
+    # THE COMPLETION MARKS of the session's unresolved write calls, read at this gate (see `completionmarks`): {receipt: [state,
+    # sha256, was_final_before_the_checks_started]}. Declared here, by the producer, in the completed transport's own metadata; a
+    # checker's output can never supply them. The marks cria has already LEARNED are released, and an authenticated directory with
+    # nothing outstanding and nothing left in it is retired through the owned retirement - never a prefix scan.
+    watch=[tuple(item) for item in marks['watch']]
+    after=_cm_observe(context,watch)
+    report={}
+    for receipt,state in after.items():
+        report[receipt]=[state[0],state[1],1 if before.get(receipt,['incomplete'])[0]!='incomplete' else 0]
+    if context is not None:
+        _cm_release(context,[tuple(item) for item in marks['release']])
+        if not watch: _cm_retire_when_empty(context)
+    return report
+
 def _gate_run_script(context,name,environment,output):
     descriptor=os.open(name,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=context['fd'])
     try:
@@ -162,6 +177,14 @@ elif mode=='worker':
             try: original[directory]=_owned_id(os.stat(directory))
             except OSError as error: scope_errors.append(dict(path=directory,error=str(error)))
         context['aux_identity']=_owned_id(os.stat('aux',dir_fd=context['fd'],follow_symlinks=False))
+        marks=request.get('marks')
+        marks_context,marks_before=None,{}
+        if marks:
+            try:
+                marks_context=_cm_open_existing(marks['credential'])
+                marks_before=_cm_observe(marks_context,[tuple(item) for item in marks['watch']])
+            except Exception:
+                marks=None
         environment=dict(os.environ)
         environment['CTX_PROBE_AUX']=os.path.join(context['parent_path'],context['name'],'aux')
         environment['CTX_GATE_SPOOL']=os.path.join(context['parent_path'],context['name'],_gate_spool_name(token))
@@ -177,6 +200,13 @@ elif mode=='worker':
                 # cria's cleanup report, then cria's survey. Declared here, by the producer that writes them, so
                 # no reader ever has to find a marker inside checker output to know where a private report starts.
                 bounds['checker_end']=os.fstat(stream.fileno()).st_size
+                if marks:
+                    try: bounds['marks']=_gate_marks_report(marks_context,marks,marks_before)
+                    except Exception: pass
+                    finally:
+                        try:
+                            if marks_context is not None: _owned_close(marks_context)
+                        except Exception: pass
                 record=_gate_aux_cleanup(context)
                 record['failed'].extend(scope_errors)
                 for directory,identity in original.items():
@@ -237,9 +267,12 @@ else:
 
 
 def launch_command(runner: str, token: str, workspace: str, body: str, survey: str, marker: str,
-                   scope_dirs: tuple[str, ...] = ()) -> str:
-    payload = json.dumps(dict(workspace=workspace, body=body, survey=survey, cleanup_marker=marker,
-                              scope_dirs=list(scope_dirs)))
+                   scope_dirs: tuple[str, ...] = (), marks: "completionmarks.Query | None" = None) -> str:
+    request = dict(workspace=workspace, body=body, survey=survey, cleanup_marker=marker, scope_dirs=list(scope_dirs))
+    if marks is not None:        # absent when the session has nothing outstanding or to release: the request is what it always was
+        request['marks'] = dict(credential=marks.credential, watch=[list(x) for x in marks.watch],
+                                release=[list(x) for x in marks.release])
+    payload = json.dumps(request)
     return (runner + ' gate launch ' + shlex.quote(token) + " <<'__CTX_GATE_REQUEST__'\n"
             + payload + '\n__CTX_GATE_REQUEST__\n')
 
