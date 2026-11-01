@@ -1064,21 +1064,56 @@ class BodyRejected(ValueError):
         self.status, self.close = status, close
 
 
+#: Chat message roles a template can render; anything else (or no role) is refused at the edge.
+CHAT_ROLES = ("system", "developer", "user", "assistant", "tool", "function")
+#: Sampling controls the upstream needs as numbers: a string there used to travel on and come back a 502.
+CHAT_NUMERIC_FIELDS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "frequency_penalty", "presence_penalty",
+                       "seed", "max_tokens")
+
+
 def _chat_shape_error(body: dict) -> str | None:
-    """Why a chat body cannot be processed at all (wrong JSON types where the pipeline iterates or slices),
-    or None. Valid JSON of the wrong shape used to die deep in the pipeline and drop the connection."""
+    """Why a chat body cannot be processed at all (wrong JSON types where the pipeline iterates, slices or
+    lowercases), naming the field, or None. Valid JSON of the wrong shape used to die deep in the pipeline
+    and drop the connection or answer 500. Tool-call ARGUMENTS are deliberately not judged here: a
+    malformed historical argument string is the history-arguments owner's to carry byte-faithfully."""
     messages = body.get("messages")
     if messages is not None and (not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages)):
         return "messages must be an array of objects"
     if not messages:
         return "messages must not be empty"     # no model's template renders none: it used to travel upstream and come back a 502
-    if any(m.get("content") is not None and not isinstance(m["content"], (str, list)) for m in messages or ()):
-        return "message content must be a string, an array of parts, or null"
+    if body.get("stream") is not None and not isinstance(body["stream"], bool):
+        return "stream must be a boolean"
+    for key in CHAT_NUMERIC_FIELDS:
+        if body.get(key) is not None and (isinstance(body[key], bool) or not isinstance(body[key], (int, float))):
+            return f"{key} must be a number"
     if body.get("tools") is not None and (not isinstance(body["tools"], list) or any(not isinstance(t, dict) for t in body["tools"])):
         return "tools must be an array of objects"
-    if any(m.get("tool_calls") is not None and (not isinstance(m["tool_calls"], list) or any(not isinstance(c, dict) for c in m["tool_calls"]))
-           for m in messages or ()):
-        return "message tool_calls must be an array of objects"
+    for i, t in enumerate(body.get("tools") or ()):
+        if t.get("type", "function") == "function":
+            fn = t.get("function")
+            if not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
+                return f"tools[{i}].function.name must be a string"
+    for i, m in enumerate(messages):
+        if m.get("role") not in CHAT_ROLES:
+            return f"messages[{i}].role must be one of {', '.join(CHAT_ROLES)}: got {m.get('role')!r}"
+        content = m.get("content")
+        if content is not None and not isinstance(content, (str, list)):
+            return f"messages[{i}].content must be a string, an array of parts, or null"
+        for j, part in enumerate(content if isinstance(content, list) else ()):
+            if not isinstance(part, dict):
+                return f"messages[{i}].content[{j}] must be an object"
+            if part.get("type") in ("text", "input_text") and not isinstance(part.get("text"), str):
+                return f"messages[{i}].content[{j}].text must be a string"
+        if m.get("tool_calls") is not None and (not isinstance(m["tool_calls"], list) or any(not isinstance(c, dict) for c in m["tool_calls"])):
+            return f"messages[{i}].tool_calls must be an array of objects"
+        for j, call in enumerate(m.get("tool_calls") or ()):
+            fn = call.get("function")
+            if not isinstance(fn, dict) or not isinstance(fn.get("name"), str):
+                return f"messages[{i}].tool_calls[{j}].function.name must be a string"
+            if call.get("id") is not None and not isinstance(call["id"], str):
+                return f"messages[{i}].tool_calls[{j}].id must be a string"
+        if m.get("tool_call_id") is not None and not isinstance(m["tool_call_id"], str):
+            return f"messages[{i}].tool_call_id must be a string"
     return None
 
 
@@ -2465,7 +2500,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         not decode it), malformed, or larger than ``MAX_BODY_BYTES``; read under a total deadline."""
         if self.headers.get("Transfer-Encoding"):
             raise BodyRejected(411, "Transfer-Encoding is not supported: send the body with a Content-Length")
-        declared = (self.headers.get("Content-Length") or "0").strip()
+        lengths = {v.strip() for v in self.headers.get_all("Content-Length") or ["0"]}
+        if len(lengths) > 1:   # RFC 9110 §8.6: conflicting lengths are a framing error (identical duplicates are one)
+            raise BodyRejected(400, f"conflicting Content-Length headers: {sorted(lengths)!r}")
+        declared = lengths.pop() or "0"
         if not (declared.isascii() and declared.isdigit()):
             raise BodyRejected(400, f"invalid Content-Length: {declared!r}")
         length = int(declared)

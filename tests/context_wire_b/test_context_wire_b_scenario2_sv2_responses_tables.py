@@ -12,11 +12,11 @@ IMG = {"type": "input_image", "image_url": "data:image/png;base64,AAAA"}
 
 
 @pytest.mark.parametrize("request_body, reason", [
-    ({"input": [U({"type": "input_file", "file_id": "f"})]}, "non-text content type"),
-    ({"input": [U("loose string")]}, "non-text content type"),
-    ({"input": [U(TEXT, IMG, "stray")]}, "unsupported Responses content part"),
+    ({"input": [U({"type": "input_file", "file_id": "f"})]}, "content.0..type is not a supported"),
+    ({"input": [U("loose string")]}, r"content.0. must be an object"),
+    ({"input": [U(TEXT, IMG, "stray")]}, r"content.2. must be an object"),
     ({"input": [U({**TEXT, "annotations": []}, IMG)]}, "text metadata"),
-    ({"input": [U({"type": "input_text", "text": 5}, IMG)]}, "text metadata"),
+    ({"input": [U({"type": "input_text", "text": 5}, IMG)]}, r"content.0..text must be a string"),
     ({"input": [{"type": "message", "role": "assistant", "content": [IMG]}]}, "image role"),
     ({"input": [U({"type": "input_image", "image_url": ""})]}, "image reference or metadata"),
     ({"input": [U({**IMG, "file_id": "x"})]}, "image reference or metadata"),
@@ -44,7 +44,7 @@ def test_images_text_custom_tools_and_controls_translate_in_order():
                   {"type": "function_call_output", "call_id": "c3", "output": {"x": 1}},
                   {"type": "function_call_output", "call_id": "c4", "output": 42},
                   {"type": "function_call_output", "call_id": "c5", "output": [IMG]},
-                  {"type": "reasoning", "summary": []}, "not-a-dict"]})
+                  {"type": "reasoning", "summary": []}]})
     assert body["messages"][0] == {"role": "user", "content": [{"type": "text", "text": "look"}, {"type": "image_url", "image_url": {"url": IMG["image_url"], "detail": "high"}}]}
     call = body["messages"][1]["tool_calls"][0]
     assert call["function"] == {"name": "apply_patch", "arguments": json.dumps({"input": "*** Begin"})}
@@ -55,12 +55,16 @@ def test_images_text_custom_tools_and_controls_translate_in_order():
     assert (body["stream"], body["parallel_tool_calls"], body["top_k"], body["seed"], body["stop"], body["max_tokens"], body["reasoning_effort"]) == (True, False, 7, 3, ["x"], 50, "low")
 
 
-def test_a_message_whose_content_is_not_text_translates_to_an_empty_message_in_its_role():
-    """A harness item with `content: null` (or a bare number) is an empty turn, not a crash and not the text "None"; a developer item like it adds no system text."""
+def test_a_message_with_null_content_is_an_empty_turn_and_a_non_text_content_is_refused():
+    """A harness item with `content: null` is an empty turn, not a crash and not the text "None"; a developer item like it adds no system text.
+    A bare number or object is refused naming the field: turning it into an empty turn would silently destroy what the harness sent."""
     body = responses.to_chat_body({"input": [{"type": "message", "role": "developer", "content": None},
                                              {"type": "message", "role": "user", "content": None},
-                                             {"type": "message", "role": "assistant", "content": 7}]})
+                                             {"type": "message", "role": "assistant", "content": None}]})
     assert body["messages"] == [{"role": "user", "content": ""}, {"role": "assistant", "content": ""}]
+    for bad in (7, {"a": 1}):
+        with pytest.raises(ValueError, match=r"input\[0\]\.content must be a string or an array"):
+            responses.to_chat_body({"input": [{"type": "message", "role": "assistant", "content": bad}]})
 
 
 def completion(message, finish="stop", **extra):

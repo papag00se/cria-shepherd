@@ -34,10 +34,16 @@ def _new_id(prefix: str) -> str:
 
 # ------------------------------------------------------------------ inbound
 
+#: The roles a Responses `message` item may carry; anything else is refused rather than quietly read as `user`.
+MESSAGE_ROLES = ("user", "assistant", "system", "developer")
+
+
 def to_chat_body(r: dict) -> dict:
     """Responses request → chat-completions body."""
     sys_parts: list[str] = []
     persona = ""
+    if r.get("instructions") is not None and not isinstance(r["instructions"], str):
+        raise ValueError("instructions must be a string")
     if isinstance(r.get("instructions"), str) and r["instructions"].strip():
         persona = r["instructions"]
         sys_parts.append(persona)
@@ -48,13 +54,17 @@ def to_chat_body(r: dict) -> dict:
         items = [{"type": "message", "role": "user", "content": items}]
     elif items is not None and not isinstance(items, list):
         raise ValueError("input must be a string or an array of items")
-    for item in items or []:
+    for n, item in enumerate(items or []):
         if not isinstance(item, dict):
-            continue
+            raise ValueError(f"input[{n}] must be an object")
         t = item.get("type", "message")
+        if not isinstance(t, str):
+            raise ValueError(f"input[{n}].type must be a string")
         if t == "message":
             role = item.get("role")
-            text = _message_content(item.get("content"), role)
+            if role not in MESSAGE_ROLES:
+                raise ValueError(f"input[{n}].role must be one of {', '.join(MESSAGE_ROLES)}: got {role!r}")
+            text = _message_content(item.get("content"), role, f"input[{n}].content")
             # `developer`/`system` items are instructions → fold into the single
             # leading system message (a 2nd leading system message breaks strict
             # chat templates — see toolmenu.add_cheatsheet).
@@ -64,26 +74,34 @@ def to_chat_body(r: dict) -> dict:
             else:
                 rest.append({"role": "assistant" if role == "assistant" else "user", "content": text})
         elif t in ("function_call", "custom_tool_call"):
+            if not isinstance(item.get("name"), str) or not item["name"]:
+                raise ValueError(f"input[{n}].name must be a non-empty string")
+            if t == "custom_tool_call":
+                if not isinstance(item.get("input", ""), str):
+                    raise ValueError(f"input[{n}].input must be a string")
+                arguments = json.dumps({"input": item.get("input", "")}, ensure_ascii=False)
+            else:
+                if not isinstance(item.get("arguments"), (str, dict)):
+                    raise ValueError(f"input[{n}].arguments must be a string or an object")
+                arguments = _as_args_str(item["arguments"])
             rest.append({
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [{
-                    "id": item.get("call_id") or item.get("id") or _new_id("call"),
+                    "id": _call_id(item, n) or _new_id("call"),
                     "type": "function",
-                    "function": {"name": item.get("name", ""), "arguments": (
-                        json.dumps({"input": item.get("input", "")}, ensure_ascii=False)
-                        if t == "custom_tool_call" else _as_args_str(item.get("arguments")))},
+                    "function": {"name": item["name"], "arguments": arguments},
                 }],
             })
         elif t in ("function_call_output", "custom_tool_call_output"):
-            call_id = item.get("call_id") or item.get("id")
+            call_id = _call_id(item, n)
             if call_id is None:
                 continue  # no id to pair on — a role:tool with null tool_call_id orphans and
                 #           strict chat templates reject it; drop rather than fabricate an id
             rest.append({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": _output_text(item.get("output")),
+                "content": _output_text(item.get("output"), f"input[{n}].output"),
             })
         # other item types (reasoning, etc.) are dropped — cria works from messages
 
@@ -111,6 +129,8 @@ def to_chat_body(r: dict) -> dict:
         body["tool_choice"] = choice
     elif r.get("tool_choice") is not None:
         raise ValueError(f"unsupported Responses tool_choice: {r.get('tool_choice')!r}")
+    if r.get("stream") is not None and not isinstance(r["stream"], bool):
+        raise ValueError("stream must be a boolean")
     if r.get("parallel_tool_calls") is not None:
         body["parallel_tool_calls"] = r["parallel_tool_calls"]
     # Preserve the Chat-Completions controls with direct wire equivalents. Silent omission changes
@@ -125,25 +145,44 @@ def to_chat_body(r: dict) -> dict:
     if "max_output_tokens" in r:
         body["max_tokens"] = r["max_output_tokens"]
     reasoning = r.get("reasoning")
+    if reasoning is not None and not isinstance(reasoning, dict):
+        raise ValueError("reasoning must be an object")
     if isinstance(reasoning, dict) and reasoning.get("effort") is not None:
         body["reasoning_effort"] = reasoning["effort"]
     return body
 
 
-def _message_content(content, role):
-    """Translate supported image parts in order; never silently omit unknown parts."""
+def _call_id(item: dict, n: int) -> str | None:
+    """The id a call/output item pairs on: `call_id`, else `id`; absent is None, a non-string is refused."""
+    for key in ("call_id", "id"):
+        if item.get(key) is not None:
+            if not isinstance(item[key], str):
+                raise ValueError(f"input[{n}].{key} must be a string")
+            return item[key] or None
+    return None
+
+
+def _message_content(content, role, field="content"):
+    """Translate supported image parts in order; never silently omit unknown parts. `field` names the
+    request path a refusal points at."""
+    if content is not None and not isinstance(content, (str, list)):
+        raise ValueError(f"{field} must be a string or an array of parts")
     if not isinstance(content, list):
         return _content_text(content)
     text_kinds = ("input_text", "output_text", "text", "summary_text")
-    image = any(isinstance(p, dict) and p.get("type") == "input_image" for p in content)
+    for i, part in enumerate(content):
+        if not isinstance(part, dict):
+            raise ValueError(f"{field}[{i}] must be an object")
+        if part.get("type") in text_kinds and not isinstance(part.get("text"), str):
+            raise ValueError(f"{field}[{i}].text must be a string")
+    image = any(p.get("type") == "input_image" for p in content)
     if not image:
-        if any(not isinstance(p, dict) or p.get("type") not in text_kinds for p in content):
-            raise ValueError("unsupported Responses non-text content type")
+        for i, part in enumerate(content):
+            if part.get("type") not in text_kinds:
+                raise ValueError(f"{field}[{i}].type is not a supported Responses content type: {part.get('type')!r}")
         return _content_text(content)  # preserve existing text-only metadata handling
     parts = []
     for part in content:
-        if not isinstance(part, dict):
-            raise ValueError("unsupported Responses content part")
         kind = part.get("type")
         if kind in ("input_text", "output_text", "text", "summary_text"):
             if set(part) != {"type", "text"} or not isinstance(part["text"], str):
@@ -177,14 +216,14 @@ def _content_text(content) -> str:
     return ""
 
 
-def _output_text(output) -> str:
+def _output_text(output, field="output") -> str:
     if isinstance(output, str):
         return output
     if isinstance(output, list):  # some clients wrap output in content parts
-        converted = _message_content(output, "tool")
-        return converted
+        return _message_content(output, "tool", field)
     if isinstance(output, dict):
-        return output.get("output") or output.get("text") or json.dumps(output)
+        text = next((output[k] for k in ("output", "text") if isinstance(output.get(k), str) and output[k]), None)
+        return text if text is not None else json.dumps(output)
     return "" if output is None else str(output)
 
 
@@ -210,6 +249,8 @@ def _to_chat_tool_choice(tc):
         return tc
     if isinstance(tc, dict):
         if tc.get("type") in ("function", "custom") and tc.get("name"):
+            if not isinstance(tc["name"], str):
+                raise ValueError("tool_choice.name must be a string")
             return {"type": "function", "function": {"name": tc["name"]}}
         if tc.get("type") == "function" and isinstance(tc.get("function"), dict):
             return tc  # already nested
@@ -221,6 +262,8 @@ def _to_chat_tools(tools) -> list[dict]:
     chat completions nests them under `function`. Custom freeform tools use one string input;
     namespace/search controls are handled by their existing compatibility policy."""
     out = []
+    if tools is not None and not isinstance(tools, list):
+        raise ValueError("tools must be an array of objects")
     for t in tools or []:
         if not isinstance(t, dict):
             raise ValueError("Responses tools must be objects")
@@ -229,6 +272,10 @@ def _to_chat_tools(tools) -> list[dict]:
             # has a Chat-Completions schema; L2+ re-advertises search through cria's portable tool
             # layer, so they must not make a coding request invalid at this boundary.
             continue
+        if t.get("type") in ("custom", "function") and not isinstance(t.get("name"), str):
+            raise ValueError(f"tools[].name must be a string: {t.get('name')!r}")
+        if t.get("type") == "function" and t.get("parameters") is not None and not isinstance(t["parameters"], dict):
+            raise ValueError("tools[].parameters must be an object")
         if t.get("type") == "custom":
             out.append({"type": "function", "function": {
                 "name": t["name"], "description": t.get("description", ""),
