@@ -20,12 +20,16 @@ def figures(briefing, *evidence):
     return briefinggrounding.ungrounded(briefing, [REAL_TRANSCRIPT, *evidence])
 
 
+CONVERSIONS = "tool: waited 2 seconds between polls, then 3000 ms\n"
+
+
 @pytest.mark.parametrize("briefing,refused", [
     (REAL_SIZE, ["2,670 bytes"]),                                              # the real fabricated size
     ("The jar is 7321 B.", ["7321 B"]), ("It imports 52,310 rows.", ["52,310 rows"]),
     ("Baseline is 83 ms per run.", ["83 ms"]), ("Resolved plugin 3.5.1 from Maven.", ["3.5.1"]),
     ("Fetched via https://mirror.example.net/maven2.", ["mirror.example.net"]), ("Listens on localhost:9871.", ["localhost:9871"]),
     ("The same size twice: 4,812 B and 4812 bytes.", ["4,812 B", "4812 bytes"]),
+    ("The wall time was 0.9 s.", ["0.9 s"]),                                   # a decimal the evidence rounds to nothing like (0.3706, 0.363)
 ])
 def test_a_figure_that_occurs_nowhere_in_the_evidence_is_refused(briefing, refused):
     assert figures(briefing) == refused
@@ -38,10 +42,11 @@ def test_a_figure_that_occurs_nowhere_in_the_evidence_is_refused(briefing, refus
     "Plugin 3.4.0 resolves from https://repo.maven.apache.org.",
     "The target is ~73 ms, at least 4 runs, over 500 rows, 0.18-0.25 s, <90 ms, ≈12 files.",     # approximated, bounded, ranged
     "The feed has 40001 lines (1 header + 40000 rows) and is 1.2 MB, 4× slower than 30%.",       # arithmetic and derived units
+    "The wait was 2000 ms and the poll 3 s.",                                                 # whole numbers converted either way (2 seconds, 3000 ms)
     "Maven 26.0.2.1 and jar 12 KB were seen.", "The file has 9 widgets and 14 gadgets.",         # a 4-part version and unknown units are never judged
 ])
 def test_a_figure_the_evidence_states_or_the_briefing_hedges_or_derives_is_never_refused(briefing):
-    assert figures(briefing) == []
+    assert figures(briefing, CONVERSIONS) == []
 
 
 def test_no_evidence_settles_nothing():

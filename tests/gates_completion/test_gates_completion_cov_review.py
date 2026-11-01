@@ -40,3 +40,13 @@ def test_every_review_event_names_its_trigger_and_scheduled_reviews_belong_to_th
     c = Calls(); cr.review_task(c.input(trigger), state())
     assert trigger.level == level and c.events == [('loop.task_review', {'assist_id': 'whole-task-review', 'family_id': 'F34', 'trigger': value, 'satisfied': True, 'status': 'approved'})]
     with pytest.raises(ValueError): cr.ReviewInput('claim', 't', None, None, None, None, None)
+
+@pytest.mark.parametrize("args,kwargs", [
+    ((None,), {}), (("approved",), {}),                                   # the status must be the enum, not its value
+    ((cr.ReviewStatus.APPROVED, 7), {}), ((cr.ReviewStatus.APPROVED, "ok", None), {}),   # reason / action must each be text
+    ((cr.ReviewStatus.REJECTED,), dict(action=["retry"]))])
+def test_a_review_outcome_is_refused_unless_status_reason_and_action_are_each_well_typed(args, kwargs):
+    """Every whole-task outcome is typed: any one malformed field (not only all three) raises; the well-typed ones construct."""
+    with pytest.raises(ValueError, match="Invalid whole-task review outcome"):
+        cr.ReviewResult(*args, **kwargs)
+    assert cr.ReviewResult(cr.ReviewStatus.REJECTED, "r", "a").approved is False

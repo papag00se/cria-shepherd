@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cria import denial, groundtruth, probegate, writerecord
+from cria import denial, filepresence, groundtruth, probegate, writerecord
 from cria.config import Role
 from cria.loop import validate_compaction_briefing
 from compaction_handoff_helpers import (TREE, call, chat_reply, lens_answer, lens_of, result, shell, survey_text, write)
@@ -81,6 +81,24 @@ def test_a_lens_abstains_and_asks_nothing_when_its_evidence_is_partial_stale_or_
 def test_an_honest_negative_an_earlier_state_a_plan_or_an_ungrounded_claim_is_never_refused(lens, briefing, reply, extra):
     """A lens never refuses an honest negative, an earlier state, a plan, a hedged count, or a name the briefing does not contain."""
     assert validate(briefing, **extra, **{lens: reply})[0] is True
+
+@pytest.mark.parametrize("lens,call_lens", [
+    ("files", lambda ask, role: filepresence.contradicted_files(ask, object(), role, REVIEW, SURVEY, None)),
+    ("changes", lambda ask, role: filepresence.unsupported_changes(ask, object(), role, CHANGED, HISTORY, None)),
+    ("sizes", lambda ask, role: filepresence.contradicted_sizes(ask, object(), role, "`pom.xml` (235 B) was written.", SURVEY, None)),
+    ("build", lambda ask, role: filepresence.unsupported_builds(ask, object(), role, GREEN, HISTORY, None))])
+def test_every_lens_puts_one_closed_cold_question_with_reasoning_off_and_no_retry(lens, call_lens):
+    """A lens is ONE focused closed question: temperature 0, reasoning off, and no second attempt on an empty reply (mutant: retry_off=True survived 4 of 4 lenses)."""
+    asked = []
+
+    def summarize(chat_fn, role, system, ask, rlog, **kw):
+        asked.append((role, system, kw))
+        return ""
+    call_lens(summarize, Role(name="reasoner", backend="fixture", reasoning="on"))
+    (role, system, kw), = asked
+    assert role.reasoning == "off" and kw["retry_off"] is False and kw["temperature"] == 0.0
+    assert kw["phase"] == f"compaction-validate-{lens}" and kw["max_tokens"] == filepresence.MAX_TOKENS
+    assert lens_of(system) == lens
 
 # ornith1.5_9b / orders-api-py through real Codex (wave 10 E2EB, cell c1, 20,480 window, compaction 0013/0015): the briefing restates
 # "in-place migration of existing `orders.db` files" (data a deployment holds, named only by the task) over a complete survey of five files.

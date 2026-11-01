@@ -21,7 +21,8 @@ def refused(briefing, *turns):
     ("There were 3 failed and 44 passed.", [PYTEST], []),
     ("There were 5 failed and 44 passed.", [PYTEST, NOISE], ["5 failed"]),         # 5 occurs nowhere at all
     ("mvn reported 16 errors.", [MAVEN], []), ("mvn reported 7 errors.", [MAVEN, NOISE], ["7 errors"]),
-    ("2 failures and 1 error.", [MAVEN], []),                                    # `Failures: 2`, `Errors: 1`; a singular `1`
+    ("2 failures and 1 error.", [MAVEN], []),
+    ("The run ended with 1 failure.", [NOISE, "tool: Output:\n   1  package a;\n"], ["1 failure"]),                     # a lone `1` is a count only on a tally line (line 1 of a listing is not one)                                    # `Failures: 2`, `Errors: 1`; a singular `1`
     ("The 47 tests all pass.", [NOISE], []),                                      # "tests" is a count the briefing may take from a file it read: not anchored
     ("The test.js file contains 3 tests.", [NOISE], []),
     ("It fails with a 404 error on the orders route.", [NOISE], []),               # a status, not a count
