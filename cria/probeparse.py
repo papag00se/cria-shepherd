@@ -182,7 +182,7 @@ _TALLIES = (
     # JUnit via maven-surefire / ant · `Tests run: 12, Failures: 1, Errors: 0, Skipped: 2`. MAVEN PREFIXES
     # IT WITH ITS LOG LEVEL — `[INFO] Tests run: 12, ...`, `[ERROR] Tests run: 12, Failures: 1, ...`, and
     # `[WARNING] Tests run:` when a test was skipped — so a row anchored on the bare words never recognised a
-    # Maven run (docs/open-threads.md). And surefire prints TWO kinds of line: one PER CLASS, ending
+    # Maven run (docs/decision-log.md). And surefire prints TWO kinds of line: one PER CLASS, ending
     # `, Time elapsed: 0.024 s -- in pipeline.ImporterTest`, and the run's TOTAL; summing both counted every
     # test twice. This row reads the totals only (one per module, summed); the per-class row below is read
     # only when no total was printed (an output cut off before the summary).
@@ -282,7 +282,7 @@ COMPILES_FIRST = frozenset({"cargo", "junit", "gradle", "dotnet", "go"})
 # A BUILD TOOL'S OWN VERDICT LINE. Maven closes every run `[INFO] BUILD SUCCESS` / `[ERROR] BUILD FAILURE`
 # and gradle `BUILD SUCCESSFUL` / `BUILD FAILED`. It is the one summary a COMPILE failure prints: across 120
 # captured Java sessions (1,356 shell runs) the coder's `mvn compile` / `mvn test` never reached a test, so no
-# `Tests run:` tally existed to read and every run stayed "unknown" (docs/open-threads.md).
+# `Tests run:` tally existed to read and every run stayed "unknown" (docs/decision-log.md).
 _BUILD_VERDICT = re.compile(
     r"(?im)^\s*(?:\[(?:\x1b\[[0-9;]*m)*(?:INFO|ERROR|WARNING)(?:\x1b\[[0-9;]*m)*\]\s+)?"
     r"BUILD (SUCCESS(?:FUL)?|FAIL(?:URE|ED))(?:\s+in\s+[\w .]+)?\s*$")

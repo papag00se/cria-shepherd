@@ -756,7 +756,7 @@ class Config:
 
 
 #: Keys that were once accepted under [context] and are now REMOVED. Named, never aliased or ignored:
-#: a config still carrying one fails at startup (docs/open-threads.md D3: zero aliases).
+#: a config still carrying one fails at startup (docs/decision-log.md D3: zero aliases).
 _REMOVED_CONTEXT_KEYS = {
     "trigger_compaction": "when to compact is derived from the coder's measured window, reserves and recent "
                           "turn growth (selfcompact.view_room / expected_growth), not configured; delete the line",

@@ -2,7 +2,7 @@
 
 The whole-briefing fidelity verdict (one word over a transcript-sized prompt) carried no claim-level
 signal: replayed on real briefings it passed a correct briefing and a briefing with a fabricated
-claim at nearly the same rate (docs/open-threads.md, 2026-11-02). The typed lenses (`filepresence`)
+claim at nearly the same rate (docs/decision-log.md, measured and not landed). The typed lenses (`filepresence`)
 settle file presence, file changes, exact sizes of listed files and build state; this one settles the
 rest of the NUMERIC claims (and opaque identifiers such as addresses and hashes) the same way, with no model in it at all (principle 1: deterministic code
 gathers, only a judgment is asked of a model, and none is needed here).

@@ -7548,7 +7548,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 
     # No model in this one: every concrete figure the briefing states is looked up, literally, in the evidence the
     # writer read. A figure found nowhere was not read from anything (briefinggrounding); it refuses before a model
-    # is asked anything. It replaced the whole-briefing fidelity verdict (docs/open-threads.md, 2026-11-02).
+    # is asked anything. It replaced the whole-briefing fidelity verdict (docs/decision-log.md).
     unread = briefinggrounding.ungrounded(briefing, [*transcript_blocks, files, checks, task])
     if unread:
         answers["figures"] = "UNGROUNDED " + ", ".join(unread)
