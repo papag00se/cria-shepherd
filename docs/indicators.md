@@ -1,47 +1,37 @@
-# Indicators — telemetry, never model context
+# Indicators — telemetry for the human, never model context
 
-> Design note for the port. "Indicators" are out-of-band signals about **what Shepherd did this turn** — the chosen route, the model, which guards fired, context moves. They are for the **human / harness**, NOT the model.
+Indicators are cria's out-of-band notes about what it did this turn: the route, the model, which guards fired, context moves. They are for the **human / harness**, not the model. They are implemented in [`cria/indicators.py`](../cria/indicators.py); the structured record of the same decisions is the [event log](observability.md).
 
 ## The invariant
 
-An indicator must **never enter the model's context**, and must be **trivially stripped** from any transcript before Shepherd makes its upstream LLM call.
+An indicator never enters the model's context and is stripped from the transcript before cria makes its upstream call. Indicators are distinct from steers: a steer is an in-context directive the model is *meant* to see; an indicator is the human-facing notice that it fired. Same event, two audiences, two channels.
 
-Indicators are *distinct from nudges.* A nudge is an in-context directive the model is **meant** to see (a STOP block, a forced-diagnosis instruction). An indicator is the **human-facing notice** that the nudge fired ("Repetition guard fired"). Same event, two audiences — keep the audiences on separate channels.
+## How they travel: the content channel, behind one sentinel
 
-## How to surface them (two layers)
+cria talks to the harness over the model-answer pipe and the harness renders whatever text is in the completion, so cria decorates the completion with lines that start with the sentinel `⟦cria⟧` (`indicators.MARKER`). No separate SSE event type exists (an earlier design proposed one; it was never built, because a plain-content harness cannot render it). The harness needs to understand nothing; the same marker is how cria finds and removes its own lines on the way back in.
 
-1. **Primary — a distinct SSE event type.** Emit `event: shepherd.indicator` with a JSON `data` payload (`{kind, route, model, guard, detail}`). Separate channel: never in `content`, nothing to strip, the harness renders it however it likes.
-2. **Fallback — sentinel-marked, for a plain-content harness.** If a harness can only render assistant `content`, prefix each indicator line with a reserved sentinel (e.g. `⟦shepherd⟧ …`). Then a single regex (`^⟦shepherd⟧.*$`) strips them on the **inbound transcript** before the upstream call — the same inbound-rewrite slot the bidirectional massages use (cf. `represent_shell_writes` in codex-local). The sentinel must be something the model would never emit and a harness would never mangle.
+- **Strip on the way in.** `indicators.strip_history` removes every `⟦cria⟧` line from non-tool messages before the model re-reads them, and the clean reasoning body between a pair of `⟦cria⟧ 💭` fence lines. A tool result is never stripped (it is a tool's own payload and may quote the marker). An UNMATCHED fence removes only the marker lines, never the answer after it. `strip_prose_dropped_marker` is the unconditional net for the one model-facing `⟦prose-dropped⟧` token on a compacted reply. The strip runs at every engagement level and again at the wire (`Upstream._prep`), so no single missed call site can leak a marker (principle 17).
+- **Never the word "cria" to the model.** Model-facing markers use `⟦ctx:…⟧`; only the human-facing `⟦cria⟧` notes are stripped.
 
-Either way: **Shepherd strips its own indicators on the way in.** If the harness echoes prior assistant turns back (sentinel form), the inbound pass removes them so they can't accrete in context or confuse the model.
+## What is surfaced
 
-## The indicators we surface today (from codex-local)
+Each family has its own `[indicators]` switch (`enabled` is the master; with it off the stream is a pure passthrough):
 
-**Identity / routing**
-- Chosen **route** + confidence + reason (`RouteDecision`).
-- **Model** that served the turn.
-- **Failover** — walked the chain: a `failover: coder → reasoner (model unavailable)` note line on the proxied turn (the `failover.walk` event, with `from`/`to`/`failure`/`attempt`/`to_window`, is the record on every path, the loop's own role calls included; `failover.exhausted` when no role is left).
+| `[indicators]` key | Line |
+|---|---|
+| `connect` | one banner on the first turn of a session, `⟦cria⟧ cria connected · <model>`, plus the template-compat glyphs (`cria/compat.py`): reports, never gates |
+| `route` | `⟦cria⟧ <role> · <model>`, the ongoing "which model answered" banner (a failover walk adds a note naming the roles) |
+| `metrics` | the `· N tok/s` suffix on the route banner (suppressed under three streamed deltas, where a rate is noise) |
+| `assists` | `⟦cria⟧ <note>` guard/assist lines: repetition and rumination guards, "running the repo's checks (…)", truncation warnings, recoveries. Turning it off strips these notes from the completion before it ships |
+| `stats` | the terse end-of-turn summary line |
+| `status` | a live `⟦cria⟧ <phase>` ticker while cria works (judges, compaction, gates): the first-minutes black box, narrated |
+| `reasoning` | forward the model's reasoning on the native Responses reasoning channel (Codex's live "thinking" preamble; transient) |
+| `reasoning_transcript` | also fold the reasoning into the message as a fenced `⟦cria⟧ 💭` block so it stays in scrollback (turn `reasoning` off if a client shows it twice) |
 
-**Guards fired** (the human notice; the nudge itself is the in-context directive)
-- Repetition guard · Forced-diagnosis guard · Context-reset guard · Rumination guard
-- Patch-failed → `write_file` rewrite · Malformed-tool-call recovered
+At engagement level 0 (pure proxy) cria decorates nothing. The authoritative record of anything an indicator reports is the JSONL event (`failover.walk`, `context.floor`, `indicators.stripped`, …), never the displayed line.
 
-**Context-shaping events**
-- Calibrated context budget (learned real-token ratio).
-- Compacted older turns / compacted active turn / dropped oldest (last resort).
-- Context overflow → re-trimmed and retried.
-- Oversized tool output reduced or omitted.
+## What the connect banner checks
 
-**Massages applied** (silent in codex-local — worth surfacing here)
-- Tool-name → `shell` alias · `write_file` → `shell` base64 · leaked tool-call recovered · malformed-JSON repaired.
+`cria/compat.py` reads the served model's `/props` once and reports (never gates, principle 19) the two template facts that earned a line after being measured against every ladder model: whether the chat template has a **tools branch** at all, and whether it enforces strict **turn alternation** (shown as handled, 🟡, when the coder role sets `merge_consecutive_turns`). Anything else, including a mismatch between the `model` a harness displays and the model serving, is not reported. A harness learns its context window from its own config, not the server, which is why Codex needs an explicit `model_context_window` ([codex-context-window.md](codex-context-window.md)).
 
-**Stats**
-- Local-vs-cloud tokens + savings (the `/stats` data), per session.
-
-**Onboarding / config (one-time, session start)**
-- **Model-name mismatch** — Shepherd sees the `model` field the harness sends on every request. If it doesn't match the model actually serving (e.g. harness says `gpt-5.5`, Shepherd is `ornith-9b`), surface a one-time tip: *"set `model = ornith-9b` for an accurate display."* Shepherd can DETECT it (from the request) but not FIX it on a config-name-display harness (Codex shows its configured name, not the response's) — so it's advisory. (The harness's own promo/announcement banners are NOT a channel — they're harness-internal fetches Shepherd can't touch.)
-- **Window not reported** — if the harness's context window looks wrong (its gauge never moves, or it overflows past where it should), advise configuring the real window (the harness learns the window from config, not the server — see CUTOVER "Compaction"). The gauge itself goes honest once Shepherd reports real usage + the harness has the real window.
-
-## For the port
-
-Pick the channel early — an SSE indicator event is cheap and keeps `content` clean, so prefer it. Reserve the sentinel + a strip pass for harnesses that only do plain content. Whatever you choose, the strip-before-upstream pass is mandatory and belongs next to the inbound transcript rewrites. Catalog of the underlying guards/moves: [`shephard.md`](shephard.md).
+The catalog of the guards behind the notes is [heuristic-assists.md](heuristic-assists.md) and [shephard.md](shephard.md).

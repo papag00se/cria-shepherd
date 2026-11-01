@@ -76,7 +76,7 @@ The grounded runaway-recovery notice uses both the gate's write registry and an 
 
 The canonical write registry records forwarded occurrences, not equal arguments or tool/target fingerprints. Its all-tool identifier counts are observed lower bounds, not proof of complete lifetime coverage. Once a collision has been observed, a read's result cannot settle a write with that identifier, and compaction or a fresh gate cannot make it unique again. Historical reconciliation is idempotent and cannot shrink the record. A gate taken before any forwarded reply has been recorded remains unknown. The mechanism assumes ordered call/result history and pair-preserving compaction; it cannot identify an unseen older dispatch's late result masquerading as the sole result of a new call after an incomplete restore. It does not reconstruct those missing events. Known ambiguity withholds the optional “no write occurred” claim; it does not replace fresh checks or block completion by itself.
 
-`tests/test_a_call_that_never_ran_does_not_defeat_the_grounded_rumination_step.py` exercises the write-observation and notice paths, including mixed refused/landed calls, later edits, identifier reuse across tool classes, and compaction. Its public `Loop.drive` lifecycle forwards a write, takes a gate, then receives the proven refusal with a generation that aborts: incoming history must settle before recovery selection, without pre-settling the registry or registering a dummy dispatch. In the selected original continuation, other unproven shell commands independently prevented grounding. Repairing refusal custody alone therefore does not establish restoration of that notice or improved coding usefulness.
+Live coverage is `tests/write_edit/test_write_edit_recovery.py` and `test_write_edit_refusals.py` (proven-unlanded custody) with the archived `tests-before-reset-20261031:tests/test_a_call_that_never_ran_does_not_defeat_the_grounded_rumination_step.py`, which exercises the write-observation and notice paths, including mixed refused/landed calls, later edits, identifier reuse across tool classes, and compaction. Its public `Loop.drive` lifecycle forwards a write, takes a gate, then receives the proven refusal with a generation that aborts: incoming history must settle before recovery selection, without pre-settling the registry or registering a dummy dispatch. In the selected original continuation, other unproven shell commands independently prevented grounding. Repairing refusal custody alone therefore does not establish restoration of that notice or improved coding usefulness.
 
 ### Overwrite evidence: which writes have an attributable completion
 
@@ -85,10 +85,10 @@ LOWERS (write, edit, read, fetch) that fact already exists: the program cria com
 a typed record bound to the call's receipt: `landed` (this invocation completed and changed the file), `unapplied` / `refused` (it did
 not run), `uncertain` (it may have changed it). It is producer-issued and position-declared, exactly like the multipart bridge's
 call-bound records. The consumers (`denial.landed_call_ids`, `focustrim._terminal_positions`, the read/write ledger, completion
-measurement, check supersession) already read only those records. `tests/test_overwrite_evidence_attribution.py` runs the real programs.
+measurement, check supersession) already read only those records. `tests/write_edit/test_write_edit_over_completion_marks.py` and `test_write_edit_held_writes.py` run the real programs (the original is archived as `tests-before-reset-20261031:tests/test_overwrite_evidence_attribution.py`).
 
 (a) Already handled. A reply that never arrived, arrived cut, or says "still running" proves no write and orders nothing; a check whose
-evidence predates a pending, late-settling or overlapping write is withdrawn (`tests/test_a_green_check_does_not_survive_a_later_write.py`);
+evidence predates a pending, late-settling or overlapping write is withdrawn (`tests/gates_completion/test_gates_completion_staleness.py`, and the lost-reply case in `test_gates_completion_over_lost_reply_write.py`);
 only a newer run of the same check clears it; a write that returns the file to earlier bytes is an ordinary landed write — nothing holds
 or blocks a revert, and the ledger follows it; a native shell command leaves the path's state unestablished.
 

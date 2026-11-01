@@ -54,12 +54,10 @@ measurement. Measured on the phi4 / Java captures (A4/A5/A6), that local estimat
 `function_call_output` items appended since the last report — a compaction followed every request where
 reported usage plus those outputs reached the trigger, and call *arguments* were not part of it. At L4+
 the outputs cria itself causes (gate transport pages, the survey riding lowered tool results) therefore
-count against the harness's trigger even though the model never reads them; see
-[the N1 measurement](audits/2026-10-11-n1-gate-plumbing-measurement.md).
+count against the harness's trigger even though the model never reads them (the full N1 measurement note was removed by `f36e880a`; read it with `git show f36e880a^:docs/audits/2026-10-11-n1-gate-plumbing-measurement.md`).
 The capability catalog must preserve the pinned client's actual output-budget
 default (`bytes/10000`), not accidentally widen it to a context-sized token budget. The
-CPU-only default-parity and dense-burst regressions are documented in the
-[restoration evidence](audits/2026-10-08-l0-codex-default-output-restoration.md).
+CPU-only default-parity and dense-burst regressions were documented in a restoration note since removed by `f36e880a` (`git show f36e880a^:docs/audits/2026-10-08-l0-codex-default-output-restoration.md`).
 
 ## What L1-L5 report: the model-visible context, pre-floor
 
@@ -101,7 +99,7 @@ final-wire refit (`Upstream._prep`) fit the wire to the window whatever the harn
 reported number is the pre-floor model-visible size, so it only under-counts cria-authored additions
 of a few hundred bytes. L0 is untouched (native usage, above). Chat-Completions **streaming** reports
 no cria usage at all (upstream's own usage, if any, passes through); that is unchanged.
-Tests: `tests/test_model_visible_usage.py` (real captured Codex requests), `tests/test_continuing_context_usage.py` (context/native separation through production reporting and Chat/Responses JSON/SSE), and `tests/test_pinned_codex_continuing_context.py` (actual pinned Codex with a sandboxed isolated home and fake endpoints only). The pinned-client controls demonstrate premature compaction under the old consumption contract, retention of the public action/result under the corrected projection, and legitimate compaction for large public output. This establishes the local accounting/compaction boundary, not usefulness causality across whole runs.
+Tests: live coverage is `tests/misc_runtime/test_misc_runtime_usage.py`; the fuller pre-reset files are archived as `tests-before-reset-20261031:tests/test_model_visible_usage.py` (real captured Codex requests), `…:tests/test_continuing_context_usage.py` (context/native separation through production reporting and Chat/Responses JSON/SSE) and `…:tests/test_pinned_codex_continuing_context.py` (actual pinned Codex with a sandboxed isolated home and fake endpoints only). The pinned-client controls demonstrate premature compaction under the old consumption contract, retention of the public action/result under the corrected projection, and legitimate compaction for large public output. This establishes the local accounting/compaction boundary, not usefulness causality across whole runs.
 
 ## Stable history after final-wire fitting
 
@@ -119,7 +117,7 @@ The coder system's permission summary is independent of build output. New valida
 
 Each prepared request with a session identity emits `context.prefix`, comparing against the previous prepared request in that session, including intervening auxiliary calls. `phase` and `previous_phase` disclose role changes; only fitting state is partitioned by role. `shared_bytes`, `previous_bytes` and `request_bytes` count UTF-8 bytes. `basis=rendered-prompt` means the server-rendered template was available through existing measurement/capture; otherwise `basis=messages-and-tools` explicitly identifies a deterministic schema/message projection, not native cache tokens. `reason`, `changed_message`, `marker` and `reduction_source_changed` distinguish appended turns, new reductions, changed source evidence, changed schemas and later wire transforms. `break_source` attributes the first changed message to `dependency_annotation`, `inventory`, `floor` or `other`; it is null for an initial, identical or appended request. A reduction elsewhere is insufficient evidence for attributing the first break to the floor. In particular, an inline caller-reduction label is attributed to the floor only when that message's offered source is unchanged; an earlier caller edit remains `other` even if later history is reduced in the same request. Attribution compares compact observation-only signatures, never confers authority on model-visible markers, and is independent of reduction reuse. Rejected measured trial fits do not become previous requests. Preparation is observed before transport: this event alone does not prove server acceptance or cache reuse. Fresh facts, restored text, surveys, optional evidence folds and harness compaction can still change earlier bytes; this floor state does not freeze live facts.
 
-CPU-only regressions through real `Upstream._prep`: `tests/test_context_prefix_stability.py`, `tests/test_context_floor_disclosure_budget.py` and `tests/test_context_annotation_prefix.py`, including ordinary and exact `rank4-ablation` selections, production coder framing and handoff reframing, unchanged older dependency facts and handoffs, current-request protection, source attribution, caller-span retention, source invalidation, task/role/session isolation, complete disclosure accounting and measured-refit accounting.
+CPU-only regressions through real `Upstream._prep` (live: the floor and wire files under `tests/context_wire_a` and `tests/context_wire_b`; the dedicated pre-reset files are archived as `tests-before-reset-20261031:tests/test_context_prefix_stability.py`, `…:tests/test_context_floor_disclosure_budget.py` and `…:tests/test_context_annotation_prefix.py`), including ordinary and exact `rank4-ablation` selections, production coder framing and handoff reframing, unchanged older dependency facts and handoffs, current-request protection, source attribution, caller-span retention, source invalidation, task/role/session isolation, complete disclosure accounting and measured-refit accounting.
 
 ## Incomplete tool history must remain renderable
 
@@ -132,7 +130,7 @@ At the final wire boundary, L0 losslessly encodes malformed historical argument 
 Valid arguments remain unchanged; argument recovery remains L1. A real pinned-harness
 regression proves compaction and successful exit after an incomplete call, and native
 CPU-only template replay proves the rejected original request renders after translation.
-See [the incident and exact evidence](audits/2026-10-08-l0-incomplete-history-wire.md).
+The incident write-up was removed by `f36e880a` (`git show f36e880a^:docs/audits/2026-10-08-l0-incomplete-history-wire.md`); the live regressions are the `_unparsed` rows in `tests/context_wire_a/test_context_wire_a_arca_history_args.py` and `tests/context_wire_a/test_context_wire_a_scenario3_cov3_wire.py`.
 
 ## Why Codex needs an exception
 
@@ -219,7 +217,7 @@ Point Codex at cria via an isolated `CODEX_HOME` (so your global `~/.codex` is u
 
 ```toml
 # $CODEX_HOME/config.toml
-model         = "ternary_bonsai_2_27b_pq2_0"   # must equal cria's /v1/models id
+model         = "ornith1.5_9b"                 # must equal cria's /v1/models id
 model_provider = "cria"
 model_context_window = 40960                   # the server's real n_ctx — the ONLY window Codex reads here
 model_auto_compact_token_limit = 34816         # optional; ~85% for margin. Omit to let Codex use 90%.

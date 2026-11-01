@@ -31,6 +31,8 @@ reasoning_transcript = true        # also fold thinking into scrollback
 [tools]
 focus = true                       # curate menu to coding essentials
 cheatsheet = true                  # inject per-tool usage note
+# workspace_image_tool = "view_image"   # only when this deployment's harness has the native view_image(path)
+                                   # tool; see docs/image-workflow.md
 
 [safety]
 # cria bounds the model to the workspace even if the harness runs --yolo (sandbox/approvals off) —
@@ -38,24 +40,23 @@ cheatsheet = true                  # inject per-tool usage note
 external_dir_permission = "none"   # none = no external reads/writes | read = external reads only | write = unrestricted
 
 [retention]
-# cria keeps private state for multipart reads (~/.cria/multipart) and image sessions (~/.cria/images) and has no
-# trusted signal from any harness that a conversation is over (measured: Codex sends nothing on exit, /clear,
-# compaction or cancel). So by default cria deletes NOTHING and the state grows until you run
-#   python -m cria.retention list|prune [--older-than 14d] [--apply]
-# Setting auto_prune_after is YOUR standing instruction to delete: cria then removes retained state whose last touch
-# is older than this, once at start and then every auto_prune_every, with exactly the safety of
-# `python -m cria.retention prune --apply --older-than` (symlinks refused, live holders and a held lock skipped,
-# corrupt entries never removed, one log event per removal and skip). A conversation that resumes after its state
-# was removed fails closed (an "unverified/unavailable" note, never a fabricated read). Age is your judgment, not
-# cria's: choose longer than any conversation you will resume. Minimums: 1h and 1m. Unset = off.
+# cria keeps private state for multipart reads (~/.cria/multipart) and image sessions (~/.cria/images). No harness
+# sends a trustworthy "conversation over" signal (measured against real Codex), so by default cria deletes NOTHING;
+# the state grows until you run `python -m cria.retention list|prune [--older-than 14d] [--apply]`.
+# auto_prune_after is YOUR standing instruction to delete: cria then removes retained state whose last touch is older
+# than this, once at start and then every auto_prune_every, with exactly the safety of `prune --apply --older-than`.
+# Choose an age longer than any conversation you will resume. Minimums: 1h and 1m. Unset = off.
+# Full contract: docs/multipart-and-retention.md.
 # auto_prune_after = "14d"
 # auto_prune_every = "1h"
 
 [context]
 focus_trim = true                  # collapse duplicate tool calls
-self_compact = true                # summarize the old history middle (when is derived from the measured window; no knob)
-satisfaction_check_start = 100     # first "task done?" check at drive N
-satisfaction_check_every = 25      # then re-check every N (0 disables)
+self_compact = true                # summarize the old history middle. WHEN is a predicate over the coder's measured
+                                   # window, reserves and recent turn growth (selfcompact.view_room): there is no
+                                   # size knob, and the old `trigger_compaction` key is a startup error.
+satisfaction_check_start = 100     # plan-off: first "whole task done?" check at drive N (engagement level 5)
+satisfaction_check_every = 25      # then re-check every N (0 disables either one)
 
 [planner]
 enabled = false                    # opt-in experiment only; never enabled by L5
@@ -74,13 +75,24 @@ enabled = false
 
 [engagement]
 bias = "task"                      # unsure classifier → task | simple | question
-# THE CONTROL FOR "WHAT ARE THE ASSISTS WORTH". false = cria never drives: no planner, no steers,
-# no gates, no critics, no completion judging. The PLUMBING stays — Responses↔chat translation,
-# window fitting, tool-menu curation, per-model sampling and reasoning, template repair and
-# tool-call dialect recovery — because without it Codex and llama.cpp cannot exchange a message at
-# all, so "measure the model without cria" has no honest literal reading. Removing the plumbing
-# measures the protocol gap; removing the ASSISTS measures the assists.
-drive = true
+# THE ENGAGEMENT LADDER, 0..5, each rung implying every rung below it (the control for "what are the assists
+# worth"; out of range is a startup error, never a clamp):
+#   0 pure proxy      Responses<->chat wire translation and nothing else (no tool changes, no context surgery,
+#                     no loop); the control that measures the protocol gap
+#   1 tool-call fixes template repair, dialect recovery, malformed-history argument recovery
+#   2 simple tools    cria's tool menu lowered to shell and represented back
+#   3 context fixes   the context floor, focus-trim, dedup, compaction reframing
+#   4 done refusals   refusing a completion CLAIM (done-critic, completion probe, on-disk brake)
+#   5 assists         everything else: steers, periodic gates, the periodic satisfaction check, detectors
+# Planning is separate and stays OFF at every level (see [planner]). Omitted = 5. The legacy `drive = true|false`
+# is still read (true = 5, false = 0) but is a worse control; write `level`.
+level = 5
+
+# Atomic opt-outs for registered assists (only level-eligible ones; unknown, duplicate or still-depended-on IDs are
+# startup errors). `profile = "rank4-ablation"` is an exact experimental selection and rejects extra `disabled`.
+# See README.md and docs/assist-inventory/REPORT.md.
+# [assists]
+# disabled = ["schema-argument-conversion", "historical-argument-recovery"]
 
 [defaults]
 base_url = "http://127.0.0.1:18084"   # shared by http backends that omit their own
@@ -160,7 +172,13 @@ output_reserve = 8192              # input-side reserve; keeps a big write_file 
 #                                  reasoning passes this many tokens, and half of it is the
 #                                  warning gate. One knob, two behaviours — raising it for a
 #                                  bigger write also gives a spiralling turn longer to spiral.
+#                                  An explicit value is yours and is never rescaled with the window, but the
+#                                  floor holds at most half the window of it (contextfloor.clamp_reserve), so
+#                                  a reserve as large as a small window cannot zero the prompt. Unset, the
+#                                  reserve and cria's own size bounds scale with the model's measured window.
 # min_p = 0.0                      # sampling floor
+# vision = true                    # opt in to image viewing for the role that serves the turn; needs
+# vision_model = "<exact wire model id>"   # the pin (docs/image-workflow.md). Unknown = no image POST
 # max_tokens = 4096                # HARD output cap; don't set on the coder. On a
 #                                  reasoning/judge role it is a CEILING only: an internal
 #                                  judgement whose measured budget is higher keeps that budget

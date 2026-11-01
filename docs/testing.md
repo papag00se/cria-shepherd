@@ -1,6 +1,6 @@
 # Testing
 
-`python -m pytest -q tests` runs the whole suite in about a minute. It is small on purpose: a test earns its place only by being able to fail for a real reason. The standard is the global test-refactor process (`~/.agents/processes/test-refactor.md`): minimum test machinery, maximum protection.
+`nice -n 19 python -m pytest -q tests` runs the whole suite (about 5,000 collected cases; a couple of minutes on the development box). Run ONE pytest process at a time (never `-n`): the suite shares the machine with model servers, and the test scratch is a per-session directory that `conftest.py` removes at exit, so do not override it. Use focused files while working and the whole suite before a commit. It is small on purpose: a test earns its place only by being able to fail for a real reason. The standard is the global test-refactor process (`~/.agents/processes/test-refactor.md`): minimum test machinery, maximum protection.
 
 ## Layout
 
@@ -38,18 +38,23 @@ Assist declarations in `cria/*.py` list regression tests in `regressions=` and `
 
 ## What the reset measured
 
-**Size** (tracked `.py` under `tests/`, `def test_`): 183 files, about 20.1K lines (12.8% of the old 157K), 909 definitions (9.9% of 9,188), 2,248 executed cases (old: ~13.8K collected), about 85 seconds (old: about 11.5 minutes).
+**Size at reset** (tracked `.py` under `tests/`, `def test_`): 183 files, about 20.1K lines (12.8% of the old 157K), 909 definitions (9.9% of 9,188), 2,248 executed cases (old: ~13.8K collected), about 85 seconds (old: about 11.5 minutes). **Size now** (2026-11-01, after the scenario and coverage waves): 327 files, about 36.6K lines, about 1,670 definitions, 5,163 collected cases (`pytest tests --collect-only -q`). The number drifts every wave; re-measure rather than trust a figure here.
 
-**Coverage** (coverage.py 7.17 in a scratch virtualenv, `--branch --source=cria`, Python 3.14; the project itself stays stdlib-only):
+**Coverage** (coverage.py in a scratch virtualenv, `--branch --source=cria`; the project itself stays stdlib-only):
 
 - old suite: 94.4% lines / 88.5% branches (with 94 stale failing tests whose lines still ran);
 - first rewrite (about 10%): 80.2% / 68.1%;
-- after the scenario pass: **87.0% lines / 77.3% branches**.
+- after the scenario pass: 87.0% / 77.3%;
+- after the wave-9/10 coverage passes (2026-11-01, about 3,720 tests at the time): **93.4% lines / 86.9% branches**.
 
-How to re-measure: install `coverage` in a throwaway venv, copy the working tree to a scratch directory (some tests need a git repo and a writable tmp, and two retention tests only pass in the real checkout), run `coverage run --branch --source=cria -m pytest tests`, then `coverage json`.
+How to re-measure: install `coverage` in a throwaway venv, copy the working tree to a scratch directory under `/var/tmp` (some tests need a git repo and a writable tmp, and two retention tests only pass in the real checkout), run `coverage run --branch --source=cria -m pytest tests`, then `coverage json`, then delete the copy. It runs the whole suite: do it rarely.
 
-The remaining gap is concentrated in `loop.py` (the planner paths are retired: planning is off by policy), the planner family itself, `groundedaction`, `returnedpolicies`, `system1` (needs faked ONNX), and a few fixture-hungry corners. Several modules keep their real logic as shell and Python programs inside strings that run in subprocesses; coverage cannot see those, so those modules are exercised by real PTY/bash execution instead.
+The remaining gap is concentrated in `loop.py`, the planner family (retired: planning is off by policy), `groundedaction`, `returnedpolicies`, and a few fixture-hungry corners. `system1` now has real-ONNX and runtime tests under `tests/misc_runtime`. Several modules keep their real logic as shell and Python programs inside strings that run in subprocesses; coverage cannot see those, so they are exercised by real PTY/bash execution instead.
 
 **Protection was checked three ways.** Mutation: each rewriter broke the code in a scratch copy and recorded how many representative defects the new tests caught (roughly 1,200 tried; survivors were strengthened or judged equivalent). History replay: 65 recent real bug fixes were reversed one at a time; of the 28 misses compared with the old suite, the old suite had caught 25 (real losses) and 7 were never tested; every loss was restored except two (a planner-only log field and a pure refactor). Coverage: the lines the old suite reached and the new one did not were mapped per module and recovered with whole-flow scenario tests (a test may drive a real multi-step flow as long as it asserts real outcomes and was seen to fail under mutation).
 
-Modules examined for having no coverage after the cut received tests; `planner_tools` (planner is off by policy) was deliberately skipped (`preamblepolicy`, inert since `9fd01656`, was deleted in wave 9). Real source defects found while rewriting are recorded as `xfail(strict=True)` tests; a strict xfail goes red when the defect is fixed, which is the cue to delete the marker. Regressions in the old suite that the new one does not cover live only in the tag: search it (`git grep`, above) before changing the assist.
+`planner_tools` (planner off by policy) was deliberately skipped; `preamblepolicy` (inert since `9fd01656`) was deleted. Real source defects found while rewriting are recorded as `xfail(strict=True)` tests; a strict xfail goes red when the defect is fixed, which is the cue to delete the marker. Regressions in the old suite that the new one does not cover live only in the tag: search it (`git grep`, above) before changing the assist.
+
+## Hostile-command tables never execute
+
+Guard and evasion tests (`dirguard`, `shellinput`, cleanup analysis) pass the command **string** to the function under test (for example `dirguard.kill_refusal(command)`); they never run it through a shell, stub it on `PATH` or "dry run" it. `kill`, `exec`, `trap`, `cd` and `eval` are shell builtins that no `PATH` stub can neutralise, and `bash -c 'kill -9 -1'` once killed the whole user session. A new row in such a table must be a string and an expected refusal, nothing else.

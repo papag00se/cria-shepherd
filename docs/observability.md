@@ -21,7 +21,7 @@ One JSON object per line. Common fields:
 
 ## Decisions — the backbone
 
-A **`decision`** event records a fork cria took: `decision` (what was being decided), `choice` (what it picked), and `reason` (why). **Reason is mandatory** — a decision without one is a future debugging session spent guessing. Today's decisions: `engagement` (question/simple/task) and `route` (which role/model).
+A **`decision`** event records a fork cria took: `decision` (what was being decided), `choice` (what it picked), and `reason` (why). **Reason is mandatory** — a decision without one is a future debugging session spent guessing. Emitted through `RunLog.decide` (`cria/events.py`); today's decisions are `engagement` (question/simple/task) and `route` (which role/model).
 
 ## Event catalog
 
@@ -42,6 +42,8 @@ Grouped by subsystem; each is a `kind`.
 **response** — `response.sent`, `response.error` (upstream failed), `response.client_gone` (client disconnected mid-stream).
 
 **http** — `http.access` (debug; the base handler's access line).
+
+**Larger families** (grep the kind prefix; the catalog above is the stable core, the rest are emitted where the work happens): `context.*` (`context.floor`, `context.prefix`, `context.wire_refit`, `context.self_compact`, `context.window`, the dedup/focus-trim events), `compaction.*` and `route.compaction*`, `failover.walk` / `failover.exhausted`, `gate.*` (transport, unsettled writes, survey), `multipart.*`, `retention.auto_prune.*`, `system1.judgment` / `system1.error` / `system1.declined`, `loop.*` (every steer, refusal and guard decision, with its reason), `writeproxy.*`, `image.*`. Every one is a field-bearing JSON record; none is a free-text log line to be parsed.
 
 ## The inspector
 
@@ -76,7 +78,7 @@ Then every upstream model call writes its **exact final body** — messages (ful
 ~/.cria/calls/<session>/NNNN-<phase>.json      # NNNN = per-session call order
 ```
 
-`<phase>` labels the role: `classifier`, `planner`, `coder-s<step>`, `critic`, `proxy`. Each file also carries a `stats` block (n_messages / n_tools / token estimate) and the `session` + `turn` ids. A pointer `upstream.dump` event lands in the JSONL, so a capture correlates to the loop events (`loop.item` step=N, `context.floor`, `loop.probe` …) that share its `turn`. To read the coder's inputs across a run in order:
+`<session>` is the run folder `<YYYYMMDDTHHMMSS>-<session id>` (the time is decoded from a v7 session id, so the newest run sorts last). `<phase>` labels the role of the call: `classifier`, `coder…`, the compaction judges (`compaction-validate-<lens>`), `proxy` and so on. Beside a request file `NNNN-<phase>.json` there may be `NNNN-<phase>.response.json` (the model's reply), and per request `inbound-<turn>-<api>.json` (the exact harness bytes before translation, with an `inbound.dump` event; it carries no `NNNN` and never advances the call sequence). Native classifier calls live in `<session>/system1/` with their own sequence and emit no `upstream.dump`; `*.receive.json` files are transport receipts, not extra model calls. Each file also carries a `stats` block (n_messages / n_tools / token estimate) and the `session` + `turn` ids. A pointer `upstream.dump` event lands in the JSONL, so a capture correlates to the loop events (`loop.item` step=N, `context.floor`, `loop.probe` …) that share its `turn`. To read the coder's inputs across a run in order:
 
 ```bash
 ls ~/.cria/calls/<session>/*coder* | sort        # every coder call, in call order
@@ -85,4 +87,4 @@ cria-tail --kind upstream.dump                    # the pointers + sizes, inline
 
 Capture metadata may also include `assist_selection` with the caller-supplied selected atomic IDs and engagement level. It is outside `body`, never model-visible, and means selection—not that each policy executed. Missing metadata means unknown, not a default selection. The generated [assist map](assist-inventory/REPORT.md) resolves the source definitions and current family ownership; authoritative intervention events, not selection membership, show what actually happened.
 
-The capture is the request body cria sends. The model's *rendered* prompt (after llama.cpp applies its chat template) is a deterministic function of that body plus the model's fixed template; get it on demand from the server's `POST /apply-template` with the same body.
+The capture is the request body cria sends. With `[logging].capture_rendered = true` (the default) cria also writes the server-rendered prompt (llama.cpp's chat template applied) beside it and records `rendered_prompt_file` and `rendered_tokens_est` in the capture; otherwise it is a deterministic function of the body plus the model's fixed template, available on demand from the server's `POST /apply-template` with the same body. Captures hold prompts, code and tool results: check them for secrets before sharing.

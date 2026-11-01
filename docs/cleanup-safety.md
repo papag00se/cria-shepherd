@@ -83,7 +83,7 @@ recursive-option objects are data, not control scopes. Unknown mutation names ca
 escape detection completely. Universal leads supplement Python findings where its
 adapter cannot resolve an API.
 
-Regression examples (inert source tests in `tests/test_cleanup_control_flow.py`):
+Regression examples (inert source tests; live rows in `tests/shell_safety/test_shell_safety_cleanup.py`, `test_shell_safety_scenario2_sw2_cleanup_lexing.py` and `test_shell_safety_scenario2_cov5_cleanup_dialects.py`; the original file is archived as `tests-before-reset-20261031:tests/test_cleanup_control_flow.py`):
 `function cleanup() { if (enabled) fs.rmSync("/", {recursive:true}); }` blocks when
 `fs` is the stable Node import; the same body with an unknown `fs` parameter or a
 computed target remains unproven. Both write and edit lowering must emit refusal
@@ -109,7 +109,7 @@ No broad safety or false-positive rate is inferred from the test count.
 
 ## Recovered incident and regression
 
-`tests/fixtures/incident_parent_cleanup.py.txt` is the exact recovered orders-api-py
+`tests-before-reset-20261031:tests/fixtures/incident_parent_cleanup.py.txt` (`git show` it; the live suite carries the shape as inline rows in `tests/shell_safety/test_shell_safety_cleanup.py`) is the exact recovered orders-api-py
 source from session `01a0f776-6370-7912-a47a-b050238406f5`, source read in
 `inbound-03a9ae51-responses.json` input[119]. SHA-256:
 `c79913cdf0fc195be9d9a1d7159d80275f01264f960da19e4f0c42c09ea78f74`.
@@ -146,4 +146,4 @@ Not covered by design: anything inside the workspace (`rm -rf .`, local git rese
 
 **Development rule:** never execute a guard candidate to prove an evasion. Feed the text to the guard. Run an executing oracle only inside a sandbox that cannot signal or write outside its own directory. A PATH stub cannot intercept shell builtins (`kill`, `exec`, redirections).
 
-Regressions: `tests/shell_safety/test_shell_safety_machine_harm.py`.
+Regressions: `tests/shell_safety/test_shell_safety_machine_harm.py`. Its candidate commands are STRINGS handed to `dirguard.machine_harm_refusal`; they are never executed (see [testing](testing.md#hostile-command-tables-never-execute)).

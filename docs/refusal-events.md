@@ -1,5 +1,7 @@
 # Dependency refusal events
 
+Implemented in [`cria/refusalledger.py`](../cria/refusalledger.py) (`RefusalLedger`, `RefusalEvent`, `refusal_events`, `success_events`); consumed by the grounded-action directive check and the loop's tracking of refused names.
+
 The dependency refusal ledger is session-scoped structured provenance, not a permanent set of
 strings. It exists so a resolver rejection can survive transcript compaction without losing the
 facts needed to interpret it later.
