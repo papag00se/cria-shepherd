@@ -553,8 +553,13 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None, m
     so the whole command is ONE argv string and Linux caps a single argument at MAX_ARG_STRLEN =
     128 KiB. A heredoc does not get around that — its bytes are in the same string. A write past
     :data:`COMMAND_ARG_BUDGET` therefore dies in the harness with "Argument list too long (os error
-    7)" before any of this runs. Not observed from a model yet (see docs/open-threads.md); the
-    fetch-spill path, where it WAS observed, states its own bound and cuts with disclosure."""
+    7)" before any of this runs. MEASURED, not assumed (2026-11-01, every capture under ~/.cria/calls):
+    6,161 well-formed write_file/edit_file/apply_patch calls, largest 21.7 KB, none past 24 KB; the
+    only calls past 24 KB were 9 of the 31 unparseable arguments, all runaway generations cut at
+    finish_reason length or aborted for rumination, which the loop refuses BEFORE lowering (and tells the
+    model to build the file in pieces). The command's fixed
+    overhead is ~13 KB, so the ceiling is ~88 KB of content. The fetch-spill path, where the cap WAS
+    observed, states its own bound and cuts with disclosure."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX,
                                            # Both are REFUSALS decided inside the lowered heredoc —
@@ -1723,26 +1728,13 @@ class _Proof(NamedTuple):
     pre: str = ""             # exact producer-authored prelude, not inferred from file text
 
 
-def _learn_completions(token: str, rep: "dict | None") -> None:
+def _learn_completions(token: str, rep: "dict | None", landed: bool = False) -> None:
     """cria's own record for ``token`` arrived: that call's outcome is known, and so is every call whose completion mark the
     record's program read back as final (`completionmarks`); their marks on the harness are released by the next program."""
-    completionmarks.settle(token)
+    completionmarks.settle(token, landed=landed)
     for receipt, (state, _digest) in ((rep or {}).get("pm") or {}).items():
         if state != "incomplete":
             completionmarks.settle(receipt)
-
-
-def _merged_marks(first: "dict | None", second: dict) -> dict:
-    """The completion marks two records of ONE result report, merged per receipt: a final state outranks ``incomplete``, and two
-    different final states for one receipt (they cannot both be true) leave that receipt out - it is witnessed by nothing."""
-    out: dict = {receipt: list(state) for receipt, state in (first or {}).items()}
-    for receipt, state in second.items():
-        have = out.get(receipt)
-        if have is None or have[0] == "incomplete":
-            out[receipt] = list(state)
-        elif state[0] != "incomplete" and list(state) != have:
-            out[receipt] = ["__conflict__", ""]
-    return {receipt: state for receipt, state in out.items() if state[0] != "__conflict__"}
 
 
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
@@ -1777,13 +1769,13 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             first = resultpacket.read_record(content, off, token)
             if first is None:
                 continue
-            _learn_completions(token, first.rep)
+            _learn_completions(token, first.rep, first.kind == denial.LANDED)
             at, survey, rep = first.end, "", first.rep
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
                 at = second.end
                 if second.rep and second.rep.get("pm"):
                     _learn_completions(token, second.rep)
-                    rep = {**(first.rep or {}), "pm": _merged_marks((first.rep or {}).get("pm"), second.rep["pm"])}
+                    rep = {**(first.rep or {}), "pm": (first.rep or {}).get("pm") or second.rep["pm"]}   # a write's own read-back is the first record's
                 if second.body is not None:
                     try:
                         survey = second.body.decode("utf-8")
@@ -2194,7 +2186,11 @@ def _adopt_marks(messages: list[dict], out: list[dict], session: str, root: str 
     closed = (denial.REFUSED, denial.UNAPPLIED, denial.LANDED, denial.UNCERTAIN)
     unresolved = {receipt for receipt, _n, _p, cid in declared
                   if denial.proof(paired.get(cid)) not in closed and witnessed.get(cid, ("incomplete",))[0] == "incomplete"}
-    completionmarks.adopt(session, [item[:3] for item in declared], unresolved, root)
+    landed = {cid for cid in paired if denial.proof(paired[cid]) == denial.LANDED}
+    superseded = frozenset(receipt for i, (receipt, _n, path, _c) in enumerate(declared) if receipt in unresolved
+                           and any(later in landed and completionmarks.same_file(path, later_path, root)
+                                   for _r, _m, later_path, later in declared[i + 1:]))
+    completionmarks.adopt(session, [item[:3] for item in declared], unresolved, root, superseded)
 
 
 # The dependency-note budgets (one surface inline, and the sum of all notes per request) live in
