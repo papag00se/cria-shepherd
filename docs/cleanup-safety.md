@@ -57,7 +57,19 @@ listed declaration evidence and no detected shadowing, rebinding or escaped bind
 Unresolved lexical/preprocessor/dynamic-binding constructs can withhold proof for a
 whole candidate; this is uncertainty about interpretation/identity, not a downgrade
 merely because a function or `if` exists. Unsupported macros, aliases and reflection
-remain gaps. None of these adapters tracks temporary-resource ownership yet.
+remain gaps. Temporary-resource facts are modelled only where the language has a recursive delete and a
+closed temp vocabulary: the OS-wide temp directory (`std::filesystem::temp_directory_path`, `NSTemporaryDirectory`,
+`FileManager.default.temporaryDirectory`, `Directory.systemTemp`, `File::Spec->tmpdir`, Julia `tempdir()`,
+PowerShell `GetTempPath()`/`$env:TEMP|TMP|TMPDIR`) is the shared parent, so a recursive delete of it, or of the
+`dirname` of a fresh temp resource (R `tempdir()`/`tempfile()`, Julia `mktempdir()`, Perl `File::Temp::tempdir`,
+PowerShell `GetTempFileName()`), is PROVEN `temp_parent`; the fresh resource itself and its children stay within
+scope. Any argument that could move a fresh resource elsewhere (`tempdir(DIR => …)`, `tempfile(tmpdir=…)`) is
+unresolved; a property or variable spelling that is declared, shadowed or reassigned anywhere in the candidate
+(`$env:TEMP = …`, `let FileManager = …`) is unresolved. C and Lua have no recursive delete, so no temp rule applies.
+Not resolved: paren-less Perl calls whose argument is a bare word (`remove_tree File::Spec->tmpdir;`), joins
+with the temp directory as the left operand, and shell strings handed to `system`/`os.execute`/`Process.run`.
+PowerShell switch parameters (`-Recurse`, `-Force`, `-WhatIf`, `-Confirm`, …) take no value, so a positional path
+after them is read (`Remove-Item -Recurse '/'` was missed before).
 
 Their lexer excludes language-specific comments, common raw/long/triple strings,
 Perl POD/data sections and quote operators, and PowerShell here-strings. Interpolated,

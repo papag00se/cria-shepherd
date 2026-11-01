@@ -21,6 +21,14 @@ LANGUAGES = {
 _CLIKE = {'c', 'cpp', 'swift', 'objective-c', 'dart'}
 _WORD = re.compile(r'\$?[A-Za-z_][\w]*[!?]?')
 _LONG_LUA = re.compile(r'\[(=*)\[')
+# Temporary-resource vocabulary shared by every adapter that has a recursive delete (path facts: cleanupfacts).
+# shared = the OS-wide parent every program's temp files live in (cleaning it is never "my own temp");
+# tempdir / tempfile = a fresh resource this call creates (its parent is the shared one); rtempfile = R's
+# per-session temp file, which lives in R's own session directory (itself a child of the shared parent).
+_PS_SWITCHES = frozenset({'recurse', 'force', 'whatif', 'confirm', 'verbose', 'debug', 'passthru'})
+TEMP_KINDS = {'shared', 'tempdir', 'tempfile', 'rtempfile'}
+_DECLARATIONS = ('function', 'sub', 'class', 'struct', 'namespace', 'module', 'local', 'let', 'var', 'const',
+                 'typedef', 'typealias', 'def', 'final', 'enum', 'extension', 'protocol')
 
 
 def _block_end(source, start, opening, closing, nested=False, escaped=False):
@@ -341,16 +349,34 @@ class Inspector:
                 contracts.update({'FileManager.default.removeItem': Contract(True, label='atPath'),
                                   'FileManager.default.createFile': Contract(label='atPath')})
                 self.helpers['URL'] = 'url'
+        self.constants = {}
+        if lang == 'cpp' and 'filesystem' in headers:
+            self.helpers['std::filesystem::temp_directory_path'] = 'shared'
+        if lang == 'swift' and imported:
+            self.helpers['NSTemporaryDirectory'] = 'shared'
+            self.constants['FileManager.default.temporaryDirectory'] = 'shared'
         if lang == 'objective-c':
             self.foundation = 'Foundation/Foundation.h' in headers
+            if self.foundation:
+                self.helpers['NSTemporaryDirectory'] = 'shared'
         if lang == 'dart':
             self.dart_io = any(t.kind == 'word' and t.text == 'import' and i+2 < len(ts) and ts[i+1].kind == 'literal'
                                and ts[i+1].text == 'dart:io' and ts[i+2].text == ';' for i,t in enumerate(ts))
+            if self.dart_io:
+                self.constants.update({'Directory.systemTemp': 'shared', 'Directory.systemTemp.path': 'shared'})
         if lang == 'lua':
             contracts.update({'os.remove': Contract(), 'io.open': Contract(mode=1)})
         if lang == 'perl':
             contracts.update({'unlink': Contract(), 'rmdir': Contract(), 'open': Contract(target=2, mode=1),
                               'CORE::unlink': Contract(), 'CORE::rmdir': Contract(), 'CORE::open': Contract(target=2, mode=1)})
+            used = {name(ts[i+1:i+4]) for i,t in enumerate(ts) if t.kind == 'word' and t.text in ('use', 'require')}
+            if 'File::Spec' in used:
+                self.helpers.update({'File::Spec->tmpdir': 'shared', 'File::Spec->catdir': 'join', 'File::Spec->catfile': 'join'})
+                self.constants['File::Spec->tmpdir'] = 'shared'
+            if 'File::Basename' in used:
+                self.helpers['dirname'] = 'parent'
+            if 'File::Temp' in used:
+                self.helpers.update({'tempdir': 'tempdir', 'File::Temp::tempdir': 'tempdir'})
             for i,t in enumerate(ts):
                 if t.kind == 'word' and t.text in ('use', 'require') and name(ts[i+1:i+4]) == 'File::Path':
                     contracts['File::Path::remove_tree'] = Contract(True)
@@ -362,11 +388,15 @@ class Inspector:
                                   prefix+'writeLines': Contract(target=1, label='con')})
                 self.helpers[prefix+'dirname'] = 'parent'
                 self.helpers[prefix+'file.path'] = 'join'
+                self.helpers[prefix+'tempdir'] = 'tempdir'
+                self.helpers[prefix+'tempfile'] = 'rtempfile'
         if lang == 'julia':
             for prefix in ('', 'Base.'):
                 contracts.update({prefix+'rm': Contract(), prefix+'open': Contract(mode=1), prefix+'write': Contract()})
                 self.helpers[prefix+'dirname'] = 'parent'
                 self.helpers[prefix+'joinpath'] = 'join'
+                self.helpers[prefix+'tempdir'] = 'shared'
+                self.helpers[prefix+'mktempdir'] = 'tempdir'
         dynamic = {'lua': {'load', 'loadstring', 'setfenv', 'rawset'}, 'perl': {'eval'},
                    'r': {'eval', 'assign'}, 'julia': {'eval'}, 'powershell': {'Invoke-Expression', 'Set-Alias', 'New-Alias'}}
         if any(t.kind == 'word' and t.text in dynamic.get(lang, set()) for t in ts):
@@ -376,8 +406,47 @@ class Inspector:
             self.ts = [Token(t.text.lower() if t.kind == 'word' else t.text, t.kind, t.start, t.end) for t in ts]
             if any(name(self.ts[i:i+3]) in ('set-alias', 'new-alias', 'invoke-expression') for i in range(len(ts))):
                 self.uncertain = True
+            for prefix in ('[system.io.path]::', '[io.path]::'):
+                self.helpers.update({prefix+'gettemppath': 'shared', prefix+'gettempfilename': 'tempfile',
+                                     prefix+'getdirectoryname': 'parent', prefix+'combine': 'join'})
+            self.constants.update({'$env:'+var: 'shared' for var in ('temp', 'tmp', 'tmpdir')})
         if lang == 'julia' and any(t.kind == 'word' and t.text == 'quote' for t in ts):
             self.uncertain = True  # block quotes require Julia's full nesting grammar
+        self._exclude_constants(declarations)
+
+    def _constant_spans(self):
+        """(start, end, raw) token spans spelling a known constant; the longest spelling wins."""
+        spans, taken = [], set()
+        for raw in sorted(self.constants, key=len, reverse=True):
+            for i in range(len(self.ts)):
+                text, j = '', i
+                while j < len(self.ts) and len(text) < len(raw) and self.ts[j].kind != 'newline':
+                    text += self.ts[j].text
+                    j += 1
+                if text == raw and taken.isdisjoint(range(i, j)) and not (i and self.ts[i-1].text in MEMBER_OPS):
+                    spans.append((i, j, raw))
+                    taken.update(range(i, j))
+        return spans
+
+    def _exclude_constants(self, declarations):
+        self.constant_spans = self._constant_spans()
+        spanned = {k for a, b, _ in self.constant_spans for k in range(a, b)}
+        self.identity_ts = [t for i, t in enumerate(self.ts) if i not in declarations and i not in spanned]
+
+    def const_known(self, raw):
+        """A property/variable spelling keeps its library meaning only while nothing in the candidate declares,
+        reassigns or shadows it or its root (whole-candidate conservative, like `stable`)."""
+        root = re.split(r'\.|::|->|:', raw)[0]
+        for i, t in enumerate(self.ts):
+            if t.kind != 'word' or (i and self.ts[i-1].text in MEMBER_OPS):
+                continue
+            after = self.ts[i+1].text if i+1 < len(self.ts) else ''
+            if t.text == root and (i and self.ts[i-1].text in _DECLARATIONS or after in ('=', ':=', '<-', '+=')):
+                return False
+        for a, b, spelled in self.constant_spans:
+            if spelled == raw and b < len(self.ts) and self.ts[b].text in ('=', ':=', '<-', '+='):
+                return False
+        return True
 
     def known(self, raw):
         if raw not in self.contracts and raw not in self.helpers:
@@ -397,6 +466,8 @@ class Inspector:
             return PathFact('literal', seq[0].text)
         if seq and seq[0].text == '(' and end_group(seq, 0) == len(seq)-1:
             return self.path(seq[1:-1], depth+1)
+        if name(seq) in self.constants:
+            return PathFact('temp-parent') if self.const_known(name(seq)) else None
         start = next((i for i,t in enumerate(seq) if t.text == '(' and t.kind == 'op'), None)
         if start is None or end_group(seq, start) != len(seq)-1:
             return None
@@ -404,6 +475,8 @@ class Inspector:
         if raw not in self.helpers or not self.known(raw):
             return None
         args = arguments(seq[start+1:-1])
+        if self.helpers[raw] in TEMP_KINDS:
+            return self.temp_fact(self.helpers[raw], args)
         if self.helpers[raw] == 'url':
             return self.path(keyword(args, 'fileURLWithPath'), depth+1)
         facts = [self.path(a, depth+1) for a in args]
@@ -417,6 +490,21 @@ class Inspector:
         for fact in facts[1:]:
             result = join_fact(result, fact)
         return result
+
+    def temp_fact(self, kind, args):
+        """Fresh-resource facts. Only the argument-free forms (plus options that cannot move the resource out
+        of the OS temp area) are modelled; any other argument may name a different parent, so it is unresolved."""
+        allowed = {'rtempfile': ('pattern', 'fileext'), 'tempdir': ('CLEANUP',)}.get(kind, ())
+        if any(not (len(a) >= 2 and a[0].text in allowed and a[1].text in (':', '=', '=>')) for a in args):
+            return None
+        shared = PathFact('temp-parent')
+        if kind == 'shared':
+            return shared
+        if kind == 'tempdir':
+            return PathFact('temp-dir', parent=shared)
+        if kind == 'rtempfile':
+            return PathFact('temp-file', parent=PathFact('temp-dir', parent=shared))
+        return PathFact('temp-file', parent=shared)
 
     def emit(self, start, end, target, recursive=False, known=True):
         confidence, rule = classify((target,) if target else (), self.workspace, self.permission, recursive)
@@ -472,9 +560,16 @@ class Inspector:
     def dart(self, i):
         """Direct constructor receivers only, never an arbitrary .delete method."""
         ts = self.ts
-        if ts[i].text not in ('Directory', 'File') or i+1 >= len(ts) or ts[i+1].text != '(':
-            return
         if i and ts[i-1].text in MEMBER_OPS:
+            return
+        if ts[i].text == 'Directory' and name(ts[i:i+3]) == 'Directory.systemTemp' and i+4 < len(ts) and ts[i+3].text == '.' and ts[i+5:i+6] and ts[i+5].text == '(':
+            finish = end_group(ts, i+5)
+            if ts[i+4].text in ('delete', 'deleteSync') and finish is not None:
+                recursive = name(keyword(arguments(ts[i+6:finish]), 'recursive')) == 'true'
+                known = self.dart_io and self.const_known('Directory.systemTemp')
+                self.emit(ts[i].start, ts[finish].end, PathFact('temp-parent'), recursive, known)
+            return
+        if ts[i].text not in ('Directory', 'File') or i+1 >= len(ts) or ts[i+1].text != '(':
             return
         close = end_group(ts, i+1)
         if close is None or close+3 >= len(ts) or ts[close+1].text != '.' or ts[close+3].text != '(':
@@ -538,8 +633,13 @@ class Inspector:
                     key = args[j+1].text
                     j += 2
                     begin = j
-                    while j < len(args) and args[j].text != '-':
-                        j += 1
+                    if key in _PS_SWITCHES:
+                        # A switch takes no value: only an attached `:$true`/`:$false`; what follows is positional.
+                        if j < len(args) and args[j].text == ':':
+                            j = min(j+2, len(args))
+                    else:
+                        while j < len(args) and args[j].text != '-':
+                            j += 1
                     switches[key] = args[begin:j]
                 else:
                     positional_args.append(args[j])
@@ -553,7 +653,10 @@ class Inspector:
             if whatif is not None and name(whatif) != ':$false':
                 known = False
             for target in arguments(target_seq) or [[]]:
-                self.emit(t.start, ts[end-1].end, self.path(target), recursive, known)
+                # A command-mode argument is text unless it is a literal, a variable or a parenthesized expression.
+                evaluated = (len(target) == 1 and target[0].kind == 'literal') or name(target) in self.constants or (
+                    target and target[0].text == '(' and end_group(target, 0) == len(target)-1)
+                self.emit(t.start, ts[end-1].end, self.path(target) if evaluated else None, recursive, known)
 
     def inspect(self):
         if self.language == 'powershell':
