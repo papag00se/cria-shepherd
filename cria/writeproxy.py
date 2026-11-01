@@ -1706,13 +1706,26 @@ class _Proof(NamedTuple):
     pre: str = ""             # exact producer-authored prelude, not inferred from file text
 
 
-def _learn_completions(token: str, rep: "dict | None", landed: bool = False) -> None:
+def _learn_completions(token: str, rep: "dict | None") -> None:
     """cria's own record for ``token`` arrived: that call's outcome is known, and so is every call whose completion mark the
     record's program read back as final (`completionmarks`); their marks on the harness are released by the next program."""
-    completionmarks.settle(token, landed=landed)
+    completionmarks.settle(token)
     for receipt, (state, _digest) in ((rep or {}).get("pm") or {}).items():
         if state != "incomplete":
             completionmarks.settle(receipt)
+
+
+def _merged_marks(first: "dict | None", second: dict) -> dict:
+    """The completion marks two records of ONE result report, merged per receipt: a final state outranks ``incomplete``, and two
+    different final states for one receipt (they cannot both be true) leave that receipt out - it is witnessed by nothing."""
+    out: dict = {receipt: list(state) for receipt, state in (first or {}).items()}
+    for receipt, state in second.items():
+        have = out.get(receipt)
+        if have is None or have[0] == "incomplete":
+            out[receipt] = list(state)
+        elif state[0] != "incomplete" and list(state) != have:
+            out[receipt] = ["__conflict__", ""]
+    return {receipt: state for receipt, state in out.items() if state[0] != "__conflict__"}
 
 
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
@@ -1747,13 +1760,13 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             first = resultpacket.read_record(content, off, token)
             if first is None:
                 continue
-            _learn_completions(token, first.rep, first.kind == denial.LANDED)
+            _learn_completions(token, first.rep)
             at, survey, rep = first.end, "", first.rep
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
                 at = second.end
                 if second.rep and second.rep.get("pm"):
                     _learn_completions(token, second.rep)
-                    rep = {**(first.rep or {}), "pm": (first.rep or {}).get("pm") or second.rep["pm"]}   # a write's own read-back is the first record's
+                    rep = {**(first.rep or {}), "pm": _merged_marks((first.rep or {}).get("pm"), second.rep["pm"])}
                 if second.body is not None:
                     try:
                         survey = second.body.decode("utf-8")
@@ -2164,11 +2177,7 @@ def _adopt_marks(messages: list[dict], out: list[dict], session: str, root: str 
     closed = (denial.REFUSED, denial.UNAPPLIED, denial.LANDED, denial.UNCERTAIN)
     unresolved = {receipt for receipt, _n, _p, cid in declared
                   if denial.proof(paired.get(cid)) not in closed and witnessed.get(cid, ("incomplete",))[0] == "incomplete"}
-    landed = {cid for cid in paired if denial.proof(paired[cid]) == denial.LANDED}
-    superseded = frozenset(receipt for i, (receipt, _n, path, _c) in enumerate(declared) if receipt in unresolved
-                           and any(later in landed and completionmarks.same_file(path, later_path, root)
-                                   for _r, _m, later_path, later in declared[i + 1:]))
-    completionmarks.adopt(session, [item[:3] for item in declared], unresolved, root, superseded)
+    completionmarks.adopt(session, [item[:3] for item in declared], unresolved, root)
 
 
 # The dependency-note budgets (one surface inline, and the sum of all notes per request) live in
