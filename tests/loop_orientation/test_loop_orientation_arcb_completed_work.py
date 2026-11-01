@@ -313,3 +313,18 @@ def test_a_held_claim_released_by_a_green_probe_is_briefed_and_a_failure_before_
     message = out["choices"][0]["message"]
     assert len(summaries) == 2 and cw.read_history([message]).text == MEMORY and "Abandoned" not in message["content"]
     assert not message.get("tool_calls") and driver._store.get("sid:done") is None
+
+
+@pytest.mark.parametrize("kwargs,message", [
+    (dict(enabled=1), "explicit experimental consent"), (dict(enabled="yes"), "explicit experimental consent"),
+    (dict(enabled=False, definition=cw.DEFINITION), "explicit experimental consent"),       # a replacement without consent is still no consent
+    (dict(enabled=True, definition=object()), "Incompatible"),
+    (dict(enabled=True, definition=replace(cw.DEFINITION, execute=None)), "Incompatible"),
+    (dict(enabled=True, definition=replace(cw.DEFINITION, embed="x")), "Incompatible"),
+    (dict(enabled=True, definition=replace(cw.DEFINITION, policy=replace(cw.DEFINITION.policy, id="other"))), "Incompatible")])
+def test_completed_work_generation_needs_explicit_consent_and_only_a_compatible_replacement(kwargs, message):
+    """Planning-off policy: consent is exactly the bool True (never truthy), and a replacement briefing must carry the same policy and callables."""
+    with pytest.raises(ValueError, match=message):
+        cw.BriefingSelection(**kwargs)
+    assert cw.BriefingSelection().enabled is False and cw.BriefingSelection.opt_in().enabled is True
+    assert cw.BriefingSelection(True, replace(cw.DEFINITION)).enabled is True

@@ -34,6 +34,8 @@ def extraction(**changes):
     ([extraction(), '{"exact_bytes":4}'], S.CONTRADICTED, 2),             # the task says 4 bytes; disk has 3
     ([extraction(), "{}", "{}"], S.WITHHELD, 3),                          # an unreadable confirmation never approves
     ([extraction(quote="invented requirement")], S.PERMITTED, 1),         # a quote the task does not contain is no requirement
+    ([extraction(bytes=3, ends_with_line_break=False)], S.PERMITTED, 1),   # the stated bytes ARE the measured bytes: nothing to confirm
+    ([extraction(bytes=True, ends_with_line_break=False)], S.PERMITTED, 1),   # a JSON true is not a byte count
 ])
 def test_exact_form_contradicts_only_a_grounded_requirement_against_measured_bytes(answers, status, phases):
     """A requirement counts only if quoted from the task and about a file cria measured; unreadable answers withhold."""
@@ -68,6 +70,31 @@ def test_an_end_to_end_requirement_is_judged_on_the_executed_test_source():
         questions = Questions("E2E_REQUIRED", verdict)
         result = ca.test_participation(ca.ParticipationInput(TASK, lambda: pt.report([event]), questions))
         assert result.status is status and questions.phases == ["test-e2e-requirement", "test-e2e-participation"], verdict
+
+class Log:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **fields):
+        self.events.append((kind, fields))
+
+def test_every_requirement_judgement_is_logged_with_what_it_actually_decided():
+    """The events are the metrics: required / unknown / verdict must carry the real answer (mutation survivors: log-only branches)."""
+    def run(kind, answers, sources=()):
+        log = Log()
+        event = replace(pt.observe(cand(pd.Ecosystem.JsTs, "npm test", kind), "Tests: 1 passed", 0), test_sources=sources)
+        ca.test_participation(ca.ParticipationInput(TASK, lambda: pt.report([event]), Questions(*answers), log))
+        return log.events
+    assert run(pd.ProbeKind.SyntaxCheck, ["REQUIRED"])[0][1]["required"] is True
+    assert run(pd.ProbeKind.SyntaxCheck, ["NOT_REQUIRED"])[0][1]["required"] is False
+    assert run(pd.ProbeKind.SyntaxCheck, [""])[0][1]["required"] == "unknown"
+    assert run(pd.ProbeKind.Test, ["E2E_REQUIRED"]) == [("loop.test_e2e_requirement", dict(required=True)),
+                                                         ("loop.test_e2e_participation", dict(verdict="unverified-source"))]
+    assert run(pd.ProbeKind.Test, ["NOT_REQUIRED"]) == [("loop.test_e2e_requirement", dict(required=False))]
+    assert run(pd.ProbeKind.Test, [""]) == [("loop.test_e2e_requirement", dict(required="unknown"))]
+    source = (pt.TestSourceEvidence("test/cli.js", "spawn CLI and assert exit"),)
+    assert run(pd.ProbeKind.Test, ["E2E_REQUIRED", "PROVEN"], source)[-1] == ("loop.test_e2e_participation", dict(verdict="PROVEN"))
+    assert run(pd.ProbeKind.Test, ["E2E_REQUIRED", ""], source)[-1] == ("loop.test_e2e_participation", dict(verdict="unknown"))
 
 def measuring(root, view):
     """The exact-form source's measurement services over the real loop adapters and one workspace view."""
