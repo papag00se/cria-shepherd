@@ -520,7 +520,8 @@ def _handoff_facts(server, key, body, rlog, owner):
     messages = body.get("messages", [])
     return memoryhandoff.SessionFacts(
         workspace_root=_session_cwd(key, messages, rlog) or "",
-        original_task=_history_root(messages)[0], gate_plan=_session_gate_plan(server, key),
+        original_task=_history_root(messages)[0], task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
+        gate_plan=_session_gate_plan(server, key),
         gate_flag=_last_gate_flag(server, key), gate_age=_gate_age(server, key),
         checks=_last_checks_note(server, key),
         carried_ledger=_carried_ledger(messages, origin=getattr(owner, "handoff_origin", None)))
@@ -1240,6 +1241,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             return
 
         carry_chat_system(body)
+        body[bodykeys.CHAT_WIRE] = True    # a harness compaction reply must then carry the original task (memoryhandoff.harden)
         self._multipart_original_body = copy.deepcopy(body)
         sk = session_key(self.headers, body.get('messages', []))
         if self._multipart_inbound(body, sk, rlog, api='chat', stream=bool(body.get('stream'))):

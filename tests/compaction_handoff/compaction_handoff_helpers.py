@@ -33,7 +33,7 @@ def shell(cid, cmd, output="", code=0):
 def chat_reply(content):
     return json.dumps({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}]})
 
-LENSES = {"retrospective": "RETROSPECTIVE", "scope": "PRESERVES", "files": "NONE", "changes": "NONE",
+LENSES = {"retrospective": "RETROSPECTIVE", "files": "NONE", "changes": "NONE",
           "sizes": "NONE", "build": "NONE", "nocheck": "NOT STATED", "changes_file": "CHANGED", "files_file": "EXISTS"}
 
 def lens_of(system):

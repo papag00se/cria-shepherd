@@ -3,7 +3,6 @@
 # from the recorded tool calls, not written by a model. The reason lines are closed: one per check.
 header = Briefing withheld: {{LENS}}. The model-written summary of the earlier turns was not delivered because {{REASON}}. Nothing below is a model's account; it is derived from the recorded tool calls and the workspace.
 reason_retrospective = it described what to do next rather than what happened
-reason_scope = it narrowed the task
 reason_files = it named a file as present that the workspace survey does not list
 reason_changes = it said a file was created or edited that no recorded call could have changed
 reason_sizes = it stated a file size the workspace survey contradicts

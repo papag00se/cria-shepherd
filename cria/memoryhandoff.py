@@ -110,6 +110,7 @@ class SessionFacts:
     """
     workspace_root: str = ""
     original_task: str = ""
+    task_rides_reply: bool = False    # the harness may replace the whole history with the reply, so the reply carries the task
     gate_plan: object = None
     gate_flag: str = ""
     gate_age: int = 0
@@ -306,7 +307,9 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
     withheld = (selfcompact.withheld_note(refused_by.lens or "none",
                                           evidence_messages(body.get("messages", []), services), facts.workspace_root)
                 if not text else "")
-    appendices = "\n\n".join(t for t in (ledger, withheld, fetch, notes, inventory, facts.checks) if t)
+    task = (prompts.render("compaction_original_task", task=facts.original_task.strip())
+            if facts.task_rides_reply and facts.original_task.strip() else "")
+    appendices = "\n\n".join(t for t in (ledger, withheld, fetch, notes, inventory, facts.checks, task) if t)
     if appendices or text != completion_text(comp).strip():
         merged = (text + "\n\n" + appendices).strip()
         if not text and merged:
@@ -343,7 +346,7 @@ POLICY = Policy(
     "harness-memory-handoff", "harness-memory", 3, family_id="F49",
     prompts=("recognize_compaction_request", "selfcompact_summary", "compaction_extract",
              "compaction_extract_ask", "compaction_extracted_state", "compaction_extracted_labels",
-             "compaction_withheld_note"),
+             "compaction_withheld_note", "compaction_original_task"),
     state="session producer record; shared write-result evidence observed before facts resolution",
     services=("original task", "workspace inventory", "gate evidence", "transcript",
               "three-lens validator", "provider", "authenticated carried ledger", "producer settlement"),

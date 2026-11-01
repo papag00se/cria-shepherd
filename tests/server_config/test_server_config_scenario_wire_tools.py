@@ -114,4 +114,6 @@ def test_a_compaction_request_is_rewritten_judged_and_only_a_retrospective_brief
     if plan:
         assert reply.startswith(PROSE_DROPPED_MARKER) and "issued (result recorded; execution not established): cat app.py" in reply and "rewrite app.py" not in reply
     else:
-        assert reply == "The user asked for app.py. app.py now exists and prints 1; no check has failed."
+        briefing = "The user asked for app.py. app.py now exists and prints 1; no check has failed."
+        # A chat-completions harness may replace the whole history with the reply, so the reply there ends with the user's own message.
+        assert reply == briefing if mode.startswith("resp") else (reply.startswith(briefing + "\n\n") and reply.endswith(" build app.py"))

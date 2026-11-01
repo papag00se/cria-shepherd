@@ -7551,8 +7551,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
     and omissions over a long transcript. In both failed L5 cells it accepted forward plans and
     claims contradicted in its own prompt. Ask the semantic questions separately: candidate-only
-    retrospection, then task-scope preservation. Every applicable lens must return their exact
-    positive verdict. Evidence fidelity is NOT a third verdict: a one-word judgment over the whole
+    retrospection first. Every applicable lens must return their exact positive verdict. Evidence fidelity is NOT a further verdict: a one-word judgment over the whole
     transcript carried no claim-level signal (it was blind on two of three real briefings and noisy
     on the third, rejecting an honest sentence as often as a fabricated one), so what it was
     asked is settled by lookup instead: the typed lenses below for files, changes, sizes and build
@@ -7613,10 +7612,9 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         except system1wiring.Unjudged:
             answers["retrospective"] = "UNJUDGED"
         accepted = answers["retrospective"] == "RETROSPECTIVE"
-    task_fact = (prompts.render("compaction_task_fact", task=task.strip()) if task.strip() else "")
-    if accepted and task_fact:
-        accepted = judge("scope", prompts.load("compaction_validate_scope"),
-                         [task_fact, candidate], "PRESERVES")
+    # No task-scope lens (operator decision 2026-11-01, docs/decision-log.md): the original task always travels with
+    # a briefing, so a requirement the briefing omits is not lost, and refusing a briefing for omitting one withheld
+    # the whole progress summary (59% of the small-window refusals).
     # A file the briefing calls present while a COMPLETE survey lists none such is a fact check, not a
     # reading of the transcript: the fidelity verdict below held the incident's claim and passed it.
     if accepted:

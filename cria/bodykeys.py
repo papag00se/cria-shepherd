@@ -133,6 +133,12 @@ RESULT_REPORT = "cria_result_report"
 #: Written by summary producers, read by the floor's density lookup, stripped at the wire.
 DENSITY_KIND = "cria_density_kind"
 
+#: The request arrived on the chat-completions wire. A harness compaction reply carries the user's original message
+#: verbatim there (`memoryhandoff.harden`): the Responses harness measured so far (Codex) keeps every user message
+#: beside the summary, a chat-completions harness may replace the whole history with the summary. Set by
+#: `server._handle_chat`, read by `server._handoff_facts`, stripped at the wire.
+CHAT_WIRE = "cria_chat_wire"
+
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 PROTECTED_READS = "cria_protected_reads"
@@ -150,4 +156,4 @@ MULTIPART_UNVERIFIED = "cria_multipart_unverified"
 LEGACY_MESSAGE_KEYS = ("_multipart_unverified",)
 
 ALL = (ROLE_ORIGIN, MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT, CHAT_WIRE)

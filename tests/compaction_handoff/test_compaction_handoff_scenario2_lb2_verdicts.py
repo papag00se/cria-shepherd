@@ -35,14 +35,13 @@ def answer(**override):
 
 
 @pytest.mark.parametrize("script,ok,asked,said", [
-    (answer(), True, ["retrospective", "scope"], {"retrospective": "RETROSPECTIVE", "scope": "PRESERVES"}),
-    (answer(retrospective=" retrospective\n"), True, ["retrospective", "scope"], None),            # case and whitespace are not a verdict
+    (answer(), True, ["retrospective"], {"retrospective": "RETROSPECTIVE"}),
+    (answer(retrospective=" retrospective\n"), True, ["retrospective"], None),            # case and whitespace are not a verdict
     (answer(retrospective="PLAN"), False, ["retrospective"], {"retrospective": "PLAN"}),                      # a forward plan stops at the first lens
-    (answer(scope="DROPS"), False, ["retrospective", "scope"], {"retrospective": "RETROSPECTIVE", "scope": "DROPS"}),
-    (answer(scope="PRESERVES, mostly"), False, ["retrospective", "scope"], {"scope": "PRESERVES, mostly"}),   # an exact word, not a prefix
+    (answer(retrospective="RETROSPECTIVE, mostly"), False, ["retrospective"], {"retrospective": "RETROSPECTIVE, mostly"}),   # an exact word, not a prefix
     (answer(retrospective=""), False, ["retrospective"], {"retrospective": ""}),                              # unreadable: no verdict is not a yes
-    (lambda lens, body: CUT if lens == "scope" else chat_reply(lens_answer(body["messages"][0]["content"])), False,
-     ["retrospective", "scope"], {"scope": ""}),                                               # cut off at the cap: discarded, not accepted
+    (lambda lens, body: CUT if lens == "retrospective" else chat_reply(lens_answer(body["messages"][0]["content"])), False,
+     ["retrospective"], {"retrospective": ""}),                                               # cut off at the cap: discarded, not accepted
     (lambda lens, body: (_ for _ in ()).throw(RuntimeError("down")), False, ["retrospective"], {"retrospective": ""}),
 ])
 def test_only_the_exact_positive_word_of_every_applicable_lens_accepts_a_briefing(script, ok, asked, said):
@@ -54,8 +53,8 @@ def test_only_the_exact_positive_word_of_every_applicable_lens_accepts_a_briefin
     assert said is None or all(fields["answers"][k] == v for k, v in said.items())
 
 
-def test_no_task_means_no_scope_lens_and_an_unavailable_judge_rejects_with_a_warning_or_silently():
-    assert run(answer(), Log(), task="") == (True, ["retrospective"])
+def test_a_task_is_asked_about_no_scope_lens_and_an_unavailable_judge_rejects_with_a_warning_or_silently():
+    assert run(answer(), Log(), task="") == (True, ["retrospective"]) == run(answer(), Log())
     for chat, role, briefing in [(None, ROLE, "b"), (lambda *a: "", None, "b"), (lambda *a: "", ROLE, "  ")]:
         log = Log()
         assert validate_compaction_briefing(chat, role, briefing, files="", checks="", transcript_blocks=[], rlog=log) is False
