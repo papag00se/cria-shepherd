@@ -64,7 +64,7 @@ def test_the_menu_is_extended_only_where_the_harness_lacks_the_tool_and_a_shell_
 
 def test_cria_credentials_are_scrubbed_from_every_shape_a_leak_can_take():
     """The Brave key leaked through a harness-echoed curl in a RESULT, assistant content and tool-call args; the model then reused it as a fake api-key."""
-    key = "BSAnwLmCmt454A0U3WnT7fzIVFRAKM2"
+    key = "BSAfake0000000000000000000000000"
     msgs = [{"role": "tool", "content": f"curl -H 'X-Subscription-Token: {key}' ...\n5 results"},
             {"role": "assistant", "content": f"api-key {key}", "tool_calls": [call("exec_command", {"cmd": f"curl -H api-key:{key}"})]},
             {"role": "user", "content": [{"type": "text", "text": f"token {key}"}]}]
