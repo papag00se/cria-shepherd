@@ -526,6 +526,15 @@ class Bridge:
                             raise BridgeError('changed known result')
                     if len(call_positions.get(cid, [])) > 1 or len(result_positions.get(cid, [])) > 1:
                         raise BridgeError('ambiguous known call/result')
+            # A read this history does not mention at all (none of its calls, none of their results) is not part of THIS view: the
+            # harness's own compaction rewrote the history away from it (Codex replaces it with a handoff), or this is a request that
+            # never held it. It can be neither continued nor projected here, and it is not an inconsistency: it waits, intact, for a
+            # history that holds it again. (It used to fail every later request, mark every tool result unverified and add the
+            # "state unavailable" note to each, for as long as the entry stayed pending: 9 `multipart.failed` in one noisy run.)
+            absent = [e for e in active if e.result is None and e.failure_id is None
+                      and not any(cid in call_positions or cid in result_positions for cid in (e.spec.call_id, e.pending, *e.calls))]
+            if absent:
+                active = [e for e in active if not any(e is a for a in absent)]
             if replay:
                 more = [e.calls[e.pending] for e in active if e.result is None and e.failure_id is None]
                 if more:
