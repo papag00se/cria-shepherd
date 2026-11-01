@@ -1853,6 +1853,10 @@ def note_harness_cuts(messages: list, rlog=None) -> int:
     every command result in a 24-cell campaign before anyone re-checked it. A remembered number is a
     claim about cria; the marker on the wire is a claim about the world (#5b). This asks the world.
 
+    Measured since (decision-log, "Elision roots", 2026-11): 372 distinct cut results in 174 captured Codex sessions
+    plus 243 in the outbound bodies; the policy is the model catalog's (40,000 bytes before 2026-10-07 19:33 PDT,
+    10,000 after), so a remembered number is still a claim about one catalog.
+
     It is harness-AGNOSTIC by construction: Claude Code, Aider and whatever connects next get counted
     the same way, with no survey of anyone's source and nothing to go stale."""
     n = 0

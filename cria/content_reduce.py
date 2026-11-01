@@ -37,6 +37,9 @@ def est_tokens(s: str) -> int:
 # for the harness's own framing lines (Chunk ID / Wall time / exit code / Output:). Bounding is
 # done by PAGING and spill files, never by dropping content — principle 5 (never truncate) holds;
 # this constant is what makes it hold on the far side of the harness too.
+# Re-measured from the wire 2026-11 (decision-log, "Elision roots"): in every captured session whose client carried the
+# 10,000-byte policy the shell tool's OUTPUT is cut at exactly 10,000 bytes (envelope outside it); 9,000 is a margin, not a
+# measured edge. Which policy a harness applies is its model catalog's, so the number is not a constant of the harness.
 INLINE_RESULT_MAX_BYTES = 9000
 
 # HOW MUCH OF A DOCUMENT ONE COMMAND CAN CARRY TO DISK. cria has no channel to the harness's

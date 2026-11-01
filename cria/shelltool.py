@@ -190,7 +190,7 @@ def is_read_tool_name(name: str | None) -> bool:
 # harness names its goal store, its MCP registry and its memory — `create_goal`, `list_mcp_resources`,
 # `read_mcp_resource`, `save_memory` — which is the exact firehose the focus menu exists to drop.
 # The shape rule says "this verb touches something"; this says which somethings are not files.
-_NOT_WORKSPACE_PARTS = ("goal", "mcp", "resource", "resources", "memory", "plugin", "connector",
+_NOT_WORKSPACE_PARTS = ("goal", "mcp", "resource", "resources", "memory", "plugin", "plugins", "connector",
                         "todo", "browser", "notification")
 
 

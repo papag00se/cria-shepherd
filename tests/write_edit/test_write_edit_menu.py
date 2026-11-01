@@ -25,6 +25,9 @@ def focus(*tool_names):
     # a harness whose own write/edit tools are named create_file / str_replace must not lose them
     (["create_file", "str_replace", "exec_command", "create_goal"], {"create_file", "str_replace", "exec_command"}),
     (["read_file", "edit_file", "apply_patch", "list_dir", "web_fetch", "connector_gmail_send"], {"read_file", "edit_file", "list_dir", "web_fetch"}),
+    # a plugin catalog tool (1,034 captured coder bodies carried list_available_plugins_to_install; 0 calls) is not a file
+    # tool, and a function-typed deferred search (`tool_search`) is kept by shape: the coder keeps its route to other tools
+    (["exec_command", "tool_search", "list_available_plugins_to_install", "request_plugin_install", "tool_suggest"], {"exec_command", "tool_search"}),
 ])
 def test_focus_drops_everything_but_the_coding_essentials_by_family_not_by_one_harnesss_names(given, kept):
     """apply_patch is never model-facing (a 9B cannot produce diff context); the keep-set is derived from the file-op families."""

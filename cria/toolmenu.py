@@ -45,7 +45,10 @@ _FILE_OP_NAMES = _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES | _LIST_NAMES
 # execute_command) must not be dropped from the menu for being unfamiliar.
 # Everything NOT here is dropped: goal management (create_goal/get_goal/update_goal), MCP
 # discovery (list_mcp_resources/…), ask-the-user (request_user_input), connector/app tools,
-# and Codex's deferred-tool search (tool_search/tool_suggest).
+# and Codex's tool_suggest / request_plugin_install. Measured 2026-11 (decision-log, "Elision roots"): a FUNCTION-typed
+# `tool_search` is KEPT by the file-tool shape rule below (its verb reads as a search), and the Responses-typed
+# native tools never reach this function: `responses._to_chat_tools` skips `namespace`/`web_search` and rejects any
+# other type (a `tool_search` tool is a 400 there).
 FOCUS_TOOL_NAMES = frozenset({
     "write_stdin",                                    # exec_command's PTY companion
     "write_file", "edit_file", "read_file",
