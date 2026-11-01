@@ -215,3 +215,26 @@ def test_a_429_cooldown_is_shared_by_every_request_to_that_endpoint_and_a_long_o
     other, other_opened = upstream([Buffered("ok")])
     assert json.loads(other.chat(dict(MESSAGES), Rlog()))["choices"][0]["message"]["content"] == "ok"
     assert clocked.slept == [20.0] and len(other_opened) == 1
+
+
+def test_one_credentials_429_does_not_close_another_credentials_door_to_the_same_host(clocked):
+    """A quota is per API key: the second key's request to the same host goes through unwaited while the first key stays refused."""
+    def keyed(key, script):
+        opened = []
+
+        def open_request(req, timeout=None, receipt=None):
+            opened.append(req)
+            item = script.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+        return Upstream("http://fixture.invalid", api_key=key, context_window=8192, open_request=open_request), opened
+    first, _ = keyed("key-a", [refused(429, {"Retry-After": "120"})])
+    with pytest.raises(UpstreamError):
+        first.chat(dict(MESSAGES), Rlog())
+    second, opened = keyed("key-b", [Buffered("b ok")])
+    assert json.loads(second.chat(dict(MESSAGES), Rlog()))["choices"][0]["message"]["content"] == "b ok" and clocked.slept == [] and len(opened) == 1
+    again, refused_opened = keyed("key-a", [Buffered("must not be sent")])
+    with pytest.raises(UpstreamError) as held:
+        again.chat(dict(MESSAGES), Rlog())
+    assert held.value.code == 429 and refused_opened == []

@@ -1309,7 +1309,9 @@ class Upstream:
         """Selected capacity policy over required final preparation and single-send custody."""
         from . import assistruntime, capacitypolicy
         # A host that said "wait" is waited on by EVERY request this process sends it, not only the one that was told.
-        limit_key = ratelimit.key_for(self._chat_url)
+        # A quota belongs to the endpoint AND the credential: one key's 429 does not close another key's door to the same host.
+        limit_key = ratelimit.key_for(self._chat_url) + (
+            "#" + hashlib.sha256(self._api_key.encode()).hexdigest()[:12] if self._api_key else "")
         try:
             ratelimit.STATE.hold(limit_key)
         except ratelimit.RateLimited as held:
