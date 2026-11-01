@@ -1072,8 +1072,11 @@ def _chat_shape_error(body: dict) -> str | None:
         return "messages must be an array of objects"
     if any(m.get("content") is not None and not isinstance(m["content"], (str, list)) for m in messages or ()):
         return "message content must be a string, an array of parts, or null"
-    if body.get("tools") is not None and not isinstance(body["tools"], list):
-        return "tools must be an array"
+    if body.get("tools") is not None and (not isinstance(body["tools"], list) or any(not isinstance(t, dict) for t in body["tools"])):
+        return "tools must be an array of objects"
+    if any(m.get("tool_calls") is not None and (not isinstance(m["tool_calls"], list) or any(not isinstance(c, dict) for c in m["tool_calls"]))
+           for m in messages or ()):
+        return "message tool_calls must be an array of objects"
     return None
 
 

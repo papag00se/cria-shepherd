@@ -65,6 +65,9 @@ CHAT_USER = {"role": "user", "content": "hi"}
     ("/v1/chat/completions", json.dumps({"messages": [1, 2]}).encode()),                         # messages not objects
     ("/v1/chat/completions", json.dumps({"messages": [{"role": "user", "content": 5}]}).encode()),
     ("/v1/chat/completions", json.dumps({"messages": [CHAT_USER], "tools": "x"}).encode()),
+    ("/v1/chat/completions", json.dumps({"messages": [CHAT_USER], "tools": [5]}).encode()),          # a tool that is not an object
+    ("/v1/chat/completions", json.dumps({"messages": [{"role": "assistant", "tool_calls": "x"}]}).encode()),
+    ("/v1/chat/completions", json.dumps({"messages": [{"role": "assistant", "tool_calls": [5]}]}).encode()),
     ("/v1/chat/completions", b'{"messages": [{"role": "user", "content": "hi"}], "messages": "dup"}'),  # last duplicate wins
     ("/v1/chat/completions", b'{"messages": [{"role": "user", "content": "\xff\xfe"}]}'),        # invalid UTF-8
     ("/v1/responses", b'{"input": 5}'),
