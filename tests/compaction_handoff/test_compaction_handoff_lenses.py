@@ -1,4 +1,6 @@
 """The typed briefing lenses: the model only LISTS claims; deterministic records settle them, and abstain unless the evidence is complete."""
+from pathlib import Path
+
 import pytest
 
 from cria import denial, groundtruth, probegate, writerecord
@@ -34,7 +36,7 @@ def validate(briefing, survey=SURVEY, messages=None, **replies):
     return ok, [lens_of(b["messages"][0]["content"]) for b in seen], answers, seen
 
 @pytest.mark.parametrize("lens,briefing,messages,reply,verdict", [
-    ("files", REVIEW, None, "REVIEW.md | PRESENT\npom.xml | PRESENT", "ABSENT REVIEW.md"),
+    ("files", REVIEW, None, "REVIEW.md | EXISTS\npom.xml | EXISTS", "ABSENT REVIEW.md"),
     ("changes", CHANGED, HISTORY, "pom.xml | CHANGED\nREVIEW.md | NOT CHANGED", "UNWRITTEN pom.xml"),
     ("sizes", "`pom.xml` (235 B) and `Importer.java` (11,796 B) were written.", None,
      "pom.xml | 235 B\nImporter.java | 11,796 B", "SIZE pom.xml stated 235 B, survey 980 B"),
@@ -57,13 +59,14 @@ def test_a_claim_the_typed_record_contradicts_refuses_the_briefing_before_the_fi
     + [("build", GREEN, dict(messages=[{"role": "user", "content": PRIOR[0]}] + HISTORY))])                                   # a prior compaction: not provably the whole span
 def test_a_lens_abstains_and_asks_nothing_when_its_evidence_is_partial_stale_or_not_the_whole_span(lens, briefing, kw):
     """A lens abstains (asks nothing) over a partial/overtaken survey or a transcript that is not provably the whole span."""
-    ok, asked, _, _ = validate(briefing, **kw, **{lens: "pom.xml | CHANGED\nREVIEW.md | PRESENT\npom.xml | 235 B\n" + f"{GREEN} | GREEN"})
+    ok, asked, _, _ = validate(briefing, **kw, **{lens: "pom.xml | CHANGED\nREVIEW.md | EXISTS\npom.xml | 235 B\n" + f"{GREEN} | GREEN"})
     assert ok is True and lens not in asked
 
 @pytest.mark.parametrize("lens,briefing,reply,extra", [
-    ("files", REVIEW, "REVIEW.md | NOT PRESENT\npom.xml | PRESENT", {}),                           # still to be written
-    ("files", REVIEW, "REVIEW.md | PRESENT", dict(survey=survey_text(TREE + "F\t9\t1480\tREVIEW.md\n"))),   # the survey lists it
-    ("files", REVIEW, "invented.txt | PRESENT", {}),                                               # a name the briefing does not contain
+    ("files", REVIEW, "REVIEW.md | REQUIRED\npom.xml | EXISTS", {}),                              # the task requires it
+    ("files", REVIEW, "REVIEW.md | MISSING", {}),                                                 # the briefing itself says it is not there
+    ("files", REVIEW, "REVIEW.md | EXISTS", dict(survey=survey_text(TREE + "F\t9\t1480\tREVIEW.md\n"))),   # the survey lists it
+    ("files", REVIEW, "invented.txt | EXISTS", {}),                                               # a name the briefing does not contain
     ("changes", CHANGED, "pom.xml | NOT CHANGED\ninvented.txt | CHANGED", dict(messages=HISTORY)),
     ("changes", "Wrote /tmp/note.txt and the src/ tree.", "/tmp/note.txt | CHANGED\nsrc/ | CHANGED", dict(messages=HISTORY)),     # outside the workspace / a directory: never a change claim
     ("changes", CHANGED, "pom.xml | CHANGED", dict(messages=HISTORY + [call("e", "edit_file", path="pom.xml", old_string="a", new_string="b"), result("e", outcome=denial.LANDED)])),
@@ -78,6 +81,29 @@ def test_a_lens_abstains_and_asks_nothing_when_its_evidence_is_partial_stale_or_
 def test_an_honest_negative_an_earlier_state_a_plan_or_an_ungrounded_claim_is_never_refused(lens, briefing, reply, extra):
     """A lens never refuses an honest negative, an earlier state, a plan, a hedged count, or a name the briefing does not contain."""
     assert validate(briefing, **extra, **{lens: reply})[0] is True
+
+# ornith1.5_9b / orders-api-py through real Codex (wave 10 E2EB, cell c1, 20,480 window, compaction 0013/0015): the briefing restates
+# "in-place migration of existing `orders.db` files" (data a deployment holds, named only by the task) over a complete survey of five files.
+# The two-way PRESENT / NOT PRESENT question listed it PRESENT 8 of 8 replays and refused a correct briefing, which costs the relief a
+# small window lives on. The briefing and the survey tree are the captured ones.
+C1_BRIEFING = (Path(__file__).with_name("fpres_c1_orders_db_briefing.txt")).read_text()
+C1_SURVEY = survey_text("D\t\nD\torders\nD\ttests\nF\t5\t2753\torders/db.py\nF\t4\t2438\torders/app.py\n"
+                        "F\t3\t126\tREADME.md\nF\t2\t0\torders/__init__.py\nF\t1\t560\ttests/test_db.py\n")
+C1_LISTED = "orders/app.py | EXISTS\norders/db.py | EXISTS\ntests/test_db.py | EXISTS\n"
+
+@pytest.mark.parametrize("orders_db_line,accepted", [
+    ("orders.db | REQUIRED", True),                        # the role the task gives it: data to migrate, not a file of this workspace
+    ("orders.db | MISSING", True),
+    ("orders.db | EXISTS", False),                         # the same line as a claim: the complete survey lists no such file, so code refuses it
+    ("orders.db | PRESENT", True)])                        # the retired two-way vocabulary is no longer a verdict
+def test_the_real_c1_briefing_is_refused_only_when_the_model_says_orders_db_exists_and_the_complete_survey_lacks_it(orders_db_line, accepted):
+    """A file the briefing names only as data the task requires to be migrated is never an existence claim; the survey lookup stays typed and complete."""
+    ok, asked, answers, seen = validate(C1_BRIEFING, C1_SURVEY, files=C1_LISTED + orders_db_line)
+    assert ok is accepted and "files" in asked and ("files" not in answers) is accepted
+    if not accepted:
+        assert answers["files"] == "ABSENT orders.db"
+    system = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "files")["messages"][0]["content"]
+    assert "REQUIRED" in system and "existing deployments hold" in system        # the question names the role that mention has
 
 def test_a_build_claim_is_matched_through_markup_the_copy_dropped():
     """A quoted build claim still matches the briefing when the copy dropped its markup (backticks, quotes)."""

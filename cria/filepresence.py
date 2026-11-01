@@ -10,8 +10,8 @@ no transcript at all it still answered FAITHFUL, and given only the sentence it 
 UNFAITHFUL.
 
 So the question is split along the doctrine's own seam (principle 1). The model JUDGES the one
-thing only it can read: which files the briefing says are present. Deterministic code GATHERS the
-fact: whether the complete survey lists them (`groundtruth.survey_settled_absent`). Names the
+thing only it can read: which files the briefing says exist now (not requires, not reports missing).
+Deterministic code GATHERS the fact: whether the complete survey lists them (`groundtruth.survey_settled_absent`). Names the
 model lists that the briefing does not literally contain are dropped, so the model can contradict
 nothing it did not read. A partial, overtaken or absent survey settles nothing and no call is made.
 """
@@ -47,7 +47,13 @@ def _claimed(answer: str, briefing: str, word: str, plain: bool = False) -> list
 
 
 def _claimed_present(answer: str, briefing: str) -> list[str]:
-    return _claimed(answer, briefing, "PRESENT")
+    """Files the briefing gives the role EXISTS (not REQUIRED, not MISSING).
+
+    ornith1.5_9b / c1 (wave 10 E2EB): "in-place migration of existing `orders.db` files" - data a deployment holds,
+    named only by the task - was listed PRESENT 8 of 8 by a two-way PRESENT / NOT PRESENT question (7 of 8 with a
+    reworded one). A closed three-way ROLE (EXISTS / REQUIRED / MISSING) names that mention's role instead of
+    forcing it into one of two, and the lookup against the survey is unchanged."""
+    return _claimed(answer, briefing, "EXISTS")
 
 
 def _ask_lines(summarize, chat_fn, role, briefing: str, rlog, phase: str, lens: str) -> str:

@@ -27,7 +27,7 @@ BIG = " ".join("w%05d" % i for i in range(30000))  # ~70k tokens on the fake cha
 
 
 COMPACTION_JUDGES = {"Answer PLAN if": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES", "FAITHFUL": "FAITHFUL",
-                     "present in the workspace right now": "app.py | PRESENT", "ALREADY created": "app.py | NOT CHANGED",
+                     "what role does the briefing give that file": "app.py | EXISTS", "ALREADY created": "app.py | NOT CHANGED",
                      "which state of the code": "none", "what size does the briefing give": "none"}
 
 

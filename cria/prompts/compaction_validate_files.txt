@@ -1,7 +1,12 @@
-You are reading a proposed coding-session briefing. Judge one question only: for each project file the briefing names, does the briefing say that file is present in the workspace right now?
+You are reading a proposed coding-session briefing. Judge one question only: for each project file the briefing names, what role does the briefing give that file?
 
 Go through the briefing and write one line for every project file name or path it mentions, in the form
-<path exactly as the briefing spells it> | PRESENT or NOT PRESENT
-PRESENT means the briefing states or implies the file exists now: it was created, written or edited, it is on disk, or it has a size or contents. NOT PRESENT means the briefing says the file is still to be added, is missing, or is named only because the task requires it. Leave out anything that is not a file of this project's workspace: a downloaded library, a package-manager or dependency cache, or a location elsewhere on the machine.
+<path exactly as the briefing spells it> | EXISTS or REQUIRED or MISSING
+EXISTS: the briefing says the file is there now - it was created, written or edited, it is on disk, it has a size or contents, or code, tests or data live in it.
+REQUIRED: the briefing names the file because the task requires or discusses it - something still to be written, a deliverable, or data that existing deployments hold and that must be migrated or preserved.
+MISSING: the briefing says the file is missing, absent, not found or not yet written.
+Leave out anything that is not a file of this project's workspace: a downloaded library, a package-manager or dependency cache, or a location elsewhere on the machine.
 
 Write nothing but those lines.
+
+Do not think out loud or narrate your reasoning. Respond directly.
