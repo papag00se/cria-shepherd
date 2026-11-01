@@ -205,3 +205,17 @@ def test_the_linear_scan_returns_exactly_what_the_plain_regex_scan_returns():
             assert plain == [(m.start(), m.end(), m.groupdict()) for m in rl._finditer(pattern, text)], (text, pattern.regex.pattern)
             hits += bool(plain)
     assert hits > 150        # the generator reaches real matches, not only misses
+
+
+def test_reading_the_same_transcript_again_never_retires_a_refusal_newer_than_an_old_success():
+    """The ledger re-reads the whole history on every request. A run of a command that SUCCEEDED early, then the same command
+    REFUSED a coordinate later: the second read applied the early success marker to the newer refusal (a success copy gets the
+    newest sequence), so the refusal of the newest run vanished from the ledger one request after it was recorded."""
+    history = [call("pip install -r req.txt", "a"), result("Successfully installed foo-1.0", "a"),
+               call("pip install -r req.txt", "b"), result("ERROR: No matching distribution found for y==2", "b")]
+    ledger = rl.RefusalLedger()
+    for _ in range(3):
+        ledger.observe(history)
+        assert ledger.active_names() == {"y==2"}
+    ledger.observe(history + [call("pip install -r req.txt", "c"), result("Successfully installed y-2.0", "c")])
+    assert ledger.active_names() == set()            # a success AFTER the refusal still retires it

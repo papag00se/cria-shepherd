@@ -541,7 +541,8 @@ class RefusalLedger:
         freshness is not observable, so it must not be invented.
         """
         commands = _commands(messages)
-        for message in messages or []:
+        position = {_call_id(m): i for i, m in enumerate(messages or []) if _tool_result(m) and _call_id(m)}
+        for index, message in enumerate(messages or []):
             if not _tool_result(message):
                 continue
             text = _tool_body(message)
@@ -565,6 +566,8 @@ class RefusalLedger:
             for refusal in self.active():
                 if refusal.ecosystem != ecosystem or not _same_command(refusal.command, command):
                     continue
+                if position.get(refusal.source_id, index) > index:
+                    continue    # this transcript shows the refusal AFTER this run: a re-read of an older success must not retire it
                 marker = success_marker.search(text)
                 succeeded = replace(refusal, outcome=SUCCEEDED,
                                     evidence=marker.group(0) if marker else text,
