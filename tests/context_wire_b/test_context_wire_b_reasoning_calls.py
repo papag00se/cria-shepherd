@@ -135,6 +135,41 @@ def test_a_cut_write_with_thousands_of_unclosed_braces_is_read_in_linear_time_an
     assert jsontext.close_unclosed_object('{ "a": ' + "{ " * 20000) == {}      # only the innermost brace is repairable by closers alone
 
 
+def test_thousands_of_nested_unclosed_objects_are_read_in_linear_time_and_left_as_written():
+    """`{"a":` x 3,000 re-parsed the same tail once per opener (3.5 s, in the response path); an opener nested in a candidate that already failed
+    where that opener's own candidate must fail is not parsed again."""
+    import time
+    started = time.perf_counter()
+    for n in (3000, 9000):
+        text = '{"a":' * n
+        assert jsontext.extract_json_object(text) is None and jsontext.close_unclosed_object(text) is None
+    # the first COMPLETE object is the answer; an unclosed outer candidate never promotes a nested one
+    assert jsontext.extract_json_object('{"a":' * 3000 + '{"ok":1}') is None
+    assert jsontext.extract_json_object('{"a":' * 3000 + '1} {"ok":1}') == {"a": 1}
+    assert time.perf_counter() - started < 3
+    # an outer candidate that fails on something other than a dangling key still lets the repairable inner one through
+    deep = {"z": 1}
+    for _ in range(50):
+        deep = {"a": [deep]}
+    assert jsontext.close_unclosed_object('{"a":[' * 50 + '{"z":1') == deep
+
+
+def test_skipping_openers_inside_a_failed_candidate_finds_exactly_the_objects_a_parse_per_opener_finds(monkeypatch):
+    """Over random brace/key/array/fence soup (and a cut of each) the objects and spans, repairable ones included, equal those with the skip disabled."""
+    import random
+    rng = random.Random(23)
+    tokens = ['{', '{"a":', '{"a":1', '}', '[', ']', '"', '\\', ':', ',', ' ', '\n', '1', '"k":', '"s"', '```', '```json', '{"a":1}', '[1,{"b":2}', 'x', '{"a":[', '<think>', '</think>']
+    texts = []
+    for _ in range(3000):
+        text = "".join(rng.choice(tokens) for _ in range(rng.randint(0, 24)))
+        texts += [text, text[:rng.randint(0, len(text))]]
+    fast = [(list(jsontext._json_objects(t, include_repairable=True)), list(jsontext._json_objects(t)), jsontext.extract_json_object(t), jsontext.close_unclosed_object(t)) for t in texts]
+    monkeypatch.setattr(jsontext._Scan, "nested_hopeless", lambda self, start, fail: [])
+    jsontext._scan.cache_clear()
+    slow = [(list(jsontext._json_objects(t, include_repairable=True)), list(jsontext._json_objects(t)), jsontext.extract_json_object(t), jsontext.close_unclosed_object(t)) for t in texts]
+    assert fast == slow
+
+
 def test_the_memoized_brace_scan_answers_exactly_what_one_scan_per_brace_answers():
     """_Scan shares one pass between every `{` that reads the text the same way; for every `{` of random brace/quote/escape/fence soup (and a cut of each)
     it must equal the one-scan definitions."""

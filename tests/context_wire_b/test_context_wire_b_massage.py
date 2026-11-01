@@ -104,6 +104,7 @@ def test_replayed_history_args_are_always_valid_json_and_never_lose_text():
        ("--- a/handler.py\n+++ b/handler.py\n@@ -1,2 +1,2 @@\n-old\n+new\n", ["*** Update File: handler.py", "-old", "+new"], ["+++", "@@ -1,2"]),
        ("--- /dev/null\n+++ b/new.py\n@@ -0,0 +1 @@\n+print('x')\n", ["*** Add File: new.py"], []),
        ("*** Add File: new.py\n context line\n+kept\n- item", ["+- item"], []),                        # a bare '-' in a NEW file is content the model forgot to '+', not a removal
+       ("*** Update File: a.py\n+x\n*** Add File: n.py\nclass A:\n    def f(self):\n        pass\n", ["+    def f(self):", "+        pass"], ["+   def", "+       pass"]),   # a file written bare keeps its indentation (real: session 20261008T083630 call 9 lost one space per line)
        ("*** Begin Patch\n*** Update File: a.py\n+x\n*** End Patch\n*** Begin Patch\n*** Update File: b.py\n+y\n*** End Patch", ["*** Update File: b.py"], [])])
 def test_apply_patch_input_is_normalized_to_the_native_envelope_without_losing_content(patch, has, hasnt):
     out = calls_of(massage.normalize_apply_patch(comp(calls=[("apply_patch", {"input": patch})])))[0][1]["input"]

@@ -208,9 +208,17 @@ def _fix_hunk_lines(body: str) -> str:
     an addition — matching Codex Local's fix_apply_patch_body (bare → `+` in ANY hunk)."""
     out: list[str] = []
     mode = None  # None | "add" | "update"
-    for line in body.splitlines():
+    lines = body.splitlines()
+    bare_add = set()  # Add-File blocks with no `+` line at all: the model wrote the file bare, so every line is content as written
+    for i, line in enumerate(lines):
         if line.startswith("*** Add File:"):
-            mode = "add"
+            end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("*** ")), len(lines))
+            if not any(l.startswith("+") for l in lines[i + 1:end]):
+                bare_add.add(i)
+    add_is_bare = False
+    for i, line in enumerate(lines):
+        if line.startswith("*** Add File:"):
+            mode, add_is_bare = "add", i in bare_add
             out.append(line)
         elif line.startswith("*** Update File:"):
             mode = "update"
@@ -229,7 +237,8 @@ def _fix_hunk_lines(body: str) -> str:
                 # addition, don't silently drop it (that destroyed the created file's content).
                 out.append("+" + line)
             elif line.startswith(" "):
-                out.append("+" + line[1:])  # context → addition
+                # context → addition, one space of diff syntax removed; in a bare body the space is INDENTATION
+                out.append("+" + (line if add_is_bare else line[1:]))
             else:
                 out.append("+" + line)  # bare content → addition
         elif mode == "update":

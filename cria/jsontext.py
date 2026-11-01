@@ -146,29 +146,35 @@ def close_unclosed_object(text: str) -> dict | None:
     if not text:
         return None
     cleaned = denoise(text)
-    start = cleaned.find("{")
+    start, hopeless = cleaned.find("{"), set()
     while start != -1:
-        obj = _repair_unclosed_object(cleaned, start)
+        obj = None if start in hopeless else _repair_unclosed_object(cleaned, start, hopeless)
         if obj is not None:
             return obj
         start = cleaned.find("{", start + 1)
     return None
 
 
-def _repair_unclosed_object(s: str, start: int) -> dict | None:
-    """The existing missing-closers check, without wrapper preprocessing/recursion."""
+def _repair_unclosed_object(s: str, start: int, hopeless: set[int] | None = None) -> dict | None:
+    """The existing missing-closers check, without wrapper preprocessing/recursion.
+
+    When the candidate fails to parse and ``hopeless`` is given, every OBJECT NESTED in it whose own
+    candidate must fail at the same place is added to it (:meth:`_Scan.nested_hopeless`), so the caller
+    does not re-parse the same tail once per opener (3,000 nested ``{"a":`` cost 3.5 s)."""
     closers = _unclosed_tail(s, start)
     if closers:
         try:
             obj = loads(s[start:] + closers)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            if hopeless is not None:
+                hopeless.update(_scan(s).nested_hopeless(start, start + error.pos))
             return None
         if isinstance(obj, dict):
             return obj
     return None
 
 
-def _repairable_tail_span(s: str, start: int):
+def _repairable_tail_span(s: str, start: int, hopeless: set[int] | None = None):
     """Original bytes whose only defect is missing closers, possibly outer fences.
 
     The real repair owner validates each candidate. A fence inside a value ends
@@ -177,7 +183,7 @@ def _repairable_tail_span(s: str, start: int):
     during framing only. Verdict callers still reject positive/mid-string/length
     recovery independently.
     """
-    obj = _repair_unclosed_object(s, start)
+    obj = None if hopeless is not None and start in hopeless else _repair_unclosed_object(s, start, hopeless)
     if obj is not None:
         return obj, len(s)
     for end in _scan(s).trailing_fence_starts(start):
@@ -276,6 +282,7 @@ def loads(text: str, *, strict: bool = True):
 def _json_objects(s: str, *, include_repairable: bool = False):
     """Object spans using the one parser; repairable tails are framing-only opt-in."""
     start = s.find("{")
+    hopeless: set[int] = set()      # openers whose missing-closers candidate is already known to fail
     while start != -1:
         span = _balanced_object(s, start)
         if span is not None:
@@ -288,7 +295,7 @@ def _json_objects(s: str, *, include_repairable: bool = False):
                 yield obj, start, stop
                 start = s.find("{", stop)
                 continue
-        repaired = _repairable_tail_span(s, start)
+        repaired = _repairable_tail_span(s, start, hopeless)
         if repaired is not None:
             obj, stop = repaired
             if include_repairable:
@@ -436,6 +443,27 @@ class _Scan:
         for pos, closer in reversed(stack):
             closers += closer
             out[pos] = "" if in_str else closers
+
+    def nested_hopeless(self, start: int, fail: int) -> list[int]:
+        """Openers inside the unclosed object at ``start`` whose own missing-closers candidate must fail too.
+
+        ``start``'s candidate (text + closers) stopped parsing at absolute index ``fail``. An opener
+        outside any string, after ``start`` and before ``fail``, is a VALUE the parser entered; it is
+        unclosed, so its candidate is that same value to the end of the text plus the first of the
+        same closers, and parses identically up to ``fail`` (the closers after a value that is
+        complete cannot fail). Not listed: ``fail`` itself or later (a key position, or never
+        reached) and anything inside a string. Those get their own parse, as before."""
+        s, out, i = self.s, [], start + 1
+        while (m := _BRACE_OR_QUOTE.search(s, i, fail)) is not None:
+            j = m.start()
+            if s[j] == '"':
+                j = self._string_end(j)
+                if j < 0:
+                    break
+            elif s[j] == "{":
+                out.append(j)
+            i = j + 1
+        return out
 
     def trailing_fence_starts(self, start: int) -> list[int]:
         """Starts of the fences at/after ``start`` after which nothing but fences and whitespace remains."""
