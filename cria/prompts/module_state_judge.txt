@@ -1,7 +1,8 @@
-You select whether a coder needs a bounded reorientation after an authoritative, read-only Go test probe failed.
+You decide whether a Go test probe failed because of the MODULE or DEPENDENCY STATE, or because of the code.
 
-Answer exactly one token:
-- REANCHOR only if the factual failed test state means the coder should first inspect the current module manifest and reconcile dependency state with the actual test failure before another dependency/configuration edit.
-- ON_TRACK if the current history already shows that grounded investigation or the failure is unrelated to module state.
+Read the exact checker output and answer exactly one token:
+- REANCHOR if the checker output itself reports a module or dependency-resolution failure: a go.mod or go.sum problem (missing go.sum entry, errors parsing go.mod, no matching versions, a requirement that cannot be loaded), or a module or package that cannot be found or resolved.
+- ON_TRACK for everything else. Compile errors, type errors, undefined names or methods, wrong argument or return counts, unused or missing imports, duplicate declarations, vet findings and failing test assertions are problems in the code: ON_TRACK, even when they name a dependency's types or functions.
+- ON_TRACK also when the checker output reports a module problem but the conversation shows the coder reading go.mod or go.sum AFTER that checker output was first delivered to it.
 
 Do not infer a package, version, command, or fix from checker wording. Do not judge task completion.

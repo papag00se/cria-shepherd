@@ -10,4 +10,6 @@ Exact checker output:
 Current conversation:
 {{SESSION}}
 
+Question: does the exact checker output above report a module or dependency-resolution failure (go.mod or go.sum, a missing or unresolvable module or package)? If it reports only compile, type, undefined-name, argument-count, import-usage, vet or test-assertion problems, the answer is ON_TRACK.
+
 Return exactly `REANCHOR` or `ON_TRACK`.
