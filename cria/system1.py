@@ -73,6 +73,24 @@ _CHUNK = 8 * 1024 * 1024
 #: :class:`System1RuntimeError`, the arena is shrunk back after every run, and the caller declines.
 ARENA_BUDGET_BYTES = 16 * 1024**3
 _MIN_ARENA_BUDGET_BYTES = 1024**3
+#: MEASURED (2026-11-01, docs/decision-log.md "The retrospective lens cannot be made cheaper by reading less"): the
+#: peak activation memory of one call over ``n`` rendered tokens is ``ATTENTION_PEAK_BUFFERS x 128 x n**2 + FIXED``
+#: bytes (one attention tensor is 32 heads x 4 bytes = 128 x n**2 bytes; about 2.93 are live at the peak). Bisected
+#: to the token at a 1 GiB arena (ok at 1,504 / refused at 1,508 tokens) and at 2 GiB (ok 2,262 / refused 2,268),
+#: checked against a 10 GiB arena and the production failure (10,284 tokens at 16 GiB).
+ATTENTION_PEAK_BUFFERS = 2.93
+ATTENTION_BYTES_PER_TOKEN_SQUARED = 128
+FIXED_ACTIVATION_BYTES = 220_000_000
+#: The formula's own boundary sits 1-3 tokens above the bisected failures (1,508.7 at 1 GiB, 2,267.0 at 2 GiB), so the
+#: pre-flight takes this fraction off the token count: 0.2% gives 1,505 and 2,262, bracketed by every measurement.
+CEILING_MARGIN = 0.002
+
+
+def token_ceiling(budget_bytes: int) -> int:
+    """The longest rendered input (policy included) whose activations fit ``budget_bytes``, from the measured
+    formula above less :data:`CEILING_MARGIN`. At the production 16 GiB arena: 6,711 tokens."""
+    usable = max(budget_bytes - FIXED_ACTIVATION_BYTES, 0)
+    return int(math.sqrt(usable / (ATTENTION_PEAK_BUFFERS * ATTENTION_BYTES_PER_TOKEN_SQUARED)) * (1 - CEILING_MARGIN))
 #: sub-directory of ``<calls>/<session>/`` holding this runtime's own (non-upstream) call records
 CAPTURE_NAMESPACE = "system1"
 _ARENA_CONFIG = "session.use_env_allocators"
@@ -126,6 +144,17 @@ class System1NoFit(System1Error):
 
 class System1RuntimeError(System1Error):
     """The tokenizer or the ONNX session failed, or returned something that is not a decision."""
+
+
+class System1OverCeiling(System1RuntimeError):
+    """The input is under the frozen window but over the measured memory ceiling of the configured arena: refused
+    BEFORE the model runs, the same refusal (a :class:`System1RuntimeError`) the allocator would give after a
+    ~13 GB spike. It is never truncated."""
+
+    def __init__(self, family: str, tokens: int, ceiling: int, budget_bytes: int) -> None:
+        self.tokens, self.ceiling, self.budget_bytes = tokens, ceiling, budget_bytes
+        super().__init__(f"{family} input is {tokens} tokens, over the measured memory ceiling of {ceiling} tokens "
+                         f"for the {budget_bytes / 1024**3:g} GiB arena; refused before the model ran")
 
 
 class System1NonFinite(System1RuntimeError):
@@ -465,6 +494,9 @@ class System1Runtime:
         """One real model call with no logging or capture. ``judge_detailed`` is this plus the record."""
         started = time.monotonic()
         prepared = self.prepare(family, state)
+        ceiling = token_ceiling(self._budget)
+        if prepared.token_count > ceiling:  # before any feed is built: no allocation, no model call
+            raise System1OverCeiling(family, prepared.token_count, ceiling, self._budget)
         tokenized = time.monotonic()
         np = self._np
         ids = np.asarray([prepared.input_ids], dtype=np.int64)
@@ -584,7 +616,8 @@ class System1Runtime:
                                      policy, rendered, ids)
         path = self._capture_call(family, self._request(family, state, prepared),
                                   {"error": type(exc).__name__, "message": str(exc)}, rlog)
-        rlog.emit("system1.error", level="error", family=family, error=type(exc).__name__, message=str(exc),
+        over = {"tokens": exc.tokens, "ceiling": exc.ceiling} if isinstance(exc, System1OverCeiling) else {}
+        rlog.emit("system1.error", level="error", family=family, error=type(exc).__name__, message=str(exc), **over,
                   input_sha256=_text_sha(prepared.rendered_input) if prepared is not None else None,
                   manifest_sha256=self._bundle.manifest_sha256, capture=path)
 
