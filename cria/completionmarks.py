@@ -45,7 +45,8 @@ from . import ownedfiles
 
 DIR_PREFIX = ".ctx-done-"
 MAX_OUTSTANDING = 32            # per session; the oldest is forgotten (its outcome is simply unknown again)
-MAX_RELEASE = 64
+MAX_RELEASE = 64                # marks one program or gate removes per run
+MAX_PENDING_RELEASE = 1024      # marks queued for removal in process memory (the newest are kept; a backlog drains MAX_RELEASE per carrier)
 OPEN_WAIT_SECONDS = 5
 STATES = ("landed", "did_not_run", "uncertain")      # what an executor mark may say
 # What a read-back may report beyond a final mark, decided by the writer's own start record and /proc (never a signal):
@@ -185,7 +186,10 @@ def adopt(session: str | None, declared: list, unresolved: set, root: str | None
     ``[(receipt, nonce, path)]`` read from the sentinels of the lowered write/edit calls in the history, ``unresolved`` the receipts
     of those whose outcome the history does not establish. An unresolved call this process does not hold is registered (as an
     EARLIER turn's writer: nothing in a history is of the current turn); a resolved one is only queued for release, so its mark
-    leaves the harness. Each (receipt, nonce) is taken once per process, and the newest MAX_OUTSTANDING / MAX_RELEASE are kept."""
+    leaves the harness. Each (receipt, nonce) is taken once per process. The newest ``2 * MAX_OUTSTANDING`` declared calls are
+    considered for watching (MAX_OUTSTANDING are kept); every OLDER one the history names is queued for release as well - cria can no
+    longer watch it, and its marks would otherwise stay in the private directory until the TMPDIR is cleared. The queue drains through
+    the authenticated reader, MAX_RELEASE per program or gate, and is itself bounded (MAX_PENDING_RELEASE)."""
     if not session or not declared:
         return
     with _LOCK:
@@ -195,6 +199,9 @@ def adopt(session: str | None, declared: list, unresolved: set, root: str | None
         mine = _OUTSTANDING.setdefault(session, {})
         release = _RELEASE.setdefault(session, [])
         fresh = [item for item in declared if (item[0], item[1]) not in known]
+        for receipt, nonce, _path in fresh[:-MAX_OUTSTANDING * 2]:
+            known.add((receipt, nonce))
+            release.append((receipt, nonce))
         for receipt, nonce, path in fresh[-MAX_OUTSTANDING * 2:]:
             known.add((receipt, nonce))
             if receipt in unresolved:
@@ -207,7 +214,7 @@ def adopt(session: str | None, declared: list, unresolved: set, root: str | None
         while len(mine) > MAX_OUTSTANDING:
             forgotten = mine.pop(next(iter(mine)))
             release.append((forgotten.receipt, forgotten.nonce))
-        del release[:-MAX_RELEASE * 4]
+        del release[:-MAX_PENDING_RELEASE]
 
 
 def settle(receipt: str, *, landed: bool = False) -> None:
