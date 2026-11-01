@@ -25,15 +25,9 @@ from __future__ import annotations
 import json
 import re
 
-from . import toolwire, wsview
+from . import earliernames, toolwire, wsview
 
-_P, _p = "CR" + "IA", "cr" + "ia"
-
-# (earlier spelling, current spelling). Order matters: a longer run of underscores is the same name with a longer prefix.
-LEGACY: tuple[tuple[str, str], ...] = (
-    ("___" + _P + "_", "___CTX_"), ("__" + _P + "_", "__CTX_"), ("__" + _p + "_", "__ctx_"),
-    ("." + _p + "-", ".ctx-"), (".gate-private-", ".ctx-private-"), (_P + "_RM", "CTX_RM"),
-)
+LEGACY = earliernames.LEGACY
 _EARLIER = re.compile("|".join(re.escape(old) for old, _ in LEGACY))
 _SURVEY_HEADERS = tuple({wsview.SURVEY_CMD_OPEN, "# " + LEGACY[0][0] + "SURVEY_CMD___"})
 

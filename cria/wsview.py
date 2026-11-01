@@ -50,7 +50,7 @@ import time
 import zlib
 from dataclasses import dataclass, field, replace
 
-from . import completionmarks, denial, resultpacket
+from . import completionmarks, denial, earliernames, resultpacket
 
 # --------------------------------------------------------------------------- wire format
 
@@ -1963,10 +1963,13 @@ def _unpack(group: str) -> str:
     except (ValueError, zlib.error, UnicodeError):
         return group
     enc = text.encode()
-    if len(enc) != n or hashlib.sha256(enc).hexdigest() != want or not text.startswith(SURVEY_OPEN + "\n"):
+    if len(enc) != n or hashlib.sha256(enc).hexdigest() != want:
         return group
-    # What the block regex captures for an unpacked survey ends AT the close marker, not after it.
-    return text[len(SURVEY_OPEN) + 1:].removesuffix("\n")
+    for opener in (SURVEY_OPEN, earliernames.EARLIER_SURVEY_OPEN):         # the earlier release's packed block names itself the old way
+        if text.startswith(opener + "\n"):
+            # What the block regex captures for an unpacked survey ends AT the close marker, not after it.
+            return text[len(opener) + 1:].removesuffix("\n")
+    return group
 
 
 def strip_survey(text: str) -> tuple[str, str]:
@@ -2048,7 +2051,11 @@ def apply_survey(view: View, survey_text: str) -> bool:
         # length or sha256): say THAT, not "no tree section" — a different cause than a failed run.
         _note_reject("packed-unverified")
         return False
+    survey_text, earlier = earliernames.upgrade_survey(survey_text)    # a compressed survey of the earlier release (see there)
     secs = sections(survey_text)
+    if earlier:
+        secs.pop("progs", None)           # raw names then, not the encoded ones this reader decodes: UNKNOWN, never a different name
+        secs.pop("outside", None)
     if "tree" not in secs:
         _note_reject("no-tree-section")
         return False
