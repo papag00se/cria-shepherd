@@ -751,6 +751,8 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/transientpolicy.py', 'selected_choice'),
             SourceOwner('cria/failover.py', 'classify_failure'),
             SourceOwner('cria/failover.py', 'run'),
+            SourceOwner('cria/chainendpoint.py', 'classify_exception'),
+            SourceOwner('cria/chainendpoint.py', 'ChainEndpoint'),
         ),
     ),
     AssistFamily(

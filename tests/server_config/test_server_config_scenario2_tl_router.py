@@ -69,15 +69,16 @@ def test_the_first_resolvable_role_wins_and_every_skip_and_exhaustion_is_logged(
     assert r3.route("coding", Log()) is None                                 # no routing config -> passthrough
 
 
-def test_route_chain_returns_the_resolvable_links_in_order_and_cli_resolution_checks_the_file(tmp_path, monkeypatch):
+def test_a_route_carries_the_resolvable_links_in_order_and_cli_resolution_checks_the_file(tmp_path, monkeypatch):
     r, _, _ = make(tmp_path, monkeypatch, failover={"coding": ("cli", "nocli", "ghost", "same", "keyed")})
     log = Log()
-    chain = r.route_chain("coding", log)
-    assert [(c.role, c.model) for c in chain] == [("cli", None), ("same", "model-of-shared"), ("keyed", "gpt-x")]
+    chain = r.route("coding", log).provider.hops
+    rl = Log()
+    assert [(h.role, h.model(rl)) for h in chain] == [("cli", None), ("same", "model-of-shared"), ("keyed", "gpt-x")]
     assert chain[0].provider == ("cli", chain[0].provider[1]) and os.path.basename(chain[0].provider[1]) == "fakeclaude"
-    assert [e[1]["role"] for e in log.events] == ["nocli", "ghost"]
+    assert [e[1]["role"] for e in log.events if e[0] == "route.skip"] == ["nocli", "ghost"]
     r2, _, _ = make(tmp_path, monkeypatch)
-    assert r2.route_chain("coding", Log()) == []
+    assert r2.route("coding", Log()) is None
 
 
 @pytest.mark.parametrize("role,expected", [

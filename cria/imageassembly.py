@@ -30,7 +30,7 @@ class ConfiguredCoderVision:
         resolved=router._resolve(name,rlog)
         if resolved is None:return None,None
         actual_provider,actual_model=resolved
-        if (actual_provider is not provider or not actual_model or
+        if (actual_provider is not getattr(provider,'primary',provider) or not actual_model or
                 actual_model!=applied_body.get('model') or
                 actual_model!=selected_role.vision_model):
             return None,None

@@ -395,8 +395,9 @@ class Role:
 @dataclass(frozen=True)
 class RoutingConfig:
     """How requests are routed: a table of ``backends``, a table of ``roles`` bound to them, and a
-    ``failover`` chain per task_type (first RESOLVABLE role wins — a role whose backend needs an
-    absent key/binary is skipped). ``defaults_base_url`` is the shared endpoint a served backend
+    ``failover`` chain per task_type (first RESOLVABLE role serves — a role whose backend needs an
+    absent key/binary is skipped — and a FAILED call walks to the next on another endpoint,
+    see ``chainendpoint``). ``defaults_base_url`` is the shared endpoint a served backend
     falls back to. There is no ``local_only`` switch: to stay offline, just don't configure (or
     don't chain) a keyed backend."""
 

@@ -803,6 +803,21 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     return result.completion
 
 
+def _note_failover(indic, rlog) -> None:
+    """Show a chain walk on the indicator (the event ``failover.walk`` is the record)."""
+    note = getattr(rlog, "failover_note", None)
+    if note and indic is not None and not indic.note:
+        indic.note = note
+
+
+def _failover_noted(chunks, indic, rlog):
+    """The stream opens (and may walk the chain) before its first chunk: surface the walk on the
+    indicator before the header is flushed ahead of the first content delta."""
+    for raw in chunks:
+        _note_failover(indic, rlog)
+        yield raw
+
+
 class CriaServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -1857,7 +1872,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                 sbody = _compaction_body(sbody, definition=handoff, facts=facts,
                                          distill=_handoff_distiller(provider, server, rlog))
             stream = massage.massage_stream(
-                self._image_stream(provider, self._apply_route_role(sbody, indic, rlog), indic, rlog),
+                _failover_noted(self._image_stream(provider, self._apply_route_role(sbody, indic, rlog), indic, rlog),
+                                indic, rlog),
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
@@ -1973,6 +1989,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             raw = self._chat_progressive(provider, pbody, progressive, rlog)
         else:
             raw = provider.chat(pbody, rlog)
+        _note_failover(indic, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
         except (json.JSONDecodeError, TypeError) as e:

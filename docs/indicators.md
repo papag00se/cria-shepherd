@@ -20,7 +20,7 @@ Either way: **Shepherd strips its own indicators on the way in.** If the harness
 **Identity / routing**
 - Chosen **route** + confidence + reason (`RouteDecision`).
 - **Model** that served the turn.
-- **Failover** — walked the chain (role unresolvable / model down).
+- **Failover** — walked the chain: a `failover: coder → reasoner (model unavailable)` note line on the proxied turn (the `failover.walk` event, with `from`/`to`/`failure`/`attempt`/`to_window`, is the record on every path, the loop's own role calls included; `failover.exhausted` when no role is left).
 
 **Guards fired** (the human notice; the nudge itself is the in-context directive)
 - Repetition guard · Forced-diagnosis guard · Context-reset guard · Rumination guard

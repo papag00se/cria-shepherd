@@ -1605,9 +1605,9 @@ class Upstream:
 
         Retries the SAME endpoint ONCE on a transient TIMEOUT (a slow-prefill / connection-reset on
         the shared GPU that would otherwise be a dead turn), using the failover module's POLICY
-        (`classify_failure` + `decide_action`) with the loop written out here — `failover.run` is the
-        generic executor for a multi-route chain and this has exactly one route, so walking is never
-        the answer and what it would cost is the error string in the retry log. Buffered, so a retry
+        (`classify_failure` + `decide_action`) with the loop written out here — this has exactly one
+        route; `chainendpoint.ChainEndpoint` wraps it (via `failover.run`) when the role's chain has
+        another endpoint, and treats an error out of here as this retry already spent. Buffered, so a retry
         is safe; a stream cannot be."""
         # Force stream=false (the Responses adapter buffers from a stream=true request;
         # sending that upstream would return unparseable SSE) + merge adjacent assistants.

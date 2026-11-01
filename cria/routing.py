@@ -10,7 +10,14 @@ A role names a backend, and a backend resolves to:
 A role whose backend can't resolve (missing key/binary) is SKIPPED, so a chain like
 ``["coder", "reasoner"]`` collapses to whatever resolves. When nothing resolves (or there is no
 routing config), ``route`` returns ``None`` and the caller falls back to a plain passthrough on the
-shared endpoint. Reasoning/sampling is NOT applied here — the caller applies ``role.apply(body)``,
+shared endpoint.
+
+The chain is also walked when a CALL fails: the provider ``route`` / ``endpoint_for`` hand out is a
+``ChainEndpoint`` over the resolved role and every later resolvable role of its chain that runs on a
+DIFFERENT endpoint (two roles on one server share a fate, so the second adds nothing and is
+dropped; with nothing left the plain provider is returned and nothing changes). The lane of a loop
+role is the chain named for its job: coder -> ``coding``, reasoner -> ``reasoning``,
+classifier -> ``classification``, compactor -> ``compaction``. Reasoning/sampling is NOT applied here — the caller applies ``role.apply(body)``,
 which translates the role's one portable reasoning value into its backend's convention.
 """
 
@@ -21,10 +28,22 @@ import shutil
 from dataclasses import dataclass
 
 from .claude_cli import ClaudeCliProvider
+from .chainendpoint import ChainEndpoint, Hop
 from .config import Backend, RoutingConfig
 from .envfile import env_secret
 from .upstream import Upstream
 from . import receivecapture
+
+
+_LANES = {"coder": "coding", "reasoner": "reasoning", "classifier": "classification",
+          "compactor": "compaction"}
+
+
+class _Silent:
+    """Construction-time events of ``endpoint_for`` (no request logger exists yet) go nowhere."""
+    @staticmethod
+    def emit(*a, **k):
+        return None
 
 
 @dataclass
@@ -73,11 +92,12 @@ class Router:
         chain = self._chain_for(task_type)
         if not chain:
             return None  # no routing config → caller does passthrough
-        for role in chain:
+        for k, role in enumerate(chain):
             resolved = self._resolve(role, rlog)
             if resolved is not None:
                 provider, model = resolved
                 rlog.decide("route", role, f"task_type={task_type}", model=model)
+                provider = self._walkable(task_type, role, provider, chain[k + 1:], rlog, http_only=False)
                 return Route(provider, model, role, f"chain[{task_type}] -> {role}")
             rlog.emit("route.skip", role=role, reason="unresolvable")
         rlog.emit("route.exhausted", level="warn", task_type=task_type, chain=list(chain))
@@ -91,26 +111,41 @@ class Router:
             return fo.get("reasoning") or fo.get("coding") or ()
         return fo.get("coding") or ()
 
-    def route_chain(self, task_type: str, rlog) -> list[Route]:
-        """The ORDERED list of resolvable routes for a task_type — the input to the failover
-        executor. Unresolvable links (missing key/binary) are skipped and logged; an empty list
-        means no routing config / nothing resolved."""
-        routes: list[Route] = []
-        for role in self._chain_for(task_type):
-            resolved = self._resolve(role, rlog)
-            if resolved is not None:
-                provider, model = resolved
-                routes.append(Route(provider, model, role, f"chain[{task_type}] -> {role}"))
-            else:
-                rlog.emit("route.skip", role=role, reason="unresolvable")
-        return routes
+    def _walkable(self, chain_name: str, role: str, provider, tail, rlog, *, http_only: bool):
+        """``provider`` itself, or a ``ChainEndpoint`` that falls through to the resolvable roles of
+        ``tail`` (the chain after ``role``) on other endpoints when a call fails."""
+        hops = [Hop(role, provider, self._model_of(role, provider))]
+        for nxt in tail:
+            found = self._provider_for(nxt, rlog)
+            if found is None:
+                rlog.emit("route.skip", role=nxt, reason="unresolvable")
+                continue
+            p, model, backend = found
+            if (http_only and backend.transport == "cli") or any(p is h.provider for h in hops):
+                continue
+            hops.append(Hop(nxt, p, model))
+        return ChainEndpoint(chain_name, hops) if len(hops) > 1 else provider
+
+    def _model_of(self, role: str, provider):
+        found = self._provider_for(role)
+        return found[1] if found is not None and found[0] is provider else (lambda rlog: None)
 
     def endpoint_for(self, role: str) -> Upstream:
         """The http Upstream a role runs on, for the loop's OWN internal calls (coder/reasoner/
         compactor/classifier). A served backend → the shared endpoint or its own base_url; a KEYED
         http backend → an authed Upstream (so a loop role hosted on groq/openrouter is reachable, not
         just the proxy-routed coder). A cli backend can't be a raw chat endpoint, so it falls back to
-        the shared endpoint. Unknown role → the shared endpoint."""
+        the shared endpoint. Unknown role → the shared endpoint. When the role's lane chain (see the
+        module docstring) continues on another endpoint, the result walks to it on a failed call."""
+        plain = self._plain_endpoint(role)
+        lane = _LANES.get(role)
+        chain = self._cfg.failover.get(lane) if lane else None
+        if not chain or self._cfg.roles.get(role) is None:
+            return plain
+        tail = chain[chain.index(role) + 1:] if role in chain else chain
+        return self._walkable(lane, role, plain, tail, _Silent, http_only=True)
+
+    def _plain_endpoint(self, role: str) -> Upstream:
         r = self._cfg.roles.get(role)
         if r is None:
             return self._local
@@ -122,7 +157,9 @@ class Router:
             return authed if authed is not None else self._local
         return self._served_endpoint(b)
 
-    def _resolve(self, role: str, rlog) -> tuple[object, str | None] | None:
+    def _provider_for(self, role: str, rlog=None):
+        """``(provider, lazy model, backend)`` of a role, or None when it cannot resolve (missing
+        key / binary / backend). Never probes a server: the loaded-model lookup is the lazy part."""
         r = self._cfg.roles.get(role)
         if r is None:
             return None
@@ -131,14 +168,21 @@ class Router:
             return None
         if b.transport == "cli":
             provider = self._build_cli(b)
-            return (provider, b.model) if provider is not None else None
+            return (provider, lambda rl: b.model, b) if provider is not None else None
         if b.api_key_env:  # keyed remote http
             provider = self._build_http_keyed(b, rlog)
-            return (provider, b.model) if provider is not None else None
-        # served (keyless) http — cria uses whatever model the server reports loaded. Resolve it now
-        # so the wire model + banner + density key carry the real name.
+            return (provider, lambda rl: b.model, b) if provider is not None else None
+        # served (keyless) http — cria uses whatever model the server reports loaded
         provider = self._served_endpoint(b)
-        return provider, provider.loaded_model(rlog)
+        return provider, (lambda rl, p=provider: p.loaded_model(rl)), b
+
+    def _resolve(self, role: str, rlog) -> tuple[object, str | None] | None:
+        found = self._provider_for(role, rlog)
+        if found is None:
+            return None
+        provider, model, _ = found
+        # A served role's model is resolved NOW so the wire model + banner + density key carry the real name.
+        return provider, model(rlog)
 
     def _served_endpoint(self, b: Backend) -> Upstream:
         """The http Upstream a served (keyless) backend runs on — the shared [defaults] one, or the

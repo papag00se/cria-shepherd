@@ -225,11 +225,9 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
     pending = []
     if indic.route and indic.show_route:  # the ongoing route banner (config: [indicators] route)
         pending.append(route_line(indic) + "\n")
-    if indic.assists and indic.note:  # a guard/assist note line (config: [indicators] assists)
-        pending.append(MARKER + indic.note + "\n")
-
     t_first: float | None = None
     deltas = 0
+    noted = False
     for raw in chunks:
         if raw.strip() == b"data: [DONE]":
             # metrics only when we actually emitted content (pending was flushed)
@@ -240,6 +238,10 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
             yield raw
         else:
             if _is_content_delta(raw):
+                if indic.assists and indic.note and not noted:
+                    # read NOW, not at stream start: a failover walk happens while the stream opens
+                    pending.append(MARKER + indic.note + "\n")
+                noted = True
                 for h in pending:  # flush the banner inline, ahead of the first content token
                     yield content_chunk(indic.model, h)
                 pending = []

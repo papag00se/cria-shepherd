@@ -175,7 +175,16 @@ top_p = 0.95
 top_k = 64
 repeat_penalty = 1.1
 
-# --- Failover: task_type → ordered role chain (first RESOLVABLE role wins) ---
+# --- Failover: task_type → ordered role chain ---
+# The first RESOLVABLE role serves the call. When that CALL fails (connection refused, 502-504,
+# a timeout after its retry-once, 404, 500, exhausted 429s) it walks to the next resolvable role
+# on a DIFFERENT endpoint: give that role its own backend base_url (two roles on one server
+# share a fate, so the second is dropped). A stream walks only before its first frame; each
+# target re-fits the request to its own window; every walk is a `failover.walk` event.
+# Loop roles walk the chain named for their job: coder -> coding, reasoner -> reasoning,
+# classifier -> classification, compactor -> compaction (add those keys to enable them).
 [failover]
 coding = ["coder", "reasoner"]     # a role whose backend needs a missing key/binary is skipped
 reasoning = ["reasoner"]           # a "question" turn uses this chain, then coding
+# classification = ["classifier", "reasoner"]
+# compaction = ["compactor", "reasoner"]
