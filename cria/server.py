@@ -810,6 +810,16 @@ def _note_failover(indic, rlog) -> None:
         indic.note = note
 
 
+def _terminal_upstream_error(e: BaseException) -> bool:
+    """An error the buffered call itself never retries: a typed refit/overflow outcome or a malformed-
+    generation protocol error. Asking the model again would repeat the doomed request, or (a protocol
+    error) replace the evidence with a fresh answer the buffered path would not have produced."""
+    from .upstream import ContextRefitNoChange, CallerContextRetryNoChange, UpstreamProtocolError
+    return isinstance(e, (ContextRefitNoChange, CallerContextRetryNoChange, ReadFitUnknown, ReadFitOverflow,
+                          InputOverflow, UpstreamProtocolError)) or generation.is_protocol_error(
+                              getattr(e, "response_error", None))
+
+
 def _failover_noted(chunks, indic, rlog):
     """The stream opens (and may walk the chain) before its first chunk: surface the walk on the
     indicator before the header is flushed ahead of the first content delta."""
@@ -2039,7 +2049,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         try:
             return provider.chat_watched(pbody, rlog, on_content=progressive.feed)
         except (UpstreamError, OSError) as e:
-            if progressive.opened or isinstance(e, (BrokenPipeError, ConnectionResetError)):
+            if (progressive.opened or isinstance(e, (BrokenPipeError, ConnectionResetError))
+                    or _terminal_upstream_error(e)):
                 raise
             rlog.emit("response.progressive_reask", level="warn", error=str(e))
             return provider.chat(pbody, rlog)

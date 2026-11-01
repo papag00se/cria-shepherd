@@ -231,3 +231,33 @@ def test_the_harness_hanging_up_mid_answer_is_a_client_gone_not_an_error(gated):
             break
         time.sleep(0.05)
     assert "response.client_gone" in kinds and "response.error" not in kinds, kinds[-6:]
+
+
+@pytest.mark.parametrize("make", [
+    lambda: __import__("cria.upstream", fromlist=["x"]).UpstreamProtocolError("bad", {"type": "invalid_model_output_error", "message": "bad"}),
+    lambda: __import__("cria.upstream", fromlist=["x"]).ReadFitUnknown("unmeasured"),
+    lambda: __import__("cria.upstream", fromlist=["x"]).InputOverflow("too big", 9, 5, 1, True, 0),
+], ids=["protocol error", "read fit unknown", "input overflow"])
+def test_an_error_the_buffered_call_treats_as_terminal_is_not_asked_again_before_any_text(make):
+    """A typed outcome (malformed generation, refit/overflow) reaches the caller as it does from the buffered call:
+    no second model request that would repeat the doomed one or replace the evidence with a fresh answer."""
+    from cria import responses
+    from cria.server import CriaHandler
+    asked = []
+
+    class Provider:
+        def chat_watched(self, body, rlog, on_content=None):
+            raise make()
+
+        def chat(self, body, rlog):
+            asked.append(body)
+            return b"{}"
+
+    class Rlog:
+        def emit(self, *a, **k):
+            pass
+
+    progressive = responses.ProgressiveMessage(lambda b: None, lambda t: -1, 32, 0)
+    with pytest.raises(Exception) as caught:
+        CriaHandler._chat_progressive(None, Provider(), {}, progressive, Rlog())
+    assert type(caught.value).__name__ in ("UpstreamProtocolError", "ReadFitUnknown", "InputOverflow") and asked == []
