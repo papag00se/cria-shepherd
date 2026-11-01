@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from context_wire_b_helpers import sse
-from cria import assistruntime, massage, outputpolicies, toolstages
+from cria import assistruntime, bodykeys, massage, outputpolicies, toolstages
 from cria.config import Config, RoutingConfig
 from cria.indicators import Indicator
 from cria.loop import LoopStore
@@ -34,6 +34,11 @@ def test_multipart_user_turns_merge_as_parts_and_an_incompatible_structured_turn
     assert massage.merge_for_alternation([img, note]) == [{"role": "user", "content": [*img["content"], {"type": "text", "text": "\n\n"}, {"type": "text", "text": "then this"}]}]
     out = massage.merge_for_alternation([img, {**note, "name": "other"}])
     assert [m["role"] for m in out] == ["user", "assistant", "user"] and out[1]["content"] == "" and out[2]["content"] == "then this"
+    # a private hint rides only if both turns carry the SAME object (merging would otherwise drop one turn's hint): equal-but-distinct is not fused
+    hint = ["x"]
+    hinted = {**img, bodykeys.MULTIPART_UNVERIFIED: hint}
+    assert len(massage.merge_for_alternation([hinted, {**note, bodykeys.MULTIPART_UNVERIFIED: hint}])) == 1
+    assert len(massage.merge_for_alternation([hinted, {**note, bodykeys.MULTIPART_UNVERIFIED: ["x"]}])) == 3
 
 
 def test_a_stream_survives_junk_frames_and_flushes_the_held_back_prose_at_the_end():

@@ -30,11 +30,23 @@ def test_an_unquoted_heredoc_body_joins_continuations_and_keeps_doubled_backslas
     assert si.layout(escaped).documents[0].text(escaped) == "x\\\\\nb\n"
     raw = "cat <<'E'\na\\\nb\nE\n"
     assert si.layout(raw).documents[0].text(raw) == "a\\\nb\n"
+    # the continuation also decides where the delimiter is: `x\` + `E` is the line `xE` when unquoted, but a quoted body is raw and `E` ends it
+    quoted_end = "cat <<'E'\nx\\\nE\nrm y\n"
+    assert si.layout(quoted_end).documents[0].text(quoted_end) == "x\\\n"
+    unquoted_end = "cat <<E\nx\\\nE\nE\nrm y\n"
+    assert si.layout(unquoted_end).documents[0].text(unquoted_end) == "xE\n"
 
 
 def test_ansi_c_escape_past_the_last_code_point_stays_the_literal_text_bash_prints():
     assert si.decode_ansi_c("echo $'\\U110000x' $'\\q'") == 'echo "\\\\U110000x" "\\\\q"'
     assert si.decode_ansi_c("echo $'\\x41\\u00e9\\101'") == 'echo "A\u00e9A"'
+
+
+def test_ansi_c_escapes_consume_exactly_their_digits_and_the_simple_ones_decode_to_bash_bytes():
+    """Mutation survivors: a plain character right after an octal/hex/unicode escape must survive, and \\e \\E \\" keep bash's bytes.
+    Expected strings were checked against bash's own printf."""
+    assert si.decode_ansi_c("echo $'\\101B\\x41C\\u00e9D\\e\\E\\\"\\?'") == 'echo "ABACéD\x1b\x1b\\"?"'
+    assert si.decode_ansi_c("echo $'\\a\\b\\f\\n\\r\\t\\v\\\\\\'\\?'") == 'echo "\x07\x08\x0c\n\r\t\x0b\\\\\'?"'
 
 
 @pytest.mark.parametrize("source,bodies,unterminated", [
