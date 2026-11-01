@@ -480,6 +480,26 @@ def _sniff_content_type(s: str) -> str | None:
     return None
 
 
+def clamp_reserve(reserve: int, window: int, minimum_input: int) -> int:
+    """The reply reserve the floor actually holds. ONE rule for the floor (:func:`fit`) and for every caller that asks
+    "how much history does the coder request hold" (``Loop._coder_sizing``): a reserve that is held in one and not in
+    the other makes the compaction predicate read negative room while the floor keeps history.
+
+    Two bounds, neither of them a destroyed input:
+
+    * the reply never holds back more than HALF the window. An operator ``output_reserve`` is an absolute number set
+      for the window the operator had in mind (16,384 for 49,152); on a 16K or 24K server it equals or exceeds the whole
+      window, the prompt budget is zero, and the floor drops history to make room for a reply that the prompt then
+      cannot reach (measured 2026-11 on real 16,384 / 24,576 servers: compaction due from the first turn, a
+      compaction replaced ONE message). Half is the largest reply share that still leaves the prompt as much room as
+      the reply; at and above 32,768 the live reserve is already no more than half, so those windows are untouched;
+    * it never leaves the live input (``minimum_input``, in real tokens: the system text, the request and the tool menu
+      that cannot be dropped) less than its own room. When that input alone exceeds the window it needs the ordinary
+      floor reduction, so only MIN_MSG_BUDGET is kept."""
+    input_room = max(MIN_MSG_BUDGET, minimum_input) if minimum_input < window else MIN_MSG_BUDGET
+    return max(0, min(reserve, window // 2, window - input_room))
+
+
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
         safety: float = SAFETY_FACTOR, pinned_task: str = "",
         headroom: bool = False, wire_overhead: int = 0,
@@ -517,8 +537,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     minimum_input = math.ceil((_msgs_tokens(core) + est_tokens(json.dumps(tools or []))) * safety)
     # When the live input itself exceeds the window, it needs the ordinary floor
     # reduction. Reserving zero cannot save that input and would suppress compaction.
-    input_room = max(MIN_MSG_BUDGET, minimum_input) if minimum_input < window else MIN_MSG_BUDGET
-    reserve = max(0, min(reserve, window - input_room))
+    reserve = clamp_reserve(reserve, window, minimum_input)
     rep.reserve = reserve
     # Budget in ESTIMATE space: real ≈ est × safety must fit window − reserve.
     target_est = int((window - reserve) / safety) - rep.wire_overhead

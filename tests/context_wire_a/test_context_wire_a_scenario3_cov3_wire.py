@@ -68,6 +68,28 @@ def test_a_request_that_cannot_fit_even_after_the_refit_is_refused_with_its_size
     assert ("estimated at about 1,391 tokens" if not tokenizer else f"measured {len(final) // 3:,} tokens") in notice and "Nothing was cut, summarised or dropped" in notice
 
 
+@pytest.mark.parametrize("window,requested", [(1200, 16384), (900, 300)])
+def test_the_overflow_notice_names_the_size_to_stay_under_and_that_size_is_delivered(window, requested):
+    """wave 12 CLAMP: at a 16K window the notice said 'leaves 512 tokens' (the clamped reserve of an input that already exceeded the window), advice that fits nothing.
+    The size it names is window - everything else in the request - the reply room the request ASKED for (an operator 16,384 reserve is held at half a small window), and an input of that size is delivered."""
+    reserve_body = {bodykeys.OUTPUT_RESERVE: requested}
+    paste = "y" * (window * 6)
+    history = lambda text: [{"role": "user", "content": "fix the bug"}, {"role": "assistant", "content": "reading it"}, {"role": "user", "content": text}]
+    llama = Recording(tokenizer=True)
+    with pytest.raises(InputOverflow) as err:
+        chat(llama, history(paste), window, **reserve_body)
+    e = err.value
+    reply = min(requested, window // 2)
+    assert e.requested == requested and e.reply_room() == reply and e.reserve != e.input_limit()  # the clamped reserve is NOT the advice
+    limit = e.input_limit()
+    assert limit == window - e.other - reply and 0 < limit < e.tokens
+    notice = e.notice()
+    assert f"under about {limit:,} tokens" in notice and f"about {reply:,}" in notice and "leaves 512 tokens" not in notice
+    ok = Recording(tokenizer=True)
+    chat(ok, history("x" * (limit * 3 - 60)), window, **reserve_body)
+    assert "chat" in ok.paths
+
+
 def test_a_guessed_window_never_trims_and_the_unreadable_props_are_retried_on_a_budget():
     """/props unreadable -> the 8,192 fallback is a GUESS: a 12,000-token conversation ships whole (the server settles it), the skip is logged, and the probe stops after 3 misses
     except every 50th call; when the server finally answers, the real window (and the floor) applies."""

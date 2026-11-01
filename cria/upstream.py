@@ -287,17 +287,35 @@ class InputOverflow(UpstreamError):
     """The request cannot fit the window and holds nothing the floor may drop. ``tokens`` is the whole request's size,
     ``measured`` says whether the server's own tokenizer produced it (else it is the floor's estimate)."""
 
-    def __init__(self, message, tokens, window, reserve, measured, frame=None):
+    def __init__(self, message, tokens, window, reserve, measured, other, frame=None, requested=None):
         super().__init__(message)
         self.tokens, self.window, self.reserve, self.measured = int(tokens), int(window), int(reserve), measured
+        # The reply reserve the request ASKED for (``FloorReport.reserve_requested``): ``reserve`` is what the floor was
+        # left holding, which for an input that already exceeds the window is only its last MIN_MSG_BUDGET tokens.
+        self.requested = int(reserve if requested is None else requested)
+        # Tokens everything EXCEPT the final input takes in this request (measured when the server can, else estimated):
+        # what the sender has to leave room for, so the notice can name the size the input must stay under.
+        self.other = int(other)
         # (tool-menu tokens, remaining message tokens) when the turn answers a TOOL RESULT: every lever has run
         # (older turns and the live tail dropped, results withheld), so what is left is the irreducible frame.
         self.frame = frame
 
+    def reply_room(self) -> int:
+        """The reply room the request asked for, as the floor holds it for an input that fits (the same bound
+        :func:`contextfloor.clamp_reserve` applies; the live input's own size is what is being measured here)."""
+        return contextfloor.clamp_reserve(self.requested, self.window, 0)
+
+    def input_limit(self) -> int:
+        """The most tokens the final input could have been and still fit: the window less everything else in the request and the reply room it asked for.
+        NOT ``window - reserve``: when the input alone exceeds the window the floor clamps the reserve to the window's last
+        MIN_MSG_BUDGET tokens, and "leaves 512 tokens" told a sender with a 23K-token paste and a 16K window nothing about how small is small enough."""
+        return max(self.window - self.other - self.reply_room(), 0)
+
     def notice(self) -> str:
         """What the sender is told, in place of a bare error: the size, the room, that nothing was dropped."""
         size = (f"measured {self.tokens:,} tokens" if self.measured else f"is estimated at about {self.tokens:,} tokens")
-        fields = dict(size=size, window=f"{self.window:,}", room=f"{max(self.window - self.reserve, 0):,}")
+        fields = dict(size=size, window=f"{self.window:,}", room=f"{max(self.window - self.reply_room(), 0):,}",
+                      other=f"{self.other:,}", reply=f"{self.reply_room():,}", limit=f"{self.input_limit():,}")
         if self.frame is not None:
             return prompts.render("input_overflow_frame", tools=f"{self.frame[0]:,}", rest=f"{self.frame[1]:,}", **fields)
         return prompts.render("input_overflow", **fields)
@@ -1163,7 +1181,8 @@ class Upstream:
                         raise ReadFitOverflow(MeasuredReadOverflow(window, real, rep.reserve, read_bindings, data))
                     if data == _previous_fit:
                         raise InputOverflow("Measured input cannot fit the context window without losing protected input",
-                                            real, window, rep.reserve, True, frame=_frame_of(out, rep))
+                                            real, window, rep.reserve, True, self._other_tokens(out, safety, rlog), frame=_frame_of(out, rep),
+                                            requested=rep.reserve_requested)
                     tighter = max(safety, real / max(sent_estimate, 1))
                     return self._prep(body, stream, rlog, safety_override=tighter,
                                       _previous_fit=data, _wire_overhead=_wire_overhead)
@@ -1175,7 +1194,8 @@ class Upstream:
             # POST or capture a request the one floor still knows cannot fit.
             if rep.over_budget or data == _previous_fit:
                 raise InputOverflow("Input cannot fit the context window without losing protected input",
-                                    sent_estimate * safety, window, rep.reserve, False, frame=_frame_of(out, rep))
+                                    sent_estimate * safety, window, rep.reserve, False, self._other_tokens(out, safety, rlog), frame=_frame_of(out, rep),
+                                            requested=rep.reserve_requested)
             # Structural wire growth is measured in the same estimate space,
             # separately from model density and the role's generation reserve.
             overhead = max(_wire_overhead, sent_estimate - fitted_estimate)
@@ -1412,6 +1432,16 @@ class Upstream:
                         pass
                 return capacitypolicy.Rejection(e, isinstance(e, urllib.error.HTTPError),
                                                 real, window, not failed_custody)
+
+    def _other_tokens(self, out: dict, safety: float, rlog) -> int:
+        """Tokens everything but the FINAL message takes in ``out``: measured through the server's own template and tokenizer
+        when it can be, else the floor's estimate at ``safety``. What an overflow notice must say the final input has to leave room for."""
+        rest = {**out, "messages": (out.get("messages") or [])[:-1]}
+        rendered = self._render_prompt(rest) if self._api_key is None else None
+        real = self._tokenize_prompt(rendered, rlog) if rendered is not None else None
+        if real is not None:
+            return real
+        return int(contextfloor.est_total(rest["messages"], rest.get("tools")) * safety) + 1
 
     def _render_prompt(self, body: dict) -> str | None:
         """Ask the server to render the chat body into the flat prompt string the model actually

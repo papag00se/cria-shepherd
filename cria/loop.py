@@ -33,6 +33,7 @@ import difflib
 import hashlib
 import inspect
 import json
+import math
 import os
 import posixpath
 import fnmatch
@@ -5460,7 +5461,7 @@ class Loop:
         Sized as the floor sizes the coder request: the coder's OWN learned density (not another
         request kind's), its reply reserve, and ``frame_tokens`` for the parts the caller keeps
         outside ``msgs`` (system frame, root task, tool list). Unknown window abstains (False)."""
-        sizing = self._coder_sizing(rlog)
+        sizing = self._coder_sizing(rlog, frame_tokens)
         if sizing is None:
             return False
         window, reserve, density = sizing
@@ -5476,7 +5477,7 @@ class Loop:
         by the coder's 1.2 let the floor drop 35 turns from the first compaction call at 32K), the writer's reply cap,
         the one-word verdict reserve, the prompt frame and the authoritative facts every lens also reads.
         Each None when its window is not measured."""
-        coder = self._coder_sizing(rlog)
+        coder = self._coder_sizing(rlog, frame_tokens)
         window = windowcaps.window_of(chat_fn, rlog)
         compaction, fixed = None, 0
         if window:
@@ -5487,9 +5488,14 @@ class Loop:
         return selfcompact.view_room(coder=coder, frame_tokens=frame_tokens,
                                      compaction=compaction, compaction_fixed=fixed)
 
-    def _coder_sizing(self, rlog) -> tuple[int, int, float] | None:
+    def _coder_sizing(self, rlog, frame_tokens: int = 0) -> tuple[int, int, float] | None:
         """The coder request's real window, reply reserve and learned density (real tokens per chars/4 estimated
-        token) — the floor's own currency. None when the window is unknown or only guessed."""
+        token) — the floor's own currency. None when the window is unknown or only guessed.
+
+        The reserve is the one the floor will HOLD (:func:`contextfloor.clamp_reserve`), not the role's asked-for
+        number: an operator ``output_reserve`` at or above the window (16,384 on a 16K server) was read here as
+        negative room, the compaction predicate "due" from the first turn, while the floor held it at half the window
+        and no more than leaves the live frame (``frame_tokens``, estimated) its place."""
         owner = getattr(self._ctx.coder_chat, "upstream", None)
         window = windowcaps.window_of(self._ctx.coder_chat, rlog)
         if not window or owner is None:
@@ -5499,7 +5505,6 @@ class Loop:
             "max_tokens": getattr(self._ctx.coder_role, "max_tokens", None),
         }, window)
         loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
-        return window, reserve, tokenratio.observed(loaded or "")
 
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
@@ -5510,6 +5515,8 @@ class Loop:
         msgs = framed.get("messages") or []
         out = self._self_compact(msgs, sess, None, rlog, pinned_task=root_task)
         return framed if out is msgs else {**framed, "messages": out}
+        density = tokenratio.observed(loaded or "")
+        return window, contextfloor.clamp_reserve(reserve, window, math.ceil(frame_tokens * max(density, 1.0))), density
 
 # ------------------------------------------------------------------ module functions
 

@@ -20,7 +20,10 @@ window of the model that will actually ANSWER:
 caps were tuned on, that is EXACTLY the old constant (``tests/test_window_caps.py`` proves it for the
 whole table). An UNKNOWN window — never discovered, or only a guess — yields the reference value, i.e.
 the old behaviour: unknown is not small (docs/principles.md). An operator override (a role's
-``max_tokens`` / ``output_reserve``) is an ``int`` and is never rescaled.
+``max_tokens`` / ``output_reserve``) is an ``int`` and is never rescaled by the table; what the floor HOLDS of it is
+bounded by :func:`contextfloor.clamp_reserve` — never more than half the window, never more than leaves the live input its
+room — and the compaction predicate reads that same function, so a 16,384 operator reserve is the whole of a 16K window
+only on paper.
 
 What does NOT belong here, and why, is written down next to the lint that enforces it
 (``tests/test_no_new_unmarked_bounds.py``): harness/OS transport limits, safety/time/resource bounds,
