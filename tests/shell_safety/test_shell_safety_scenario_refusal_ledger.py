@@ -219,3 +219,48 @@ def test_reading_the_same_transcript_again_never_retires_a_refusal_newer_than_an
         assert ledger.active_names() == {"y==2"}
     ledger.observe(history + [call("pip install -r req.txt", "c"), result("Successfully installed y-2.0", "c")])
     assert ledger.active_names() == set()            # a success AFTER the refusal still retires it
+
+
+def _growing_transcript():
+    """An append-only history as the loop re-sends it: refusals, a rerun that retires one, an anonymous result, a repeat."""
+    refusal = "ERROR: No matching distribution found for y==2"
+    anon = {"role": "tool", "content": "No matching version found for left-pad@99.0.0"}
+    steps = [
+        [call("pip install -r req.txt", "a"), result("Successfully installed foo-1.0", "a")],
+        [call("pip install -r req.txt", "b"), result(refusal, "b")],
+        [anon, {"role": "assistant", "content": "thinking"}],
+        [call("npm i left-pad@99.0.0", "c"), result("No matching version found for left-pad@99.0.0", "c")],
+        [call("pip install -r req.txt", "d"), result("Successfully installed y-2.0", "d")],
+        [call("pip install -r req.txt", "e"), result(refusal, "e")],
+    ]
+    history = []
+    for step in steps:
+        history = history + step
+        yield list(history)
+
+
+def test_a_memoised_re_read_gives_exactly_the_ledger_a_full_re_parse_gives_and_scans_nothing_again(monkeypatch):
+    """Every request re-reads the whole history (about 44 ms of regex per 45 tool results, ~90% of the re-read); the parse of a
+    result is a pure function of (id, command, text), so only a NEW result may be scanned. The ledger must stay byte-identical."""
+    scans = []
+    real = rl._events
+    monkeypatch.setattr(rl, "_events", lambda *a, **k: scans.append(a[0]) or real(*a, **k))
+    memoised, fresh = rl.RefusalLedger(), rl.RefusalLedger()
+    for history in _growing_transcript():
+        fresh._parsed = {}                                  # force the full parse the old code did every time
+        memoised.observe(history)
+        fresh.observe(history)
+        assert json.dumps(memoised.to_dict(), sort_keys=True) == json.dumps(fresh.to_dict(), sort_keys=True)
+        assert memoised.active_names() == fresh.active_names()
+    scans.clear()
+    before = json.dumps(memoised.to_dict(), sort_keys=True)
+    memoised.observe(history)                                # the same request again: nothing is scanned
+    assert scans == [] and json.dumps(memoised.to_dict(), sort_keys=True) == before
+    assert memoised.active_names() == {"y==2", "left-pad@99.0.0"}
+    # a result whose text changed (a rewritten stub under the same id) is parsed afresh; a dropped prefix is forgotten
+    edited = [m if m.get("tool_call_id") != "c" else result("rewritten, no refusal here", "c") for m in history]
+    memoised.observe(edited)
+    assert scans and all("rewritten" in t for t in scans)
+    assert len(memoised._parsed) == sum(1 for m in edited if m.get("role") == "tool")
+    memoised.observe(history[-2:])
+    assert len(memoised._parsed) == 1

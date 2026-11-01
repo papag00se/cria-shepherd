@@ -488,6 +488,24 @@ def _supersedes(success: RefusalEvent, refusal: RefusalEvent) -> bool:
     return bool(success.version and success.version == refusal.version)
 
 
+@dataclass(frozen=True)
+class _Parsed:
+    """Everything ``observe`` derives from ONE tool result and its command, without any ledger state."""
+    events: tuple[RefusalEvent, ...]    # refusals then successes, each in output order
+    ecosystem: str                      # the command's ecosystem, only when its own success marker is in the text
+    marker_found: bool
+    marker_text: str
+
+
+def _parse_result(text: str, source_id: str, command: str) -> _Parsed:
+    positioned = (_events(text, _REFUSALS, REFUSED, source_id, command)
+                  + _events(text, _SUCCESSES, SUCCEEDED, source_id, command))
+    events = tuple(event for _position, event in sorted(positioned, key=lambda item: item[0]))
+    ecosystem = _command_ecosystem(command)
+    marker = _COMMAND_SUCCESS[ecosystem].search(text) if ecosystem in _COMMAND_SUCCESS else None
+    return _Parsed(events, ecosystem if marker else "", bool(marker), marker.group(0) if marker else "")
+
+
 class RefusalLedger:
     """Ordered dependency outcomes for one session, including superseded provenance."""
 
@@ -495,6 +513,9 @@ class RefusalLedger:
         self.events: list[RefusalEvent] = []
         self._seen: set[str] = set()
         self._next_sequence = 1
+        #: (source_id, command, text) -> the pure parse of that one tool result. A request re-reads the whole
+        #: history, and the regex scan was ~90% of the re-read; the result never changes (events are frozen).
+        self._parsed: dict[tuple[str, str, str], "_Parsed"] = {}
         for event in events:
             self._append(event)
 
@@ -542,6 +563,7 @@ class RefusalLedger:
         """
         commands = _commands(messages)
         position = {_call_id(m): i for i, m in enumerate(messages or []) if _tool_result(m) and _call_id(m)}
+        kept: dict[tuple[str, str, str], _Parsed] = {}    # only what this transcript still holds: bounded by the history
         for index, message in enumerate(messages or []):
             if not _tool_result(message):
                 continue
@@ -550,30 +572,29 @@ class RefusalLedger:
                 continue
             source_id = _call_id(message)
             command = commands.get(source_id, "")
-            positioned = (_events(text, _REFUSALS, REFUSED, source_id, command)
-                          + _events(text, _SUCCESSES, SUCCEEDED, source_id, command))
-            for _position, event in sorted(positioned, key=lambda item: item[0]):
+            key = (source_id, command, text)
+            parsed = kept[key] = self._parsed.get(key) or _parse_result(text, source_id, command)
+            for event in parsed.events:
                 self._append(event)
 
             # A later successful rerun of the exact command is stronger than parsing an ecosystem's
             # display format: it establishes that every dependency refusal from that command no
             # longer holds. This applies only when the manager's own unambiguous success marker is
             # present and the call id lets us pair result to command.
-            ecosystem = _command_ecosystem(command)
-            success_marker = _COMMAND_SUCCESS.get(ecosystem)
-            if not (ecosystem and success_marker and success_marker.search(text)):
+            if not parsed.marker_found:
                 continue
+            ecosystem = parsed.ecosystem
             for refusal in self.active():
                 if refusal.ecosystem != ecosystem or not _same_command(refusal.command, command):
                     continue
                 if position.get(refusal.source_id, index) > index:
                     continue    # this transcript shows the refusal AFTER this run: a re-read of an older success must not retire it
-                marker = success_marker.search(text)
                 succeeded = replace(refusal, outcome=SUCCEEDED,
-                                    evidence=marker.group(0) if marker else text,
+                                    evidence=parsed.marker_text,
                                     source_id=source_id, command=command,
                                     sequence=0, observation_id="")
                 self._append(succeeded)
+        self._parsed = kept
 
     def merged(self, newer: "RefusalLedger | None") -> "RefusalLedger":
         """A copy with ``newer`` observations appended after this session history."""
