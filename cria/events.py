@@ -24,12 +24,15 @@ Convention
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .privatepaths import mkdir_private
 
 _LEVELS = {"debug": 10, "info": 20, "warn": 30, "error": 40}
 # THE VOCABULARY IS CLOSED, AND AN UNKNOWN NAME MUST NOT HIDE A RECORD. 22 fire sites spelled the
@@ -61,7 +64,7 @@ class EventLog:
         self.path: Path | None = None
         if jsonl and dir is not None:
             dpath = Path(dir).expanduser()
-            dpath.mkdir(parents=True, exist_ok=True)
+            mkdir_private(dpath)
             self._dir = dpath
             # Same clock emit() rotates on (time.time) — two clock sources for one mechanism let
             # construction and rotation disagree about what day it is.
@@ -78,7 +81,7 @@ class EventLog:
         self._day = day
         self.path = self._dir / f"cria-{day}.jsonl"
         # line-buffered so a crash still leaves a complete tail on disk.
-        self._fh = open(self.path, "a", buffering=1, encoding="utf-8")
+        self._fh = open(self.path, "a", buffering=1, encoding="utf-8", opener=lambda p, f: os.open(p, f, 0o600))
 
     def emit(
         self,

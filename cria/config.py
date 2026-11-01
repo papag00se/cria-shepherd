@@ -702,6 +702,12 @@ class Config:
     env_file: str | None = None
     source: str | None = None  # the file this was loaded from (None = all defaults)
 
+    def secret_env_vars(self) -> set[str]:
+        """The names of the environment variables holding cria's own credentials: the search key plus every
+        configured provider key. The ONE list behind the env-file allowlist and every secret redaction."""
+        from . import brave
+        return {brave.API_KEY_ENV} | {b.api_key_env for b in self.routing.backends.values() if b.api_key_env}
+
     def __post_init__(self):
         from .assistruntime import AssistRuntime
         AssistRuntime.select(level=self.routing.engagement_level, disabled=self.assists.disabled,

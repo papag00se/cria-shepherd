@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -25,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .content_reduce import est_tokens
+from .privatepaths import mkdir_private, write_private
 
 _lock = threading.Lock()
 _seq: dict[str, int] = {}
@@ -123,21 +125,34 @@ def _stats(body: dict) -> dict:
     }
 
 
-def capture_inbound(raw: bytes, rlog, *, calls_dir, api: str) -> str | None:
-    """Retain an exact valid harness request before an API adapter transforms it.
+def redact_bytes(raw: bytes, secrets) -> bytes:
+    """``raw`` with every secret value (plain and JSON-string-escaped spelling) replaced by ``***`` — the same
+    marker the model-facing redaction uses. Values under 8 characters are not credentials and are ignored."""
+    for s in secrets or ():
+        if isinstance(s, str) and len(s) >= 8:
+            for spelling in {s, json.dumps(s)[1:-1], json.dumps(s, ensure_ascii=False)[1:-1]}:
+                raw = raw.replace(spelling.encode("utf-8"), b"***")
+    return raw
+
+
+def capture_inbound(raw: bytes, rlog, *, calls_dir, api: str, secrets=()) -> str | None:
+    """Retain the harness request before an API adapter transforms it: its exact bytes, except that cria's
+    own credentials (``secrets``) are replaced by ``***``. The harness echoes a lowered ``web_search`` curl
+    — Brave key in its header — back into the next request, and 662 retained receipts held the live key.
 
     Inbound receipts deliberately have no ``NNNN`` identity: they correlate by the
     bound request turn and must never advance the model-call sequence.
     """
     try:
+        raw = redact_bytes(raw, secrets)
         session = getattr(rlog, "session", None)
         turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
         d = Path(calls_dir).expanduser() / session_dirname(session)
-        d.mkdir(parents=True, exist_ok=True)
+        mkdir_private(d)
         label = re.sub(r"[^A-Za-z0-9._-]+", "-", str(turn or "noturn"))
         api_label = re.sub(r"[^A-Za-z0-9._-]+", "-", api)
         path = d / f"inbound-{label}-{api_label}.json"
-        path.write_bytes(raw)
+        write_private(path, raw)
         rlog.emit("inbound.dump", api=api, path=str(path), bytes=len(raw),
                   sha256=hashlib.sha256(raw).hexdigest())
         return str(path)
@@ -160,7 +175,7 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
         turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
         sess = session_dirname(session)  # <timestamp>-<session>, sortable; stable per session
         d = Path(calls_dir).expanduser() / sess
-        d.mkdir(parents=True, exist_ok=True)
+        mkdir_private(d)
         seq = _next_seq(sess, d)  # seeded from what is already there, so a restart cannot overwrite
         now = time.time()
         stats = _stats(body)
@@ -184,12 +199,12 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
         if rendered is not None:
             # the flat string the model ACTUALLY tokenizes (chat template applied) — the ground truth
             prompt_name = f"{seq:04d}-{label}.prompt.txt"
-            (d / prompt_name).write_text(rendered, encoding="utf-8")
+            write_private(d / prompt_name, rendered)
             record["rendered_prompt_file"] = prompt_name
             stats["rendered_chars"] = len(rendered)
             stats["rendered_tokens_est"] = est_tokens(rendered)
         path = d / f"{seq:04d}-{label}.json"
-        path.write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        write_private(path, json.dumps(record, ensure_ascii=False, indent=2, default=str))
         rlog.emit("upstream.dump", path=str(path), seq=seq, phase=phase,
                   rendered=rendered is not None, **stats)
         return str(path)
@@ -212,7 +227,7 @@ def capture_native(request: dict, response: dict, rlog, *, calls_dir, namespace:
         turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
         sess = session_dirname(session)
         d = Path(calls_dir).expanduser() / sess / _safe(namespace)
-        d.mkdir(parents=True, exist_ok=True)
+        mkdir_private(d)
         key = f"{sess}/{_safe(namespace)}"
         label = re.sub(r"[^A-Za-z0-9._-]+", "-", phase)
         record = {"iso": datetime.fromtimestamp(time.time(), timezone.utc).isoformat(timespec="milliseconds"),
@@ -222,7 +237,7 @@ def capture_native(request: dict, response: dict, rlog, *, calls_dir, namespace:
             seq = _next_seq(key, d)
             path = d / f"{seq:04d}-{label}.json"
             try:  # exclusive: another process sharing the folder can never be overwritten
-                with open(path, "x", encoding="utf-8") as fh:
+                with open(path, "x", encoding="utf-8", opener=lambda p, f: os.open(p, f, 0o600)) as fh:
                     fh.write(json.dumps({"seq": seq, **record}, ensure_ascii=False, indent=2, default=str))
                 return str(path)
             except FileExistsError:
@@ -248,7 +263,7 @@ def capture_response(request_path: str | None, response, rlog=None) -> str | Non
                 obj = json.loads(response)
             except (json.JSONDecodeError, ValueError):
                 obj = {"raw": bytes(response).decode("utf-8", "replace")}
-        rp.write_text(json.dumps(obj, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        write_private(rp, json.dumps(obj, ensure_ascii=False, indent=2, default=str))
         if rlog is not None:
             rlog.emit("upstream.response_dump", path=str(rp))
         return str(rp)

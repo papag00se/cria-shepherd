@@ -40,7 +40,7 @@ from . import content_reduce
 from .content_reduce import est_tokens
 from . import config, assistruntime
 from .config import Config
-from . import brave, webfetch
+from . import brave, envfile, webfetch
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
@@ -1000,6 +1000,11 @@ class CriaServer(ThreadingHTTPServer):
             )
         super().__init__((cfg.server.host, cfg.server.port), CriaHandler)
 
+    def secret_values(self) -> list[str]:
+        """cria's own credentials as currently set in the environment (read per call: the env file is loaded
+        after the config), for redaction from everything retained or shown to the model."""
+        return [v for name in sorted(self.cfg.secret_env_vars()) if (v := envfile.env_secret(name))]
+
     def session_started(self, sess_key: str) -> float:
         """Unix-epoch start time for a session — the ticker's TOTAL running clock. A Codex session
         id is a UUIDv7, so its BIRTH TIME rides in the key itself: durable across cria restarts with
@@ -1626,7 +1631,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                               workspace_root=getattr(self, "_workspace_root", None),
                               sess_key=sess_key, tools_present=_c40_active,
                               window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog)),
-            [self._brave_key])
+            self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness
         # never announced a cwd still gets a workspace", in its own docstring — and `survey_root`
@@ -2192,7 +2197,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         rlog = log.bind(session=sess, turn=turn)
         if self.server.cfg.logging.capture_calls:
             callcapture.capture_inbound(raw, rlog, calls_dir=self.server.cfg.logging.capture_dir_path,
-                                        api="responses")
+                                        api="responses", secrets=self.server.secret_values())
         try:
             body = responses.to_chat_body(rbody)
         except ValueError as e:

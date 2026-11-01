@@ -147,3 +147,68 @@ def test_a_slow_model_turn_is_not_cut_by_the_head_deadline(w, monkeypatch):
     threading.Timer(1.0, w.fake.release.set).start()
     head, raw = post(w, json.dumps(body).encode(), path, headers=b"")
     assert head.startswith(b"HTTP/1.1 200"), (head, raw)
+
+
+# ---------------------------------------------------------------- secrets and file modes
+
+BRAVE = "BSAtest-brave-key-0123456789abcdef"
+
+
+def _tree_files(root):
+    return [p for p in root.rglob("*") if p.is_file()]
+
+
+def test_the_search_key_a_harness_echoes_back_is_never_written_to_a_capture_or_log_or_the_model(tmp_path, monkeypatch):
+    """The lowered web_search curl carries the Brave key; the harness echoes that command into its next request. The raw inbound
+    receipt, every outbound capture, the event log and the body the model receives must all be free of the key."""
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", BRAVE)
+    w = Wire(tmp_path, capture=True)
+    try:
+        echoed = f"curl -sL -H 'X-Subscription-Token: {BRAVE}' 'https://api.search.brave.com/res/v1/web/search?q=x'"
+        body = {"model": "m", "input": [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "search for x then say done"}]},
+            {"type": "function_call", "call_id": "c1", "name": "exec_command", "arguments": json.dumps({"cmd": echoed})},
+            {"type": "function_call_output", "call_id": "c1", "output": f"$ {echoed}\n{{\"web\": []}}"}]}
+        status, _ = w.post("/v1/responses", body)
+    finally:
+        w.close()
+    assert status == 200
+    inbound = [p for p in _tree_files(tmp_path) if p.name.startswith("inbound-")]
+    assert inbound, "the inbound receipt must still be written"
+    assert "X-Subscription-Token: ***" in inbound[0].read_text()
+    assert [p.name for p in _tree_files(tmp_path) if BRAVE.encode() in p.read_bytes()] == []
+    assert BRAVE not in json.dumps([b for _h, b in w.fake.chats])
+
+
+def test_a_keyed_backend_value_is_redacted_from_inbound_receipts_too(tmp_path, monkeypatch):
+    from cria import callcapture
+    class R:
+        session, _turn = "s", "t"
+        def emit(self, *a, **k): pass
+    secret = 'sk-live-"quoted"-\u00e9-0123456789'
+    raw = json.dumps({"x": secret, "y": "plain " + secret}).encode()
+    path = callcapture.capture_inbound(raw, R(), calls_dir=tmp_path, api="chat", secrets=[secret, "short"])
+    text = open(path, "rb").read()
+    assert secret.encode() not in text and json.dumps(secret)[1:-1].encode() not in text and text.count(b"***") == 2
+
+
+def test_capture_and_log_artifacts_are_owner_only_whatever_the_umask(tmp_path, monkeypatch):
+    """Captured conversations and logs hold whole prompts and tool output: files 0600, every directory cria creates 0700."""
+    import os
+    import stat
+    old = os.umask(0)
+    try:
+        w = Wire(tmp_path / "t", capture=True)
+        try:
+            w.post("/v1/chat/completions", {"messages": [CHAT_USER]})
+            w.post("/v1/responses", {"input": "hi"})
+        finally:
+            w.close()
+    finally:
+        os.umask(old)
+    root = tmp_path / "t"
+    files = _tree_files(root)
+    assert {p.suffix for p in files} >= {".json", ".jsonl", ".txt"}
+    assert {oct(stat.S_IMODE(p.stat().st_mode)) for p in files} == {"0o600"}, [p.name for p in files if stat.S_IMODE(p.stat().st_mode) != 0o600]
+    made = [p for p in root.rglob("*") if p.is_dir()]
+    assert made and {oct(stat.S_IMODE(p.stat().st_mode)) for p in made} == {"0o700"}
