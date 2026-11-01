@@ -94,6 +94,12 @@ SUPERSEDED_WRITES = "cria_superseded_writes"
 #: The wire consumes and strips this packet, never serializing its executors.
 FOCUS_PRODUCERS = "cria_focus_producers"
 
+#: What the body looked like BEFORE the first `Role.apply` wrote its sampling/reasoning onto it (a `config.RoleOrigin`).
+#: A walked failover standby is a different role with its own settings: `chainendpoint` restores the body to this and applies
+#: THAT role, so it never receives the originating role's temperature / top_k / thinking dialect. Opt-in: only `Role.apply`
+#: writes it, and the wire strips it, so a body that never walks is byte-identical on the wire.
+ROLE_ORIGIN = "cria_role_origin"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -143,5 +149,5 @@ MULTIPART_UNVERIFIED = "cria_multipart_unverified"
 # It never carries authority and is not an active internal contract in ALL.
 LEGACY_MESSAGE_KEYS = ("_multipart_unverified",)
 
-ALL = (MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
+ALL = (ROLE_ORIGIN, MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
        CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT)

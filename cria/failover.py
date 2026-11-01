@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
-from . import generation, ratelimit, transientpolicy
+from . import generation, transientpolicy
 from .transientpolicy import (Failure, Behavior, RetrySame, NextInChain, HardFail, ChainExhausted)
 
 
@@ -47,10 +47,6 @@ def classify_failure(status_code: Optional[int], error_message: str,
             return Failure.TIMEOUT
         return Failure.MODEL_UNAVAILABLE  # connection refused / unreachable / unknown → unavailable
     return Failure.MODEL_UNAVAILABLE
-
-
-# How long the server said to wait before asking again (headers in every dialect, plus the body): one reader, in ratelimit.
-retry_after_ms = ratelimit.delay_ms
 
 
 def decide_action(failure: Failure, current_role: str, chain_name: str, chain: Sequence[str],

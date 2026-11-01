@@ -14,8 +14,10 @@ turns "one request" into an ordered list of attempts, one per hop:
 * The FIRST hop gets the caller's body untouched. Each later hop gets a copy whose ``model`` is that
   hop's own (never the previous server's name: ``base_url`` says where, not which) and is sent
   through THAT hop's ``Upstream`` — so the final-wire fit, the learned density and the window cap are
-  the target's, never a body fitted for another window. Sampling stays the originating role's (the
-  request is the same request; its wire dialect is reconciled per endpoint at the wire).
+  the target's, never a body fitted for another window. Sampling, reasoning and instruction placement are
+  the TARGET role's: ``Role.apply`` records the body as it was before it touched it (``bodykeys.ROLE_ORIGIN``,
+  stripped at the wire) and a walked hop restores that and applies its own role. A body no role touched
+  (pure proxy) walks as it is. A call that carries a coder route/observer binding (image-bound) is never walked.
 * A stream is walked only BEFORE its first frame: the attempt opens the stream and pulls the first
   frame, so a refused connection / 5xx / dead silence is retried or walked, and once a frame exists
   the generator belongs to the caller and a later failure is the ordinary truthful failure.
@@ -62,6 +64,7 @@ class Hop:
     role: str
     provider: object
     model: Callable[[object], Optional[str]]  # lazy: a served hop's loaded model is probed only when walked to
+    config: Optional[config.Role] = None  # the hop's OWN role: what a walked-to hop applies instead of the first role's settings
 
 
 class ChainEndpoint:
@@ -94,6 +97,12 @@ class ChainEndpoint:
             return body
         hop = self.hops[i]
         out = {**body, "messages": [dict(m) if isinstance(m, dict) else m for m in body.get("messages") or []]}
+        origin = body.get(bodykeys.ROLE_ORIGIN)
+        if isinstance(origin, config.RoleOrigin) and hop.config is not None:
+            # The body carries the ORIGINATING role's temperature / top_k / thinking dialect. This hop is a different
+            # role on a different endpoint: put the body back as it was before any role touched it and apply THIS one.
+            origin.restore(out)
+            hop.config.apply(out, internal=origin.internal, rlog=rlog)
         model = hop.model(rlog)
         if model:
             out["model"] = model

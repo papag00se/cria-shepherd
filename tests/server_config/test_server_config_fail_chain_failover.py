@@ -356,3 +356,138 @@ def test_a_rate_limit_wait_longer_than_cria_will_hold_a_turn_walks_instead_of_re
     assert status == 200 and "answer from model-b" in text_of(mode, raw)
     assert len(first.chats) == 1 and not [w for w in waits if w >= 1.0]
     assert [w["failure"] for w in r.events("failover.walk")] == ["rate_limit"]
+
+
+STANDBY_ROLES = {"coder": Role("coder", "a", temperature=0.11, top_k=7, repeat_penalty=1.1, reasoning="off", output_reserve=2048),
+                 "reasoner": Role("reasoner", "b", temperature=0.99, reasoning="on")}
+
+
+def _settings(chat):
+    return {k: chat.get(k) for k in ("temperature", "top_k", "repeat_penalty", "chat_template_kwargs")}
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_walked_standby_receives_its_own_roles_settings_not_the_coders(rig, mode):
+    """The coder role (temperature 0.11, top_k 7, reasoning off, no-think directive) is dead; the standby role is configured
+    temperature 0.99 / reasoning on. The standby's server must receive ITS role's settings and none of the coder's, and cria's
+    own hints never reach it. (Before: it received the coder's knobs verbatim.)"""
+    standby = Model("model-b")
+    r = rig(dead_url(), standby, extra_roles=STANDBY_ROLES)
+    status, raw = r.post(mode)
+    assert status == 200 and "answer from model-b" in text_of(mode, raw)
+    sent = standby.chats[-1]
+    assert _settings(sent) == {"temperature": 0.99, "top_k": None, "repeat_penalty": None,
+                               "chat_template_kwargs": {"enable_thinking": True}}
+    assert "Do not think out loud" not in json.dumps(sent["messages"]) and not [k for k in sent if k.startswith("cria_")]
+
+
+def test_a_healthy_first_endpoint_still_gets_its_own_roles_settings_and_directive(rig):
+    first, standby = Model("model-a"), Model("model-b")
+    r = rig(first, standby, extra_roles=STANDBY_ROLES)
+    status, _ = r.post("chat-buffered")
+    assert status == 200 and standby.chats == []
+    sent = first.chats[-1]
+    assert _settings(sent) == {"temperature": 0.11, "top_k": 7, "repeat_penalty": 1.1,
+                               "chat_template_kwargs": {"enable_thinking": False}}
+    assert "Do not think out loud" in json.dumps(sent["messages"]) and not [k for k in sent if k.startswith("cria_")]
+
+
+def test_the_loops_own_role_call_walks_with_the_standbys_settings_and_keeps_its_own_token_floor(rig):
+    """The loop applies the role (internal=True) before the chain call. The standby gets its own role applied to the
+    pre-role body: the call's measured max_tokens floor stands, the origin's temperature/top_k do not."""
+    standby = Model("model-b")
+    r = rig(dead_url(), standby, extra_roles={"coder": Role("coder", "a", temperature=0.11, top_k=7, max_tokens=64),
+                                              "reasoner": Role("reasoner", "b", temperature=0.99, max_tokens=32)})
+    log = r.cria.log.bind(session="s", turn="t")
+    body = {"model": "x", "max_tokens": 900, "messages": [{"role": "user", "content": "hello"}]}
+    r.cria.cfg.routing.roles["coder"].apply(body, internal=True, rlog=log)
+    assert body["max_tokens"] == 900 and body["temperature"] == 0.11
+    r.cria._endpoint_for("coder").chat(body, log)
+    sent = standby.chats[-1]
+    assert (sent["temperature"], sent["max_tokens"], "top_k" in sent) == (0.99, 900, False)
+
+
+ROLE_VARIANTS = [Role("r", "b", think_protocol=p, reasoning=rs, temperature=0.5, top_p=0.9, top_k=5, repeat_penalty=1.2,
+                      presence_penalty=0.1, min_p=0.05, max_tokens=300, output_reserve=111, collapse_system_prompt=c,
+                      merge_consecutive_turns=m)
+                 for p in ("chat_template", "openai", "openrouter", "system_directive", "none")
+                 for rs in ("on", "off", None) for c in (False, True) for m in (False, True)]
+
+
+@pytest.mark.parametrize("internal", [False, True])
+def test_the_recorded_origin_puts_back_exactly_what_every_role_variant_wrote(internal):
+    """Whatever a role writes — every sampling dialect, both reasoning conventions, the reasoning sentence, the no-think
+    directive, a folded system prompt, cria's two hints — the body's own recorded origin restores the pre-role body."""
+    from cria import bodykeys
+    from cria.config import ROLE_WRITTEN_KEYS
+    for role in ROLE_VARIANTS:
+        original = {"model": "m", "temperature": 1.0, "reasoning_effort": "none", "chat_template_kwargs": {"x": 1},
+                    "max_tokens": 200, "tools": [] if internal else None, "messages": [
+                        {"role": "system", "content": "SYS"}, {"role": "user", "content": "U1"}, {"role": "assistant", "content": "A"}]}
+        original = {k: v for k, v in original.items() if v is not None}
+        body = json.loads(json.dumps(original))
+        before_messages = json.loads(json.dumps(body["messages"]))
+        role.apply(body, internal=internal)
+        written = set(body) - set(original) - {"messages", bodykeys.ROLE_ORIGIN}
+        assert written <= set(ROLE_WRITTEN_KEYS), (role, written)
+        body["messages"].append({"role": "user", "content": "LATER"})       # a stage appended after the role
+        body[bodykeys.ROLE_ORIGIN].restore(body)
+        body.pop(bodykeys.ROLE_ORIGIN)
+        assert body == {**original, "messages": before_messages + [{"role": "user", "content": "LATER"}]}, role
+
+
+def test_a_later_stage_that_rewrote_the_leading_message_keeps_the_body_it_made():
+    """The role's head rewrite is undone only while the body still begins with exactly what the role wrote; a later stage that
+    changed that message is never overwritten with a stale copy."""
+    from cria import bodykeys
+    body = {"messages": [{"role": "system", "content": "SYS"}, {"role": "user", "content": "U"}]}
+    Role("r", "b", reasoning="off").apply(body)
+    body["messages"][0] = {**body["messages"][0], "content": body["messages"][0]["content"] + " + later facts"}
+    body[bodykeys.ROLE_ORIGIN].restore(body)
+    assert body["messages"][0]["content"].endswith("+ later facts") and "chat_template_kwargs" not in body
+
+
+class _Provider:
+    def __init__(self, fail=None):
+        self.fail, self.sent = fail, []
+
+    def chat(self, body, rlog):
+        self.sent.append(body)
+        if self.fail:
+            raise self.fail
+        return b'{"choices": [{"message": {"content": "ok"}}]}'
+
+
+class _Quiet:
+    emit = staticmethod(lambda *a, **k: None)
+
+
+def test_a_keyed_standby_never_receives_the_local_roles_llama_cpp_knobs():
+    """A keyed (strict OpenAI dialect) standby behind a local coder: top_k / repeat_penalty / the template kwarg would be a
+    400 there, which does not walk on. The hop gets the standby role's own dialect: effort, temperature, nothing else."""
+    from cria.chainendpoint import ChainEndpoint, Hop
+    coder = Role("coder", "a", temperature=0.11, top_k=7, repeat_penalty=1.1, reasoning="off")
+    keyed = Role("keyed", "k", think_protocol="openai", temperature=0.7, reasoning="on")
+    dead, live = _Provider(ConnectionRefusedError("refused")), _Provider()
+    ep = ChainEndpoint("coding", [Hop("coder", dead, lambda rl: None, coder), Hop("keyed", live, lambda rl: "gpt-x", keyed)])
+    body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+    coder.apply(body)
+    assert ep.chat(body, _Quiet) == b'{"choices": [{"message": {"content": "ok"}}]}'
+    sent = live.sent[0]
+    assert (sent["model"], sent["temperature"], sent["reasoning_effort"]) == ("gpt-x", 0.7, "medium")
+    assert not {"top_k", "repeat_penalty", "chat_template_kwargs"} & set(sent)
+    assert dead.sent[0]["top_k"] == 7 and dead.sent[0]["temperature"] == 0.11     # the first hop's body is untouched
+
+
+def test_a_body_no_role_touched_walks_unchanged():
+    from cria.chainendpoint import ChainEndpoint, Hop
+    dead, live = _Provider(ConnectionRefusedError("refused")), _Provider()
+    ep = ChainEndpoint("coding", [Hop("a", dead, lambda rl: None, Role("a", "a", temperature=0.1)),
+                                  Hop("b", live, lambda rl: None, Role("b", "b", temperature=0.9))])
+    ep.chat({"messages": [{"role": "user", "content": "hi"}], "temperature": 0.3, "top_k": 2}, _Quiet)
+    assert (live.sent[0]["temperature"], live.sent[0]["top_k"]) == (0.3, 2)
+
+
+def test_the_roles_config_refuses_for_a_cli_backend_are_exactly_the_roles_the_loop_calls():
+    from cria import config, routing
+    assert config.LOOP_ROLES == frozenset(routing._LANES)

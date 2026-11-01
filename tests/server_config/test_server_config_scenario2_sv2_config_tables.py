@@ -96,6 +96,7 @@ def test_system_directive_roles_put_the_reasoning_switch_in_the_first_system_mes
     for reasoning in (None, "auto"):
         untouched = body()
         Role("c", "x", think_protocol="system_directive", reasoning=reasoning).apply(untouched)
+        untouched.pop(bodykeys.ROLE_ORIGIN)     # the role's record of the pre-role body: the only thing it adds
         assert untouched == body()
     empty = {"messages": [{"role": "system", "content": "  "}, {"role": "user", "content": "q"}]}
     Role("c", "x", think_protocol="system_directive", reasoning="off").apply(empty)
@@ -131,7 +132,7 @@ def test_role_apply_hints_and_the_nothink_directive_arms():
     Role("c", "x", reasoning="off").apply(judge)
     assert judge["messages"] == body()["messages"] and judge["chat_template_kwargs"] == {"enable_thinking": False}
     Role("c", "x").apply(nothing := {"messages": "not-a-list"})
-    assert nothing == {"messages": "not-a-list"}
+    assert nothing.pop(bodykeys.ROLE_ORIGIN) and nothing == {"messages": "not-a-list"}
     for bad in ({"vision": "true"}, {"vision_model": 7}):
         with pytest.raises(ValueError):
             Role("c", "x", **bad)

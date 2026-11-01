@@ -240,6 +240,53 @@ def _collapse_system_into_user(body: dict) -> None:
     body["messages"] = rest[:first] + [merged] + rest[first + 1:]
 
 
+#: Every top-level body key `Role.apply` can write or overwrite (sampling in any backend dialect, reasoning in any
+#: convention, the two cria hints). A test applies a fully-set role under every protocol and fails if one is missing here.
+ROLE_WRITTEN_KEYS = ("temperature", "top_p", "top_k", "repeat_penalty", "repetition_penalty", "presence_penalty", "min_p",
+                     "max_tokens", "chat_template_kwargs", "reasoning_effort", "reasoning",
+                     bodykeys.OUTPUT_RESERVE, bodykeys.MERGE_TURNS)
+_ABSENT = object()
+
+
+@dataclass(frozen=True)
+class RoleOrigin:
+    """The body as it was before the first `Role.apply`: the role-owned keys (absent keys recorded as absent), whether
+    the call was `internal`, and — only when the role rewrote messages (no-think directive, reasoning sentence, folded
+    system prompt) — the leading messages before and after that rewrite. Consumed by a failover hop to apply ITS role."""
+    values: tuple
+    internal: bool
+    head_before: tuple = ()
+    head_after: tuple = ()
+
+    @classmethod
+    def record(cls, values, internal, before, after) -> "RoleOrigin":
+        """``before``/``after``: the messages around the role's own rewrite. The rewrite is the part left once the
+        untouched common tail (the same message objects) is set aside."""
+        head_before, head_after = (), ()
+        if isinstance(before, tuple) and isinstance(after, list):
+            n = 0
+            while n < min(len(before), len(after)) and before[-1 - n] is after[-1 - n]:
+                n += 1
+            head_before, head_after = before[:len(before) - n], tuple(dict(m) if isinstance(m, dict) else m for m in after[:len(after) - n])
+        return cls(values, internal, head_before, head_after)
+
+    def restore(self, body: dict) -> None:
+        """Put the role-owned keys back as they were and, if the role's rewritten leading messages are still exactly
+        what the body begins with (later stages only appended or changed the tail), put the original ones back."""
+        for key, value in self.values:
+            if value is _ABSENT:
+                body.pop(key, None)
+            else:
+                body[key] = value
+        msgs, head = body.get("messages"), self.head_after
+        if head and isinstance(msgs, list) and len(msgs) >= len(head) and all(a == b for a, b in zip(head, msgs)):
+            body["messages"] = list(self.head_before) + msgs[len(head):]
+
+
+#: The roles the loop itself calls through `Router.endpoint_for` (each is also the head of a failover lane in `routing`).
+LOOP_ROLES = frozenset({"coder", "reasoner", "classifier", "compactor"})
+
+
 @dataclass(frozen=True)
 class Role:
     """HOW cria uses a backend: the backend binding + the sampling + reasoning cria attaches to
@@ -326,6 +373,10 @@ class Role:
         at once — and an empty answer reads as "nothing to report", so the judgement disappears with
         no trace. So a role cap below the floor is raised back and RECORDED. On a pass-through body
         the cap stands: capping the coder is what the operator knob is for."""
+        first = bodykeys.ROLE_ORIGIN not in body    # the FIRST role to touch a body is the origin a failover hop restores to
+        if first:
+            values = tuple((k, body[k] if k in body else _ABSENT) for k in ROLE_WRITTEN_KEYS)
+            before = tuple(body["messages"]) if isinstance(body.get("messages"), list) else None
         if self.merge_consecutive_turns:
             # A HINT, not the transform. The merge itself runs at the wire (`Upstream._prep` →
             # massage.merge_for_alternation) because `apply` runs mid-pipeline and every later
@@ -382,6 +433,9 @@ class Role:
             # appending the contradiction to it. Reasoning stays OFF either way (the prefill still
             # applies); only the narrate-nothing sentence is withheld where looking is the job.
             _inject_nothink_directive(body)
+        if first:
+            after = body.get("messages")
+            body[bodykeys.ROLE_ORIGIN] = RoleOrigin.record(values, internal, before, after)
 
     def clean_content(self, text: str | None) -> str:
         """When reasoning is OFF, drop any reasoning that leaked ahead of a `</think>` marker
@@ -1023,6 +1077,15 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
     bname = _typed(f"roles.{name}", "backend", spec.get("backend", ""), str)
     if bname not in backends:
         raise ValueError(f"[roles.{name}] backend = {bname!r} has no matching [backends.{bname}]")
+    if name in LOOP_ROLES and backends[bname].transport == "cli":
+        # `claude -p` reads only the LAST user message (the system prompt that carries a judge's/compactor's/classifier's
+        # instructions is dropped), returns prose with no tool calls and no sampling control, and runs its own agent in
+        # the workspace. The loop's own calls need a chat completion that obeys their system prompt and returns a verdict
+        # or a tool call, so the role used to fall back SILENTLY to the shared local endpoint. Say so at load instead.
+        raise ValueError(
+            f"[roles.{name}] backend = {bname!r} is a cli backend, which cannot serve the loop's own {name} calls "
+            f"(`claude -p` ignores the system prompt, returns no tool calls and takes no sampling). Bind [roles.{name}] to an "
+            f"http backend; use the cli backend as an ESCALATION role under another name in a [failover] chain.")
 
     def _num(key):
         v = spec.get(key)

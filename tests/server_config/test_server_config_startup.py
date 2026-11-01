@@ -126,14 +126,3 @@ def test_the_executor_retries_a_timeout_once_walks_on_unavailable_and_reraises_w
     assert fo.decide_action(fo.Failure.RATE_LIMIT, "light", "r", CHAIN, 2).role == "light_backup"
     assert fo.decide_action(fo.Failure.RATE_LIMIT, "light", "r", CHAIN, 0, retry_after_ms=60000).role == "light_backup"   # never an early retry
     assert fo.decide_action(fo.Failure.RATE_LIMIT, "light", "r", CHAIN, 0, retry_after_ms=7000).wait_ms == 7000
-
-
-@pytest.mark.parametrize("headers,expected", [
-    ({"Retry-After": "7"}, 7000), ({"retry-after-ms": "250"}, 250), ({"X-RateLimit-Reset-After": "1.5"}, 1500),
-    ({"Retry-After": "Thu, 01 Jan 1970 00:16:50 GMT"}, 10000),            # an HTTP date, 10 s after the injected clock
-    ({"Retry-After": "2", "X-RateLimit-Reset-After": "9"}, 9000),         # the longest advertised delay wins
-    ({"Retry-After": "-3"}, None), ({"Retry-After": "soon"}, None), ({}, None), (None, None)])
-def test_a_servers_advertised_delay_is_read_from_its_headers(headers, expected):
-    class H(dict):
-        get = lambda self, k, d=None: next((v for kk, v in self.items() if kk.lower() == k.lower()), d)  # noqa: E731
-    assert fo.retry_after_ms(H(headers) if headers is not None else None, now=lambda: 1000.0) == expected

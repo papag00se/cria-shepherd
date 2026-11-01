@@ -114,7 +114,7 @@ class Router:
     def _walkable(self, chain_name: str, role: str, provider, tail, rlog, *, http_only: bool):
         """``provider`` itself, or a ``ChainEndpoint`` that falls through to the resolvable roles of
         ``tail`` (the chain after ``role``) on other endpoints when a call fails."""
-        hops = [Hop(role, provider, self._model_of(role, provider))]
+        hops = [Hop(role, provider, self._model_of(role, provider), self._cfg.roles.get(role))]
         for nxt in tail:
             found = self._provider_for(nxt, rlog)
             if found is None:
@@ -123,7 +123,7 @@ class Router:
             p, model, backend = found
             if (http_only and backend.transport == "cli") or any(p is h.provider for h in hops):
                 continue
-            hops.append(Hop(nxt, p, model))
+            hops.append(Hop(nxt, p, model, self._cfg.roles.get(nxt)))
         return ChainEndpoint(chain_name, hops) if len(hops) > 1 else provider
 
     def _model_of(self, role: str, provider):
@@ -134,8 +134,8 @@ class Router:
         """The http Upstream a role runs on, for the loop's OWN internal calls (coder/reasoner/
         compactor/classifier). A served backend → the shared endpoint or its own base_url; a KEYED
         http backend → an authed Upstream (so a loop role hosted on groq/openrouter is reachable, not
-        just the proxy-routed coder). A cli backend can't be a raw chat endpoint, so it falls back to
-        the shared endpoint. Unknown role → the shared endpoint. When the role's lane chain (see the
+        just the proxy-routed coder). A cli backend can't be a raw chat endpoint: config refuses one for these
+        roles at load, so the fallback to the shared endpoint is only for a hand-built config. Unknown role → the shared endpoint. When the role's lane chain (see the
         module docstring) continues on another endpoint, the result walks to it on a failed call."""
         plain = self._plain_endpoint(role)
         lane = _LANES.get(role)

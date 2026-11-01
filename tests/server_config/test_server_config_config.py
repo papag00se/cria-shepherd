@@ -66,6 +66,8 @@ def test_toml_layers_merge_cwd_over_home_and_defaults_normalize(tmp_path):
     ('[roles.coder]\nbackend = "nope"\n', "no matching"),
     ('[backends.g]\ntransport = "http"\napi_key_env = "K"\n[roles.coder]\nbackend = "g"\n', "needs a base_url"),
     ('[backends.cx]\ntransport = "cli"\ntool = "codex"\n[roles.r]\nbackend = "cx"\n', "codex exec"),
+    *[(f'[backends.cl]\ntransport = "cli"\ntool = "claude"\n[roles.{r}]\nbackend = "cl"\n', f"roles.{r}\\] backend = 'cl' is a cli backend")
+      for r in ("coder", "reasoner", "classifier", "compactor")],      # the loop's own calls need a chat completion: refused at load, not silently run locally
     (ROLE + '[failover]\ncoding = ["ghost"]\n', "no \\[roles.ghost\\]"),
     (ROLE + 'vision = "true"\n', "vision"),
     (ROLE + 'vision = true\n', "vision_model"),
