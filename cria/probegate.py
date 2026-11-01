@@ -78,6 +78,17 @@ TRANSPORT_CHUNK_BYTES = 6_000
 # always over the raw bytes — compression is invisible to every integrity check). This caps how much
 # raw one page may decompress to, so a hostile/garbled page cannot balloon cria's memory.
 TRANSPORT_RAW_PAGE_MAX = 65_536
+# THE HARNESS'S RESULT BOUND AND HOW A NOISY SHELL SPENDS IT. A harness result over TRANSPORT_RESULT_BYTES keeps the first and the last half
+# and cuts the middle; a login shell that prints before/after the page (mise, direnv) leaves the page less room, and a page cut in the
+# middle used to end the whole transport UNKNOWN (the gate was then re-composed, and re-cut, until the run's wall clock ended). Each page
+# says how much noise surrounded it (`_learn_noise`), the next page is asked for at the size that fits beside it, and a page the harness
+# cut anyway is asked for again at the next of TRANSPORT_REFETCH_BUDGETS (never more than three times in a row, then the old UNKNOWN).
+TRANSPORT_RESULT_BYTES = 10_000
+TRANSPORT_REFETCH_BUDGETS = (1_500, 750, 375)
+TRANSPORT_MIN_BUDGET = 128
+TRANSPORT_SAFETY_BYTES = 300       # envelope header, CRLF expansion and anything else the measure cannot see
+_RUNNING_PAGE_OVERHEAD = 700       # a `running` reply carries no data field to measure the page envelope from
+_HARNESS_CUT_MARK = re.compile(r"…\s*[\d,]+\s+(?:chars|tokens)\s+truncated\s*…")
 TRANSPORT_PREFIX = "___CTX_GATE_TRANSPORT_"
 TRANSPORT_SUFFIX = "___"
 TRANSPORT_END_PREFIX = "___CTX_GATE_TRANSPORT_END_"
@@ -132,7 +143,8 @@ _HELPER_HEREDOC = "__CTX_GATE_HELPER_PY__"
 
 
 def _helper_reader_program() -> str:
-    """The page reader as the helper's ``reader`` mode. argv: ``reader PATH OFFSET TRANSPORT_ID WAIT_S``.
+    """The page reader as the helper's ``reader`` mode. argv: ``reader PATH OFFSET TRANSPORT_ID WAIT_S [BUDGET]`` (BUDGET: the most wire
+    bytes a page may carry, at most :data:`TRANSPORT_CHUNK_BYTES`; cria lowers it beside a shell that prints around the page).
 
     Behaviour is the reader this replaced (typed ``gone`` / ``running`` / page / ``error`` envelopes,
     never deletes anything) plus ONE addition: when the harness's python3 has zlib, a page carries the
@@ -147,6 +159,7 @@ def _helper_reader_program() -> str:
     except ImportError:
         zlib = None
     path, offset, tid, wait_s = sys.argv[2], int(sys.argv[3]), sys.argv[4], float(sys.argv[5])
+    budget = min({TRANSPORT_CHUNK_BYTES}, int(sys.argv[6])) if len(sys.argv) > 6 else {TRANSPORT_CHUNK_BYTES}
     opening = {TRANSPORT_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
     closing = {TRANSPORT_END_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
     path = os.path.abspath(path)
@@ -184,15 +197,15 @@ def _helper_reader_program() -> str:
             window = source.read({TRANSPORT_RAW_PAGE_MAX})
         if not _owned_valid(context):
             raise ValueError("namespace_identity_changed")
-        chunk, wire, enc = window[:{TRANSPORT_CHUNK_BYTES}], None, "raw"
+        chunk, wire, enc = window[:budget], None, "raw"
         if zlib is not None:
             n = len(window)
             while True:
                 packed = zlib.compress(window[:n], 6)
-                if len(packed) <= {TRANSPORT_CHUNK_BYTES} or n <= 1:
+                if len(packed) <= budget or n <= 1:
                     break
-                n = max(1, min(n - 1, int(n * {TRANSPORT_CHUNK_BYTES} / len(packed) * 0.9)))
-            if len(packed) <= {TRANSPORT_CHUNK_BYTES}:
+                n = max(1, min(n - 1, int(n * budget / len(packed) * 0.9)))
+            if len(packed) <= budget:
                 chunk, wire, enc = window[:n], packed, "zlib"
         print(opening)
         print("path\\t" + base64.b64encode(path.encode()).decode())
@@ -282,19 +295,20 @@ def _helper_install_leg() -> str:
             'fi\n')
 
 
-def _helper_reader_call(path_arg: str, offset: int, transport_id: str, wait_s: float) -> str:
+def _helper_reader_call(path_arg: str, offset: int, transport_id: str, wait_s: float, budget: int = TRANSPORT_CHUNK_BYTES) -> str:
     """Run the helper's page reader through the verifying loader, or say — in a typed envelope cria
     fails closed on — that the helper is missing or is not cria's program. Never silent: a vanished
     or substituted helper must not look like a check that is "running" or, worse, finished."""
     gone = (f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' "
             f"{shlex.quote(_transport_marker(transport_id))} "
             f"{shlex.quote(_transport_marker(transport_id, end=True))}")
-    return (f'{helper_runner()} reader {path_arg} {offset} {transport_id} {wait_s!r}; '
+    narrower = f" {budget}" if budget != TRANSPORT_CHUNK_BYTES else ""
+    return (f'{helper_runner()} reader {path_arg} {offset} {transport_id} {wait_s!r}{narrower}; '
             f'if [ $? -eq {HELPER_BAD_EXIT} ]; then {gone}; fi')
 
 
 def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
-                      wait_s: float = GATE_POLL_WAIT_S, helper_ready: bool = False) -> str:
+                      wait_s: float = GATE_POLL_WAIT_S, helper_ready: bool = False, budget: int = TRANSPORT_CHUNK_BYTES) -> str:
     """Harness-side page reader. ``path_arg`` is a shell expression or quoted path.
 
     Waits up to ``wait_s`` for the sibling ``.done`` marker the detached probe block writes when it
@@ -345,12 +359,12 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
     envelope, which :func:`ingest_transport` makes terminal UNKNOWN — never clean.
     """
     return (_helper_install_leg() if not helper_ready else "") + _helper_reader_call(
-        path_arg, offset, transport_id, wait_s)
+        path_arg, offset, transport_id, wait_s, budget)
 
 
 def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], survey: str,
                        poll_wait_s: float = GATE_POLL_WAIT_S, scope_dirs: tuple[str, ...] = (),
-                       marks: "completionmarks.Query | None" = None) -> list[str]:
+                       marks: "completionmarks.Query | None" = None, budget: int = TRANSPORT_CHUNK_BYTES) -> list[str]:
     """Launch one authenticated private harness resource, idempotently.
 
     A detached Python supervisor owns the entire lifetime: native commands with
@@ -370,7 +384,7 @@ def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], surv
         '__ctx_launch_error=$({\n' + launch + '} 2>&1)',
         '__ctx_launch_status=$?',
         'if [ "$__ctx_launch_status" -eq 0 ]; then',
-        _helper_reader_call('"$__ctx_gate_file"', 0, transport_id, poll_wait_s),
+        _helper_reader_call('"$__ctx_gate_file"', 0, transport_id, poll_wait_s, budget),
         'elif [ "$__ctx_launch_status" -eq 3 ]; then',
         f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' {opening} {closing}",
         'else',
@@ -439,6 +453,13 @@ class GatePlan:
     # when it declares an ms-unit time-budget field, else GATE_POLL_WAIT_S) and reused by every
     # continuation read of this same plan so a mid-transport tool swap can never silently change it.
     transport_poll_wait_s: float = GATE_POLL_WAIT_S
+    # The most wire bytes the NEXT page may carry (the reader's BUDGET argument): the page size that fits beside the noise a login shell
+    # printed around the pages seen so far (`_learn_noise`), or the next narrower probe after a page the harness cut. Starts at the
+    # full page; the count of consecutive cut pages is bounded by TRANSPORT_REFETCH_BUDGETS.
+    transport_budget: int = TRANSPORT_CHUNK_BYTES
+    transport_cuts: int = 0
+    # The launch script at a given page budget, for the re-sends that happen while the spool path is still unknown (set by `plan_gate`).
+    transport_compose: "object | None" = field(default=None, repr=False, compare=False)
     # N1: does the harness already hold this session's helper program (see :func:`_helper_install_leg`)?
     # Set at compose time from the session's own knowledge, turned True by any real envelope a helper
     # call answered with (it ran, so it is there), and False by a typed ``helper-gone`` reply. The
@@ -553,6 +574,41 @@ def _decode_page_data(data: str, enc: str) -> bytes:
     return raw
 
 
+def _cut_page(plan: GatePlan, reason: str) -> str:
+    """The harness cut the result around the page (a login shell's noise left it no room): ask for the SAME offset again at the next
+    narrower budget, ``pending`` (nothing is learned from a cut page and nothing is read from it). After the last probe size the
+    transport is terminal UNKNOWN exactly as before."""
+    if plan.transport_cuts >= len(TRANSPORT_REFETCH_BUDGETS):
+        return fail_transport(plan, reason + ", repeatedly — the page does not fit beside what the shell prints")
+    plan.transport_budget = min(plan.transport_budget, TRANSPORT_REFETCH_BUDGETS[plan.transport_cuts])
+    plan.transport_cuts += 1
+    return "pending"
+
+
+def _learn_noise(plan: GatePlan, text: str, start: int, stop: int, data_len: int | None) -> None:
+    """A page ``text[start:stop]`` arrived whole: size the next one to fit beside what the shell printed around it.
+
+    The harness keeps a result whole up to TRANSPORT_RESULT_BYTES, else only its first and last halves (the cut is in the middle). A page
+    therefore fits when it lies in the head (room: half less the noise before it), in the tail (half less the noise after it) or the
+    result is not cut at all (the whole less both). Everything is measured off THIS result (the noise before the opener, the bytes after
+    the closer, where the harness's own cut marker sits); the bound itself is the one the reader was sized for."""
+    from .resultnotes import exec_envelope
+    envelope = exec_envelope(text)
+    base = envelope.record_start if envelope is not None else 0
+    cut = _HARNESS_CUT_MARK.search(text)
+    before, after = start - base, len(text) - stop
+    half = TRANSPORT_RESULT_BYTES // 2
+    if cut is None:
+        room = max(TRANSPORT_RESULT_BYTES - before - after, half - before, half - after)
+    elif cut.end() <= start:
+        room = half - after                    # the page survived in the tail
+    else:
+        room = half - before                   # the page survived in the head
+    overhead = (stop - start) - data_len if data_len is not None else _RUNNING_PAGE_OVERHEAD
+    plan.transport_budget = max(TRANSPORT_MIN_BUDGET, min(TRANSPORT_CHUNK_BYTES, 3 * ((room - overhead - TRANSPORT_SAFETY_BYTES) // 4)))
+    plan.transport_cuts = 0
+
+
 def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = None) -> str:
     """Ingest one harness-returned page: ``pending``, ``running``, ``complete``, ``unknown`` or
     ``legacy``.
@@ -592,6 +648,8 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     text = result_text or ""
     start = text.find(opening)
     if start < 0:
+        if _HARNESS_CUT_MARK.search(text):
+            return _cut_page(plan, "transport page opener did not arrive (the harness cut the result)")
         if not text.strip() or refusal_reason(text):
             # GENUINELY ABSENT (no tool message answered this call at all — the harness declined
             # this turn, or a caller asks before any result could exist) and an explicit REFUSAL
@@ -615,7 +673,11 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         return _retry_or_deadline(plan, now)
     end = text.find(closing, start + len(opening))
     if end < 0:
+        if _HARNESS_CUT_MARK.search(text, start):
+            return _cut_page(plan, "transport page was cut before its closing marker")
         return fail_transport(plan, "transport page was cut before its closing marker")
+    if _HARNESS_CUT_MARK.search(text, start, end):
+        return _cut_page(plan, "the harness cut the transport page")
     if text.count(opening) != 1 or text.count(closing) != 1:
         return fail_transport(plan, "transport page contains duplicate envelope markers")
     body = text[start + len(opening):end].strip("\r\n")
@@ -665,6 +727,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         plan.transport_path = running_path
         plan.helpers_ready = True
         plan.transport_openerless_streak = 0
+        _learn_noise(plan, text, start, end + len(closing), None)
         return _retry_or_deadline(plan, now)
     if "error" in fields:
         try:
@@ -713,6 +776,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     plan.transport_sections = _declared_sections(fields.get("bounds"))
     plan.transport_marks = _declared_marks(fields.get("bounds"))
     plan.transport_data.extend(chunk)
+    _learn_noise(plan, text, start, end + len(closing), len(fields["data"]))
     if len(plan.transport_data) < total:
         return "pending"
     if len(plan.transport_data) != total:
@@ -832,12 +896,12 @@ def continue_transport_command(plan: GatePlan) -> str:
     if not plan.transport_required or plan.transport_complete or plan.transport_error:
         return ""
     if not plan.transport_path:
-        return plan.script
+        return plan.transport_compose(plan.transport_budget) if plan.transport_compose else plan.script
     return "\n".join([
         _gate_sentinel([]),
         _transport_reader(shlex.quote(plan.transport_path), len(plan.transport_data),
                           plan.transport_id, wait_s=plan.transport_poll_wait_s,
-                          helper_ready=plan.helpers_ready),
+                          helper_ready=plan.helpers_ready, budget=plan.transport_budget),
     ])
 
 
@@ -990,16 +1054,19 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # learned nothing yet, and `_gate_launch_guard` makes that retry a no-op once the block is started.
     spool = f'"${{TMPDIR:-/tmp}}/{gatecleanup.PRIVATE_PREFIX}{plan.transport_id}/.ctx-gate-{plan.transport_id}.spool"'
     plan.transport_deadline_s = _gate_deadline_s(len(plan.candidates) + (1 if offline else 0))
-    plan.script = "\n".join([
-        _gate_sentinel(retypable),
-        f"__ctx_gate_file={spool}",
-        # The helper owns positive allocation before detaching any native work.
-        *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
-        *([spool_cleanup] if spool_cleanup else []),
-        *_gate_launch_guard(plan.transport_id, workspace, parts, survey_command, plan.transport_poll_wait_s,
-                           tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else (),
-                           marks=marks),
-    ])
+    def compose(budget: int = TRANSPORT_CHUNK_BYTES) -> str:
+        return "\n".join([
+            _gate_sentinel(retypable),
+            f"__ctx_gate_file={spool}",
+            # The helper owns positive allocation before detaching any native work.
+            *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
+            *([spool_cleanup] if spool_cleanup else []),
+            *_gate_launch_guard(plan.transport_id, workspace, parts, survey_command, plan.transport_poll_wait_s,
+                               tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else (),
+                               marks=marks, budget=budget),
+        ])
+    plan.script = compose()
+    plan.transport_compose = compose
     return plan
 
 
