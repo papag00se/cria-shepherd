@@ -110,9 +110,29 @@ def _tally_numbers(evidence: list[str], stem: str) -> set[Decimal]:
             if _NOT_A_TOOL_RESULT.match(turn):
                 continue
             for line in turn.splitlines():
-                if stem in line.lower() and probeparse.is_tally_line(line):
+                if not probeparse.is_tally_line(line):
+                    continue
+                if stem == "pass" and (derived := _derived_passed(line)) is not None:
+                    found.add(derived)
+                if stem in line.lower():
                     found |= {d for m in _EVIDENCE_NUMBER.finditer(line) if (d := _dec(m.group(0).replace(",", ""))) is not None}
     return found
+
+
+# A runner that prints how many ran and how many did not (minitest "7 runs, 7 assertions, 1 failures, 0 errors, 0 skips",
+# rspec "12 examples, 1 failure", maven "Tests run: 14, Failures: 2, Errors: 1, Skipped: 0") never prints "N passed", and a
+# briefing that says "6 passed, 1 failed" has done the subtraction the runner left to the reader. That figure is a
+# derivation from the runner's own line, not an invention: wave 13 E2ERB (shipping-rates-rb, ruby) refused a correct briefing for it.
+_RAN = re.compile(r"(?i)\b(\d+)\s+(?:runs|tests|examples|specs)\b|\bTests run:\s*(\d+)")
+_NOT_PASSED = re.compile(r"(?i)\b(\d+)\s+(?:failures?|errors?|skips?|skipped|pending)\b|\b(?:failures?|errors?|skipped|pending):\s*(\d+)")
+
+
+def _derived_passed(line: str) -> Decimal | None:
+    ran = _RAN.search(line)
+    if not ran:
+        return None
+    left = int(ran.group(1) or ran.group(2)) - sum(int(m.group(1) or m.group(2)) for m in _NOT_PASSED.finditer(line))
+    return Decimal(left) if left >= 0 else None
 
 
 def _turns(block: str) -> list[str]:
@@ -145,6 +165,8 @@ def ungrounded(briefing: str, evidence: list[str]) -> list[str]:
         if _hedged(briefing, m):
             continue
         unit = m.group(2).lower()
+        if unit == "passed" and _dec(m.group(1)) in tallied.setdefault("pass", _tally_numbers(evidence, "pass")):
+            continue  # a pass count the runner's own line settles (printed, or runs minus failures/errors/skips)
         if not _grounded_number(m.group(1), unit, values, decimals):
             found.append(m.group(0))
         elif _OUTCOME_UNIT.match(unit) and (unit not in _SINGULAR or m.group(1) == "1"):

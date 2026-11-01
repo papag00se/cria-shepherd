@@ -8,6 +8,8 @@ from cria import briefinggrounding
 NODE = "tool: Chunk ID: n1\nProcess exited with code 1\nOutput:\nℹ tests 9\nℹ pass 6\nℹ fail 3\n"
 MAVEN = "tool: Chunk ID: m1\nProcess exited with code 1\nOutput:\n[ERROR] Tests run: 14, Failures: 2, Errors: 1, Skipped: 0\n[INFO] 16 errors\n"
 PYTEST = "tool: Chunk ID: p1\nOutput:\n=== 3 failed, 44 passed in 2.1s ===\n"
+# Real minitest output (wave 13 E2ERB, shipping-rates-rb): it prints no "passed" at all; the briefing's "6 passed" is 7 runs - 1 failure.
+MINITEST = "tool: Chunk ID: r1\nProcess exited with code 1\nOutput:\n7 runs, 7 assertions, 1 failures, 0 errors, 0 skips\n"
 # Number 3 and 47 occur in the transcript, on lines that are NOT a runner's tally (a listing, a path, the coder's prose).
 NOISE = ("tool: Chunk ID: l1\nOutput:\n   3  import java.util.List;\n  47  return rows;\n 404 Not Found\n./data/part-3/feed-47.csv\n"
          "assistant: All 47 tests pass and there are 3 failures left? no - 0 failures.\nuser: Please make all 3 failures go away.\n")
@@ -27,7 +29,11 @@ def refused(briefing, *turns):
     ("The test.js file contains 3 tests.", [NOISE], []),
     ("It fails with a 404 error on the orders route.", [NOISE], []),               # a status, not a count
     ("The line-124 failure was a self-contradiction.", [NOISE], []),               # a location
-    ("It failed 3 times.", [NOISE], [])])
+    ("It failed 3 times.", [NOISE], []),
+    ("rake test: 6 passed, 1 failed.", [MINITEST], []),                            # 7 runs - 1 failures: derived from the runner's own line
+    ("rake test: 5 passed, 1 failed.", [MINITEST], ["5 passed"]),                  # not 7 - 1: still refused
+    ("mvn: 11 passed.", [MAVEN], []), ("mvn: 12 passed.", [MAVEN], ["12 passed"]),  # 14 - 2 - 1
+    ("6 passed.", [NOISE, "assistant: 7 runs, 7 assertions, 1 failures\n"], ["6 passed"])])  # the coder's prose derives nothing
 def test_an_outcome_count_must_sit_on_a_runner_summary_line_beside_its_unit(briefing, turns, out):
     assert refused(briefing, *turns) == out
 
