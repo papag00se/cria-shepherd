@@ -13,6 +13,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from . import httpread
+
 
 class CaptureFailure(OSError):
     """Already received data could not be truthfully retained."""
@@ -329,6 +331,12 @@ class DefaultTransport:
                 self._default_policy = self._policy(cache)
 
     def __call__(self, req, *, timeout, receipt=None):
+        installed = urllib.request._opener
+        if self._default_cache is None and installed is not None and installed is httpread.INSTALLED:
+            # cria's own startup opener (stdlib handlers + an http(s)-only redirect policy) is the one installed policy
+            # known compatible without an ordinary open first.
+            self._default_cache = installed
+            self._default_policy = self._policy(installed)
         cache = self._default_cache
         if cache is not None and self._policy(cache) != self._default_policy:
             cache = None  # installed policy was changed; explicit compatibility required

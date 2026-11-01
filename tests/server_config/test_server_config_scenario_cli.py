@@ -83,10 +83,13 @@ def test_main_refuses_bad_config_and_applies_cli_overrides_then_drains_on_interr
 
     old = signal.getsignal(signal.SIGTERM)
     monkeypatch.setattr("cria.server.CriaServer.serve_forever", interrupted)
+    monkeypatch.setattr("urllib.request._opener", None)     # restored after the test: main() installs the process's http(s)-only redirect opener
     try:
         assert main(["--config", str(tmp_path / "cria.toml"), "--host", "127.0.0.1", "--port", "0", "--log-level", "debug"]) == 0
         with pytest.raises(KeyboardInterrupt):
             seen["handler"](signal.SIGTERM, None)  # SIGTERM is turned into the same graceful path
     finally:
         signal.signal(signal.SIGTERM, old)
+    import urllib.request
+    assert any(type(h).__name__ == "HttpOnlyRedirects" for h in urllib.request._opener.handlers)
     assert events_in(tmp_path / "logs")["server.start"]["port"] == 0 and events_in(tmp_path / "logs")["server.stop"]["drained_streams"] == 0

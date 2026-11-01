@@ -41,6 +41,31 @@ def test_a_stated_delay_is_read_from_every_signal_a_server_uses(headers, body, r
     assert ratelimit.delay_ms(H(headers) if headers is not None else None, body, now=lambda: NOW, refused=refused) == expected
 
 
+@pytest.mark.parametrize("prose, expected", [
+    ("You've hit your limit · resets 5pm (America/Los_Angeles)", 10_000_000),             # 14:13 in LA at NOW: 2 h 46 m 40 s
+    ("Claude usage limit reached. Your limit will reset at 5pm (Europe/Berlin).", 64_000_000),     # 23:13 in Berlin: 5pm is tomorrow's
+    ("resets 2pm (America/Los_Angeles)", 85_600_000),                                     # already past today in LA: tomorrow
+    ('{"result": "You\'ve hit your limit · resets 12am (UTC)"}', 6_400_000),               # inside JSON; midnight is 12am
+    ("resets Nov 20 at 12pm (UTC)", 481_600_000), ("resets Jan 2, 9:30am (UTC)", 4_187_800_000),   # a named day (past this year: next)
+    ("resets 5 pm (Asia/Tokyo)", 35_200_000),                                             # 07:13 in Tokyo: "5 pm" with a space
+    ("resets 13pm (UTC)", None), ("resets 5pm (Mars/Olympus)", None),                      # impossible hour; a zone this machine cannot read
+    ("the cache resets 5 times", None), ("password reset email sent", None),
+])
+def test_the_claude_cli_prose_that_names_a_clock_time_is_read_in_the_zone_it_names(prose, expected):
+    assert ratelimit.delay_ms(None, prose.encode(), now=lambda: NOW) == expected
+
+
+def test_a_reset_time_without_a_zone_is_read_in_this_machines_zone(monkeypatch):
+    import time
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    time.tzset()
+    try:
+        assert ratelimit.delay_ms(None, b"resets 5pm", now=lambda: NOW) == 35_200_000
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
 class Clock:
     """A fake clock whose sleep advances it, and remembers each sleep."""
     def __init__(self):
@@ -164,3 +189,24 @@ def test_the_protocol_probe_honours_the_same_wait(limited):
     script += [(429, {"Retry-After": "3"}, b"busy"), (200, {}, b'{"result": {}}')]
     status, body, _ = apidiscovery._post_json(url + "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "ping"}, {})
     assert status == 200 and clock.slept == [3.0] and len(seen) == 2
+
+
+@pytest.fixture
+def http_only_redirects(monkeypatch):
+    """The process-wide opener `python -m cria` installs at startup, replaced for the test and restored after."""
+    from cria import httpread
+    monkeypatch.setattr(webfetch.urllib.request, "_opener", None)
+    httpread.install_http_only_redirects()
+
+
+def test_a_redirect_to_another_protocol_is_not_followed_and_a_redirect_to_http_still_is(limited, http_only_redirects):
+    """A real local 302 to `ftp://` used to be followed by urllib's default opener (a refused ftp connection surfaced as a transport error);
+    the 302 itself is now the answer, while a redirect to a path on the same host is followed as before."""
+    url, script, seen, _clock = limited
+    script += [(302, {"Location": "ftp://127.0.0.1:9/secret"}, b"")]
+    page = webfetch.fetch(url + "/a")
+    assert page.status == 302 and len(seen) == 1
+    script[:] = [(302, {"Location": "/b"}, b""), (200, {"Content-Type": "text/plain"}, b"landed")]
+    seen.clear()
+    followed = webfetch.fetch(url + "/a")
+    assert followed.status == 200 and "landed" in followed.body and [p for p, _ in seen] == ["/a", "/b"]

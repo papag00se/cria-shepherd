@@ -12,6 +12,7 @@ interval is the other half of the same sin, so the only retry here is ONE, after
 """
 from __future__ import annotations
 
+import datetime
 import email.utils
 import io
 import json
@@ -22,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zoneinfo
 from typing import Callable, Optional
 
 MAX_WAIT_MS = 30_000          # what one request may hold the turn for; a longer cooldown is reported, not slept
@@ -33,6 +35,11 @@ _DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
 _BODY_PROSE = re.compile(r"(?:try again|retry)\s+(?:in|after)\s+((?:\d+(?:\.\d+)?(?:ms|h|m|s))+|\d+(?:\.\d+)?\s*(?:seconds?|secs?))",
                          re.IGNORECASE)
 _UNIT_MS = {"ms": 1, "s": 1000, "m": 60_000, "h": 3_600_000}
+# The `claude` CLI's own prose: "resets 5pm (America/Los_Angeles)", "will reset at 5:30 PM", "resets Oct 9 at 12pm (Europe/Berlin)".
+_RESET_CLOCK = re.compile(
+    r"\bresets?\s+(?:at\s+)?(?:(?P<mon>[a-z]{3})[a-z]*\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?:at\s+)?)?"
+    r"(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ap>[ap])\.?m\b\.?(?:\s*\((?P<tz>[A-Za-z][\w+\-]*(?:/[\w+\-]+)*)\))?", re.IGNORECASE)
+_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 
 
 class RateLimited(OSError):
@@ -64,6 +71,42 @@ def duration_ms(text: str) -> Optional[int]:
     if parts and "".join(f"{n}{u}" for n, u in parts) == t.replace(" ", ""):
         return int(sum(float(n) * _UNIT_MS[u] for n, u in parts))
     return None
+
+
+def _reset_clock_ms(m: "re.Match[str]", now: float) -> Optional[int]:
+    """Wait until the wall-clock time a refusal's prose named, in the zone it named (else this machine's), counted from ``now``
+    (epoch seconds): the next such time at or after now — today's, else tomorrow's; a named day, this year's or next."""
+    hour, minute = int(m["h"]), int(m["m"] or 0)
+    if not (1 <= hour <= 12 and minute < 60):
+        return None
+    hour = hour % 12 + (12 if m["ap"].lower() == "p" else 0)
+    try:
+        zone = zoneinfo.ZoneInfo(m["tz"]) if m["tz"] else None
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError, OSError):
+        return None                                  # a zone this machine cannot read: no wait stated, not a guessed one
+    here = datetime.datetime.fromtimestamp(now, zone) if zone else datetime.datetime.fromtimestamp(now).astimezone()
+    try:
+        if m["mon"]:
+            month = _MONTHS.get(m["mon"].lower())
+            if month is None:
+                return None
+            target = here.replace(month=month, day=int(m["day"]), hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= here:
+                target = target.replace(year=here.year + 1)
+        else:
+            target = here.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= here:
+                target += datetime.timedelta(days=1)
+    except ValueError:
+        return None
+    return int((target.timestamp() - now) * 1000)
+
+
+def _prose_delays(text: str, now: float) -> list[int]:
+    """The waits a sentence states: "try again in 1.5s" and the claude CLI's "resets 5pm (America/Los_Angeles)"."""
+    out = [duration_ms(m.group(1)) for m in _BODY_PROSE.finditer(text)]
+    out += [_reset_clock_ms(m, now) for m in _RESET_CLOCK.finditer(text)]
+    return [v for v in out if v is not None]
 
 
 def _date_ms(raw: str, now: float) -> Optional[int]:
@@ -141,7 +184,7 @@ def _header_delays(headers, now: float, refused: bool) -> list[int]:
     return out
 
 
-def _body_delays(body: bytes | str | None) -> list[int]:
+def _body_delays(body: bytes | str | None, now: float) -> list[int]:
     if not body:
         return []
     text = body.decode("utf-8", "replace") if isinstance(body, bytes) else body
@@ -165,8 +208,7 @@ def _body_delays(body: bytes | str | None) -> list[int]:
             for v in node:
                 walk(v, depth + 1)
         elif isinstance(node, str):
-            for m in _BODY_PROSE.finditer(node):
-                out.append(duration_ms(m.group(1)))
+            out.extend(_prose_delays(node, now))
 
     start, end = text.find("{"), text.rfind("}")
     try:
@@ -177,8 +219,7 @@ def _body_delays(body: bytes | str | None) -> list[int]:
                 walk(json.loads(text[start:end + 1]))
             except ValueError:
                 pass
-        for m in _BODY_PROSE.finditer(text[:4096]):
-            out.append(duration_ms(m.group(1)))
+        out.extend(_prose_delays(text[:4096], now))
     return [v for v in out if v is not None and v >= 0]
 
 
@@ -190,7 +231,7 @@ def delay_ms(headers, body=None, *, now: Callable[[], float] = time.time, refuse
     if headers:
         found += _header_delays(headers, now(), refused)
     if refused:
-        found += _body_delays(body)
+        found += _body_delays(body, now())
     return max(found) if found else None
 
 

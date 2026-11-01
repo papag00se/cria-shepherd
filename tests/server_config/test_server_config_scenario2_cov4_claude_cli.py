@@ -115,3 +115,19 @@ def test_a_claude_cli_api_429_carries_its_wait_and_cools_the_backend_down_for_ev
     with pytest.raises(UpstreamError) as held:
         provider.chat(BODY, Rlog("s2"))
     assert held.value.code == 429 and held.value.retry_after_ms > 0 and ran.read_text().count("x") == 1
+
+
+def test_a_claude_cli_usage_limit_that_names_only_a_reset_clock_time_carries_that_wait(tmp_path, monkeypatch):
+    """"resets 5pm (UTC)" is the whole of the stated wait: the 429 carries the hours until then (never the 1 s default that
+    sends the next request early) and the next invocation, over a turn's hold, is not started."""
+    from cria import ratelimit
+    monkeypatch.setattr(ratelimit, "STATE", ratelimit.WaitState())
+    ran = tmp_path / "ran"
+    refusal = '{"is_error":true,"api_error_status":429,"result":"Your usage limit was reached · resets 5pm (UTC)"}'
+    provider = ClaudeCliProvider(binary=fake(tmp_path, f'echo x >> "{ran}"\n' + say(refusal) + "exit 1\n"))
+    with pytest.raises(UpstreamError) as err:
+        provider.chat(BODY, Rlog("s1"))
+    assert err.value.code == 429 and 0 < err.value.retry_after_ms <= 86_400_000 and err.value.retry_after_ms != ratelimit.DEFAULT_WAIT_MS
+    with pytest.raises(UpstreamError):
+        provider.chat(BODY, Rlog("s2"))
+    assert ran.read_text().count("x") == 1

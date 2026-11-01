@@ -15,7 +15,7 @@ import sys
 from dataclasses import replace
 
 from . import __version__
-from . import prompts, receivecapture, system1wiring
+from . import httpread, prompts, receivecapture, system1wiring
 from .config import Config
 from .envfile import load_env_file
 from .events import EventLog
@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as e:
         print(f"cria: config error: {e}", file=sys.stderr)
         return 2
+
+    httpread.install_http_only_redirects()      # once: every urlopen (fetch, probes, search) follows a redirect to http(s) only
 
     # Apply CLI overrides onto the (frozen) config.
     if args.host or args.port is not None:

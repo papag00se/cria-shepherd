@@ -11,6 +11,9 @@ from __future__ import annotations
 import codecs
 import re
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Callable
 
 TOTAL_READ_SECONDS = 120   # one fetch's whole body: a slow-drip server is cut off here, said plainly, never waited on forever
@@ -19,6 +22,31 @@ _CHUNK = 64 * 1024
 _CHARSET_PARAM = re.compile(rb"charset\s*=\s*[\"']?\s*([A-Za-z0-9_.:\-]+)", re.IGNORECASE)
 _BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
          (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
+
+
+class HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """A redirect is followed only to http or https. urllib's default also follows ``ftp://`` (and an empty scheme); a fetch
+    that was told to read a web page must not be walked onto another protocol by a server's ``Location`` header. The 3xx
+    itself is then the response (an ``HTTPError``, which every caller already reads like a response)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        scheme = urllib.parse.urlsplit(newurl).scheme.lower()
+        if scheme not in ("http", "https"):
+            raise urllib.error.HTTPError(req.full_url, code, f"{msg}: redirect to '{newurl}' not followed (only http/https)", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+INSTALLED: urllib.request.OpenerDirector | None = None     # the opener install_http_only_redirects put in place, so a reader can tell it from a foreign one
+
+
+def install_http_only_redirects() -> None:
+    """Install the one process-wide default opener, once at startup. ``urllib.request.urlopen`` stays the name every caller (and
+    every test that pins it as the no-network seam) goes through; only what it does on a redirect changes. The receive-custody
+    transport (``receivecapture``) refuses an installed opener it did not build, except this one: the stdlib's own handlers
+    plus a redirect policy, nothing it would have to infer."""
+    global INSTALLED
+    INSTALLED = urllib.request.build_opener(HttpOnlyRedirects)
+    urllib.request.install_opener(INSTALLED)
 
 
 class SlowBody(TimeoutError):
