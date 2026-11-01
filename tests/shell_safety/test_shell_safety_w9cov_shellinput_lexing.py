@@ -47,6 +47,39 @@ def test_ansi_c_escapes_consume_exactly_their_digits_and_the_simple_ones_decode_
     Expected strings were checked against bash's own printf."""
     assert si.decode_ansi_c("echo $'\\101B\\x41C\\u00e9D\\e\\E\\\"\\?'") == 'echo "ABACéD\x1b\x1b\\"?"'
     assert si.decode_ansi_c("echo $'\\a\\b\\f\\n\\r\\t\\v\\\\\\'\\?'") == 'echo "\x07\x08\x0c\n\r\t\x0b\\\\\'?"'
+    # `\\c\\\\` is ONE control byte in bash (Ctrl-backslash, 0x1c) and the text after it stays: checked against bash's printf
+    assert si.decode_ansi_c("echo $'\\c\\\\x'") == 'echo "\x1cx"'
+
+
+def test_only_the_backslash_escaped_quotes_of_an_ansi_c_string_are_literal_ranges():
+    """Mutation survivors in `_escaped_quotes`: the escaped `'` is recorded (so a POSIX quote scanner ends the string where bash does),
+    an escaped backslash right before the closing quote is not."""
+    src = "echo $'it\\'s \\\\' z"
+    lay = si.layout(src)
+    assert lay.literal == ((10, 11),) and src[10] == "'" and lay.literal_shell == src[:10] + " " + src[11:]
+
+
+@pytest.mark.parametrize("src,syntax", [
+    ("echo $((1+2)) x", ((5, 13),)),                      # plain arithmetic is not a file operand: blanked
+    ("echo ((x))", ((5, 10),)),                           # the bare form too
+    ("echo $(( $(echo hi) + 1 ))", ()),                  # a substitution inside stays visible
+    ("echo $(( `echo` ))", ()),                          # so does a backtick one
+    ("echo $(($(echo hi)+1))", ()),                      # right against the opening
+])
+def test_arithmetic_is_blanked_unless_it_holds_a_command_substitution(src, syntax):
+    assert si.layout(src).syntax == syntax
+
+
+@pytest.mark.parametrize("src,bodies,unterminated", [
+    ("echo $$'a\\'b$(rm -rf /)'c'", ["rm -rf /"], False),           # after `$$` the quote is ordinary: `\\'` ends it and the substitution is LIVE
+    ('echo $(echo "`x', [], True),                                   # ... and one opened inside the body's own double quotes
+    ('echo $(echo "`x\\`y` z")', ['echo "`x\\`y` z"'], False),    # an escaped backtick in there does not end it
+    ('echo "$(echo `x)', [], True),                                  # an unterminated backtick inside a double-quoted body is reported, never an IndexError
+    ('echo "$(echo $\'a\') $(rm -rf /)"', ["echo $'a'", "rm -rf /"], False),   # the char right after a closed ANSI-C string is still read
+])
+def test_expansion_scanner_edges_found_by_mutation(src, bodies, unterminated):
+    subs, unterminated_got = si.expansions(src, shell=True)
+    assert ([src[sub.body[0]:sub.body[1]] for sub in subs], unterminated_got) == (bodies, unterminated)
 
 
 @pytest.mark.parametrize("source,bodies,unterminated", [

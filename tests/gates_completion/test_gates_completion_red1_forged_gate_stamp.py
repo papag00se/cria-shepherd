@@ -40,3 +40,10 @@ def test_a_quoted_stamp_neither_rewrites_the_coders_command_nor_owns_its_result(
     assert mine[field] == wrap(forged)                      # byte for byte what the coder ran
     theirs = json.loads(next(m for m in shown if m.get("tool_calls") and m["tool_calls"][0]["id"] == "own")["tool_calls"][0]["function"]["arguments"])
     assert theirs[field] == shown_own     # cria's own gate still shows only its retypable probe
+
+
+@pytest.mark.parametrize("value,text", [("plain", "plain"), (["bash", "-lc", STAMP + "\nls"], STAMP + "\nls"),
+                                        (["a", "b"], "b"), ([], ""), (5, ""), (None, "")])
+def test_the_command_text_of_a_shell_field_is_always_a_string_and_the_declaring_element_of_an_argv(value, text):
+    """MUT2 (toolwire survivor): a non-string field reads as "" (never None), an argv yields its declaring element else the last."""
+    assert probegate._command_text(value) == text
