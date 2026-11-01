@@ -1998,7 +1998,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(e.response_error if generation.is_generation_error(e.response_error) else str(e))
         except Exception as e:  # noqa: BLE001 — never die silently mid-stream (the g4 hole)
-            rlog.emit("response.error", level="error", error=repr(e))
+            rlog.emit("response.error", level="error", error=repr(e), traceback=traceback.format_exc())
             yield _error_sse(f"cria internal error: {e}")
         finally:
             _image_current.reset(token)
@@ -2168,7 +2168,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # deleted mid-run — SIX invisible deaths, only journalctl knew; codex retried 5x into
             # silence and exited the whole run). The harness must see a clean error it can surface,
             # and cria's own log must carry the crash.
-            rlog.emit("response.error", level="error", error=repr(e))
+            rlog.emit("response.error", level="error", error=repr(e), traceback=traceback.format_exc())
             self._send_json(500, {"error": f"cria internal error: {e}"})
             return
         raw = json.dumps(comp).encode("utf-8")
@@ -2325,7 +2325,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 # a FileNotFoundError here killed the handler with no event and no response; codex
                 # retried 5x into the void and exited the run. The harness gets a clean failed
                 # event; cria's log gets the crash.
-                rlog.emit("response.error", level="error", error=repr(e))
+                rlog.emit("response.error", level="error", error=repr(e), traceback=traceback.format_exc())
                 hb.write(responses._event("response.failed",
                     {"response": {"id": resp_id, "status": "failed", "error": {"message": f"cria internal error: {e}"}}}))
                 return
@@ -2360,7 +2360,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001 — an item that cannot be built (a custom call with no string
                 # input) left the stream open mid-item with no terminal event: a bare EOF the harness reads
                 # as a user abort. The retryable failure is the one terminal event it can act on.
-                rlog.emit("response.error", level="error", error=repr(e))
+                rlog.emit("response.error", level="error", error=repr(e), traceback=traceback.format_exc())
                 hb.write(responses.failed_event(resp_id, f"cria internal error: {e}"))
                 return
             rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats,
@@ -2405,7 +2405,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._send_json(getattr(e, "code", None) or 502, {"error": e.response_error})
             return
         except Exception as e:  # noqa: BLE001 — never die silently (the g4 hole)
-            rlog.emit("response.error", level="error", error=repr(e))
+            rlog.emit("response.error", level="error", error=repr(e), traceback=traceback.format_exc())
             self._send_json(500, {"error": f"cria internal error: {e}"})
             return
         ind = self.server.cfg.indicators

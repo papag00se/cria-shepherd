@@ -97,6 +97,8 @@ def test_a_loop_that_raises_ends_the_turn_with_a_terminal_answer_leaves_nothing_
         assert "response.completed" not in raw
     errors = [e for e in loop_wire.events() if e["kind"] == "response.error"]
     assert len(errors) == 1 and "loop exploded" in errors[0]["error"] and loop_wire.cria.active_streams == {}
+    # A bare `KeyError('k')` named no line in a real Codex run (e2e handles-cli-node, 2026-11-01); the event carries the raise site.
+    assert "Traceback" in errors[0]["traceback"] and "RuntimeError: loop exploded" in errors[0]["traceback"]
     status, raw = send(loop_wire, mode, "__TOOL__ write hello.txt")
     assert status == 200 and [n for n, _ in harness_calls(mode, raw)] == ["write_file"]
 
