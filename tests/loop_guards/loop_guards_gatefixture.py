@@ -14,7 +14,7 @@ def _layout(raw):
     prefix, suffix = probegate.SECTION_PREFIX.encode(), probegate.SECTION_SUFFIX.encode()
     removed = (probegate.SECTION_PREFIX + probegate.LITTER_REMOVED_SECTION + probegate.SECTION_SUFFIX).encode()
     start = data.find(removed)
-    survey = data.find(b'___CRIA_SURVEY___')
+    survey = data.find(b'___CTX_SURVEY___')
     if start < 0:
         checker_end = report_end = len(data) if survey < 0 else survey
     else:
@@ -49,7 +49,7 @@ def gate_page(plan, raw, offset=0, size=None):
     plan.transport_required = True
     data = raw.encode()
     chunk = data[offset:] if size is None else data[offset:offset + size]
-    path = f"/tmp/.cria-gate-{plan.transport_id}.spool"
+    path = f"/tmp/.ctx-gate-{plan.transport_id}.spool"
     return "\n".join([probegate._transport_marker(plan.transport_id),
         "path\t" + base64.b64encode(path.encode()).decode(), f"offset\t{offset}", f"total\t{len(data)}",
         "sha256\t" + hashlib.sha256(data).hexdigest(), *bounds_field_for(raw),

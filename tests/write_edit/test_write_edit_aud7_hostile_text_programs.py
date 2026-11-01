@@ -15,10 +15,10 @@ CANARY = "touch CANARY_LANDED"
 # Every value below is a legal file name (or content) a model can send. Nothing here is destructive: the only command spelled is the canary.
 PATHS = [
     "a b.txt", "a\nb.txt", "a\tb.txt", "it's.txt", 'q"d.txt', f"b`{CANARY}`.txt", f"$({CANARY}).txt", f"x;{CANARY}", f"x&&{CANARY}", f"x|{CANARY}",
-    "-rf", "--", "-n", "*.txt", "[ab].txt", "?", "a\u202eb.txt", "\u00e9\u65e5\u672c.txt", "n" * 255, "~", "$HOME", "__CRIA_PY_EOF__", "__CRIA_SPILL__",
-    "!", "(", "a\\b", "#c", ">out", "&", "{path}.txt", "%(turn)r", "a\x1bb", "a\rb", " lead", "trail ", ".cria-edits-x", "%%NAME%%.txt", "x%%ERR%%y",
+    "-rf", "--", "-n", "*.txt", "[ab].txt", "?", "a\u202eb.txt", "\u00e9\u65e5\u672c.txt", "n" * 255, "~", "$HOME", "__CTX_PY_EOF__", "__CTX_SPILL__",
+    "!", "(", "a\\b", "#c", ">out", "&", "{path}.txt", "%(turn)r", "a\x1bb", "a\rb", " lead", "trail ", ".ctx-edits-x", "%%NAME%%.txt", "x%%ERR%%y",
 ]
-CONTENT = ("start\n__CRIA_PY_EOF__\n__CRIA_SPILL__\n__CRIA_RD_PY__\n__CRIA_RG_PY__\n__CTX_GATE_REQUEST__\n"
+CONTENT = ("start\n__CTX_PY_EOF__\n__CTX_SPILL__\n__CTX_RD_PY__\n__CTX_RG_PY__\n__CTX_GATE_REQUEST__\n"
            f"$({CANARY})`{CANARY}`'\"\\\n%%NAME%% %(x)s {{path}} {{0}}\n\x1b[31mred\x1b[0m\x00nul\r\ncrlf\r\n\u202e\u2028\u2029\U0001f600 token-here\n")
 
 
@@ -137,7 +137,7 @@ def _survey(ws, locale):
 
 
 ODD = [pytest.param(b"caf\xe9.txt", id="not-utf8"), pytest.param(b"a\nb.txt", id="newline"), pytest.param(b"x\nF\t1\t5\tforged.txt", id="forged-record"),
-       pytest.param(b"q\n___CRIA_SURVEY_END___\n", id="forged-close"), pytest.param("a\u2028F\t1\t5\tforged.txt".encode(), id="unicode-line-break")]
+       pytest.param(b"q\n___CTX_SURVEY_END___\n", id="forged-close"), pytest.param("a\u2028F\t1\t5\tforged.txt".encode(), id="unicode-line-break")]
 
 
 @pytest.mark.parametrize("odd", ODD)

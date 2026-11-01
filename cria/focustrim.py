@@ -193,7 +193,7 @@ def _is_hard_failure(content) -> bool:
 
 
 def _call_is_gate(tc: dict) -> bool:
-    """The tool call is cria's own gate probe — its command carries the ___CRIA_GATE_ marker."""
+    """The tool call is cria's own gate probe — its command carries the ___CTX_GATE_ marker."""
     args = (tc.get("function") or {}).get("arguments") or ""
     args = args if isinstance(args, str) else json.dumps(args)
     return _GATE_MARKER in args
@@ -222,7 +222,7 @@ def _call_mutates(tc: dict) -> bool:
 
 
 def _is_gate_probe(tc: dict, result: dict) -> bool:
-    """cria's own ground-truth gate probe (its command/result carries the ___CRIA_GATE_ markers).
+    """cria's own ground-truth gate probe (its command/result carries the ___CTX_GATE_ markers).
     Exempt from the failure-squash: it is the ground truth, not a dead end to remove."""
     return _call_is_gate(tc) or _GATE_MARKER in str(result.get("content") or "")
 

@@ -78,10 +78,10 @@ TRANSPORT_CHUNK_BYTES = 6_000
 # always over the raw bytes — compression is invisible to every integrity check). This caps how much
 # raw one page may decompress to, so a hostile/garbled page cannot balloon cria's memory.
 TRANSPORT_RAW_PAGE_MAX = 65_536
-TRANSPORT_PREFIX = "___CRIA_GATE_TRANSPORT_"
+TRANSPORT_PREFIX = "___CTX_GATE_TRANSPORT_"
 TRANSPORT_SUFFIX = "___"
-TRANSPORT_END_PREFIX = "___CRIA_GATE_TRANSPORT_END_"
-_TRANSPORT_HEREDOC = "__CRIA_GATE_TRANSPORT_PY__"
+TRANSPORT_END_PREFIX = "___CTX_GATE_TRANSPORT_END_"
+_TRANSPORT_HEREDOC = "__CTX_GATE_TRANSPORT_PY__"
 
 # C28: a harness exec's DEFAULT yield does not have to honor the 300s budget `with_time_budget`
 # asks for (Codex clamped/returned early at ~10s in the captured incident, mid-pytest, with no
@@ -128,7 +128,7 @@ def _transport_marker(transport_id: str, *, end: bool = False) -> str:
 
 # --------------------------------------------------------------------------- harness-side helper (N1)
 HELPER_GONE_FIELD = "helper-gone"
-_HELPER_HEREDOC = "__CRIA_GATE_HELPER_PY__"
+_HELPER_HEREDOC = "__CTX_GATE_HELPER_PY__"
 
 
 def _helper_reader_program() -> str:
@@ -225,7 +225,7 @@ def _helper_source() -> str:
 
 
 def _helper_name() -> str:
-    return ".cria-helper-" + hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()[:16] + ".py"
+    return ".ctx-helper-" + hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()[:16] + ".py"
 
 
 def _helper_digest() -> str:
@@ -367,15 +367,15 @@ def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], surv
     opening, closing = shlex.quote(_transport_marker(transport_id)), shlex.quote(_transport_marker(transport_id, end=True))
     error_encoder = shlex.quote('import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')
     return [
-        '__cria_launch_error=$({\n' + launch + '} 2>&1)',
-        '__cria_launch_status=$?',
-        'if [ "$__cria_launch_status" -eq 0 ]; then',
-        _helper_reader_call('"$__cria_gate_file"', 0, transport_id, poll_wait_s),
-        'elif [ "$__cria_launch_status" -eq 3 ]; then',
+        '__ctx_launch_error=$({\n' + launch + '} 2>&1)',
+        '__ctx_launch_status=$?',
+        'if [ "$__ctx_launch_status" -eq 0 ]; then',
+        _helper_reader_call('"$__ctx_gate_file"', 0, transport_id, poll_wait_s),
+        'elif [ "$__ctx_launch_status" -eq 3 ]; then',
         f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' {opening} {closing}",
         'else',
         f"printf '%s\\nerror\\t' {opening}",
-        f'printf %s "$__cria_launch_error" | python3 -c {error_encoder}',
+        f'printf %s "$__ctx_launch_error" | python3 -c {error_encoder}',
         f"printf '%s\\n' {closing}",
         'fi',
     ]
@@ -658,7 +658,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
             return fail_transport(plan, "transport page contains undecodable fields")
         if not running_path or "\x00" in running_path or "\n" in running_path or "\r" in running_path:
             return fail_transport(plan, "transport page path or hash is invalid")
-        if not os.path.basename(running_path).startswith(f".cria-gate-{plan.transport_id}."):
+        if not os.path.basename(running_path).startswith(f".ctx-gate-{plan.transport_id}."):
             return fail_transport(plan, "transport page named an unexpected spool")
         if plan.transport_path and running_path != plan.transport_path:
             return fail_transport(plan, "transport spool changed between pages")
@@ -693,7 +693,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     if (not path or "\x00" in path or "\n" in path or "\r" in path
             or not re.fullmatch(r"[0-9a-f]{64}", digest)):
         return fail_transport(plan, "transport page path or hash is invalid")
-    expected_name = f".cria-gate-{plan.transport_id}."
+    expected_name = f".ctx-gate-{plan.transport_id}."
     if not os.path.basename(path).startswith(expected_name):
         return fail_transport(plan, "transport page named an unexpected spool")
     if offset != len(plan.transport_data) or total < 0 or len(chunk) > TRANSPORT_RAW_PAGE_MAX:
@@ -926,21 +926,21 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # header-shaped line (any id, any text around it) cannot have declared its position, so it is just output.
     parts.append(SECTION_DECLARATION)
     for i, c in enumerate(plan.candidates):
-        parts.append(f"__cria_declare probe-{i}")
+        parts.append(f"__ctx_declare probe-{i}")
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
         if c.kind is probediscovery.ProbeKind.Test:
             # Remember THIS probe's exit code for the offline leg below. compose_probe_command
-            # leaves it in __cria_ec, which the next probe overwrites, so it is captured here under
+            # leaves it in __ctx_ec, which the next probe overwrites, so it is captured here under
             # a name of its own.
-            parts.append(f"{proberun.TEST_EC_VAR}=$__cria_ec")
+            parts.append(f"{proberun.TEST_EC_VAR}=$__ctx_ec")
     # The OFFLINE re-run of the test probe — see proberun.offline_probe_command.
     # Emitted last among the probes so a failure here can never mask a real check result.
     test_c = next((c for c in plan.candidates
                    if c.kind is probediscovery.ProbeKind.Test), None)
     offline = proberun.offline_probe_command(test_c, COMPLETION_PROBE_TIMEOUT_S) if test_c else ""
     if offline:
-        parts.append("__cria_declare offline")
+        parts.append("__ctx_declare offline")
         parts.append(f"echo {_marker('offline')}")
         parts.append(offline)
     # Private scratch cleanup and the following survey are supervisor-finalized,
@@ -988,11 +988,11 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # cannot know `${TMPDIR:-/tmp}`'s resolved value (#23c — that's the HARNESS's environment), but a
     # fixed name lets `continue_transport_command` retry this exact launch text verbatim while it has
     # learned nothing yet, and `_gate_launch_guard` makes that retry a no-op once the block is started.
-    spool = f'"${{TMPDIR:-/tmp}}/{gatecleanup.PRIVATE_PREFIX}{plan.transport_id}/.cria-gate-{plan.transport_id}.spool"'
+    spool = f'"${{TMPDIR:-/tmp}}/{gatecleanup.PRIVATE_PREFIX}{plan.transport_id}/.ctx-gate-{plan.transport_id}.spool"'
     plan.transport_deadline_s = _gate_deadline_s(len(plan.candidates) + (1 if offline else 0))
     plan.script = "\n".join([
         _gate_sentinel(retypable),
-        f"__cria_gate_file={spool}",
+        f"__ctx_gate_file={spool}",
         # The helper owns positive allocation before detaching any native work.
         *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
         *([spool_cleanup] if spool_cleanup else []),
@@ -1060,7 +1060,7 @@ _CHECKER_HEADER = re.compile(r"probe-\d+|offline|git|litter")      # cria's own 
 # The script-side half of the declaration: append `<section id> <spool size>` to the worker's private side file. `wc -c` is
 # the size of everything printed so far (every earlier probe has exited and the spool is append-only), i.e. exactly where
 # the next header line will start. Failing quietly declares nothing, which leaves that header unrecognised (never guessed).
-SECTION_DECLARATION = ('__cria_declare(){ printf \'%s %s\\n\' "$1" "$(wc -c < "${CTX_GATE_SPOOL:-/dev/null}" 2>/dev/null | tr -d \' \')" '
+SECTION_DECLARATION = ('__ctx_declare(){ printf \'%s %s\\n\' "$1" "$(wc -c < "${CTX_GATE_SPOOL:-/dev/null}" 2>/dev/null | tr -d \' \')" '
                        '>> "${CTX_GATE_SECTIONS:-/dev/null}" 2>/dev/null; }')
 
 
@@ -1521,7 +1521,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
 
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
-    ``___CRIA_GATE_probe-N___`` section markers, ``EXIT:<n>`` sentinels, a git-hash section, and a
+    ``___CTX_GATE_probe-N___`` section markers, ``EXIT:<n>`` sentinels, a git-hash section, and a
     ``Chunk ID / Process exited / …`` wrapper. Shown verbatim (and PROTECTED from trimming) it buried
     the one real error under plumbing AND leaked advisory lint (``imported but unused``) the model then
     chased — even though the gate DIGEST already filters those. This strips all of it and, keying on the
@@ -2093,7 +2093,7 @@ def _strip_gate_plumbing(cmd: str) -> str:
 
     THE HARMS THIS PREVENTS ARE MEASURED. Across the thirteen walked nemotron runs the unstripped
     scaffolding was 3.8% of every byte cria sent one coder (50 copies of a pom checker, 100 of the
-    `unshare` offline leg, 850 occurrences of `__cria_`); three separate models copied it back as
+    `unshare` offline leg, 850 occurrences of `__ctx_`); three separate models copied it back as
     their own command; and the token `cria` reached the model 63 times in a single prompt (#17).
 
     Not a gate → "". A cria-authored call the model never made has nothing in it for the model.
@@ -2178,7 +2178,7 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
     a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
 
-    Also STRIPS the gate's command-side plumbing (the ``echo ___CRIA_GATE_…``/``git status|sha1sum``/
+    Also STRIPS the gate's command-side plumbing (the ``echo ___CTX_GATE_…``/``git status|sha1sum``/
     ``cd||exit 97`` scaffolding the coder never authored), DROPS non-signal ⟦ctx:checks⟧ turns entirely
     (with their command call, so nothing orphans — a "no usable result this turn" is pure noise), and
 
@@ -2522,7 +2522,7 @@ def spool_cleanup_command(workspace: str) -> str:
     commands = []
     for path in paths:
         name = os.path.basename(path)
-        token = name.removeprefix('.cria-gate-').removesuffix('.spool')
+        token = name.removeprefix('.ctx-gate-').removesuffix('.spool')
         commands.append(gatecleanup.dispose_command(helper_runner(), token, path))
     return '{\n' + '\n'.join(commands) + '\n} >/dev/null 2>&1'
 

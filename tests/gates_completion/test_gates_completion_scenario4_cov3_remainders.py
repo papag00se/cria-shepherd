@@ -24,15 +24,15 @@ def test_the_spool_cleanup_queue_is_bounded_by_forgetting_not_by_growing(monkeyp
     """A spool is queued for removal only after its transport verified; with more than 256 workspaces waiting the queue is dropped whole (a leftover spool is private scratch, never evidence)
     and the newest workspace is queued afresh; nothing is queued without a workspace or a path."""
     monkeypatch.setattr(probegate, "_SPOOL_CLEANUP_QUEUE", {})
-    probegate._queue_spool_cleanup("", "/tmp/.cria-gate-a.x")
+    probegate._queue_spool_cleanup("", "/tmp/.ctx-gate-a.x")
     probegate._queue_spool_cleanup("/ws", "")
     assert probegate._SPOOL_CLEANUP_QUEUE == {}
     for n in range(257):
-        probegate._queue_spool_cleanup(f"/ws{n}", f"/tmp/.cria-gate-{n}.x")
+        probegate._queue_spool_cleanup(f"/ws{n}", f"/tmp/.ctx-gate-{n}.x")
     assert len(probegate._SPOOL_CLEANUP_QUEUE) == 257
-    probegate._queue_spool_cleanup("/last", "/tmp/.cria-gate-last.x")
+    probegate._queue_spool_cleanup("/last", "/tmp/.ctx-gate-last.x")
     assert list(probegate._SPOOL_CLEANUP_QUEUE) == ["/last"]
-    assert "/tmp/.cria-gate-last.x" in probegate.spool_cleanup_command("/last") and probegate.spool_cleanup_command("/ws0") == ""
+    assert "/tmp/.ctx-gate-last.x" in probegate.spool_cleanup_command("/last") and probegate.spool_cleanup_command("/ws0") == ""
 
 
 def test_a_transport_that_cannot_continue_offers_no_page_request():

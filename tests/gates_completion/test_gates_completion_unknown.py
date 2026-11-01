@@ -4,7 +4,7 @@ import base64
 from cria import loop, probegate, prompts, repositorychecks as checks
 from gates_completion_helpers import Log, gates_completion_view, gate_turn, new_plan, sec, text_of  # noqa: F401
 
-LAST = "OSError: [Errno 30] Read-only file system: '.gate-private-b52133be8bb213a65ba610ee'"
+LAST = "OSError: [Errno 30] Read-only file system: '.ctx-private-b52133be8bb213a65ba610ee'"
 TRACE = f'Traceback (most recent call last):\n  File "<string>", line 7, in <module>\n{LAST}'
 UNKNOWN = prompts.load("probe_transport_unknown").strip()
 

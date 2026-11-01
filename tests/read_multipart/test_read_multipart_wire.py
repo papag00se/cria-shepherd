@@ -19,7 +19,7 @@ def test_oversize_read_reaches_the_model_as_one_exact_read_and_stays_projected(t
         msg, carriers = w.drive()
         assert 'seen' in msg['content'] and len(carriers) > 3 and len(backend.bodies) == 2
         seen = lambda: sorted((m['content'] for m in backend.tool_results()), key=len)
-        assert seen() == ['short\n', RAW] and '__CRIA_MULTIPART_PAGE__' not in json.dumps(backend.bodies[-1]['messages'])
+        assert seen() == ['short\n', RAW] and '__CTX_MULTIPART_PAGE__' not in json.dumps(backend.bodies[-1]['messages'])
         w.messages += [{'role': 'assistant', 'content': 'done'}, {'role': 'user', 'content': 'continue'}]   # harness replays history
         w.post()
         assert seen() == ['short\n', RAW] and len(backend.bodies) == 3

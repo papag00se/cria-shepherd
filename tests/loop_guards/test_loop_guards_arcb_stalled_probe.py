@@ -57,7 +57,7 @@ def test_a_partial_reading_keeps_the_ticket_until_the_whole_reading_has_arrived(
     run, bodies = spinning(tmp_path)
     ticket, plan = run.sess.stalled_probe, run.sess.gate_plan
     probe_id = run.out["choices"][0]["message"]["tool_calls"][0]["id"]
-    spool = base64.b64encode(f"/tmp/.cria-gate-{plan.transport_id}.spool".encode()).decode()
+    spool = base64.b64encode(f"/tmp/.ctx-gate-{plan.transport_id}.spool".encode()).decode()
     poll = answer(run, probe_id, envelope(plan, "path\t" + spool, "running\t12.3"))
     poll_id = poll["tool_calls"][0]["id"]
     assert poll_id != probe_id and run.sess.stalled_probe is ticket and run.sess.stalled_steer is None and len(bodies) == 5

@@ -527,7 +527,7 @@ except OSError as _e:
     _unlanded(_e)
 # THE LANDED FACT, and the removal facts the shrink protection measured (handed in by its wrapper), are TYPED fields of the
 # record — never lines a reader has to find.
-sys.stdout.write(_rec('landed', **({{'rm':os.environ['CRIA_RM']}} if os.environ.get('CRIA_RM') else {{}}), **({{'late':True}} if _late else {{}})))
+sys.stdout.write(_rec('landed', **({{'rm':os.environ['CTX_RM']}} if os.environ.get('CTX_RM') else {{}}), **({{'late':True}} if _late else {{}})))
 '''
 
 
@@ -1049,13 +1049,13 @@ def _survey_after_first_record(cmd: str, ride: str) -> str:
     reader never has to look past record 1 for the survey, and never searches for it. The exit status is the command's own,
     saved before and restored last (the survey wrapper preserves it too). Only cria's OWN lowered commands are composed this
     way; a native command is never wrapped."""
-    return ("__cria_o=$( { " + cmd + "\n} 2>&1 )\n"
-            "__cria_ec=$?\n"
-            "printf '%s\\n' \"${__cria_o%%$'\\n'*}\"\n"
-            "( exit $__cria_ec )\n"
+    return ("__ctx_o=$( { " + cmd + "\n} 2>&1 )\n"
+            "__ctx_ec=$?\n"
+            "printf '%s\\n' \"${__ctx_o%%$'\\n'*}\"\n"
+            "( exit $__ctx_ec )\n"
             + ride + "\n"
-            "case \"$__cria_o\" in *$'\\n'*) printf '%s\\n' \"${__cria_o#*$'\\n'}\" ;; esac\n"
-            "exit $__cria_ec")
+            "case \"$__ctx_o\" in *$'\\n'*) printf '%s\\n' \"${__ctx_o#*$'\\n'}\" ;; esac\n"
+            "exit $__ctx_ec")
 
 
 SPILL_CONTENT_MAX = content_reduce_mod.SPILL_CONTENT_MAX
@@ -1084,8 +1084,8 @@ def _spill_command(target: str, content: str, msg: str, *, operation=None) -> st
     if operation is not None:
         raw = body.encode('utf-8')
         stored = dict(operation=operation, target=target, byte_count=len(raw), sha256=hashlib.sha256(raw).hexdigest())
-    command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
-               f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
+    command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CTX_SPILL__'\n"
+               f"{_b64_wrapped(body)}\n__CTX_SPILL__\n"
                f"then printf %s {_qbash(denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else ''))}")
     output = denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else '')
     return _bounded_tool_stdout(command + '; else exit 1; fi', output)

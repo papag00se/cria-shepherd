@@ -686,7 +686,7 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
         f"timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} </dev/null 2>&1; "
-        f"__cria_ec=$?; printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
+        f"__ctx_ec=$?; printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__ctx_ec\""
     )
 # The network block for the OFFLINE re-run: an empty KERNEL network namespace, not a language shim.
 #
@@ -745,7 +745,7 @@ _NETNS_LOOPBACK_UP = "ip link set lo up 2>/dev/null; exec "
 # ask whether the online run passed. ONE owner: `probegate` writes it, `offline_probe_command` reads
 # it, and `probegate._strip_gate_plumbing` drops every line that mentions it — three places that
 # must agree, and did not while it was a bare literal in each (#23).
-TEST_EC_VAR = "__cria_test_ec"
+TEST_EC_VAR = "__ctx_test_ec"
 
 
 def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
@@ -793,11 +793,11 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
         # It spent the rest of the run chasing a duplication cria had created. ~25 coder calls.
         #
         # A removal, and it uses a fact the script already holds (probegate saves the test probe's
-        # exit code into __cria_test_ec). Unset means the test probe never ran, which is also a
+        # exit code into __ctx_test_ec). Unset means the test probe never ran, which is also a
         # reason not to run it twice.
-        f'if [ "${{__cria_test_ec:-1}}" -eq 0 ] && {_netns_capable(c.working_dir)} >/dev/null 2>&1; then '
-        f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
-        f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __cria_ec=$?; "
+        f'if [ "${{__ctx_test_ec:-1}}" -eq 0 ] && {_netns_capable(c.working_dir)} >/dev/null 2>&1; then '
+        f"__ctx_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
+        f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __ctx_ec=$?; "
         # THE TALLY LINE BY ITS SHAPE, NOT BY BEING LAST. This was a bare `tail -c 600` — no marker,
         # no named constant, and it is ALL the offline evidence there is: the section is skipped for
         # findings entirely, so 600 bytes is the whole basis of the sentence cria then tells the
@@ -811,11 +811,11 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
         # after it could only ever remove one of the few lines that matter, which is the failure the
         # comment above records. Nothing here is shown to a model, so this is not rule 5 — it is 5b:
         # a claim cria states as fact must not rest on bytes cria threw away.
-        f"printf '%s' \"$__cria_out\" | grep -E {shlex.quote(_TALLY_LINE_RE)}; "
+        f"printf '%s' \"$__ctx_out\" | grep -E {shlex.quote(_TALLY_LINE_RE)}; "
         # The raw tail behind it is a PARSE fallback for a runner whose summary the pattern missed,
         # never something a model reads. It stays bounded.
-        f"printf '%s' \"$__cria_out\" | tail -c {OFFLINE_TAIL_BYTES}; "
-        f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\"; "
+        f"printf '%s' \"$__ctx_out\" | tail -c {OFFLINE_TAIL_BYTES}; "
+        f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__ctx_ec\"; "
         f"fi"
     )
 

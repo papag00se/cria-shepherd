@@ -102,7 +102,7 @@ _WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 # reframe lead. Literals mirror loop.BRIEFING_OPEN / probegate.SECTION_PREFIX / selfcompact.SUMMARY_MARKER
 # / selfcompact.TASK_MARKER / loop.CONTINUATION_MARKER — contextfloor is low-level and imports none (avoids
 # a cycle); a test asserts they stay in sync.
-_PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK,
+_PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CTX_GATE_", _COMPACTED_MARK,
                     "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:facts⟧", "⟦ctx:continuation⟧",
                     "⟦ctx:extracted⟧")
 

@@ -111,7 +111,7 @@ def test_check_evidence_keeps_who_requested_a_check_through_list_commands_and_mi
     (lambda p: p.replace("\nsha256\t", "\nno-tab-here\nsha256\t"), "malformed or duplicate fields"),
     (lambda p: page(new_plan(), FAIL, data=B64("z" * (probegate.TRANSPORT_CHUNK_BYTES + 1))), "undecodable fields"),
     (lambda p: page(new_plan(), FAIL, data=B64("not a zlib stream"), enc="zlib"), "undecodable fields"),
-    (lambda p: page(new_plan(), FAIL, path=B64("/tmp/.cria-gate-" + "a" * 24 + ".x\nevil")), "path or hash is invalid"),
+    (lambda p: page(new_plan(), FAIL, path=B64("/tmp/.ctx-gate-" + "a" * 24 + ".x\nevil")), "path or hash is invalid"),
     (lambda p: page(new_plan(), FAIL, sha256="NOT-HEX"), "path or hash is invalid"),
     (lambda p: page(new_plan(), FAIL, total="-1"), "inconsistent"),
 ], ids=["duplicate-field", "no-tab", "oversize-payload", "bad-zlib", "newline-in-path", "non-hex-digest", "negative-total"])

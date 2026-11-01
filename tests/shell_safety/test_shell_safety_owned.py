@@ -7,7 +7,7 @@ import pytest
 
 from cria import gatecleanup, ownedfiles
 
-PREFIX, REAL_OPEN = ".cria-edits-", os.open
+PREFIX, REAL_OPEN = ".ctx-edits-", os.open
 
 
 def opened(parent, create=True):

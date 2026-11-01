@@ -204,6 +204,8 @@ Use `⟦ctx:…⟧` for model-facing markers. Strip human-facing `⟦cria⟧` no
 
 Internal tokens and harness idioms can be copied into executable commands, so prevent leakage anywhere cria composes content the model may read or run.
 
+Private artefacts that appear in a command or result (heredoc delimiters, section and frame markers, shell variables, temp directories) carry no product name: they are `ctx`-family names (`___CTX_GATE_`, `__CTX_PY_EOF__`, `.ctx-done-`, ...). A history an earlier release lowered is made clean at the wire, statelessly (`privatenames`: the earlier names are renamed inside cria-composed commands and their results only; a declared lowering without a receipt is re-presented as the tool the model made; a survey cria composed alone leaves with its result). `tests/structure` composes every main lowered command and scans it for the name; `tests/server_config/test_server_config_invis_fixture_session.py` runs a whole session, and its replay through a restarted server, and scans every body sent upstream.
+
 ### 18. Harness-agnostic
 Do not depend on, prune, or specialize for harness configuration or rendering.
 
@@ -243,7 +245,7 @@ cria is not necessarily on the machine the coder is on. The likely deployment is
 
 `workspace_root` is a path the HARNESS announced, about the HARNESS's filesystem. Handing it to `os.path.isdir` only means anything when the two are the same machine.
 
-**Any access to the workstation, the environment or the repo must go through a harness tool.** cria composes the call, the harness runs it where the files actually are, and cria reads the result. The completion gate is the worked example: `guard_gate_op` builds a shell tool call, the harness runs the repo's own checks in the workspace and spools the complete result outside the workspace, and later harness calls return checked pages. cria never opens that path; only an exact byte count and SHA-256 release the stream to the existing parser. `probegate.clean_gate_results` replaces the paged plumbing in the model's view — command scaffolding the coder never wrote is stripped, non-signal turns are dropped along with their calling turn so nothing orphans, and what the model sees is one `⟦ctx:checks⟧` summary. So cria can already act on the repo without the model ever reading cria's plumbing (`___CRIA_GATE_`, `selfcompact._ANCHOR_MARKERS`).
+**Any access to the workstation, the environment or the repo must go through a harness tool.** cria composes the call, the harness runs it where the files actually are, and cria reads the result. The completion gate is the worked example: `guard_gate_op` builds a shell tool call, the harness runs the repo's own checks in the workspace and spools the complete result outside the workspace, and later harness calls return checked pages. cria never opens that path; only an exact byte count and SHA-256 release the stream to the existing parser. `probegate.clean_gate_results` replaces the paged plumbing in the model's view — command scaffolding the coder never wrote is stripped, non-signal turns are dropped along with their calling turn so nothing orphans, and what the model sees is one `⟦ctx:checks⟧` summary. So cria can already act on the repo without the model ever reading cria's plumbing (`___CTX_GATE_`, `selfcompact._ANCHOR_MARKERS`).
 
 **Three kinds of fact, and only two of them travel:**
 

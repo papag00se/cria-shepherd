@@ -36,7 +36,7 @@ from typing import Callable
 from .assistcontract import Policy, Reference
 from .memoryeffects import Effect
 
-from . import bodykeys, contextfloor, dedup, focustrim, generation, indicators, probegate, prompts, selfcompact
+from . import bodykeys, contextfloor, dedup, focustrim, generation, indicators, privatenames, probegate, prompts, selfcompact
 
 # The messages that carry the repo's own check evidence into the model's view, each rendered by a
 # different owner: the compaction continuation freezes the gate's findings into the harness's history
@@ -56,7 +56,11 @@ def wire_messages(messages: list[dict]) -> list[dict]:
     `Upstream._prep` applies exactly this before the floor, and the usage report measures exactly this.
 
     The one-copy fold is a SEPARATE step (:func:`fold_evidence`) because it may only run once the floor
-    has decided what survives (see `Upstream._prep`)."""
+    has decided what survives (see `Upstream._prep`).
+
+    First, whatever an earlier release lowered into the history is made what the model should read
+    (`privatenames.restore_wire`): a replayed body never shows a private command or marker name."""
+    messages = privatenames.restore_wire(messages)
     if probegate.gate_call_ids(messages):
         messages = probegate.clean_gate_results(messages, linked_only=True)
     return messages

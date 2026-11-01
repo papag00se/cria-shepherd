@@ -114,7 +114,9 @@ READ_TRANSPORT_STDOUT_BYTES = 10_000
 # repo's chars/4 estimate. A file past it cannot be delivered whole to that window at all (a measured overflow), so it keeps the live,
 # detect-and-fail-closed paging. Not a new bound: the reference window and the estimate already exist.
 MULTIPART_SNAPSHOT_MAX_BYTES = windowcaps.REFERENCE_WINDOW * 4
-MULTIPART_SNAPSHOT_DIR = ".cria-mpsnap-"        # under the harness's $TMPDIR (else /tmp) - never in the user's tree
+MULTIPART_SNAPSHOT_DIR = ".ctx-mpsnap-"        # under the harness's $TMPDIR (else /tmp) - never in the user's tree
+# The shape earlier releases created. Directories of it may still sit in a harness TMPDIR; retention sweeps both, nothing creates it.
+LEGACY_MULTIPART_SNAPSHOT_DIR = ".cria-mpsnap-"
 
 
 def _read_display_path(path: str) -> str:
@@ -131,12 +133,12 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
     return (f"{_read_failure_branches(q, path)}"
             f"if ! command -v python3 >/dev/null 2>&1; then {unavailable}; fi; "
             f"python3 - {q} {start} {end} {_qbash(receipt or '')} {_qbash(past)} {_qbash(base64.b64encode(json.dumps(prompts.load_map('read_transport_oversize')).encode()).decode())} {READ_TRANSPORT_STDOUT_BYTES} <<'{_RANGE_HD}'\n{_read_program(_RANGE_PY)}{_RANGE_HD}\n"
-            f'__cria_rd=$?\n'
-            f'exit "$__cria_rd"')
+            f'__ctx_rd=$?\n'
+            f'exit "$__ctx_rd"')
 
 
 # The harness owns the file; payload and provenance come from the same read.
-_READ_HD = "__CRIA_RD_PY__"
+_READ_HD = "__CTX_RD_PY__"
 
 
 def _read_program(body: str) -> str:
@@ -218,7 +220,7 @@ sys.stdout.flush()
 # always numbered it). The window's bytes ride in the record with their length and digest and are declared `range`, so what
 # a window carried is verified — a pty cannot rewrite it and a harness cut makes it unverifiable (UNKNOWN), never a window
 # that looks complete.
-_RANGE_HD = "__CRIA_RG_PY__"
+_RANGE_HD = "__CTX_RG_PY__"
 _RANGE_PY = r'''
 import base64, json, os, stat, sys
 path, start, end, receipt, past = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
@@ -262,8 +264,8 @@ def _whole_read(q: str, *, kind: str = denial.RAN, pre: str = "", otherwise: str
     return (f"if ! command -v python3 >/dev/null 2>&1; then {unavailable}; fi; "
             f"python3 - {q} {_qbash(receipt or '')} {kind} '{pre_b64}' '{no_read_b64}' '{template_b64}' {READ_TRANSPORT_STDOUT_BYTES} "
             f"<<'{_READ_HD}'\n{_read_program(_READ_PY)}{_READ_HD}\n"
-            f'__cria_rd=$?\n'
-            f'if [ "$__cria_rd" -eq 0 ]; then :; else {failed}; fi')
+            f'__ctx_rd=$?\n'
+            f'if [ "$__ctx_rd" -eq 0 ]; then :; else {failed}; fi')
 
 
 def _read_failure_branches(q: str, path: str) -> str:
@@ -371,7 +373,7 @@ def _read_in_place_of_write(path: str, fact: str) -> str:
     return (f'if [ -f {q} ] && [ -r {q} ]; then\n'
             f"{_whole_read(q, kind=denial.REFUSED, pre=read, otherwise='false', no_read=no_read)}\n"
             f'fi\n'
-            f'if [ "${{__cria_rd:-1}}" -ne 0 ]; then printf %s {_qbash(not_read)}; {answer}; fi')
+            f'if [ "${{__ctx_rd:-1}}" -ne 0 ]; then printf %s {_qbash(not_read)}; {answer}; fi')
 
 
 def _under_spill_dir(path: str, spill_dir: str) -> bool:
@@ -689,7 +691,7 @@ def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_by
         raise ValueError('invalid record limit')
     page_mode = 'take' if offset == 0 else 'live' if live else 'serve'
     script = _MULTIPART_PAGE_PY.replace('%%CONFIG%%', cfg).replace('%%OFFSET%%', str(offset)).replace('%%MODE%%', page_mode).replace('%%LIMIT%%', str(limit))
-    command = "python3 - <<'__CRIA_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + ownedfiles.DIRECTORY_PROGRAM + script + '\n__CRIA_MULTIPART_PAGE__\n'
+    command = "python3 - <<'__CTX_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + ownedfiles.DIRECTORY_PROGRAM + script + '\n__CTX_MULTIPART_PAGE__\n'
     if command_max_bytes is not None:
         if type(command_max_bytes) is not int or command_max_bytes < 0:
             raise ValueError('invalid command byte limit')

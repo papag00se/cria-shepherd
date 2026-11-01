@@ -56,16 +56,16 @@ from . import completionmarks, denial, resultpacket
 
 # Marker opening the survey block appended to a cria-composed command. Everything from this line
 # to SURVEY_CLOSE is cria's, never the model's, and is stripped before the result is represented.
-SURVEY_OPEN = "___CRIA_SURVEY___"
-SURVEY_CLOSE = "___CRIA_SURVEY_END___"
+SURVEY_OPEN = "___CTX_SURVEY___"
+SURVEY_CLOSE = "___CTX_SURVEY_END___"
 # First line inside a survey block whose body travels packed (zlib, see `_SURVEY_PY`): the marker, the
 # length and the sha256 of the text it unpacks to. `strip_survey` unpacks it; nothing else ever sees it.
-SURVEY_PACKED = "___CRIA_SURVEY_Z___"
+SURVEY_PACKED = "___CTX_SURVEY_Z___"
 # Marker bracketing the survey inside the COMMAND cria composed, so the same plumbing-strip that
 # hides the gate's own scaffolding from the model hides this too. The model never authored either.
-SURVEY_CMD_OPEN = "# ___CRIA_SURVEY_CMD___"
-SURVEY_CMD_CLOSE = "# ___CRIA_SURVEY_CMD_END___"
-_SEC_PREFIX = "___CRIA_SV_"
+SURVEY_CMD_OPEN = "# ___CTX_SURVEY_CMD___"
+SURVEY_CMD_CLOSE = "# ___CTX_SURVEY_CMD_END___"
+_SEC_PREFIX = "___CTX_SV_"
 _SEC_SUFFIX = "___"
 
 # How much of the tree one survey may carry. A task workspace is a few hundred files; a repo with
@@ -1693,7 +1693,7 @@ _SURVEY_RECORD_PY = (
     .replace('W("{close}\\n")\n', 'W("{close}\\n")' + _RECORD_EPILOGUE, 1))
 assert _SURVEY_RECORD_PY.count("PIECES") >= 3 and "{receipt}" in _SURVEY_RECORD_PY
 
-_HEREDOC = "__CRIA_SV_PY__"
+_HEREDOC = "__CTX_SV_PY__"
 
 
 class _Param(str):
@@ -1761,10 +1761,10 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
         params = json.dumps({"tree_bytes": tree_bytes, "want": list(bodies),
                              "progs": list(progs), "outside": list(outside)})
         return (f"{SURVEY_CMD_OPEN}\n"
-                "__cria_sv_ec=$?\n"
+                "__ctx_sv_ec=$?\n"
                 f"{{ {prefix}{helper} survey {_q(params)}\n"
                 "} 2>/dev/null\n"
-                "( exit $__cria_sv_ec )\n"
+                "( exit $__ctx_sv_ec )\n"
                 f"{SURVEY_CMD_CLOSE}")
     receipt = denial.active_receipt()
     if receipt:
@@ -1777,9 +1777,9 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
         want=list(bodies), progs=list(progs), outside=list(outside), 
         open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
     return (f"{SURVEY_CMD_OPEN}\n"
-            "__cria_sv_ec=$?\n"
+            "__ctx_sv_ec=$?\n"
             f"{{ {prefix}python3 - <<'{_HEREDOC}'\n{body}\n{_HEREDOC}\n}} 2>/dev/null\n"
-            "( exit $__cria_sv_ec )\n"
+            "( exit $__ctx_sv_ec )\n"
             f"{SURVEY_CMD_CLOSE}")
 
 
@@ -1795,9 +1795,9 @@ def marks_ride(query, *, cd: str = "") -> str:
     denial.declare_survey()
     prefix = f"cd {_q(cd)} 2>/dev/null; " if cd else ""
     return (f"{SURVEY_CMD_OPEN}\n"
-            "__cria_sv_ec=$?\n"
+            "__ctx_sv_ec=$?\n"
             f"{{ {prefix}python3 - <<'{_HEREDOC}'\n{completionmarks.ride(query, receipt)}\n{_HEREDOC}\n}} 2>/dev/null\n"
-            "( exit $__cria_sv_ec )\n"
+            "( exit $__ctx_sv_ec )\n"
             f"{SURVEY_CMD_CLOSE}")
 
 

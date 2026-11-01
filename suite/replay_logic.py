@@ -313,7 +313,7 @@ def _flattened(lines):
 def check_gate_verbatim(row, cap, ws):
     """How many gate results shipped DE-INDENTED and DE-DUPLICATED source lines to the coder.
 
-    The captures hold raw checker output (the ``___CRIA_GATE_`` sections, as forwarded on the proxy
+    The captures hold raw checker output (the ``___CTX_GATE_`` sections, as forwarded on the proxy
     path), so the current :func:`probegate.clean_gate_output` can be run over the very bytes cria
     read. A fire needs both halves: the current cleaner keeps indentation or a repeated line that
     flattening would destroy, AND the FLATTENED form is the one found in this run's coder prompts —

@@ -1,5 +1,5 @@
 """Operator retention of the private source snapshots an abandoned multipart read leaves in the harness temp directory.
-A completed read removes its own; one abandoned before its last page leaves `.cria-mpsnap-<token>` (there is no session-close signal to
+A completed read removes its own; one abandoned before its last page leaves `.ctx-mpsnap-<token>` (there is no session-close signal to
 sweep it on, so only the operator's explicit `--kind snapshot`, never `all`, and only by age or token)."""
 import io
 import json
@@ -29,9 +29,10 @@ def run(tmp_path, *argv):
 
 def test_an_abandoned_snapshot_is_listed_and_pruned_by_age_only_when_asked_for_and_decoys_are_never_touched(tmp_path):
     """Real snapshot made by the real page program: listed with its size; `all` does not scan the temp dir; prune needs a selector, honours age and
-    removes exactly it; a same-prefix directory with foreign contents, a symlink, a wrong-shape name and an unrelated directory survive."""
+    removes exactly it (a directory in the shape an earlier release created is listed and pruned too); a same-prefix directory with foreign contents, a symlink, a wrong-shape name and an unrelated directory survive."""
     (tmp_path / 't').mkdir(); (tmp_path / 'home').mkdir(mode=0o700)
     snap = abandoned_read(tmp_path, 'a' * 32); other = abandoned_read(tmp_path, 'b' * 32)
+    other = other.rename(other.with_name(filecommands.LEGACY_MULTIPART_SNAPSHOT_DIR + 'b' * 32))  # left by an earlier release: still swept
     prefix = filecommands.MULTIPART_SNAPSHOT_DIR
     foreign = tmp_path / 't' / (prefix + 'c' * 32); foreign.mkdir(mode=0o700); (foreign / 'precious.txt').write_text('mine')
     link = tmp_path / 't' / (prefix + 'd' * 32); link.symlink_to(foreign)

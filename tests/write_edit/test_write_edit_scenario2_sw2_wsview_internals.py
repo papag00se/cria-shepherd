@@ -17,7 +17,7 @@ OPEN, CLOSE = wsview.SURVEY_OPEN, wsview.SURVEY_CLOSE
 
 
 def sec(name):
-    return f"___CRIA_SV_{name}___"
+    return f"___CTX_SV_{name}___"
 
 
 def survey(root, tree, blob=(), entries=None, extra_meta=True):

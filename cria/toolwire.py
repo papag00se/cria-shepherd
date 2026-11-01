@@ -12,7 +12,7 @@ from .toolargs import parse_args as _parse
 
 # Existing gate wire facts, lowered here to avoid importing the gate executor.
 # The old producer must reexport these canonical values during integration.
-SECTION_PREFIX = "___CRIA_GATE_"
+SECTION_PREFIX = "___CTX_GATE_"
 GATE_SENTINEL = "⟦ctx:gate⟧"
 
 
@@ -65,7 +65,7 @@ def _refusal_command(text: str, survey: str = "") -> str:
     if not survey:
         return f"{body}; exit {REFUSED_EXIT_CODE}"
     # NEWLINE-JOINED, AND NOT WRAPPED IN ANYTHING. The survey is a multi-line block containing a
-    # heredoc (`python3 - <<'__CRIA_SV_PY__'`), so it cannot be `;`-joined onto one line and it
+    # heredoc (`python3 - <<'__CTX_SV_PY__'`), so it cannot be `;`-joined onto one line and it
     # cannot be parenthesised: `( <heredoc> ) || true` does not parse at all.
     #
     # My own first version did exactly that and SHIPPED. Measured on the very next cell run

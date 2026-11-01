@@ -200,11 +200,11 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         # BOTH cria command sentinels earn the exemption: `# ⟦ctx:tool⟧` leads a lowered synthetic
         # tool call, `# ⟦ctx:gate⟧` (probegate.GATE_SENTINEL) leads the gate script AND its transport
         # continuation. The continuation is a `python3 - <spool> <<HEREDOC` reader that NAMES the
-        # /tmp/.cria-gate-* spool; recognising only the tool sentinel made cria refuse its own
+        # /tmp/.ctx-gate-* spool; recognising only the tool sentinel made cria refuse its own
         # multi-page gate as "outside the working directory", so every large gate read UNKNOWN and the
         # completion path could never verify (cart-billing-go, session 20260906T124743).
         if (head.startswith("# " + _SENTINEL) or head.startswith("# " + GATE_SENTINEL)
-                or (head.startswith("cd ") and "___CRIA_GATE_" in head)):
+                or (head.startswith("cd ") and "___CTX_GATE_" in head)):
             return None
         return dirguard.command_refusal(command, level, workspace, roots)
     return None

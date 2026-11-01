@@ -87,16 +87,17 @@ def test_no_internal_body_key_reaches_the_wire():
         assert not set(out) & {*bodykeys.ALL, *bodykeys.LEGACY_MESSAGE_KEYS} and out["messages"] == [{"role": role, "content": text}], role
 
 
-PRIVATE_IDENTIFIER = re.compile(r"___CRIA_[A-Za-z_0-9-]*___|__CRIA_[A-Z_]+__|__cria_\w+|\bCRIA_RM\b")
-
-
-def test_lowered_commands_carry_no_prose_naming_the_product():
-    """A command cria lowers is executed by the harness and comes back in the history the model reads: ornith1.5_9b, 2026-10: the
-    java cells read the product's name out of paths and helper comments and called a Maven repo 'the CRIA one'. The embedded programs'
-    own comments said 'cria elides a rejected payload' / 'cria's decoding' / 'cria's own wreckage' / 'tool output cria itself ran'
-    in every write and edit. Private marker identifiers (heredoc delimiters, ___CRIA_*___ frame markers, __cria_* shell variables)
-    are parsed by their consumers and stripped from the model's history by session state; PROSE in a composed program never is."""
-    from cria import filecommands, wsview, writeproxy
+def test_lowered_commands_carry_no_trace_of_the_product(tmp_path):
+    """A command cria lowers is executed by the harness and comes back in the history the model reads: ornith1.5_9b / Java, 2026-10: the
+    cells read the product's name out of paths and helper comments and called a Maven repo 'the CRIA one'; every write and edit shipped a
+    program whose comments said 'cria elides a rejected payload'. The private markers (heredoc delimiters, section/frame markers, shell
+    variables, temp directories) used to carry the name too. No composed command - tools, survey rides, the gate's launch and poll -
+    spells it, in any case, nor `shepherd`."""
+    from cria import filecommands, probegate, wsview, writeproxy
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
+    plan = probegate.plan_gate(str(tmp_path))
     commands = {
         "write": writeproxy._write_command("a/b.py", "x = 1\n"),
         "edit": writeproxy._edit_command("a/b.py", "x = 1", "x = 2", pack=True, echo=True),
@@ -110,8 +111,9 @@ def test_lowered_commands_carry_no_prose_naming_the_product():
         "survey-pack": wsview.survey_command("s", cd="/w", pack=True),
         "survey-helper": wsview.survey_command("s", cd="/w", helper="sh /x/helper"),
         "multipart-page": filecommands.build_multipart_page(filecommands.MultipartReadSpec("c", "tok", "rec", "a.py"), 0),
+        "gate": plan.script,
+        "gate-poll": probegate.continue_transport_command(plan),
     }
     assert all(len(c) > 100 for c in commands.values())
-    leaks = {name: [m.group(0) for m in re.finditer(r".{0,50}cria.{0,30}", PRIVATE_IDENTIFIER.sub("·", c), re.I)]
-             for name, c in commands.items()}
+    leaks = {name: [m.group(0) for m in re.finditer(r".{0,50}(?:cria|shepherd).{0,30}", c, re.I)] for name, c in commands.items()}
     assert {n: v for n, v in leaks.items() if v} == {}

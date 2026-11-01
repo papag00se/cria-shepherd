@@ -24,8 +24,8 @@ SHELL = {"type": "function", "function": {"name": "shell", "parameters": {
     "type": "object", "properties": {"command": {"type": "array"}}}}}
 WRITE = {"type": "function", "function": {"name": "write_file", "parameters": {
     "type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}}
-RED = "___CRIA_GATE_probe-0___\napp.py:3: undefined name 'x'\nEXIT:1\n___CRIA_GATE_git___\nabc\n"
-GREEN = "___CRIA_GATE_probe-0___\nEXIT:0\n___CRIA_GATE_git___\nabc\n"
+RED = "___CTX_GATE_probe-0___\napp.py:3: undefined name 'x'\nEXIT:1\n___CTX_GATE_git___\nabc\n"
+GREEN = "___CTX_GATE_probe-0___\nEXIT:0\n___CTX_GATE_git___\nabc\n"
 TASK = "Build app.py, then write README.md describing it."
 QUOTE = "write README.md describing it."
 GAP = {"satisfied": False, "reason": "no README", "proposed_fix": "", "diagnosis_kind": "missing_file", "subject": "README.md",
@@ -113,7 +113,7 @@ def test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge(tmp_
     run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [read]},
                              {"role": "tool", "tool_call_id": "r0", "content": "x = 1"}]
     probe = run.turn()                                        # claim 1 -> the repo's checks are run, not believed
-    assert "running the repo's checks" in probe["content"] and "CRIA_GATE_probe-0" in probe["tool_calls"][0]["function"]["arguments"]
+    assert "running the repo's checks" in probe["content"] and "CTX_GATE_probe-0" in probe["tool_calls"][0]["function"]["arguments"]
     assert run.sess.done_probe and run.sess.pending_done == "Fixed the name." and len(coder.bodies) == 2   # act-first re-ask, then the probe
     probe = run.turn(RED)                                     # RED: the checker's own message steers the coder
     assert "not done yet" in steer_seen(coder, 2) and "undefined name 'x'" in steer_seen(coder, 2)

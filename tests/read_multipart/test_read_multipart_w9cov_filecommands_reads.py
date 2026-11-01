@@ -92,7 +92,7 @@ def test_a_page_command_refuses_what_it_cannot_carry(change, msg):
 def test_a_page_command_that_exceeds_the_harness_limit_is_reported_not_truncated_and_read_instead_carries_its_prose():
     spec = fc.make_multipart_read_spec("c1", "read_file", '{"path": "f"}', "tok")
     page = fc.build_multipart_page(spec, 0)
-    assert page.startswith("python3 - <<'__CRIA_MULTIPART_PAGE__'") and fc.build_multipart_page(spec, 0, command_max_bytes=len(page.encode())) == page
+    assert page.startswith("python3 - <<'__CTX_MULTIPART_PAGE__'") and fc.build_multipart_page(spec, 0, command_max_bytes=len(page.encode())) == page
     with pytest.raises(fc.MultipartCommandTooLarge):
         fc.build_multipart_page(spec, 0, command_max_bytes=len(page.encode()) - 1)
     for bad in (-1, "9"):

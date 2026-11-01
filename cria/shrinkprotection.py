@@ -174,7 +174,7 @@ def wrap_finding(path: str, finding: ShrinkFinding, command: str, release: str =
     if finding.get('land'):
         # The measured facts ride into the write program, which reports them as the typed `rm` field of ITS OWN `landed`
         # record — only when it actually landed, only when the disk still held the measured bytes (the `same` check).
-        return f'if python3 -c {_qbash(same)}; then\nexport CRIA_RM={_qbash(finding["text"])}\n{command}\nelse\n{command}\nfi'
+        return f'if python3 -c {_qbash(same)}; then\nexport CTX_RM={_qbash(finding["text"])}\n{command}\nelse\n{command}\nfi'
     return f"if python3 -c {_qbash(same)}; then\n{release}{_refusal_command(finding['text'])}\nelse\n{command}\nfi"
 
 

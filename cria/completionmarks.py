@@ -7,7 +7,7 @@ needing "executor cooperation". This module is that cooperation, and it is delib
 
 * **At its end** (an ``atexit`` handler, so every normal exit and every refusal) each lowered write/edit program leaves ONE
   authenticated file for THIS invocation in a private owned directory under the harness ``TMPDIR``
-  (``.cria-done-<session credential>``, created and certified by `ownedfiles.DIRECTORY_PROGRAM` - the same machinery as the
+  (``.ctx-done-<session credential>``, created and certified by `ownedfiles.DIRECTORY_PROGRAM` - the same machinery as the
   batch markers of `editsequence`). It says ``landed`` (with the sha256 of the bytes it put on the file), ``did_not_run`` or
   ``uncertain``. A program that is killed leaves nothing: the absence of a mark is "not complete", never "did not run".
 * **Authenticated** means: the file is in the certified directory, is a regular single-link file of this user, mode 0600, and
@@ -43,7 +43,7 @@ from dataclasses import dataclass
 
 from . import ownedfiles
 
-DIR_PREFIX = ".cria-done-"
+DIR_PREFIX = ".ctx-done-"
 MAX_OUTSTANDING = 32            # per session; the oldest is forgotten (its outcome is simply unknown again)
 MAX_RELEASE = 64
 OPEN_WAIT_SECONDS = 5

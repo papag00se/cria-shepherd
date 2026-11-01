@@ -31,7 +31,7 @@ from . import imageassembly
 from . import upstream as _image_wire
 from .imageprotocol import ImageUnavailable
 
-from . import bodykeys, dirguard, handoffdistill, memoryhandoff, system1wiring, windowcaps
+from . import bodykeys, dirguard, handoffdistill, memoryhandoff, privatenames, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify
@@ -1548,7 +1548,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         if not isinstance(messages, list):
             return
         self._bind_workspace_view(body, sess_key)
-        cleaned, stripped = strip_history(messages)
+        upgraded = privatenames.upgrade_names(messages)     # an earlier release's private names, so every reader below sees one spelling
+        cleaned, stripped = strip_history(upgraded)
         # LEVEL 3 — CONTEXT_FIXES. Reattributing the harness's compaction turn REWRITES a message the
         # harness wrote, which is surgery on the context by any reading, so it belongs to the rung
         # that owns surgery. It ran at EVERY level including the pure proxy until 2026-08-25, and
@@ -1571,7 +1572,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         marker_left = rescrubbed is not cleaned
         if marker_left:
             cleaned = rescrubbed
-        if stripped or reframed or marker_left:
+        if stripped or reframed or marker_left or upgraded is not messages:
             body["messages"] = cleaned
             if stripped:
                 rlog.emit("indicators.stripped", lines=stripped)

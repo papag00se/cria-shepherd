@@ -54,7 +54,7 @@ def page(plan, raw, offset=0, size=None, **over):
     data = raw.encode()
     chunk = data[offset:] if size is None else data[offset:offset + size]
     b64 = lambda raw_bytes: base64.b64encode(raw_bytes).decode()                                    # noqa: E731
-    f = dict(path=b64(f"/tmp/.cria-gate-{plan.transport_id}.spool".encode()), offset=str(offset), total=str(len(data)),
+    f = dict(path=b64(f"/tmp/.ctx-gate-{plan.transport_id}.spool".encode()), offset=str(offset), total=str(len(data)),
              sha256=hashlib.sha256(data).hexdigest(), bounds=_bounds(raw), data=b64(chunk))
     f.update(over)
     body = [f"{k}\t{v}" for k, v in f.items() if v is not None]
@@ -88,7 +88,7 @@ def clean(raw, plan=None, **kw):
 
 def gate_turn(call_id, raw, tid="a" * 24, probes=("pytest -q",), **over):
     plan = new_plan(tid)
-    cmd = probegate._gate_sentinel(list(probes)) + "\n__cria_gate_file=/tmp/x\n" + probegate._transport_reader('"/tmp/x"', 0, tid)
+    cmd = probegate._gate_sentinel(list(probes)) + "\n__ctx_gate_file=/tmp/x\n" + probegate._transport_reader('"/tmp/x"', 0, tid)
     return [{"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {
                 "name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]},
             {"role": "tool", "tool_call_id": call_id, "content": page(plan, raw, **over)}]

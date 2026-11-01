@@ -162,7 +162,7 @@ def test_the_gate_releases_the_marks_cria_has_learned_and_retires_only_its_own_e
     foreign = os.path.join(harness_dir(tmp_path), completionmarks.DIR_PREFIX + "someone-elses")
     os.mkdir(foreign)
     open(os.path.join(foreign, "m-keep"), "w").write("x")
-    bystander = os.path.join(harness_dir(tmp_path), ".cria-done-unrelated.txt")
+    bystander = os.path.join(harness_dir(tmp_path), ".ctx-done-unrelated.txt")
     open(bystander, "w").write("keep")
     directory = completionmarks.DIR_PREFIX + completionmarks.credential(SESSION)
     held = lambda: sorted(n for n in os.listdir(os.path.join(harness_dir(tmp_path), directory)) if n.startswith("m-"))   # noqa: E731

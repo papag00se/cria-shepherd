@@ -1,8 +1,8 @@
 """Harness-side authenticated batch markers; no directory-prefix garbage collection."""
 from . import ownedfiles
 
-_HD_PY = "__CRIA_PY_EOF__"
-EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
+_HD_PY = "__CTX_PY_EOF__"
+EDIT_SEQ_DIR = ".ctx-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
 EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
 
 PROGRAM = ownedfiles.DIRECTORY_PROGRAM + r'''

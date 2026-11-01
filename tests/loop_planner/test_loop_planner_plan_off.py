@@ -189,8 +189,8 @@ def test_a_missing_file_gap_rearms_only_after_a_new_complete_workspace_observati
     """feed-pipeline-java: the same REVIEW.md gap stays quiet until a complete survey of the harness shows the
     workspace changed; an unknown (a mutator ran) or partial survey cannot re-arm it."""
     def survey(content_line, complete=True):
-        return ("\n".join(["___CRIA_SV_meta___", "root\t/h", "___CRIA_SV_tree___", content_line,
-                           "___CRIA_SV_done___", "entries\t1", f"complete\t{int(complete)}"]))
+        return ("\n".join(["___CTX_SV_meta___", "root\t/h", "___CTX_SV_tree___", content_line,
+                           "___CTX_SV_done___", "entries\t1", f"complete\t{int(complete)}"]))
     view = wsview.View("/h", "feed")
     token = wsview.bind(view)
     try:

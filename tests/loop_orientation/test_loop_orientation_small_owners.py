@@ -72,6 +72,6 @@ def test_a_spilled_document_that_is_cut_says_exactly_how_much_is_missing(monkeyp
     """Nothing the model reads is silently clipped: the saved copy and the pointer both state the extent kept (2 of 7)."""
     monkeypatch.setattr(writeproxy, "SPILL_CONTENT_MAX", 5)         # mid-character: the cut must not leave half a glyph
     command = writeproxy._spill_command("./tmp/reference/doc.txt", "αβγ\nEND", "POINTER")
-    saved = base64.b64decode(command.split("<<'__CRIA_SPILL__'\n", 1)[1].split("\n__CRIA_SPILL__", 1)[0]).decode()
+    saved = base64.b64decode(command.split("<<'__CTX_SPILL__'\n", 1)[1].split("\n__CTX_SPILL__", 1)[0]).decode()
     note = "[NOTE: this saved copy holds the first 2 characters of a 7-character document"
     assert saved.startswith("αβ\n\n" + note) and ("POINTER\n" + note) in command

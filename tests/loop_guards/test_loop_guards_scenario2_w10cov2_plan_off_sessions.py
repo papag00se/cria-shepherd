@@ -73,7 +73,7 @@ def test_a_done_probe_whose_output_arrives_in_pages_is_pulled_to_the_last_page_b
     coder = Chat(reply("All done."), reply("All done."), WRITE_README)
     run = Run(tmp_path, coder, tools=(SHELL, WRITE))
     run.turn()
-    raw = "___CRIA_GATE_probe-0___\napp.py:3: undefined name 'x'\n" + "".join(f"noise {i}\n" for i in range(60)) + "EXIT:1\n___CRIA_GATE_git___\nabc\n"
+    raw = "___CTX_GATE_probe-0___\napp.py:3: undefined name 'x'\n" + "".join(f"noise {i}\n" for i in range(60)) + "EXIT:1\n___CTX_GATE_git___\nabc\n"
     plan = run.sess.gate_plan
     ask = deliver(run, gate_page(plan, raw, 0, 90))
     assert "receiving the repo's complete check output" in ask["content"] and ask["tool_calls"] and run.sess.done_probe and len(coder.bodies) == 2

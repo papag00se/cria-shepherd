@@ -272,7 +272,7 @@ def held(verdict_reasoner):
             sections[line.strip()[len(probegate.SECTION_PREFIX):-len(probegate.SECTION_SUFFIX)].decode()] = offset
         offset += len(line)
     b64 = lambda raw_bytes: base64.b64encode(raw_bytes).decode()                                  # noqa: E731
-    page = "\n".join([probegate._transport_marker(plan.transport_id), "path\t" + b64(f"/tmp/.cria-gate-{plan.transport_id}.spool".encode()),
+    page = "\n".join([probegate._transport_marker(plan.transport_id), "path\t" + b64(f"/tmp/.ctx-gate-{plan.transport_id}.spool".encode()),
                       "offset\t0", f"total\t{len(data)}", "sha256\t" + hashlib.sha256(data).hexdigest(),
                       "bounds\t" + b64(json.dumps(dict(checker_end=len(data), report_end=len(data), total=len(data), sections=sections)).encode()),
                       "data\t" + b64(data), probegate._transport_marker(plan.transport_id, end=True)])

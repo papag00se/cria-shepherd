@@ -5682,7 +5682,7 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     receipt_labels = prompts.load_map("work_log_receipt_labels")
     # Same scrub chain every other reasoner-facing serialization uses (author_steer, _summarize_single,
     # _self_compact): without clean_gate_results, cria's OWN gate probe renders here as a coder action —
-    # `$ shell {"command": "cd … || exit 97\necho ___CRIA_GATE_…\npytest …"}` — and its raw output as
+    # `$ shell {"command": "cd … || exit 97\necho ___CTX_GATE_…\npytest …"}` — and its raw output as
     # something the coder's tool returned. This log feeds the step critic, the re-derivation, the
     # satisfaction judge and the completion briefing, so the orchestration was being judged as work.
     # THE PLAN IS WHAT MAKES THE GATE TEXT HONEST. Without it `clean_gate_output` has no workspace
@@ -6388,7 +6388,7 @@ def _shell_runs(messages: list[dict]):
             cmd = args.get("cmd") if args.get("cmd") is not None else args.get("command")
             if isinstance(cmd, list):
                 cmd = " ".join(str(x) for x in cmd)
-            if isinstance(cmd, str) and tc.get("id") and "___CRIA_" not in cmd:
+            if isinstance(cmd, str) and tc.get("id") and "___CTX_" not in cmd:
                 calls[tc["id"]] = cmd
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls and tid in paired:

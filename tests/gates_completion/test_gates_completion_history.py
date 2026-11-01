@@ -26,7 +26,7 @@ def test_the_coder_re_reads_only_the_probe_commands_never_cria_composed_programs
     call = probegate.clean_gate_results(msgs)[1]["tool_calls"][0]["function"]["arguments"]
     shown = json.loads(call)["cmd"]
     assert shown.strip() == "\n".join(" ".join(c.command) for c in plan.candidates if not c.composed_by_cria)
-    for leak in ("python3 -c", "tomli", "ElementTree", "json.load", "<<", "cria", plan.transport_id, "__cria_", "$"):
+    for leak in ("python3 -c", "tomli", "ElementTree", "json.load", "<<", "cria", plan.transport_id, "__ctx_", "$"):
         assert leak not in shown
 
 
@@ -74,7 +74,7 @@ def test_automatic_checks_reach_a_reasoner_as_observations_never_as_the_coders_a
     assert "Automatic check result (not an action chosen by the coder)" in seen and "checker exact evidence" in seen
     own = [m for m in out if m.get("tool_calls") and m["tool_calls"][0]["id"] == "mine"]
     assert len(own) == 1 and "The coder chosen check returned this." in seen
-    assert "___CRIA_GATE_" not in seen and "__cria_" not in seen
+    assert "___CTX_GATE_" not in seen and "__ctx_" not in seen
 
 
 def test_a_paged_gate_shows_every_checker_line_whole_and_a_broken_or_pending_one_never_reads_as_green():
@@ -86,7 +86,7 @@ def test_a_paged_gate_shows_every_checker_line_whole_and_a_broken_or_pending_one
     checker = "module.txt:7: wrong value\n  expected: two  spaces\n\n  actual: other\n"
     sent = [{"role": "user", "content": "Repair it."}, *gate_turn("auto", sec(0, checker, 1), probes=("runner check",))]
     shown = selfcompact.serialize(probegate.check_evidence_messages(sent), defang=True)
-    assert "Automatic check result" in shown and all(line in shown for line in checker.splitlines() if line) and "___CRIA_GATE_" not in shown
+    assert "Automatic check result" in shown and all(line in shown for line in checker.splitlines() if line) and "___CTX_GATE_" not in shown
     pending = selfcompact.serialize(probegate.check_evidence_messages(sent[:2]), defang=True)
     assert "Automatic check requested" in pending and "Automatic check result" not in pending
     broken = selfcompact.serialize(probegate.check_evidence_messages(

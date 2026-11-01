@@ -18,7 +18,7 @@ YIELD_CUT = "Chunk ID: 34454d\nWall time: 30.0008 seconds\nProcess running with 
 
 def running(plan, path=None):
     return "\n".join([probegate._transport_marker(plan.transport_id),
-                      "path\t" + B64(path or f"/tmp/.cria-gate-{plan.transport_id}.spool"), "running\t1.0",
+                      "path\t" + B64(path or f"/tmp/.ctx-gate-{plan.transport_id}.spool"), "running\t1.0",
                       probegate._transport_marker(plan.transport_id, end=True)])
 
 
@@ -35,7 +35,7 @@ def test_paged_stream_completes_only_when_every_byte_and_the_hash_agree():
 
 
 @pytest.mark.parametrize("over", [
-    dict(sha256="0" * 64), dict(total="5"), dict(path=B64("/tmp/.cria-gate-ffffffffffffffffffffffff.spool")),
+    dict(sha256="0" * 64), dict(total="5"), dict(path=B64("/tmp/.ctx-gate-ffffffffffffffffffffffff.spool")),
     dict(data="!!not-base64"), dict(sha256=None), dict(enc="gzip"),
 ], ids=["bad-hash", "short-total", "foreign-spool", "undecodable", "missing-field", "unknown-enc"])
 def test_a_page_that_disagrees_with_itself_is_terminal_unknown_never_clean(over):
@@ -50,7 +50,7 @@ def test_a_page_that_disagrees_with_itself_is_terminal_unknown_never_clean(over)
     lambda p: page(p, RAW, 0, 40),                                   # replayed page 0
     lambda p: page(p, RAW, 60),                                      # a skipped range
     lambda p: page(p, RAW, 40, total="999"),                         # total changed midstream
-    lambda p: page(p, RAW, 40, path=B64(f"/tmp/.cria-gate-{p.transport_id}.other")),   # spool changed
+    lambda p: page(p, RAW, 40, path=B64(f"/tmp/.ctx-gate-{p.transport_id}.other")),   # spool changed
     lambda p: page(p, RAW, 40)[:-20],                                # cut before its closing marker
     lambda p: (page(p, RAW, 40) + "\n") * 2,                         # doubled envelope
 ], ids=["replay", "gap", "total-changed", "spool-changed", "cut", "doubled"])
@@ -97,13 +97,13 @@ def test_typed_envelopes_learn_or_end_the_transport():
     assert probegate.continue_transport_command(plan) == "LAUNCH-SCRIPT"
     assert probegate.ingest_transport(plan, running(plan)) == "running"
     assert plan.transport_path and "LAUNCH-SCRIPT" not in probegate.continue_transport_command(plan)
-    assert probegate.ingest_transport(plan, running(plan, f"/tmp/.cria-gate-{plan.transport_id}.v2")) == "unknown"
+    assert probegate.ingest_transport(plan, running(plan, f"/tmp/.ctx-gate-{plan.transport_id}.v2")) == "unknown"
     for fields, why, ready in ((["gone\t1"], "gone", True), (["helper-gone\t1"], "helper", False)):
         p = new_plan(helpers_ready=True)
         env = "\n".join([probegate._transport_marker(p.transport_id), *fields, probegate._transport_marker(p.transport_id, end=True)])
         assert probegate.ingest_transport(p, env) == "unknown" and why in p.transport_error and p.helpers_ready is ready
     foreign = new_plan()
-    assert probegate.ingest_transport(foreign, running(foreign, "/tmp/.cria-gate-deadbeefdeadbeefdeadbeef.spool")) == "unknown"
+    assert probegate.ingest_transport(foreign, running(foreign, "/tmp/.ctx-gate-deadbeefdeadbeefdeadbeef.spool")) == "unknown"
 
 
 def test_a_verified_stream_whose_worker_declared_no_extents_is_unknown():
@@ -115,11 +115,11 @@ def test_a_verified_stream_whose_worker_declared_no_extents_is_unknown():
 
 
 def test_the_continuation_command_is_crias_own_and_not_refused_as_external():
-    """cart-billing-go 20260906: the write guard refused the gate's own `/tmp/.cria-gate-*` pager as an external path."""
-    plan = new_plan("76d2c884f9d09725178dd678", workspace="/ws", transport_path="/tmp/.cria-gate-76d2c884f9d09725178dd678.x")
+    """cart-billing-go 20260906: the write guard refused the gate's own `/tmp/.ctx-gate-*` pager as an external path."""
+    plan = new_plan("76d2c884f9d09725178dd678", workspace="/ws", transport_path="/tmp/.ctx-gate-76d2c884f9d09725178dd678.x")
     plan.transport_data = bytearray(b"first page")
     cmd = probegate.continue_transport_command(plan)
-    assert "/tmp/.cria-gate-" in cmd
+    assert "/tmp/.ctx-gate-" in cmd
     assert writeproxy._external_refusal("exec_command", {"cmd": cmd}, {"arguments": json.dumps({"cmd": cmd})},
                                         injected=set(), level="none", workspace="/ws") is None
 
@@ -137,7 +137,7 @@ def test_a_real_gate_run_under_sh_pages_home_every_byte_and_a_lost_helper_is_unk
     assert any("middle.py" in f.file for f in outcome.report.results[0].findings)
     fresh = probegate.plan_gate(str(tmp_path))
     assert probegate.ingest_transport(fresh, run_in_harness(fresh.script, tmp_path, "sh")) == "pending"
-    for helper in glob.glob(str(harness_dir(tmp_path) / ".cria-helper-*")):
+    for helper in glob.glob(str(harness_dir(tmp_path) / ".ctx-helper-*")):
         os.unlink(helper)
     poll = run_in_harness(probegate.continue_transport_command(fresh), tmp_path)
     assert probegate.ingest_transport(fresh, poll) == "unknown" and not fresh.transport_complete

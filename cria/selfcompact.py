@@ -11,7 +11,7 @@ Everything is measured in TOKENS, not message count — the real constraint is t
 window, and a few huge file reads matter more than many tiny turns (the same currency the
 floor uses). Structure kept every turn:
   - the leading system message (cria's coder framing),
-  - any ANCHOR message (a ⟦ctx:briefing⟧ handoff / a ___CRIA_GATE_ ground truth) — verbatim,
+  - any ANCHOR message (a ⟦ctx:briefing⟧ handoff / a ___CTX_GATE_ ground truth) — verbatim,
   - ONE ⟦ctx:rollup⟧ summary of the old middle,
   - a small VERBATIM band of old-but-not-yet-folded turns (bounded by RECOMPACT_TOKENS),
   - the recent tail up to KEEP_TAIL_TOKENS verbatim (the live working set).
@@ -535,7 +535,7 @@ def _drop_unanswered_gate_calls(messages: list[dict]) -> list[dict]:
 
     A gate survey/launch/poll is cria's plumbing, stamped with the ``⟦ctx:gate⟧`` provenance sentinel
     at composition time (``probegate.gate_call_ids``) — the coder never authored it. Both compaction
-    callers filter ``_ANCHOR_MARKERS`` (``___CRIA_GATE_`` among them) out of the writer's input BEFORE
+    callers filter ``_ANCHOR_MARKERS`` (``___CTX_GATE_`` among them) out of the writer's input BEFORE
     this module sees it, so the raw RESULT is gone while the CALL survived. ``clean_gate_results`` can
     only drop a call together with a result it can see, so the call reached the briefing writer — and
     the validators — as ``assistant: exec_command({"cmd": "mvn -q compile\\nmvn test"…})`` with no
@@ -656,7 +656,7 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
     test file, the untested list, the delimiter facts, and the offline re-run.
 
     Scope, measured rather than assumed: a RAW gate blob does not currently reach here. Both callers
-    filter ``_ANCHOR_MARKERS`` out of the summarizer's input first, and ``___CRIA_GATE_`` is one of
+    filter ``_ANCHOR_MARKERS`` out of the summarizer's input first, and ``___CTX_GATE_`` is one of
     them — 0 of 70 real self-compact prompts carry a raw marker, and the last gate state is appended
     deterministically instead (``server._last_checks_note``). So this argument changes no output
     today; it exists because the alternative is one caller of four holding a different rule about

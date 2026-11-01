@@ -136,7 +136,7 @@ def test_a_missing_dependency_note_goes_on_the_newest_result_once_is_logged_and_
     again = msgs[2]["content"]
     rp._note_missing_dependency(history(msgs, ws, log=log))                                     # the same note is never stacked
     assert msgs[2]["content"] == again and len(log.events) == 1
-    own, gated, quiet = [tool("a", err("localmod"))], [tool("a", "___CRIA_GATE_x\n" + err("requests"))], [tool("a", "fine")]
+    own, gated, quiet = [tool("a", err("localmod"))], [tool("a", "___CTX_GATE_x\n" + err("requests"))], [tool("a", "fine")]
     before = gated[0]["content"]
     for case in (own, gated, quiet):                                                            # own module / gate result / nothing missing: silent
         rp._note_missing_dependency(history(case, ws, log=log))

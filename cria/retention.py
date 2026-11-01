@@ -31,7 +31,7 @@ associations, so an interrupted run leaves only associations that fail closed.
 
 `--kind snapshot` (never part of `all`: it scans the shared harness temp directory, `--tmp` or $TMPDIR, not cria's home) lists
 and prunes the private source snapshots a multipart read leaves behind when it is abandoned before its last page
-(`.cria-mpsnap-<token>`; a completed read removes its own). Only a directory of exactly that name shape, owned by this user,
+(`.ctx-mpsnap-<token>`, or `.cria-mpsnap-<token>` as earlier releases named it; a completed read removes its own). Only a directory of exactly that name shape, owned by this user,
 mode 0700, holding nothing but `.owner`, `snap` and `meta` (regular files) is ever touched. There is no signal whether such a
 read is still running, so prune needs `--older-than` (or `--session` = the token) and the operator's age is the judgment.
 """
@@ -59,7 +59,8 @@ _SHA = r'[0-9a-f]{64}'
 _MP_RECORD = re.compile(_SHA + r'\.json')
 _MP_INDEX = re.compile(r'call-(' + _SHA + r')\.json')
 _MP_TEMP = re.compile(r'\.(?:multipart|index)-[0-9a-f]{32}')
-_SNAP_DIR = re.compile(re.escape(filecommands.MULTIPART_SNAPSHOT_DIR) + r'([0-9a-f]{32})')
+_SNAP_PREFIXES = (filecommands.MULTIPART_SNAPSHOT_DIR, filecommands.LEGACY_MULTIPART_SNAPSHOT_DIR)
+_SNAP_DIR = re.compile('(?:' + '|'.join(map(re.escape, _SNAP_PREFIXES)) + r')([0-9a-f]{32})')
 _SNAP_FILES = frozenset(('.owner', 'snap', 'meta'))
 _IMG_DIR = re.compile(r'image-session-[A-Za-z0-9_-]+')
 _IMG_MARKER = re.compile(r'(image-session-[A-Za-z0-9_-]+)\.owner\.json')
@@ -371,7 +372,7 @@ def _scan_snapshots(tmp):
     only; one that is not a private owned directory of known files is listed refused and never touched."""
     entries, ignored = [], []
     for name in sorted(os.listdir(tmp)):
-        if not name.startswith(filecommands.MULTIPART_SNAPSHOT_DIR):
+        if not name.startswith(_SNAP_PREFIXES):
             continue
         match = _SNAP_DIR.fullmatch(name)
         if match is None:
@@ -404,7 +405,13 @@ def _scan_snapshots(tmp):
 
 
 def _delete_snapshot(tmp, entry):
-    name = filecommands.MULTIPART_SNAPSHOT_DIR + entry.id
+    def present(name):
+        try:
+            os.stat(name, dir_fd=tmp, follow_symlinks=False)
+            return True
+        except OSError:
+            return False
+    name = next((p + entry.id for p in _SNAP_PREFIXES if present(p + entry.id)), _SNAP_PREFIXES[0] + entry.id)
     child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
     try:
         for f in os.listdir(child):

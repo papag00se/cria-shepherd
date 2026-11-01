@@ -103,7 +103,7 @@ call whose predecessor never finished inside the bound still runs (never held fo
 (c) Executor-side completion marks (`cria/completionmarks.py`) make three of the four cases a KNOWN state; the fourth stays unestablished.
 Every lowered write and edit program, under a session, leaves ONE authenticated mark for its own invocation as its last act (an `atexit`
 handler, so every exit and every refusal): `landed` with the sha256 of the bytes it put on the file, `did_not_run`, or `uncertain`. It
-lives in a private owned directory (`.cria-done-<session credential>` under the harness `TMPDIR`, certified by `ownedfiles.DIRECTORY_PROGRAM`
+lives in a private owned directory (`.ctx-done-<session credential>` under the harness `TMPDIR`, certified by `ownedfiles.DIRECTORY_PROGRAM`
 like the batch markers). A mark authenticates only as a regular, single-link, mode-0600 file of this user in the certified directory
 whose content names the session credential, the call's receipt and THIS composition's nonce (a fresh one per composition, so an earlier
 attempt's mark is stale). The credential, receipt and nonce are correlation tokens, not a security boundary. The next lowered write/edit

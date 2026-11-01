@@ -3,7 +3,7 @@ import json
 import shlex
 from . import completionmarks, ownedfiles
 
-PRIVATE_PREFIX = '.gate-private-'
+PRIVATE_PREFIX = '.ctx-private-'
 
 NAMESPACE_PROGRAM = ownedfiles.DIRECTORY_PROGRAM + r'''
 def _gate_namespace(token,parent=None,create=False):
@@ -11,7 +11,7 @@ def _gate_namespace(token,parent=None,create=False):
                        parent_path=parent,create=create)
 
 def _gate_spool_name(token):
-    return '.cria-gate-'+token+'.spool'
+    return '.ctx-gate-'+token+'.spool'
 
 def _gate_reader_open(path,token):
     namespace=os.path.dirname(os.path.abspath(path))
@@ -157,7 +157,7 @@ if mode=='launch':
                     raise ValueError('transport_request_changed')
             sys.exit(0)
         _gate_create(context,'request.json',json.dumps(request).encode())
-        _gate_create(context,'.cria-gate-'+token+'-cmd.sh',request['body'].encode())
+        _gate_create(context,'.ctx-gate-'+token+'-cmd.sh',request['body'].encode())
         _gate_create(context,'survey.sh',request['survey'].encode())
         _gate_create(context,_gate_spool_name(token))
         os.mkdir('aux',0o700,dir_fd=context['fd'])
@@ -194,7 +194,7 @@ elif mode=='worker':
         bounds={}
         with os.fdopen(output,'wb',buffering=0) as stream:
             try:
-                _gate_run_script(context,'.cria-gate-'+token+'-cmd.sh',environment,stream)
+                _gate_run_script(context,'.ctx-gate-'+token+'-cmd.sh',environment,stream)
             finally:
                 # THE TRANSITIONS ARE THE BOUNDARIES: everything before this size is native checker output, then
                 # cria's cleanup report, then cria's survey. Declared here, by the producer that writes them, so
@@ -220,7 +220,7 @@ elif mode=='worker':
                 bounds['report_end']=os.fstat(stream.fileno()).st_size
                 _gate_run_script(context,'survey.sh',os.environ,stream)
         if not _owned_valid(context): raise ValueError('namespace_identity_changed')
-        os.unlink('.cria-gate-'+token+'-cmd.sh',dir_fd=context['fd'])
+        os.unlink('.ctx-gate-'+token+'-cmd.sh',dir_fd=context['fd'])
         os.unlink('survey.sh',dir_fd=context['fd'])
         os.unlink('request.json',dir_fd=context['fd'])
         bounds['total']=os.stat(_gate_spool_name(token),dir_fd=context['fd']).st_size
