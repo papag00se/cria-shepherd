@@ -64,10 +64,28 @@ class _Pattern:
     regex: re.Pattern
     package_group: str = ""
     version_group: str = ""
+    # A pattern that BEGINS with a character-class run (a bare coordinate before its sentence) costs
+    # O(run) at every start position inside one long run of those characters: a single 8,000-character
+    # base64 tool result cost 1.5 s of CPU, and a 100 KB one would cost minutes (measured on a real
+    # 8,520-byte gate-transport result, 4 of 59 patterns, quadratic). ``starts`` finds the only
+    # positions worth trying (see ``_first_match``); ``lead`` finds the first valid start at or after
+    # the scan position when that position sits inside a run. Both are None for a pattern whose
+    # first element is a literal, where the regex engine already skips by the literal.
+    starts: re.Pattern | None = None
+    lead: re.Pattern | None = None
 
 
 _NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"
 _NPM_NAME = rf"(?:@{_NAME}/{_NAME}|{_NAME})"
+
+# Where a pattern that begins with a bare coordinate can possibly begin (see ``_Pattern.starts``).
+# A match that starts at p when p-1 is itself a valid start inside the same run also matches from
+# p-1 (same end), so the leftmost match never begins mid-run: only the first valid start of each run,
+# the scan position itself, and a scoped npm name's "@" need trying.
+_NAME_STARTS = re.compile(r"(?<![A-Za-z0-9_.-])[.-]*([A-Za-z0-9_])|@")
+_NAME_LEAD = re.compile(r"[.-]*([A-Za-z0-9_])")
+_GO_STARTS = re.compile(r"(?<![\w./\-])([\w./\-])")
+_JVM_STARTS = re.compile(r"(?<![\w.\-])([\w.\-])")
 
 
 # Resolver-specific facts. These patterns do not decide whether a directive is good or bad; they
@@ -78,7 +96,8 @@ _REFUSALS = (
     _Pattern("node", re.compile(
         rf"No matching version found for (?P<coord>{_NPM_NAME}(?:@[^\s]+?)?)(?=\.(?:\s|$)|\s|$)", re.I)),
     _Pattern("node", re.compile(
-        rf"(?P<coord>{_NPM_NAME}) is not in (?:the )?npm registry", re.I)),
+        rf"(?P<coord>{_NPM_NAME}) is not in (?:the )?npm registry", re.I),
+        starts=_NAME_STARTS, lead=_NAME_LEAD),
     _Pattern("node", re.compile(
         rf"[\"'`](?P<coord>{_NPM_NAME}(?:@[^\s\"'`]+)?)[\"'`] is not in (?:this|the) registry", re.I)),
     _Pattern("node", re.compile(
@@ -92,7 +111,8 @@ _REFUSALS = (
     _Pattern("node", re.compile(
         rf"package [\"'`](?P<coord>{_NPM_NAME})[\"'`] (?:was )?not found", re.I)),
     _Pattern("node", re.compile(
-        rf"(?P<coord>{_NPM_NAME}(?:@npm:[^\s:]+|@[^\s:]+)?): Package not found", re.I)),
+        rf"(?P<coord>{_NPM_NAME}(?:@npm:[^\s:]+|@[^\s:]+)?): Package not found", re.I),
+        starts=_NAME_STARTS, lead=_NAME_LEAD),
     _Pattern("node", re.compile(
         rf"404 Not Found[^\n]*?[\"'`](?P<coord>{_NPM_NAME}(?:@[^\s\"'`]+)?)[\"'`]", re.I)),
 
@@ -128,7 +148,7 @@ _REFUSALS = (
         r'require (?P<package>[\w./\-]+): version "(?P<version>[^"]+)" invalid:[^\n]*?unknown revision', re.I),
         package_group="package", version_group="version"),
     _Pattern("go", re.compile(
-        r"(?P<coord>[\w./\-]+@v?[\w.+\-]+):[^\n]*?unknown revision", re.I)),
+        r"(?P<coord>[\w./\-]+@v?[\w.+\-]+):[^\n]*?unknown revision", re.I), starts=_GO_STARTS),
     _Pattern("go", re.compile(r"no required module provides package (?P<coord>[^\s;,)]+)", re.I)),
     _Pattern("go", re.compile(r"cannot find module providing package (?P<coord>[^\s;,)]+)", re.I)),
     _Pattern("go", re.compile(
@@ -139,7 +159,7 @@ _REFUSALS = (
     # Maven / Gradle / javac
     _Pattern("jvm", re.compile(r"Could not find artifact (?P<coord>[\w.\-]+:[\w.\-:]+)", re.I)),
     _Pattern("jvm", re.compile(
-        r"(?P<coord>[\w.\-]+:[\w.\-]+:(?:jar|pom|aar):[\w.+\-]+) was not found", re.I)),
+        r"(?P<coord>[\w.\-]+:[\w.\-]+:(?:jar|pom|aar):[\w.+\-]+) was not found", re.I), starts=_JVM_STARTS),
     _Pattern("jvm", re.compile(
         r"Could not (?:find|resolve) (?P<coord>[\w.\-]+:[\w.\-]+:[\w.+\-]+)(?=\.|\s|$)", re.I)),
     _Pattern("jvm", re.compile(r"package (?P<coord>[\w.]+) does not exist", re.I)),
@@ -328,11 +348,43 @@ def _event_from_match(pattern: _Pattern, match: re.Match, outcome: str,
                         command=(command or "").strip())
 
 
+def _first_match(pattern: _Pattern, text: str, pos: int) -> re.Match | None:
+    """The match ``pattern.regex.search(text, pos)`` returns, found in linear time for a pattern
+    that begins with a character-class run (``_Pattern.starts``). Same spans, same groups.
+
+    Candidates in increasing position: ``pos`` itself (a resumption after the previous match can
+    begin mid-run, where the lookbehind in ``starts`` would refuse it), the first valid start at or
+    after ``pos`` inside the run ``pos`` sits in (``lead``), then the first valid start of each later
+    run and every "@"."""
+    if pattern.starts is None:
+        return pattern.regex.search(text, pos)
+    match = pattern.regex.match
+    found = match(text, pos)
+    if found:
+        return found
+    if pattern.lead is not None and (lead := pattern.lead.match(text, pos)) and lead.start(1) > pos:
+        if found := match(text, lead.start(1)):
+            return found
+    for start in pattern.starts.finditer(text, pos):
+        at = start.start(1) if start.lastindex else start.start()
+        if at > pos and (found := match(text, at)):
+            return found
+    return None
+
+
+def _finditer(pattern: _Pattern, text: str):
+    """``pattern.regex.finditer(text)`` with ``_first_match`` doing the scanning."""
+    pos = 0
+    while pos <= len(text) and (match := _first_match(pattern, text, pos)):
+        yield match
+        pos = match.end() if match.end() > match.start() else match.end() + 1
+
+
 def _events(text: str, patterns: Iterable[_Pattern], outcome: str,
             source_id: str = "", command: str = "") -> list[tuple[int, RefusalEvent]]:
     found: list[tuple[int, RefusalEvent]] = []
     for pattern in patterns:
-        for match in pattern.regex.finditer(text or ""):
+        for match in _finditer(pattern, text or ""):
             event = _event_from_match(pattern, match, outcome, source_id, command)
             if event.raw_coordinate and event.package:
                 found.append((match.start(), event))

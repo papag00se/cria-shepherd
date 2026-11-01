@@ -2,6 +2,8 @@
 observable exact success, serialised with provenance, rendered to the model, and used as a trigger
 (never a veto) against a directive. Rows are the old refusal-event matrix (one line per manager)."""
 import json
+import random
+import time
 
 import pytest
 
@@ -142,3 +144,64 @@ def test_legacy_names_and_the_prescription_trigger():
     assert git.active()[0].coordinate == "github.com/acme/missing"
     assert rl.prescribed("clone github.com/acme/missing", git) == "github.com/acme/missing"
     assert rl.prescribed("pin x", []) is None
+
+
+# Four of the 59 patterns begin with a bare coordinate (a character-class run before the resolver's sentence). A regex
+# engine tries every start position, and each try runs to the end of the run: one 8,000-character base64 gate-transport
+# result in a real captured request cost 1.5 s of CPU, every request, because the ledger re-reads the whole history.
+RUN_PATTERNS = [p for p in rl._REFUSALS if p.starts is not None]
+
+
+def _cpu(fn, repeats=3):
+    """The least CPU seconds of ``repeats`` runs (the minimum is the run the machine did not disturb)."""
+    best = float("inf")
+    for _ in range(repeats):
+        start = time.process_time()
+        fn()
+        best = min(best, time.process_time() - start)
+    return best
+
+
+@pytest.mark.parametrize("alphabet", ["abcdefghijklmnopqrstuvwxyz0123456789", "ab.", "ab-_"])
+def test_a_long_run_of_name_characters_costs_linear_not_quadratic_cpu(alphabet):
+    """The same text four times longer must cost about four times the CPU, never sixteen (ornith1.5_9b / Java overnight:
+    the 8,520-byte base64 result of a gate transport took 1.5 s per request in ``refusalledger._events``)."""
+    rng = random.Random(14)
+    short, long_ = (("".join(rng.choice(alphabet) for _ in range(n))) for n in (3000, 12000))
+    cost_short = _cpu(lambda: rl.refusal_events(short) + rl.success_events(short))
+    cost_long = _cpu(lambda: rl.refusal_events(long_) + rl.success_events(long_))
+    assert cost_long < 8 * max(cost_short, 0.002), (cost_short, cost_long)       # linear ~4x; quadratic ~16x
+
+
+JOINED = (
+    ("_x is not in npm registry-_x is not in npm registry", ["_x", "_x"]),                 # the next one starts after a "-" the run began with
+    ("foo is not in npm registryfoo is not in npm registry", ["foo", "foo"]),             # a resumption that begins mid-run, right after the last match
+    ("a: Package not found-b: Package not found", ["a", "b"]),
+    ("x/y@v1: unknown revisiona/b@v2: unknown revision", ["x/y@v1", "a/b@v2"]),
+    ("g:a:jar:1 was not foundh:b:jar:2 was not found", ["g:a:jar:1", "h:b:jar:2"]),
+    ("...-.foo is not in the npm registry", ["foo"]),                                      # leading punctuation is not part of a name
+    ("see xyz@types/node is not in npm registry", ["@types/node"]),                        # a scoped name begins at its "@", mid-run
+    ("@@@@ is not in npm registry", []),
+)
+
+
+@pytest.mark.parametrize("text,coordinates", JOINED)
+def test_skipping_start_positions_never_changes_what_the_resolver_sentences_yield(text, coordinates):
+    assert [e.raw_coordinate for e in rl.refusal_events(text)] == coordinates
+
+
+def test_the_linear_scan_returns_exactly_what_the_plain_regex_scan_returns():
+    """The independent oracle is ``re``'s own ``finditer``: same spans and same groups on random texts made of the
+    pieces these sentences are made of, joined with and without separators."""
+    rng = random.Random(7)
+    pieces = ["foo", "a", "Bar9", "_x", "a.b", "1.2.3", ".", "-", "--", "@", "@scope", "/", ":", " ", "\n", "é",
+              " is not in the npm registry", ": Package not found", " was not found", "unknown revision", ":jar:",
+              "v1.2", "@v1.2", "@npm:", "g:a:jar:1.0", "x/y@v1.0.0", "IS NOT IN NPM REGISTRY"]
+    texts = ["".join(rng.choice(pieces) for _ in range(rng.randint(1, 14))) for _ in range(2500)]
+    hits = 0
+    for text in texts:
+        for pattern in RUN_PATTERNS:
+            plain = [(m.start(), m.end(), m.groupdict()) for m in pattern.regex.finditer(text)]
+            assert plain == [(m.start(), m.end(), m.groupdict()) for m in rl._finditer(pattern, text)], (text, pattern.regex.pattern)
+            hits += bool(plain)
+    assert hits > 150        # the generator reaches real matches, not only misses
