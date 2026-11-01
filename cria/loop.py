@@ -74,7 +74,7 @@ from .groundtruth import workspace_inventory
 from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
                       surviving_noise_drops)
 from .searchloop import first_domain_in, normalize_search
-from . import probeclassify, windowcaps
+from . import checkmotion, probeclassify, windowcaps
 from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
                         tool_declares_time_budget, with_time_budget, writes_something)
 from .toolargs import PATH_KEYS, parse_args
@@ -7258,8 +7258,20 @@ def _stalled_observation(gs, messages, rlog, *, observed, step=None, sequence_st
         sanctioned = frozenset(call.write_path for call in observed.calls
             if call.write_path is not None and editrecovery.rewrite_sanctioned(sanction_messages or [], call.write_path))
         return stalledwork.ObservationFacts(observed.calls, count, last,
-                                            observed.unlanded_ids, sanctioned, sequence_start)
+                                            observed.unlanded_ids, sanctioned, sequence_start,
+                                            lambda call_id: _check_outputs_since(messages, call_id))
     return stalledwork.ObservationInput(measure, rlog, step)
+
+
+def _check_outputs_since(messages, call_id):
+    """The error sets the coder's own check runs reported after the call ``call_id`` (checkmotion owns the reading)."""
+    msgs = messages or []
+    start = next((i for i, m in enumerate(msgs) if isinstance(m, dict)
+                  and any(isinstance(tc, dict) and tc.get('id') == call_id for tc in m.get('tool_calls') or [])), None)
+    if start is None:
+        return ()
+    own = probegate.gate_call_ids(msgs)
+    return checkmotion.outputs((cmd, res) for tid, cmd, res in _shell_runs(msgs[start:]) if tid not in own)
 
 
 def _prepare_stalled_reply(gs, retained):

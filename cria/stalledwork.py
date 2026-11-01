@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Callable, Protocol
 
-from . import prompts, groundedaction
+from . import checkmotion, prompts, groundedaction
 from .assistcontract import Policy, Reference
 from .writeobservation import ForwardedCall
 
@@ -61,6 +61,9 @@ class ObservationFacts:
     # optional observation. This is the sequence BEFORE this actual call batch.
     # None preserves the standalone policy's historical local counter contract.
     sequence_start: int | None = None
+    # The error sets of the coder's own check runs since the given write call (oldest first), read only
+    # when five writes are about to trip: errors that were fixed and never came back are progress.
+    check_outputs: Callable[[str], tuple[frozenset[str], ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -194,11 +197,26 @@ def observe(source: ObservationInput, state: StateAccess, *, enabled: bool = Tru
         source.log.emit("loop.wheel_spinning", steer="wheel-spin", step=source.step,
                         path=path, writes=WRITE_THRESHOLD)
 
+    def fire(path):
+        # Five writes to one file are a wheel only while the checks keep naming the same fault. Errors
+        # that were fixed (and none returned) across the runs since the window opened mean each edit
+        # landed: the window restarts, so a later real spiral still needs five more writes.
+        first = next((cid for p, cid in zip(state.recent_writes, state.recent_write_ids)
+                      if p == path and cid), None)
+        if first is not None and facts.check_outputs is not None:
+            runs = facts.check_outputs(first)
+            if checkmotion.moving(runs):
+                state.recent_writes, state.recent_write_ids = [], []
+                state.spin_recheck = ""
+                source.log.emit("loop.wheel_spin_progress", level="info", path=path, runs=len(runs))
+                return
+        trip(path)
+
     pending = state.spin_recheck
     if pending:
         state.spin_recheck = ""
         if state.recent_writes.count(pending) >= WRITE_THRESHOLD and armed(pending):
-            trip(pending)
+            fire(pending)
     this_turn = {}
     for call in facts.calls:
         if state.redirect_due or state.spin_due or state.pending_probe is not None:
@@ -212,7 +230,7 @@ def observe(source: ObservationInput, state: StateAccess, *, enabled: bool = Tru
             this_turn[path] = this_turn.get(path, 0) + 1
             counted = state.recent_writes.count(path) - (this_turn[path] - 1)
             if counted >= WRITE_THRESHOLD and armed(path):
-                trip(path)
+                fire(path)
             elif this_turn[path] > 1 and state.recent_writes.count(path) >= WRITE_THRESHOLD:
                 state.spin_recheck = path
     trigger = Trigger.REFUSAL if state.redirect_due else Trigger.WHEEL_SPIN if state.spin_due else None
@@ -506,6 +524,8 @@ DEFINITION = Definition(
            regressions=(Reference("tests/loop_orientation/test_loop_orientation_stalled_work.py", "test_a_refusal_arms_a_nomination_that_admission_confirms_or_withdraws"),
                         Reference("tests/loop_orientation/test_loop_orientation_stalled_work.py", "test_five_writes_to_one_path_trip_a_wheel_spin_unless_corrected_sanctioned_or_aged_out"),
                         Reference("tests/loop_orientation/test_loop_orientation_stalled_work.py", "test_settlement_records_the_reading_before_the_author_and_a_directive_carries_the_envelope"),
+                        Reference("tests/loop_orientation/test_loop_orientation_wheel1_check_motion.py", "test_the_real_rust_sequence_each_edit_fixing_a_new_error_is_progress_not_a_wheel"),
+                        Reference("tests/loop_orientation/test_loop_orientation_wheel1_check_motion.py", "test_the_real_go_wheel_the_same_error_after_every_rewrite_still_trips"),
                         Reference("tests/loop_orientation/test_loop_orientation_stalled_work.py", "test_an_on_track_answer_delivers_nothing_but_no_answer_keeps_the_facts"),
                         Reference("tests/loop_orientation/test_loop_orientation_stalled_work.py", "test_unchanged_checks_get_one_second_look_then_come_back_verbatim_not_re_diagnosed"),
                         Reference("tests/loop_orientation/test_loop_orientation_stalled_work.py", "test_a_stale_ticket_touches_nothing_and_a_step_advance_keeps_the_check_authority"),
