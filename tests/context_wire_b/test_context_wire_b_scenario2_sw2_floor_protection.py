@@ -74,3 +74,13 @@ def test_a_cria_anchor_and_its_pair_stay_protected_and_a_relocated_annotation_ne
     briefing_call = {"role": "assistant", "content": "⟦ctx:briefing⟧ earlier work", "tool_calls": tc("k")}
     messages = [system, task, briefing_call, result("k", "r"), {"role": "assistant", "content": "", "tool_calls": tc("dangling")}, go]
     assert contextfloor._protected_mask(messages, "task") == [True, True, True, True, False, True]
+
+
+def test_a_result_that_arrives_without_its_call_stays_whole_as_user_text_when_it_fits_alone_and_is_withheld_with_a_label_when_it_cannot():
+    """Self-compaction can fold a call and leave its result: that result is evidence, never silently deleted. Beside the frame it still fits, it is the same text as a user turn; one that cannot fit even alone
+    is replaced by a labelled not-delivered note (also recorded for the fit's report)."""
+    messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}, result("gone", "small file text"), result("gone2", "BIG line\n" * 3000), {"role": "user", "content": "go"}]
+    notes = []
+    out = contextfloor._stand_in_arriving_orphans(messages, None, window=2000, reserve=200, safety=1.0, overhead=0, notes=notes)
+    assert [m["role"] for m in out] == ["system", "user", "user", "user", "user"] and out[2]["content"] == "small file text"
+    assert out[3]["content"].startswith("⟦ctx:result-not-delivered⟧") and "3,000 line(s)" in out[3]["content"] and notes == [out[3]]
