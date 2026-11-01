@@ -144,6 +144,19 @@ def test_unchanged_checks_get_one_second_look_then_come_back_verbatim_not_re_dia
     sw.progress(sw.ProgressInput("old", 2, author_service([], superseded="a newer coder run"), Log()), stale)
     assert stale.steered_checks_text == "" and not stale.same_checks_relooked
 
+@pytest.mark.parametrize("length,clipped", [(100, False), (101, True)])
+@pytest.mark.parametrize("event,state,author_kw", [
+    ("loop.steer_checks_stale", sw.State(), {"superseded": "a newer coder run"}),                      # the carried failure is superseded by the coder's own run
+    ("loop.steer_same_checks", sw.State(same_checks_relooked=True), {}),                               # the same failure the coder can already see
+])
+def test_the_logged_head_of_withheld_checks_is_the_first_100_characters_and_marks_a_cut(event, state, author_kw, length, clipped):
+    checks = "c" * (length - 1) + "z"
+    state = replace(state, steered_checks_text=checks if event == "loop.steer_same_checks" else "")
+    author = author_service([], checks=checks, **author_kw)
+    sw.progress(sw.ProgressInput(checks, 2, author, Log()), state)
+    head = next(f["head"] for kind, f in author.log.events if kind == event)
+    assert head == (checks[:100] + "…" if clipped else checks) and ("z" in head) is (not clipped)
+
 def test_pending_steer_suspends_detection_and_only_the_exact_delivery_acknowledges():
     state = sw.State(redirect_due=True, repeat_count=3)
     out = sw.admit(sw.AdmissionInput(lambda: None, Log(), lambda: (3, ACTION)), state)
