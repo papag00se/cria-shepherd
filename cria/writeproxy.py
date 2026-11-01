@@ -1778,9 +1778,17 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                 continue
             content = str(paired_result.get("content") or "")
             off = _payload_offset(content)
-            first = resultpacket.read_record(content, off, token)
-            if first is None:
+            found = resultpacket.find_record(content, off, token)
+            if found is None and declaration.get("sv") == 1:
+                # A shell that printed >5 KB before the program leaves the harness's tail holding the records (it keeps the first and
+                # last halves). Record 1 is taken from there only when its DECLARED second record follows it on the very next line:
+                # a quoted record in a command's tail is never followed by a valid survey of the same receipt.
+                found = resultpacket.find_record(content, off, token, past_cut=True)
+                if found is not None and resultpacket.read_record(content, found[1].end, token, survey=True) is None:
+                    found = None
+            if found is None:
                 continue
+            first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped, as multipart drops it
             _learn_completions(token, first.rep, first.kind == denial.LANDED)
             at, survey, rep = first.end, "", first.rep
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:

@@ -222,17 +222,19 @@ def read_record(text: str, at: int, receipt: str, *, survey: bool = False) -> Re
 _CUT_MARK = re.compile(r"…\s*[\d,]+\s+(?:chars|tokens)\s+truncated\s*…")
 
 
-def find_record(text: str, at: int, receipt: str, *, survey: bool = False) -> tuple[int, Record] | None:
+def find_record(text: str, at: int, receipt: str, *, survey: bool = False, past_cut: bool = False) -> tuple[int, Record] | None:
     """``(start, record)`` of record 1 when a login shell printed BYTES BEFORE the program (a chatty profile, mise, direnv), else None.
 
     The program's own record is the FIRST thing the program prints, so it is the first occurrence of ``{"v":1,"r":"<receipt>"`` at or
     after ``at``: the shell's output precedes the program and cannot hold a receipt derived from a call that had not been issued yet.
-    Everything between ``at`` and ``start`` is the shell's noise (the caller measures and keeps or drops it). Nothing past the harness's
-    own cut marker is considered: after a cut the first surviving occurrence is no longer provably the program's first line, and a cut
-    that destroyed the record leaves the result UNKNOWN, never a record taken from the tail. At ``at`` itself this is :func:`read_record`."""
+    Everything between ``at`` and ``start`` is the shell's noise (the caller measures and keeps or drops it). By default nothing past
+    the harness's own cut marker is considered: after a cut the first surviving occurrence is no longer provably the program's first
+    line, and a cut that destroyed the record leaves the result UNKNOWN, never a record taken from the tail. ``past_cut`` lets the
+    caller look in the surviving tail anyway, when it can check something the cut did not destroy (see `writeproxy._frame_proofs`).
+    At ``at`` itself this is :func:`read_record`."""
     if not receipt:
         return None
-    cut = _CUT_MARK.search(text, at)
+    cut = None if past_cut else _CUT_MARK.search(text, at)
     limit = cut.start() if cut else len(text)
     start = text.find('{"v":%d,"r":"%s"' % (VERSION, receipt), at, limit)
     if start < 0:
