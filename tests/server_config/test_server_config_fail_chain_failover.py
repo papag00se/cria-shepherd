@@ -34,10 +34,12 @@ class Model(ThreadingHTTPServer):
         class H(BaseHTTPRequestHandler):
             log_message = lambda *a: None  # noqa: E731
 
-            def reply(h, payload, code=200, ctype="application/json"):
+            def reply(h, payload, code=200, ctype="application/json", headers=()):
                 raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
                 h.send_response(code)
                 h.send_header("Content-Type", ctype)
+                for name, value in headers:
+                    h.send_header(name, value)
                 h.send_header("Content-Length", str(len(raw)))
                 h.end_headers()
                 h.wfile.write(raw)
@@ -74,6 +76,8 @@ class Model(ThreadingHTTPServer):
         text = f"answer from {self.model}"
         if step == "503":
             return h.reply({"error": {"message": "loading model"}}, 503)
+        if step.startswith("429:"):    # rate limited, the server stating how long to wait (seconds)
+            return h.reply({"error": {"message": "slow down"}}, 429, headers=[("Retry-After", step[4:])])
         if step == "400":
             return h.reply({"error": {"message": "template rejected the request"}}, 400)
         if step == "overflow":
@@ -325,3 +329,28 @@ def test_a_watched_call_whose_text_already_left_for_the_harness_is_not_walked(ri
         r.cria._endpoint_for("coder").chat_watched({"model": "x", "stream": True, "messages": [{"role": "user", "content": "hi"}]},
                                                    r.cria.log.bind(session="s", turn="t"), on_content=seen.append)
     assert seen and standby.chats == [] and r.events("failover.walk") == []
+
+
+def test_a_rate_limited_endpoint_is_retried_only_after_the_wait_it_advertised(rig, monkeypatch):
+    """Retry-After: 3 is the server's own number: the retry waits 3 s (it used to wait a made-up 1 s and hit the limiter again)."""
+    waits = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    first, standby = Model("model-a", script=["429:3"]), Model("model-b")
+    r = rig(first, standby)
+    status, raw = r.post("chat-buffered")
+    assert status == 200 and "answer from model-a" in raw and standby.chats == []
+    assert waits.count(3.0) == 1 and 1.0 not in waits
+
+
+@pytest.mark.parametrize("mode", ["chat-buffered", "chat-stream"])
+def test_a_rate_limit_wait_longer_than_cria_will_hold_a_turn_walks_instead_of_retrying_early(rig, monkeypatch, mode):
+    """Retry-After: 600 is beyond the 30 s cap: retrying at 30 s would be the early retry the limiter punishes. The next
+    endpoint takes the request at once and the first endpoint is asked exactly once."""
+    waits = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    first, standby = Model("model-a", script=["429:600"] * 4), Model("model-b")
+    r = rig(first, standby)
+    status, raw = r.post(mode)
+    assert status == 200 and "answer from model-b" in text_of(mode, raw)
+    assert len(first.chats) == 1 and not [w for w in waits if w >= 1.0]
+    assert [w["failure"] for w in r.events("failover.walk")] == ["rate_limit"]

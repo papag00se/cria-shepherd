@@ -111,9 +111,13 @@ def choose(facts: FailureFacts, behavior: Behavior = Behavior()) -> RecoveryChoi
     if facts.failure is Failure.AUTH:
         return RecoveryChoice(HardFail(f"Authentication failed for {facts.role}"))
     if facts.failure is Failure.RATE_LIMIT:
+        if facts.retry_after_ms is not None and facts.retry_after_ms > behavior.rate_limit_max_wait_ms:
+            # Holding the turn that long is not ours to do and retrying earlier is the early retry a limiter
+            # punishes: another endpoint, or the truthful failure, takes it now.
+            return _walk(facts, "rate limit wait exceeds what a turn can hold")
         if facts.attempt < behavior.retry_same_attempts:
-            wait = min(behavior.rate_limit_default_wait_ms if facts.retry_after_ms is None
-                       else facts.retry_after_ms, behavior.rate_limit_max_wait_ms)
+            wait = (behavior.rate_limit_default_wait_ms if facts.retry_after_ms is None
+                    else facts.retry_after_ms)
             return RecoveryChoice(RetrySame(wait, facts.attempt + 1))
         return _walk(facts, "rate limit retries exhausted")
     if facts.failure is Failure.TIMEOUT:

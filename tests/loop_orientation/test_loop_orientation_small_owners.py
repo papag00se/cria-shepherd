@@ -28,7 +28,8 @@ def test_a_route_is_grounded_by_its_path_not_by_the_name_of_its_template_variabl
 @pytest.mark.parametrize("failure,attempt,delay,expected", [
     (tp.Failure.TIMEOUT, 0, None, tp.RetrySame(500, 1)),
     (tp.Failure.TIMEOUT, 1, None, tp.NextInChain("backup", "timeout after retry")),
-    (tp.Failure.RATE_LIMIT, 1, 90000, tp.RetrySame(30000, 2)),           # the server's Retry-After is capped
+    (tp.Failure.RATE_LIMIT, 1, 90000, tp.NextInChain("backup", "rate limit wait exceeds what a turn can hold")),  # never an early retry
+    (tp.Failure.RATE_LIMIT, 1, 12000, tp.RetrySame(12000, 2)),           # the server's own Retry-After, uncapped below the limit
     (tp.Failure.AUTH, 0, None, tp.HardFail("Authentication failed for primary")),   # a bad key is never retried or routed
 ])
 def test_a_transient_failure_is_retried_routed_or_failed_by_its_kind(failure, attempt, delay, expected):

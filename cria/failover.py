@@ -14,6 +14,7 @@ reset would otherwise be a dead turn. Chain-walk matters once distinct endpoints
 """
 from __future__ import annotations
 
+import email.utils
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
@@ -47,6 +48,32 @@ def classify_failure(status_code: Optional[int], error_message: str,
             return Failure.TIMEOUT
         return Failure.MODEL_UNAVAILABLE  # connection refused / unreachable / unknown → unavailable
     return Failure.MODEL_UNAVAILABLE
+
+
+def retry_after_ms(headers, now: Callable[[], float] = time.time) -> Optional[int]:
+    """How long the server said to wait before asking again, in ms, from a 429/503's response headers
+    (``Retry-After`` as delta-seconds or an HTTP date, ``Retry-After-Ms``, ``X-RateLimit-Reset-After``);
+    ``None`` when it named no delay. The longest advertised delay wins: waiting less is the early retry
+    a limiter punishes."""
+    if not headers:
+        return None
+    get = headers.get
+    found = []
+    for name, scale in (("Retry-After-Ms", 1), ("Retry-After", 1000), ("X-RateLimit-Reset-After", 1000)):
+        raw = (get(name) or "").strip()
+        if not raw:
+            continue
+        try:
+            value = float(raw) * scale
+        except ValueError:
+            try:
+                when = email.utils.parsedate_to_datetime(raw) if name == "Retry-After" else None
+            except (TypeError, ValueError):
+                when = None
+            value = (when.timestamp() - now()) * 1000 if when is not None else None
+        if value is not None and value == value and value >= 0:
+            found.append(int(value))
+    return max(found) if found else None
 
 
 def decide_action(failure: Failure, current_role: str, chain_name: str, chain: Sequence[str],
@@ -102,7 +129,8 @@ def _run(chain_name, attempts, classify, rlog, *, behavior, sleep, definition):
                 raise
             choice = transientpolicy.selected_choice(definition,
                 lambda: transientpolicy.FailureFacts(failure, cur.role, chain_name,
-                                                       tuple(roles), attempt), behavior)
+                                                       tuple(roles), attempt,
+                                                       getattr(e, "retry_after_ms", None)), behavior)
             if choice is None:
                 raise
             action = choice.action

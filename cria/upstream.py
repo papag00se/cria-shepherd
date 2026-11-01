@@ -1353,6 +1353,7 @@ class Upstream:
             getattr(e, 'response_error', None)) else UpstreamError)
         err = error_class(str(e), getattr(e, 'response_error', None))
         err.code = getattr(e, 'code', None)
+        err.retry_after_ms = failover.retry_after_ms(getattr(e, 'headers', None))
         raise err from e
 
     def _send_capacity(self, prepared, body, stream, rlog, attempt, runtime, transport):
@@ -1642,7 +1643,8 @@ class Upstream:
                 choice = transientpolicy.selected_choice(runtime.transient_recovery,
                     lambda: transientpolicy.FailureFacts(
                         failover.classify_failure(getattr(e, 'code', None), str(e)),
-                        'upstream', 'upstream', ('upstream',), attempt))
+                        'upstream', 'upstream', ('upstream',), attempt,
+                        getattr(e, 'retry_after_ms', None)))
                 if choice is None:
                     raise
                 action = choice.action
