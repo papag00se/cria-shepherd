@@ -6,8 +6,10 @@ native command can quote any of them, including the call's own receipt (the rece
 and arguments; a file body is not an input to it, so a file can contain it). Authority therefore comes from POSITION and
 DECLARATION, never from finding something:
 
-* Record 1 is ONE ASCII line of JSON at stdout offset 0 (after the harness's own envelope). Only its terminator may be
-  LF or CRLF (a pty turns LF into CRLF); every other byte is ASCII, so a transport can neither split nor rewrite it.
+* Record 1 is ONE ASCII line of JSON, the first thing the program prints: at stdout offset 0 (after the harness's own envelope), or,
+  when the harness's login shell printed noise first (:func:`find_record`), the FIRST occurrence of this call's own receipt record
+  and only before the harness's own cut marker. Only its terminator may be LF or CRLF (a pty turns LF into CRLF); every other byte is
+  ASCII, so a transport can neither split nor rewrite it.
 * A second record exists ONLY when the call's own sentinel declared a survey, and is read ONLY on the very next line.
   A valid record 1 stands when record 2 is missing or cut: nothing is rescanned, nothing resynchronised.
 * Whatever follows the declared records is the command's own output — an opaque tail. It is never parsed for metadata:
@@ -28,6 +30,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 
 from . import fetchfacts
@@ -213,6 +216,29 @@ def read_record(text: str, at: int, receipt: str, *, survey: bool = False) -> Re
     if rep is False:
         return None
     return Record(kind, pre, body, observe, nl + 1, rep)
+
+
+# The harness's own marker where it cut the MIDDLE of a result (`…N chars truncated…` / `…N tokens truncated…`).
+_CUT_MARK = re.compile(r"…\s*[\d,]+\s+(?:chars|tokens)\s+truncated\s*…")
+
+
+def find_record(text: str, at: int, receipt: str, *, survey: bool = False) -> tuple[int, Record] | None:
+    """``(start, record)`` of record 1 when a login shell printed BYTES BEFORE the program (a chatty profile, mise, direnv), else None.
+
+    The program's own record is the FIRST thing the program prints, so it is the first occurrence of ``{"v":1,"r":"<receipt>"`` at or
+    after ``at``: the shell's output precedes the program and cannot hold a receipt derived from a call that had not been issued yet.
+    Everything between ``at`` and ``start`` is the shell's noise (the caller measures and keeps or drops it). Nothing past the harness's
+    own cut marker is considered: after a cut the first surviving occurrence is no longer provably the program's first line, and a cut
+    that destroyed the record leaves the result UNKNOWN, never a record taken from the tail. At ``at`` itself this is :func:`read_record`."""
+    if not receipt:
+        return None
+    cut = _CUT_MARK.search(text, at)
+    limit = cut.start() if cut else len(text)
+    start = text.find('{"v":%d,"r":"%s"' % (VERSION, receipt), at, limit)
+    if start < 0:
+        return None
+    record = read_record(text, start, receipt, survey=survey)
+    return None if record is None else (start, record)
 
 
 def _report(rep) -> dict | None | bool:

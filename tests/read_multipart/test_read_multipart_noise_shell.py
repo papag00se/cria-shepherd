@@ -6,52 +6,22 @@ over 10,000 bytes it keeps the first and last 5,000 and says `Warning: truncated
 capture /var/tmp/w10-e2ea/calls/t7/*/0003-coder-s1.prompt.txt: 17,898 bytes in, head 5,000, `…7898 chars truncated…`, tail 5,000).
 Before the fix the page record (9,9xx bytes) plus any noise was cut in the middle and the whole read ended unverified.
 """
-import os, pty, subprocess
 
 import pytest
 import read_multipart_helpers as rig
 from cria import bodykeys
-from read_multipart_helpers import HEX, isolated_home, page_through, start  # noqa: F401
-
-MISE = 'mise WARN  GitHub rate limit exceeded. Resets at 2026-10-31 16:32:13 -07:00\n'
-
-
-def noise(n):
-    return (MISE * (n // len(MISE) + 1))[:n]
-
-
-def codex_result(raw: bytes, code: int = 0) -> str:
-    """The harness's own envelope: whole under 10,000 bytes, else head 5,000 + marker + tail 5,000 behind the cut warning."""
-    tokens = -(-len(raw) // 4)
-    head = 'Chunk ID: 3a9c1e\nWall time: 1.1236 seconds\nProcess exited with code %d\nOriginal token count: %d\nOutput:\n' % (code, tokens)
-    text = raw.decode('utf-8', 'replace')
-    if len(raw) <= 10000:
-        return head + text
-    return (head + 'Warning: truncated output (original token count: %d)\nTotal output lines: %d\n\n' % (tokens, raw.count(b'\n'))
-            + text[:5000] + '…%d chars truncated…' % (len(text) - 10000) + text[-5000:])
-
+from read_multipart_helpers import HEX, chatty_pty, codex_result, isolated_home, noise, page_through, start  # noqa: F401
 
 @pytest.fixture
 def noisy(tmp_path, monkeypatch):
     """Install a noisy harness: returns a setter `noisy(before_out, before_err, after)` and the list of raw results it produced."""
-    shell_home = tmp_path / 'shellhome'; shell_home.mkdir()
     cfg = {'before_out': 0, 'before_err': 0, 'after': 0}; raw_results = []
-    (shell_home / '.bash_profile').write_text('printf %s "$N_OUT"; printf %s "$N_ERR" >&2; trap \'printf %s "$N_AFTER"\' EXIT\n')
 
     def run(call):
         import json
-        command = json.loads(call['function']['arguments'])['cmd']
-        env = dict(os.environ, HOME=str(shell_home), N_OUT=noise(cfg['before_out']), N_ERR=noise(cfg['before_err']), N_AFTER=noise(cfg['after']))
-        master, slave = pty.openpty()
-        p = subprocess.Popen(['bash', '-lc', command], stdout=slave, stderr=slave, env=env, cwd=tmp_path); os.close(slave); data = bytearray()
-        while True:
-            try: chunk = os.read(master, 65536)
-            except OSError: break
-            if not chunk: break
-            data.extend(chunk)
-        os.close(master); code = p.wait()
-        raw_results.append(bytes(data))
-        return codex_result(bytes(data), code)
+        raw, code = chatty_pty(json.loads(call['function']['arguments'])['cmd'], str(tmp_path), cfg['before_out'], cfg['before_err'], cfg['after'])
+        raw_results.append(raw)
+        return codex_result(raw, code)
     monkeypatch.setattr(rig, 'run_call', run)
 
     def setter(before_out=0, before_err=0, after=0): cfg.update(before_out=before_out, before_err=before_err, after=after)

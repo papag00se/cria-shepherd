@@ -1751,8 +1751,10 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
     result after it) and whose STORED command declared a receipt in cria's sentinel.
 
-    AUTHORITY IS POSITION AND DECLARATION (`resultpacket`): the first record is the line at offset 0 of the stdout
-    (after the harness's own envelope); the second exists only if the sentinel declared a survey and is read only on the
+    AUTHORITY IS POSITION AND DECLARATION (`resultpacket`): the first record is the program's own first line: at offset 0 of
+    the stdout (after the harness's own envelope), or after whatever a chatty login shell printed first
+    (`resultpacket.find_record`: the first occurrence of THIS call's receipt record, never past the harness's cut marker; that
+    noise is dropped from the display as multipart drops it); the second exists only if the sentinel declared a survey and is read only on the
     very next line. Nothing is searched for — a file, a page or a native command that quotes records, receipts, markers or
     a valid-looking survey is just the opaque tail and keeps every byte. A valid first record stands when the second is
     missing or cut. No record at offset 0 (a legacy command, a cut, an unlowered shape) means UNKNOWN: untouched."""

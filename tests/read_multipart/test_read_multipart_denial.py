@@ -64,11 +64,13 @@ def test_data_that_quotes_records_receipts_or_markers_is_data_and_nothing_can_no
     out = represent_inbound(out); assert bodykeys.RESULT_OUTCOME not in out[1] and bodykeys.READ_OBSERVATION not in out[1]
 
 def test_what_cria_cannot_prove_is_unknown_keeps_the_received_bytes_and_earns_no_credit(tmp_path):
-    """A cut/rewritten/misplaced first record, a pre-record (legacy) read, invalid UTF-8, and a duplicate/orphan/reordered result are
-    UNKNOWN: the bytes stay visible, nothing is cached as the file, and no read is credited."""
+    """A cut/rewritten first record, one that only survives AFTER the harness's cut marker (it is no longer provably the program's first
+    line; bytes BEFORE it are the shell's noise and are tolerated, see test_read_multipart_noise2_typed_transports), a pre-record
+    (legacy) read, invalid UTF-8, and a duplicate/orphan/reordered result are UNKNOWN: the bytes stay visible, nothing is cached as the
+    file, and no read is credited."""
     (tmp_path / 'f.txt').write_text('abc\ndef\n'); tc = lower('read_file', {'path': 'f.txt'}); raw = envelope(cmd_of(tc), tmp_path)
     head, _, rec = raw.partition('Output:\n')
-    for broken in (rec[:60], rec.replace('def', 'de', 1), 'x' + rec, rec.replace('"v":1', '"v":2', 1)):
+    for broken in (rec[:60], rec.replace('def', 'de', 1), 'x…9000 chars truncated…' + rec, rec.replace('"v":1', '"v":2', 1)):
         out, view = represent(tc, head + 'Output:\n' + broken, tmp_path)
         assert denial.proof(out[1]) == denial.UNKNOWN and not denial.attributable_read(out[1]) and denial.read_payload(out[1]) is None and view.read_bytes('f.txt') is None
         assert loop._extract_reads(out) == {} and out[1]['content'].strip()
