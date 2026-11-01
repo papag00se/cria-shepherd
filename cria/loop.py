@@ -3883,8 +3883,11 @@ class Loop:
 
         # The write record may judge a briefing's change claims only over a span nothing earlier summarized:
         # a prior rollup (its state or its marker) means the briefing legitimately restates what it carried.
+        # A harness handoff (Codex's own compaction, hardened by cria) is the same thing one level up: it is a root
+        # message OUTSIDE ``msgs`` that carries the writes of everything before it, so a span with no write calls is
+        # not the session's whole record (E2EB c7: 4 of 11 briefings refused `UNWRITTEN` over files the coder wrote).
         whole_span = (None if sess.compact_state.summary or selfcompact.body_is_compacted(msgs)
-                      else msgs)
+                      or getattr(sess, "handoff_origin", None) is not None else msgs)
 
         def make_summary(mm: list[dict], *, newer_messages: list[dict]) -> str:
             history, evidence = evidence_for(mm, newer_messages=newer_messages)
