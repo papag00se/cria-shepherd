@@ -57,7 +57,6 @@ FIXED_SIZES = {
     ("multipart.py", "STDOUT_LIMIT"): "transport: the harness stdout bound for one multipart record line",
     ("writeproxy.py", "ECHO_MAX_BYTES"): "measured: one byte bound on a write's echoed window and its report; over it the window shrinks, never cut mid-way",
     ("probegate.py", "TRANSPORT_CHUNK_BYTES"): "transport: 6,000 raw bytes encode to 8,000 chars under the harness's ~9-10 KiB result bound",
-    ("probegate.py", "TRANSPORT_RESULT_BYTES"): "transport: the harness's result bound a gate page is sized against (it keeps the first and last halves of a longer result); measured, not a window stand-in",
     ("probegate.py", "TRANSPORT_RAW_PAGE_MAX"): "safety: caps what one hostile/garbled compressed page may decompress to in memory",
     ("upstream.py", "_REASONING_FLUSH_BYTES"): "measured: a kill loses at most this much reasoning; larger would be a write per token",
     ("toolwire.py", "_RIDE_ALONG_HOST_RESERVE"): "transport: room under the inline bound for the harness's own framing lines",
