@@ -17,7 +17,7 @@ Doctrine:
 - Order is preserved: each run of consecutive extracted pieces becomes one labelled block in its
   original position; a piece whose extraction fails stays verbatim where it was.
 - An extraction is accepted only if it is a JSON object with known keys of the right types and at
-  least one non-empty fact. Anything else ({} / wrong keys / object-shaped entries / truncation)
+  least one non-empty fact (an entry that is an object of strings reads as its values joined by " — "). Anything else ({} / wrong keys / an entry that is a number, a list or an object holding a non-string / truncation)
   is a failure, and the piece stays verbatim: nothing is silently replaced by an empty block.
 - Nothing runs unless the evidence exceeds the measured budget; small requests are unchanged.
 - The floor remains the single last-resort reducer, with its own label.
@@ -52,9 +52,23 @@ class MergedState:
     chunks: int = 0
 
 
+def _entry(value) -> str | None:
+    """One list entry as a plain string, or None when it is not one. A string is itself. An object
+    whose every value is a string (the model's own `{"path": ..., "what": ...}` rendering of the
+    schema's `"path — what"` line: 5 of 94 real replies, every key different) is those values, in
+    order, joined by the schema's own " — "; no word is added, dropped or reordered. Anything else
+    (a number, a list, a nested object, an object with a non-string value) is not guessed at."""
+    if isinstance(value, dict):
+        if not value or not all(isinstance(v, str) for v in value.values()):
+            return None
+        return " — ".join(v.strip() for v in value.values() if v.strip())
+    return value.strip() if isinstance(value, str) else None
+
+
 def valid_extraction(obj) -> dict | None:
-    """The extraction contract, or None. Object-shaped or non-string entries reject the whole
-    reply rather than being guessed at; an object with no non-empty known fact is a failure."""
+    """The extraction contract, or None. An entry that is neither a string nor an all-string object
+    rejects the whole reply rather than being guessed at; an object with no non-empty known fact is
+    a failure."""
     if not isinstance(obj, dict) or not any(k in obj for k in KNOWN_KEYS):
         return None
     out, facts = {}, 0
@@ -67,9 +81,12 @@ def valid_extraction(obj) -> dict | None:
             continue
         if isinstance(value, str):
             value = [value] if value.strip() else []
-        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        if not isinstance(value, list):
             return None
-        out[key] = [v.strip() for v in value if v.strip()]
+        entries = [_entry(v) for v in value]
+        if None in entries:
+            return None
+        out[key] = [e for e in entries if e]
         if key != "latest_plan":         # a goal or plan alone is not evidence of what happened
             facts += len(out[key])
     return out if facts else None

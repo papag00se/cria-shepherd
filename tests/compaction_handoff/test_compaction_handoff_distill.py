@@ -24,9 +24,16 @@ def blocks(n, words=600):
     return [f"turn {i}: " + "detail " * words for i in range(n)]
 
 def test_an_extraction_must_have_the_contract_shape_and_the_merge_is_a_deterministic_newest_wins_union():
-    """Extraction contract rejects empty/object-shaped replies; merge is a deterministic union that keeps the newest wording."""
-    for bad in ({}, {"summary": "x"}, {"errors": [{"text": "E1"}]}, {"objective": "", "errors": []}, {"objective": "goal", "latest_plan": ["do x"]}):
+    """Extraction contract rejects empty/mis-shaped replies; merge is a deterministic union that keeps the newest wording."""
+    for bad in ({}, {"summary": "x"}, {"objective": "", "errors": []}, {"objective": "goal", "latest_plan": ["do x"]},
+                {"errors": [{"text": "E1", "line": 3}]}, {"errors": [{"text": ["E1"]}]}, {"errors": [{}]}, {"errors": [["E1"]]},       # an entry that is not a string or an object of strings
+                {"errors": [3]}, {"errors": [{"text": {"nested": "E1"}}]}):
         assert hd.valid_extraction(bad) is None
+    # the model's own object rendering of a `"path — what"` entry (real replies: path/what, cmd/outcome, error/context, text/cmd, change/evidence)
+    flat = hd.valid_extraction({"files_touched": [{"path": "Importer.java", "what": "edited: added the retry"}, "README.md — read"],
+                                "commands_run": [{"cmd": "mvn test", "outcome": " exit 0 ", "note": ""}], "errors": [{"error": "E1", "command": "mvn -o compile"}]})
+    assert flat["files_touched"] == ["Importer.java — edited: added the retry", "README.md — read"]
+    assert flat["commands_run"] == ["mvn test — exit 0"] and flat["errors"] == ["E1 — mvn -o compile"]
     assert hd.valid_extraction({"errors": "E1", "pending": ["write REVIEW.md"]})["pending"] == ["write REVIEW.md"]
     state = hd.merge([{"objective": "old", "errors": ["E1", "E2"], "latest_plan": ["a"]}, {"objective": "", "errors": ["e2", "E3"], "latest_plan": []},
                       {"objective": "new", "errors": ["E4"], "latest_plan": ["b"]}])
