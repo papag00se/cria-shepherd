@@ -79,9 +79,9 @@ def test_a_judge_is_shown_only_sources_that_answered_and_defined_something_plus_
     assert research.grounded_sources({}) == [] and research.grounded_sources(None) == []
     messages = read("path", "schema.sql", "1", "create table t (id int);")
     combined = research.sources_read(ledger, messages)
-    assert combined[-1] == ("schema.sql", "", "24 chars read from disk") and len(combined) == 3
+    assert combined[-1] == research.FileRead("schema.sql", 24) and len(combined) == 3
     assert research.sources_read({}, None) == [] and research.sources_read({}) == []
     block = research._sources_block(combined)
     assert block.splitlines()[0] == "- https://api.example/openapi.json" and "    routes it defines: /v1/handle, /v1/holders" in block
-    assert "    response fields it defines: GET /v1/handle" in block and block.splitlines()[-2] == "- schema.sql" and "24 chars read from disk" in block.splitlines()[-1]
+    assert "    response fields it defines: GET /v1/handle" in block and block.splitlines()[-2] == "- schema.sql" and "24 chars" in block.splitlines()[-1] and "response fields" not in block.splitlines()[-1]
     assert "routes it defines" not in research._sources_block([("u", "  ", " ")]) and research._sources_block([]) == ""

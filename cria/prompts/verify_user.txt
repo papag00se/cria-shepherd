@@ -27,3 +27,6 @@ absent_literals = ON-DISK FACT, gathered by running the check — not a verdict,
 # a page that answered while defining nothing is not here. This is the fact a critic ruling on a
 # "research the API" step could not otherwise get — the transcript shows attempts, not outcomes.
 sources_read = WHAT HAS ACTUALLY BEEN READ SO FAR (gathered from the real tool results — each of these returned content, and everything else that was tried did not):\n{{SOURCES}}\n\nIf THIS step's goal was to find something out, judge whether what is listed here answers it. If the step's goal was to BUILD something, this list is background and does not make it done.
+# One entry of the sources_read block for a FILE (research.FileRead). A file defines no routes or response
+# fields, so it is not rendered in the web entry's wording.
+source_file = - {{PATH}}\n    a file on disk, opened and read: {{CHARS}} chars came back

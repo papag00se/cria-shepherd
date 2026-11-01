@@ -29,13 +29,29 @@ about reading on trust (#8: deterministic code gathers the facts, the reasoner j
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
-from . import denial, fetchfacts, groundtruth, jsontext
+from . import denial, fetchfacts, groundtruth, jsontext, prompts
 
 
 
 
-def sources_read(ledger: dict, messages: list | None = None) -> list[tuple[str, str, str]]:
+class WebSource(NamedTuple):
+    """A fetched document that defined something: ``(url, routes, shapes)`` display text, composed once from the typed entry."""
+    url: str
+    routes: str
+    shapes: str
+
+
+class FileRead(NamedTuple):
+    """A file on disk that was opened and came back with content: its path and the chars the read returned. A file defines no
+    routes or response fields, so it is its own kind: carrying it in a web entry's slots made the judge read "response fields it
+    defines: N chars read from disk"."""
+    path: str
+    chars: int
+
+
+def sources_read(ledger: dict, messages: list | None = None) -> list[WebSource | FileRead]:
     """Everything really READ this session — the web documents that defined something, AND the files
     on disk that were opened and came back with content.
 
@@ -53,7 +69,7 @@ def sources_read(ledger: dict, messages: list | None = None) -> list[tuple[str, 
     read is not a read."""
     out = list(grounded_sources(ledger))
     for path, size in files_read(messages or []):
-        out.append((path, "", f"{size} chars read from disk"))
+        out.append(FileRead(path, size))
     return out
 
 
@@ -158,7 +174,7 @@ def fetch_answered(entry) -> bool:
     return fetch_succeeded(status) or bool(groundtruth.fetch_observed(entry))
 
 
-def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
+def grounded_sources(ledger: dict) -> list[WebSource]:
     """``(url, routes, shapes)`` for the fetches that came back 2xx AND defined something.
 
     A page that answered but yielded no routes and no response fields is NOT a source here. That
@@ -171,13 +187,17 @@ def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
         _status, routes, shapes, _catalog = groundtruth.fetch_facts(entry)
         if fetch_answered(entry) and (routes or shapes):
             # (display for a judge, composed one way from the typed entry — never read back)
-            out.append((url, ", ".join(routes), fetchfacts.shapes_text(shapes)))
+            out.append(WebSource(url, ", ".join(routes), fetchfacts.shapes_text(shapes)))
     return out
 
 
-def _sources_block(sources: list[tuple[str, str, str]]) -> str:
+def _sources_block(sources: list[WebSource | FileRead]) -> str:
     lines = []
-    for url, routes, shapes in sources:
+    for source in sources:
+        if isinstance(source, FileRead):
+            lines.append(prompts.fill(prompts.load_map("verify_user")["source_file"], path=source.path, chars=source.chars))
+            continue
+        url, routes, shapes = source
         lines.append(f"- {url}")
         if routes.strip():
             lines.append(f"    routes it defines: {routes.strip()}")

@@ -168,7 +168,7 @@ class StepInput:
     workspace_root: str = ""
     coder_tools: str = ""
     routes: str = ""
-    sources_read: tuple[tuple[str, str, str], ...] = ()
+    sources_read: tuple[research.WebSource | research.FileRead, ...] = ()
     participation_facts: str = ""
     original_task: str = ""
     key: str = ""
