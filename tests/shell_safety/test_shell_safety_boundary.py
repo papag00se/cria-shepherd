@@ -18,7 +18,11 @@ ACCESS = [
     ("...", f"ls {WS}/sub"), ("...", "curl http://h/a/b"), ("...", "grep '/handles' f"), ("...", "echo 'GET /handles' > tmp/x"),
     ("...", 'exec_command cmd="go mod tidy", shell="/bin/bash"'),   # a tool SIGNATURE: a parameter value is not an access
     ("...", "cat /dev/null"), ("...", "cat tmp/d <<EOF\nx = 1/1_000_000\nEOF"), ("...", "cd sub && ls"),
-    ("...", "echo ${base}/etc/x"), ("...", "curl http://$(hostname)/a/b"), ("...", "/usr/bin/python3 script.py"),
+    ("...", "echo ${base}/etc/x"), ("...", "curl http://$(hostname)/a/b"),
+    # A QUOTED expansion with a tail (`"$DEC"/x.go`, the idiomatic shell spelling, walked on cart-billing-go x ornith1.5_9b):
+    # the tail's leading component is unresolved exactly like the unquoted `$(..)/x` row, never the coder's rooted path.
+    ("...", 'DEC=$(go env GOMODCACHE)/x; ls "$DEC"/*.go'), ("...", 'ls "${DIR}"/x.go'), ("...", 'ls "$(go env GOMODCACHE)"/x'),
+    ("R..", 'cat "$D"/x; cat /etc/passwd'),   # the abstention is for the tail only: a real rooted path after it is still judged ("...", "/usr/bin/python3 script.py"),
     ("...", f"javap -classpath {M2} com.opencsv.CSVParserBuilder"), ("...", "cat /home/jesse/.cargo/registry/src/x/serde-1.0/src/lib.rs"),
     ("...", "pip install -t ./vendor x"), ("...", "python3 -m venv .venv && ./.venv/bin/pip install x"), ("...", "npm install"),
     ("...", "kill -9 4242"), ("...", "kill 4242 && echo $(date)"), ("...", "cat <<'EOF'\nkill $(lsof -t -i :8081)\nEOF"),

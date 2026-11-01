@@ -956,6 +956,11 @@ def _after_unresolved_expansion(command: str, start: int) -> bool:
         return False
     if command[i] == "*" or (i > 0 and command[i] == "/" and command[i - 1] == "*"):
         return True
+    if command[i] == '"':
+        # `"$DEC"/x.go` / `"${DIR}"/x` / `"$(go env GOMODCACHE)"/x`: a DOUBLE-quoted expansion followed by its tail. The quote
+        # hides the closing `)` / `}` from the check below, and the scan then read `/x.go` as a rooted path the coder never
+        # wrote ("'/' is outside the project" for `ls "$DEC"/*.go` — walked on cart-billing-go x ornith1.5_9b).
+        return any(e == i and s < e and re.search(r"\$|`", command[s:e]) for s, e in _quoted_spans(command))
     if command[i] not in ")}":
         return False
     close, opener = command[i], "(" if command[i] == ")" else "{"
