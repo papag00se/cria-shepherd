@@ -6398,7 +6398,11 @@ def _coder_shell_runs(messages: list[dict] | None) -> tuple[completionapproval.S
     status its result envelope reports (None when the harness reports none) and the output after the
     envelope's own header. Ground truth for a question about what the coder actually executed."""
     from .resultnotes import exec_envelope
-    own = probegate.gate_call_ids(messages or [])
+    from .writerecord import last_build_write
+    messages = [m for m in (messages or []) if isinstance(m, dict)]
+    own = probegate.gate_call_ids(messages)
+    call_at = {tc.get("id"): pos for pos, m in enumerate(messages) for tc in m.get("tool_calls") or []}
+    last_write = last_build_write(messages)
     runs = []
     for tid, cmd, res in _shell_runs(messages):
         if tid in own:
@@ -6406,7 +6410,8 @@ def _coder_shell_runs(messages: list[dict] | None) -> tuple[completionapproval.S
         envelope = exec_envelope(res)
         runs.append(completionapproval.ShellRun(
             cmd, envelope.exit_code if envelope is not None else None,
-            res[envelope.payload_start:] if envelope is not None else res))
+            res[envelope.payload_start:] if envelope is not None else res,
+            edited_after=call_at.get(tid, -1) < last_write))
     return tuple(runs)
 
 

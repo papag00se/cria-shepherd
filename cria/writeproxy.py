@@ -805,14 +805,19 @@ _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts
 # batch that touches the same file names its predecessors (call indexes in this turn); it waits, OUTSIDE the
 # directory lock, until each has left a done-mark (written at process exit, whether it applied, was refused or
 # failed). A predecessor that never arrives inside the bound is not waited for further: the edit applies and
-# its result says it ran early. A turn with a single edit per file carries none of this.
+# its result says it ran early. Each call first records its own pid and start time (`completionmarks._cm_begin`), so a
+# predecessor known DEAD without its done-mark (read through /proc, no signal) is not waited for at all.
+# A turn with a single edit per file carries none of this.
 _EDIT_SEQ_BLOCK = r'''import time,atexit
 _seq_deadline=time.monotonic()+%(wait)r
 try:
     _sequence=_seq_open(%(turn)r,%(dir)r,%(participants)r,_seq_deadline)
     atexit.register(_seq_done,_sequence,%(idx)r)
+    try: _cm_begin(_sequence,str(%(idx)r),%(turn)r)
+    except OSError: pass
     _miss=lambda: _seq_missing(_sequence,%(preds)r)
-    while _miss() and time.monotonic()<_seq_deadline: time.sleep(0.05)
+    _live=lambda: [_i for _i in _miss() if not _seq_dead(_sequence,_i,%(turn)r)]
+    while _live() and time.monotonic()<_seq_deadline: time.sleep(0.05)
     _late=bool(_miss())
 except (OSError,ValueError):
     _late=bool(%(preds)r)
@@ -835,7 +840,7 @@ def _queued(py: str, seq: "EditSequence | None", marks: "completionmarks.Plan | 
     if seq is None:
         return completionmarks.directory_program() + py if marks is not None else py
     turn, idx, preds, participants = seq
-    head = editsequence.PROGRAM + (completionmarks.FUNCTIONS if marks is not None else "")
+    head = editsequence.PROGRAM + completionmarks.FUNCTIONS
     return head + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
         dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
         participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))

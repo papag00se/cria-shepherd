@@ -62,6 +62,7 @@ class ShellRun:
     command: str
     exit_code: int | None
     output: str
+    edited_after: bool = False      # a write that may change a build sits LATER in the transcript than this run
 
 
 @dataclass(frozen=True)
@@ -141,27 +142,32 @@ def exact_form(source: ExactFormInput) -> ApprovalResult:
     return ApprovalResult(ApprovalStatus.CONTRADICTED, prompts.render("exact_form_unmet", facts=facts)) if contradicted else ApprovalResult(ApprovalStatus.PERMITTED)
 
 
-def _coder_ran_required_test(source: ParticipationInput) -> bool:
+def _coder_ran_required_test(source: ParticipationInput) -> ApprovalResult | None:
     """The gate's own runner collected nothing, so the only evidence of the task's named run is the coder's
     own: ask ONE question of its recorded runs, WHICH of them executes the test the task requires (the
     reasoner judges what the task requires; code reads the exit status the harness measured). Released only
-    when the named run exists and did not exit non-zero. An unreadable answer, a number that is no run, a
+    when the named run exists, did not exit non-zero and no write that may change a build came after it in the
+    transcript (a later write keeps the block, with a notice that says so). An unreadable answer, a number that is no run, a
     failed run or no recorded run all keep the block (bounded by the caller's completion-check limit)."""
     runs = source.runs()
     if not runs:
-        return False
+        return None
     shown_from = max(0, len(runs) - RUNS_SHOWN)
     answer = source.questions.closed(
         prompts.render("coder_run_executes_required_test", task=source.task, runs=render_runs(runs)),
         phase="coder-run-executes-required-test").strip().strip("`[]. ").upper()
     named = int(answer) if answer.isdigit() and shown_from < int(answer) <= len(runs) else None
     run = runs[named - 1] if named is not None else None
-    released = run is not None and run.exit_code in (0, None)
+    passed = run is not None and run.exit_code in (0, None)
+    released = passed and not run.edited_after
     if source.log is not None:
         source.log.emit("loop.coder_run_executes_required_test", runs=len(runs),
                         named=named if named is not None else (answer or "unknown"),
-                        exit_code=run.exit_code if run is not None else None, released=released)
-    return released
+                        exit_code=run.exit_code if run is not None else None, released=released,
+                        edited_after=bool(run is not None and run.edited_after))
+    if released:
+        return ApprovalResult(ApprovalStatus.PERMITTED)
+    return ApprovalResult(ApprovalStatus.CONTRADICTED, prompts.load("required_test_run_predates_edit")) if passed else None
 
 
 def test_participation(source: ParticipationInput) -> ApprovalResult:
@@ -177,8 +183,10 @@ def test_participation(source: ParticipationInput) -> ApprovalResult:
         if source.log is not None:
             source.log.emit("loop.test_participation_requirement", support=support.value,
                             required=(answer == "REQUIRED") if answer else "unknown")
-        if answer == "REQUIRED" and support is participation.Support.ABSENT and _coder_ran_required_test(source):
-            return ApprovalResult(ApprovalStatus.PERMITTED)
+        if answer == "REQUIRED" and support is participation.Support.ABSENT:
+            ran = _coder_ran_required_test(source)
+            if ran is not None:
+                return ran
         return ApprovalResult(ApprovalStatus.NO_CONSTRAINT if answer == "NOT_REQUIRED" else
                               ApprovalStatus.CONTRADICTED if answer == "REQUIRED" and support in
                               (participation.Support.ABSENT, participation.Support.FAILED) else ApprovalStatus.WITHHELD)

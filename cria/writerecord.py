@@ -143,6 +143,25 @@ def may_change_a_build(path: str) -> bool:
     return _TYPES.guess_type(os.path.basename(path.strip().strip("`'\"")))[0] not in _PROSE_DOCUMENTS
 
 
+def last_build_write(messages) -> int:
+    """Index of the newest message whose write-class file call may have changed what a build or test run reports
+    (a call cria proved did not land, or whose every readable target is a prose document, is not one; a write whose
+    target cannot be read counts), or -1. Position is transcript order: a run is stale when its call sits before this."""
+    msgs = [m for m in (messages or []) if isinstance(m, dict)]
+    unlanded = denial.unlanded_call_ids(msgs)
+    last = -1
+    for pos, m in enumerate(msgs):
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            if tc.get("id") in unlanded or not (shelltool.is_write_tool_name(name) and shelltool.is_file_tool_name(name)):
+                continue
+            targets = _targets(name, fn.get("arguments"))
+            if targets is None or any(may_change_a_build(t) for t in targets):
+                last = pos
+    return last
+
+
 class WriteRecord:
     """What the transcript can show was written: the paths (as the calls spelled them, grouped under their
     lower-case file name) that some write-class call or shell command may have changed, and whether anything

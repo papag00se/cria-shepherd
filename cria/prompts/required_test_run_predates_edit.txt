@@ -1,0 +1,1 @@
+The completion gate found no tests to run itself. The run of the required test that you did make came before a later edit to the project's files, so it does not show that the current files pass. Run the required test again now.

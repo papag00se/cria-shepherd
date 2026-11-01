@@ -25,6 +25,12 @@ def _seq_mark_identity(context,index):
 def _seq_missing(context,predecessors):
     return [index for index in predecessors if _seq_mark_identity(context,index) is None]
 
+def _seq_dead(context,index,turn):
+    # A predecessor that left no done-mark and whose recorded process is gone (`_cm_liveness`: /proc, no signal). Looked at
+    # twice: one that finished between the two looks has its mark and is not dead. Needs completionmarks.FUNCTIONS.
+    if _seq_mark_identity(context,index) is not None: return False
+    return _cm_liveness(context,str(index),turn)=='dead' and _seq_mark_identity(context,index) is None
+
 def _seq_done(context,index):
     try:
         if index not in context['scope'] or not _owned_valid(context): return
@@ -34,6 +40,8 @@ def _seq_done(context,index):
                 stream.write((context['credential']+':'+str(index)).encode())
         except FileExistsError:
             if _seq_mark_identity(context,index) is None: return
+        try: os.unlink('s-'+str(index)+'-'+context['credential'],dir_fd=context['fd'])      # this call's start record (`_cm_begin`)
+        except OSError: pass
         observed={value:_seq_mark_identity(context,value) for value in context['scope']}
         if any(identity is None for identity in observed.values()): return
         for value,identity in observed.items():
