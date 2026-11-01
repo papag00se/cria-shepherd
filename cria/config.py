@@ -245,42 +245,47 @@ def _collapse_system_into_user(body: dict) -> None:
 ROLE_WRITTEN_KEYS = ("temperature", "top_p", "top_k", "repeat_penalty", "repetition_penalty", "presence_penalty", "min_p",
                      "max_tokens", "chat_template_kwargs", "reasoning_effort", "reasoning",
                      bodykeys.OUTPUT_RESERVE, bodykeys.MERGE_TURNS)
-_ABSENT = object()
 
 
-@dataclass(frozen=True)
-class RoleOrigin:
-    """The body as it was before the first `Role.apply`: the role-owned keys (absent keys recorded as absent), whether
-    the call was `internal`, and — only when the role rewrote messages (no-think directive, reasoning sentence, folded
-    system prompt) — the leading messages before and after that rewrite. Consumed by a failover hop to apply ITS role."""
-    values: tuple
-    internal: bool
-    head_before: tuple = ()
-    head_after: tuple = ()
+class RoleOrigin(dict):
+    """The body as it was before the first `Role.apply`, carried on the body as `bodykeys.ROLE_ORIGIN`: the role-owned
+    keys that were SET (``set``) and those that were absent (``absent``), whether the call was ``internal``, and — only
+    when the role rewrote messages (no-think directive, reasoning sentence, folded system prompt) — the leading messages
+    before and after that rewrite. Consumed by a failover hop to apply ITS role. A dict (not an object) so a stage that
+    serializes a body before the wire cannot trip over it; only an instance of this class is ever believed (a key a client
+    sent is a plain dict and is ignored)."""
 
     @classmethod
-    def record(cls, values, internal, before, after) -> "RoleOrigin":
-        """``before``/``after``: the messages around the role's own rewrite. The rewrite is the part left once the
-        untouched common tail (the same message objects) is set aside."""
-        head_before, head_after = (), ()
-        if isinstance(before, tuple) and isinstance(after, list):
+    def record(cls, body: dict, internal: bool) -> "RoleOrigin":
+        """Snapshot ``body`` BEFORE the role writes to it; `settle` finishes the record once the role has run."""
+        before = body.get("messages")
+        return cls(set={k: body[k] for k in ROLE_WRITTEN_KEYS if k in body}, absent=[k for k in ROLE_WRITTEN_KEYS if k not in body],
+                   internal=internal, head_before=[], head_after=[], _before=tuple(before) if isinstance(before, list) else None)
+
+    def settle(self, after) -> "RoleOrigin":
+        """The role's own message rewrite is what is left once the untouched common tail (the same message objects) is set aside."""
+        before = self.pop("_before")
+        if before is not None and isinstance(after, list):
             n = 0
             while n < min(len(before), len(after)) and before[-1 - n] is after[-1 - n]:
                 n += 1
-            head_before, head_after = before[:len(before) - n], tuple(dict(m) if isinstance(m, dict) else m for m in after[:len(after) - n])
-        return cls(values, internal, head_before, head_after)
+            self["head_before"] = list(before[:len(before) - n])
+            self["head_after"] = [dict(m) if isinstance(m, dict) else m for m in after[:len(after) - n]]
+        return self
 
     def restore(self, body: dict) -> None:
         """Put the role-owned keys back as they were and, if the role's rewritten leading messages are still exactly
         what the body begins with (later stages only appended or changed the tail), put the original ones back."""
-        for key, value in self.values:
-            if value is _ABSENT:
-                body.pop(key, None)
-            else:
-                body[key] = value
-        msgs, head = body.get("messages"), self.head_after
+        for key in self["absent"]:
+            body.pop(key, None)
+        body.update(self["set"])
+        msgs, head = body.get("messages"), self["head_after"]
         if head and isinstance(msgs, list) and len(msgs) >= len(head) and all(a == b for a, b in zip(head, msgs)):
-            body["messages"] = list(self.head_before) + msgs[len(head):]
+            body["messages"] = list(self["head_before"]) + msgs[len(head):]
+
+    @property
+    def internal(self) -> bool:
+        return self["internal"]
 
 
 #: The roles the loop itself calls through `Router.endpoint_for` (each is also the head of a failover lane in `routing`).
@@ -373,10 +378,8 @@ class Role:
         at once — and an empty answer reads as "nothing to report", so the judgement disappears with
         no trace. So a role cap below the floor is raised back and RECORDED. On a pass-through body
         the cap stands: capping the coder is what the operator knob is for."""
-        first = bodykeys.ROLE_ORIGIN not in body    # the FIRST role to touch a body is the origin a failover hop restores to
-        if first:
-            values = tuple((k, body[k] if k in body else _ABSENT) for k in ROLE_WRITTEN_KEYS)
-            before = tuple(body["messages"]) if isinstance(body.get("messages"), list) else None
+        # the FIRST role to touch a body is the origin a failover hop restores to
+        origin = None if isinstance(body.get(bodykeys.ROLE_ORIGIN), RoleOrigin) else RoleOrigin.record(body, internal)
         if self.merge_consecutive_turns:
             # A HINT, not the transform. The merge itself runs at the wire (`Upstream._prep` →
             # massage.merge_for_alternation) because `apply` runs mid-pipeline and every later
@@ -433,9 +436,8 @@ class Role:
             # appending the contradiction to it. Reasoning stays OFF either way (the prefill still
             # applies); only the narrate-nothing sentence is withheld where looking is the job.
             _inject_nothink_directive(body)
-        if first:
-            after = body.get("messages")
-            body[bodykeys.ROLE_ORIGIN] = RoleOrigin.record(values, internal, before, after)
+        if origin is not None:
+            body[bodykeys.ROLE_ORIGIN] = origin.settle(body.get("messages"))
 
     def clean_content(self, text: str | None) -> str:
         """When reasoning is OFF, drop any reasoning that leaked ahead of a `</think>` marker

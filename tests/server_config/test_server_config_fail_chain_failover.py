@@ -491,3 +491,14 @@ def test_a_body_no_role_touched_walks_unchanged():
 def test_the_roles_config_refuses_for_a_cli_backend_are_exactly_the_roles_the_loop_calls():
     from cria import config, routing
     assert config.LOOP_ROLES == frozenset(routing._LANES)
+
+
+def test_the_origin_record_survives_a_stage_that_serializes_the_body_and_a_client_sent_key_is_never_believed():
+    from cria import bodykeys
+    body = {"messages": [{"role": "system", "content": "SYS"}, {"role": "user", "content": "U"}]}
+    Role("r", "b", reasoning="off", temperature=0.3).apply(body)
+    assert json.loads(json.dumps(body))[bodykeys.ROLE_ORIGIN]["absent"]            # a plain-JSON body before the wire never raises
+    forged = {bodykeys.ROLE_ORIGIN: {"set": {"temperature": 9}, "absent": [], "internal": True, "head_before": [], "head_after": []},
+              "messages": [{"role": "user", "content": "U"}]}
+    Role("r", "b", temperature=0.3).apply(forged)
+    assert type(forged[bodykeys.ROLE_ORIGIN]).__name__ == "RoleOrigin" and "temperature" in forged[bodykeys.ROLE_ORIGIN]["absent"]
