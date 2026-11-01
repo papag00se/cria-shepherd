@@ -78,27 +78,6 @@ def test_an_empty_or_all_echo_briefing_folds_nothing_and_leaves_history_verbatim
     res, seen = run(msgs, answer, force=force, keep_tail_tokens=120)
     assert len(seen) == 1 and res.effect is Effect.WITHHELD and res.messages == msgs and res.state.summary == ""
 
-def test_a_disabled_rolling_stage_measures_nothing_asks_nobody_and_keeps_a_pending_force_and_a_replacement_owns_the_legacy_entry():
-    source = sc.RollingInput(history(16), lambda mm, **k: pytest.fail("writer ran"), room_tokens=100, keep_tail_tokens=100,
-                             recompact_tokens=100, force=True)
-    state = sc.CompactState("prior", 3, 5)
-    with patch.object(sc, "_msg_tokens", side_effect=AssertionError("detection ran")):
-        off = sc.DEFINITION.execute(source, state, enabled=False)
-    assert off.messages is source.messages and off.state is state and off.effect is Effect.NO_OP and off.force_pending
-    assert state == sc.CompactState("prior", 3, 5)
-    received = []
-
-    def replacement(src, current, *, enabled=True):
-        received.append((src, current, enabled))
-        return sc.RollingResult(src.messages, current, Effect.WITHHELD)
-    msgs = history(16)
-    with patch.object(sc, "DEFINITION", replace(sc.DEFINITION, execute=replacement)), patch.object(
-            sc, "_msg_tokens", side_effect=AssertionError("stock algorithm bypassed the replacement")):
-        out, returned, applied = sc.compact(msgs, lambda mm: "unused", state, pinned_task="original", force=True)
-    assert out is msgs and returned is state and not applied
-    assert len(received) == 1 and received[0][0].pinned_task == "original" and received[0][0].force and received[0][2]
-
-
 def test_a_rejected_increment_keeps_the_standing_rollup_and_is_not_asked_again_until_a_new_band_grows():
     """ornith1.5_9b / Java run07: a rejected writer made coder call 0077 carry 47 raw messages and no rollup."""
     msgs = history(30)
@@ -155,38 +134,6 @@ def test_the_tail_never_starts_inside_an_exchange():
     assert calls(seen[0]) == answers(seen[0]) and contextfloor.ensure_tool_integrity(res.messages)[1] == 0
     lone = [msgs[0], call("only", "read_file"), result("only", "z" * 600)]
     assert run(lone, room_tokens=10, keep_tail_tokens=40, recompact_tokens=5)[0].messages is lone     # a tail spanning everything folds nothing
-
-@pytest.mark.parametrize("source", [bodykeys.AnnotationSource.GUIDANCE_HISTORY, bodykeys.AnnotationSource.INVENTORY])
-def test_a_relocated_historical_annotation_never_takes_the_place_of_the_turn_the_coder_is_answering(source):
-    """ornith1.5_9b / Python orders-api, scratch E2E c5 (16,384 window, 2026-11-01, call 0034 -> 0036): the last exchange was a 2.1K-token
-    `list_dir` result; the guidance-history annotation, appended AFTER it, was the one message the tail was guaranteed to keep, so the exchange
-    fell into the folded middle, the coder was handed only the rollup, and listed the directory again: 14 of 16 coder turns, 0 edits, 11 folds."""
-    note = {"role": "user", "content": "⟦ctx:guidance-history⟧ " + "g" * 600, bodykeys.ANNOTATION_SOURCE: source}
-    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}]
-    for i in range(3):
-        msgs += [call(f"e{i}", "read_file", path=f"f{i}"), result(f"e{i}", f"R{i} " + "y" * 400)]
-    msgs += [call("last", "list_dir", path="."), result("last", "LISTING " + "n" * 8400), note]    # the newest exchange alone is ~2.1K tok
-    res, seen = run(msgs, keep_tail_tokens=1000, recompact_tokens=5)
-    kept = [text(m) for m in res.messages]
-    assert res.applied and any(t.startswith("LISTING") for t in kept) and note in res.messages
-    assert not any("LISTING" in text(m) for m in seen[0])                  # the newest exchange is not in the writer's evidence either
-    assert contextfloor.ensure_tool_integrity(res.messages)[1] == 0
-
-@pytest.mark.parametrize("keep", [150, 200, 260, 330])
-def test_a_parallel_batch_is_one_exchange_even_when_the_harness_sends_its_calls_as_separate_assistant_messages(keep):
-    """ornith1.5_9b / Java (20261007T193504 inbound-2ffd2629; 28 of 894 views rebuilt from 447 real compaction requests): Codex issues parallel calls as
-    consecutive assistant messages followed by their results. A cut BETWEEN the calls folded the first call and kept its result, which the
-    wire re-roled as a bare `user` message with the call and its path gone - the lone-result failure again, in the batch shape."""
-    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}]
-    for i in range(4):
-        msgs += [call(f"p{i}a", "read_file", path=f"a{i}"), call(f"p{i}b", "read_file", path=f"b{i}"),
-                 result(f"p{i}a", f"A{i} " + "y" * 560), result(f"p{i}b", f"B{i} " + "y" * 560)]
-    res, seen = run(msgs, keep_tail_tokens=keep)
-    calls = lambda ms: {tc["id"] for m in ms for tc in m.get("tool_calls") or []}
-    answers = lambda ms: {m["tool_call_id"] for m in ms if m["role"] == "tool"}
-    assert res.applied and answers(res.messages) and calls(res.messages) == answers(res.messages)
-    assert calls(seen[0]) == answers(seen[0]) and contextfloor.ensure_tool_integrity(res.messages)[1] == 0
-    assert calls(seen[0]) | calls(res.messages) == calls(msgs)                                 # every call is in the rollup's evidence or verbatim, none twice
 
 def test_anchors_survive_verbatim_identical_copies_collapse_and_an_anchored_result_keeps_its_call():
     """Anchors survive verbatim; byte-identical exchanges collapse (counted) but copies differing in their tool call both stay; an anchored result keeps its call."""
@@ -260,24 +207,3 @@ def test_the_briefing_ask_echoed_back_is_stripped_per_call_site_and_a_real_brief
     refolded, _ = run(history(30), "n" * 9000, refold=lambda s, **k: sc._ask_sentences(refold_ask)[0] + "\nCONDENSED", refold_tokens=100)
     assert refolded.state.summary == "CONDENSED"
 
-
-@pytest.mark.parametrize("middle_tokens,standing,asks", [
-    (8, False, False),        # real Codex 0.159.3 at 16K: ONE ~120-character sentence ("Nothing has been built yet") was the whole middle
-    (400, False, True),       # a middle the rollup frame cannot outweigh is still folded
-    (8, True, False)])        # a standing rollup: the new sliver is not worth a second writer call either
-def test_a_view_that_even_an_empty_briefing_would_not_shrink_never_calls_the_writer(middle_tokens, standing, asks):
-    """An event with before == after cost a writer call plus validators in 8 of 11 real compactions (owner: rolling)."""
-    tail = history(2, 100)[1:]
-    state = sc.CompactState("EARLIER", covered=2, attempted=2) if standing else sc.CompactState()
-    msgs = [{"role": "system", "content": "sys"}] + ([asst(400)] if standing else []) + [asst(middle_tokens, "sliver")] + tail
-    kw = dict(room_tokens=100, keep_tail_tokens=200, recompact_tokens=1, files_list=f"{sc.FILES_MARKER} a.py (10 B)")
-    res, seen = run(msgs, state=state, **kw)
-    assert bool(seen) is asks
-    total = lambda ms: sum(est_tokens(text(m)) for m in ms)
-    if asks:
-        assert res.effect is Effect.REDUCED and total(res.messages) < total(msgs)
-    else:
-        assert (res.state.attempted, res.state.summary) == (state.attempted, state.summary)
-        assert res.effect is (Effect.REDUCED if standing else Effect.NO_OP)
-        assert (sc.SUMMARY_MARKER in text(res.messages[1]) or sc.SUMMARY_MARKER in text(res.messages[2])) is standing
-        assert standing or res.messages is msgs

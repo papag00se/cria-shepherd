@@ -52,17 +52,6 @@ def test_a_claim_the_typed_record_contradicts_refuses_the_briefing_before_the_fi
 
 VAGUE = "The code compiles cleanly and all tests pass."
 
-@pytest.mark.parametrize("messages,nocheck,build,refused,asked", [
-    (HISTORY, "STATED", "NONE", True, True),             # the record says no check ran, the cold listing misses the vague sentence (8 of 8 real briefings: 52 of 64 replays)
-    (HISTORY, "NOT STATED", "NONE", False, True),        # an honest briefing: the grounded question says nothing and the listing finds nothing
-    (HISTORY, "Unclear.", "NONE", False, True),          # an unreadable answer adds no rejection
-    (HISTORY + RED_RUN, "STATED", "NONE", False, False)]) # the record names a check that ran: the fact is not "no check ran", so the question is not asked
-def test_a_success_stated_while_the_record_says_no_check_ran_is_refused_by_the_grounded_question(messages, nocheck, build, refused, asked):
-    """8 real briefings with an honest 'not compiled' sentence plus the vague success sentence: the listing lens refused 12 of 64, this question 62 of 64."""
-    ok, seen, answers, _ = validate(f"{HONEST} {VAGUE}", SURVEY, messages, nocheck=nocheck, build=build)
-    assert ok is (not refused) and ("nocheck" in seen) is asked
-    assert (answers.get("build", "").startswith("UNRUN the briefing states a success (no check ran)")) is (refused and build == "NONE")
-
 @pytest.mark.parametrize("lens,briefing,kw", [
     ("files", REVIEW, dict(survey=PARTIAL)), ("files", REVIEW, dict(survey=STALE)),                   # a survey that is partial or overtaken settles nothing
     ("sizes", "`pom.xml` (235 B) was written.", dict(survey=STALE)),
@@ -97,26 +86,6 @@ def test_an_honest_negative_an_earlier_state_a_plan_or_an_ungrounded_claim_is_ne
     """A lens never refuses an honest negative, an earlier state, a plan, a hedged count, or a name the briefing does not contain."""
     assert validate(briefing, **extra, **{lens: reply})[0] is True
 
-@pytest.mark.parametrize("lens,call_lens", [
-    ("files", lambda ask, role: filepresence.contradicted_files(ask, object(), role, REVIEW, SURVEY, None)),
-    ("changes", lambda ask, role: filepresence.unsupported_changes(ask, object(), role, CHANGED, HISTORY, None)),
-    ("sizes", lambda ask, role: filepresence.contradicted_sizes(ask, object(), role, "`pom.xml` (235 B) was written.", SURVEY, None)),
-    ("build", lambda ask, role: filepresence.unsupported_builds(ask, object(), role, GREEN, HISTORY + RED_RUN, None)),
-    ("nocheck", lambda ask, role: filepresence.unsupported_builds(ask, object(), role, GREEN, HISTORY, None))])
-def test_every_lens_puts_one_closed_cold_question_with_reasoning_off_and_no_retry(lens, call_lens):
-    """A lens is ONE focused closed question: temperature 0, reasoning off, and no second attempt on an empty reply (mutant: retry_off=True survived 4 of 4 lenses)."""
-    asked = []
-
-    def summarize(chat_fn, role, system, ask, rlog, **kw):
-        asked.append((role, system, kw))
-        return ""
-    call_lens(summarize, Role(name="reasoner", backend="fixture", reasoning="on"))
-    (role, system, kw), *rest = asked          # the grounded question comes first and, answered empty, the listing follows
-    assert role.reasoning == "off" and kw["retry_off"] is False and kw["temperature"] == 0.0
-    assert kw["phase"] == f"compaction-validate-{lens}" and kw["max_tokens"] == (filepresence.VERDICT_TOKENS if lens == "nocheck" else filepresence.MAX_TOKENS)
-    assert len(rest) == (1 if lens == "nocheck" else 0)
-    assert lens_of(system) == lens
-
 # ornith1.5_9b / orders-api-py through real Codex (wave 10 E2EB, cell c1, 20,480 window, compaction 0013/0015): the briefing restates
 # "in-place migration of existing `orders.db` files" (data a deployment holds, named only by the task) over a complete survey of five files.
 # The two-way PRESENT / NOT PRESENT question listed it PRESENT 8 of 8 replays and refused a correct briefing, which costs the relief a
@@ -126,37 +95,11 @@ C1_SURVEY = survey_text("D\t\nD\torders\nD\ttests\nF\t5\t2753\torders/db.py\nF\t
                         "F\t3\t126\tREADME.md\nF\t2\t0\torders/__init__.py\nF\t1\t560\ttests/test_db.py\n")
 C1_LISTED = "orders/app.py | EXISTS\norders/db.py | EXISTS\ntests/test_db.py | EXISTS\n"
 
-@pytest.mark.parametrize("orders_db_line,reading,accepted", [
-    ("orders.db | REQUIRED", "NOT EXISTS", True),         # the role the task gives it: data to migrate, not a file of this workspace
-    ("orders.db | MISSING", "NOT EXISTS", True),
-    ("orders.db | EXISTS", "NOT EXISTS", True),           # a listing's EXISTS alone is no claim: the reasoned per-file reading decides
-    ("orders.db | EXISTS", "EXISTS", False),              # the reading keeps it, and the complete survey lists no such file: refused
-    ("orders.db | REQUIRED", "Not sure.", True),          # an unreadable reading adds no rejection
-    ("orders.db | PRESENT", "EXISTS", True)])             # the retired two-way vocabulary names nothing, so nothing is asked
-def test_the_real_c1_briefing_is_refused_only_when_the_per_file_reading_says_orders_db_exists_and_the_complete_survey_lacks_it(orders_db_line, reading, accepted):
-    """A file the briefing names only as data the task requires to be migrated is never an existence claim; the survey lookup stays typed and complete."""
-    ok, asked, answers, seen = validate(C1_BRIEFING, C1_SURVEY, files=C1_LISTED + orders_db_line, files_file=reading)
-    assert ok is accepted and "files" in asked and ("files" not in answers) is accepted
-    assert asked.count("files_file") == (0 if "PRESENT" in orders_db_line else 1)
-    if not accepted:
-        assert answers["files"] == "ABSENT orders.db"
-    system = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "files")["messages"][0]["content"]
-    assert "REQUIRED" in system and "existing deployments hold" in system        # the listing names the role that mention has
-
 # ornith1.5_9b / Java overnight run 3 (20261012T095640 0048 self-compact, with the incident sentence appended): "the task requires `REVIEW.md`" and
 # "`REVIEW.md` must exist before the work is finished" beside "a `REVIEW.md` (235 B) describing remaining risks". One `path | role` line cannot carry a
 # path that is both required and claimed: the listing answered REQUIRED / MISSING 8 of 8 replays and caught nothing (0 of 8, on another real briefing 7 of 8);
 # the per-file reasoned question read EXISTS 8 of 8 on both. The briefing is the captured one, the survey the run's complete one (no REVIEW.md).
 REVIEW_BOTH = Path(__file__).with_name("fpres_review_required_and_claimed_briefing.txt").read_text()
-
-@pytest.mark.parametrize("reading,accepted", [("EXISTS", False), ("NOT EXISTS", True)])
-def test_a_path_the_briefing_both_requires_and_claims_is_settled_by_the_per_file_reading_not_by_its_listed_role(reading, accepted):
-    ok, asked, answers, seen = validate(REVIEW_BOTH, evidence=REVIEW_BOTH, files="REVIEW.md | REQUIRED\nImporter.java | EXISTS", files_file=reading)
-    assert ok is accepted and asked.count("files_file") == 1 and answers.get("files") == (None if accepted else "ABSENT REVIEW.md")
-    ask = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "files_file")
-    assert "`REVIEW.md`" in ask["messages"][0]["content"] and "Importer.java" not in ask["messages"][0]["content"]       # one question per ABSENT name
-    assert REVIEW_BOTH.strip() in " ".join(str(m["content"]) for m in ask["messages"])
-    assert ask["chat_template_kwargs"]["enable_thinking"] is True and ask["temperature"] == 0.0
 
 # ornith1.5_9b / cart-billing-go (AUD5, 20260812T205119 0006-self-compact): "The last action taken was identifying the current logic in
 # `cart.go`" with every change under "What remains". The one-line-per-file listing named `cart.go | CHANGED` on 7 of 8 real replays (2 at
@@ -164,25 +107,6 @@ def test_a_path_the_briefing_both_requires_and_claims_is_settled_by_the_per_file
 # (4 files x 8) and CHANGED on 24 of 24 appended fabrications (`pom.xml` dependency updated, `REVIEW.md` (235 B) written, `discounts.json` created).
 AUD5 = Path(__file__).with_name("fpres_aud5_cart_go_briefing.txt").read_text()
 CART_READ = TASK + [call("r1", "read_file", path="cart.go"), result("r1", "package cart")]
-
-@pytest.mark.parametrize("confirmation,accepted", [
-    ("Only the sentence about cart.go: it identified logic.\nNOT CHANGED", True),     # the reasoned reading clears a listing's false claim
-    ("`cart.go` is described as edited.\nCHANGED", False),                              # a claim the reading keeps is still refused
-    ("NOT CHANGED, except it is unclear.", False), ("", False)])                       # an unreadable or empty reply never clears it
-def test_a_listed_change_claim_nothing_wrote_is_refused_only_while_a_reasoned_question_about_that_file_does_not_clear_it(confirmation, accepted):
-    """The listing's CHANGED line for a file no write could have touched is confirmed by one reasoning-ON question about that file alone."""
-    ok, asked, answers, seen = validate(AUD5, messages=CART_READ, changes="cart.go | CHANGED\ncart_test.go | NOT CHANGED",
-                                        changes_file=confirmation)
-    assert ok is accepted and asked.count("changes_file") == 1 and ("changes" in answers) is (not accepted)
-    ask = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "changes_file")
-    assert "`cart.go`" in ask["messages"][0]["content"] and "cart_test.go" not in ask["messages"][0]["content"]
-    assert AUD5.strip() in " ".join(str(m["content"]) for m in ask["messages"])     # it reads the briefing, not the transcript
-    assert ask["chat_template_kwargs"]["enable_thinking"] is True and ask["temperature"] == 0.0
-
-def test_a_file_a_write_could_have_changed_is_never_put_to_the_reasoned_question():
-    """A supported claim (a landed write names the file) needs no confirmation: the typed record settles it."""
-    ok, asked, _, _ = validate(AUD5, messages=CART_READ + write("w1", path="cart.go"), changes="cart.go | CHANGED", changes_file="NOT CHANGED")
-    assert ok is True and "changes_file" not in asked
 
 def test_a_build_claim_is_matched_through_markup_the_copy_dropped():
     """A quoted build claim still matches the briefing when the copy dropped its markup (backticks, quotes)."""

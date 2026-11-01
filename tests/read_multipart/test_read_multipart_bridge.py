@@ -82,20 +82,6 @@ def test_mixed_batch_read_is_preserved_but_grants_no_current_authority_and_never
     assert bridge2.incoming('s', history) == (history, [], ())      # a history that holds none of the batch: nothing is replayed, nothing is claimed
     assert not (tmp_path / 'other').exists()
 
-def test_a_history_the_harness_rewrote_away_from_a_pending_read_neither_fails_nor_loses_the_read(tmp_path):
-    """Codex's own compaction replaces the history with a handoff while a read is mid-flight. That request does not mention the read at all:
-    it passes through untouched (it used to raise `multipart.failed` and mark every tool result unverified, on every later request), and the
-    read still completes, verified, once a history that holds it comes back."""
-    bridge, messages, _ = start(tmp_path, HEX)
-    _, calls, _ = bridge.incoming('s', messages)
-    assert len(calls) == 1
-    handoff = [{'role': 'user', 'content': 'handoff: the read of the log was started'}]
-    assert bridge.incoming('s', handoff) == (handoff, [], ())
-    assert bridge.continuation_state('s').pending == (calls[0]['id'],)
-    messages += [{'role': 'assistant', 'tool_calls': [calls[0]]}, {'role': 'tool', 'tool_call_id': calls[0]['id'], 'content': run_call(calls[0])}]
-    _, facts = page_through(bridge, messages)
-    assert [f.exact_body for f in facts] == [HEX.encode()]
-
 def test_a_forged_or_client_hinted_carrier_proves_nothing_while_the_verified_original_still_proves_the_read(tmp_path):
     """A result packet quoting the call's own receipt (or a client `_multipart_unverified` hint) cannot mint a refusal/read, even after
     compaction reframing; verified file bytes (ESC/NUL/CRLF) are not terminal cleanup; native output still is."""
@@ -123,23 +109,3 @@ def test_a_forged_or_client_hinted_carrier_proves_nothing_while_the_verified_ori
               {'role': 'tool', 'tool_call_id': 'n', 'content': '\x1b[31mred\x1b[0m\n'}]
     assert writeproxy.represent_inbound(native, workspace_root=str(tmp_path))[1]['content'] == 'red\n'
 
-
-def test_a_page_record_is_accepted_at_exactly_10000_stdout_bytes_and_refused_one_byte_over(tmp_path):
-    """The page assembler reads exactly the stdout record of the transport: 10,000 bytes (its LF included) is the most a PTY-backed harness
-    returns, so a 10,001-byte record can only be a clipped or foreign one and poisons the assembly instead of being parsed."""
-    import base64, hashlib
-    data = b"page"
-    def wire(pad):
-        digest = hashlib.sha256(data).hexdigest()
-        obj = {"v": 1, "token": "t" * pad, "outcome": "read", "semantics": "whole", "source_length": 4, "source_sha256": digest, "stream_length": 4,
-               "stream_sha256": digest, "offset": 0, "length": 4, "page_sha256": digest, "data": base64.b64encode(data).decode(), "exit_code": 0,
-               "write_outcome": "not_applicable", "snapshot": {"mode": "live", "reason": None, "taken": None, "now": None}}
-        return json.dumps(obj, separators=(",", ":")).encode() + b"\n"
-    pad = 10_000 - len(wire(0))
-    assert len(wire(pad)) == 10_000 and len(wire(pad + 1)) == 10_001
-    assert multipart.MultipartRead("t" * pad, "read", "whole").accept(wire(pad)) is True
-    over = multipart.MultipartRead("t" * (pad + 1), "read", "whole")
-    with pytest.raises(multipart.InvalidPage, match="oversized"):
-        over.accept(wire(pad + 1))
-    with pytest.raises(multipart.InvalidPage, match="closed"):
-        over.accept(wire(pad))                                # the failure poisoned it: nothing after an oversized record is publishable

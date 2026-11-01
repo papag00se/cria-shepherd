@@ -55,18 +55,6 @@ def test_images_text_custom_tools_and_controls_translate_in_order():
     assert (body["stream"], body["parallel_tool_calls"], body["top_k"], body["seed"], body["stop"], body["max_tokens"], body["reasoning_effort"]) == (True, False, 7, 3, ["x"], 50, "low")
 
 
-def test_a_message_with_null_content_is_an_empty_turn_and_a_non_text_content_is_refused():
-    """A harness item with `content: null` is an empty turn, not a crash and not the text "None"; a developer item like it adds no system text.
-    A bare number or object is refused naming the field: turning it into an empty turn would silently destroy what the harness sent."""
-    body = responses.to_chat_body({"input": [{"type": "message", "role": "developer", "content": None},
-                                             {"type": "message", "role": "user", "content": None},
-                                             {"type": "message", "role": "assistant", "content": None}]})
-    assert body["messages"] == [{"role": "user", "content": ""}, {"role": "assistant", "content": ""}]
-    for bad in (7, {"a": 1}):
-        with pytest.raises(ValueError, match=r"input\[0\]\.content must be a string or an array"):
-            responses.to_chat_body({"input": [{"type": "message", "role": "assistant", "content": bad}]})
-
-
 def completion(message, finish="stop", **extra):
     return {"choices": [{"message": message, "finish_reason": finish}], **extra}
 

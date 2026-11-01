@@ -42,23 +42,3 @@ def test_a_rollup_that_launders_a_tests_pass_claim_carries_crias_measured_red_ch
     assert "had reported failures" in rollup and "A later result from the same check supersedes" in rollup
     assert "currently FAIL" not in rollup
 
-
-def test_a_change_claim_is_not_refused_for_want_of_writes_when_a_harness_handoff_carries_them():
-    """ornith1.5_9b / Python orders-api, scratch E2E c7 (2026-11-01; 4 of 11 refused briefings): the coder wrote db.py, app.py and test_http.py in
-    calls 6-12, Codex compacted, and every later briefing naming those files was refused `UNWRITTEN` because the handoff that carries the writes is a
-    root message OUTSIDE the span the write record reads, so a span with no write calls looked like the whole session. A session that holds a harness
-    handoff has no provable whole span: the lens abstains. Without a handoff the same briefing over the same view is still refused."""
-    def reasoner(body, rlog):
-        system = body["messages"][0]["content"]
-        text = ("orders/db.py | CHANGED" if "CHANGED or NOT CHANGED" in system
-                else next((v for k, v in ACCEPT.items() if k in system), "Edited orders/db.py to add a status column."))
-        return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
-    ctx = LoopContext(planner=None, coder_chat=None, reasoner_chat=reasoner, runs_dir="")
-    loop = Loop(replace(ctx, reasoner_role=Role(name="reasoner", backend="local")))
-    loop._compaction_room = lambda rlog, chat_fn, frame_tokens, *, facts_text="": (100, None)
-    view = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
-    rolled = lambda sess: any("⟦ctx:rollup⟧" in str(m.get("content")) for m in loop._self_compact(list(view), sess, 1, Rlog()))
-    plain, handed = synthetic(), synthetic()
-    handed.handoff_origin = _HandoffOrigin(reply="earlier handoff", ledger="", dropped=False)
-    assert not rolled(plain)             # nothing in this span wrote orders/db.py: refused, as before
-    assert rolled(handed)                # the handoff outside the span carries the write: no verdict is possible

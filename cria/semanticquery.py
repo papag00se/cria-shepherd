@@ -161,12 +161,12 @@ REHUNT = RehuntDefinition(Policy(
     services=("selected-search-repeat-public-api", "shared-task-and-tool-facts", "summary-provider"),
     hooks=(Reference("cria/loop.py", "guard_search_query"), Reference("cria/loop.py", "Loop._coder_turn_impl"),
            Reference("cria/loop.py", "Loop.drive")),
-    regressions=(Reference("tests/research_discovery/test_research_discovery_arcc_semantic_turn.py", "test_a_deselected_rehunt_or_search_stage_never_asks_and_never_clears"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_semantic_turn.py", "test_a_new_direction_search_runs_once_and_only_when_the_judged_call_is_the_one_retained"),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_semantic_query_policy.py", "test_repeat_disabled_never_enters_detector_or_clearance"),
+                 Reference("tests-before-reset-20261031:tests/test_semantic_query_production_binding.py", "test_public_exact_rehunt_replacement_defers_then_uses_canonical_public_admission"),
                  Reference("tests/research_discovery/test_research_discovery_research_policy.py", "test_a_rehunt_is_judged_once_and_a_new_direction_runs_exactly_once"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_semantic_turn.py", "test_a_discarded_turn_spends_nothing_but_its_verdict_is_kept_so_the_retained_retry_is_not_asked_again"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_semantic_turn.py", "test_a_historical_positive_of_unknown_spend_never_invents_a_grant"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_semantic_turn.py", "test_a_rewritten_or_substituted_reply_cannot_settle_the_grant")),
+                 Reference("tests-before-reset-20261031:tests/test_semantic_query_production_binding.py", "test_public_discarded_positive_rehunt_earns_first_retained_grant_without_reasking"),
+                 Reference("tests-before-reset-20261031:tests/test_semantic_query_production_binding.py", "test_public_historical_positive_unknown_spend_never_invents_a_grant"),
+                 Reference("tests-before-reset-20261031:tests/test_semantic_query_production_binding.py", "test_public_rehunt_changed_call_id_cannot_settle_or_spend_first_grant")),
     migrated=False), rehunt)
 DEFINITIONS = (REHUNT,)
 

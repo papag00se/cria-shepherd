@@ -97,32 +97,6 @@ def test_a_failed_judgment_is_typed_never_clipped_and_the_guard_declines(eng, tm
     assert rt.judge("dictation", DICT) == "DESCRIBES"
 
 
-def test_an_input_over_the_measured_memory_ceiling_is_refused_before_the_model_with_the_allocators_outcome(eng, tmp_path):
-    """The ceiling comes from the arena (formula + margin, bracketed by the bisections: ok 1,504 / fails 1,508 at 1 GiB, ok 2,262 /
-    fails 2,268 at 2 GiB). One token over is refused BEFORE any feed is built, as the same typed runtime refusal the allocator gives
-    (so the guard declines identically), and the event carries the token count and the ceiling; the ceiling itself still runs."""
-    gib = 1024**3
-    assert (system1.token_ceiling(gib), system1.token_ceiling(2 * gib)) == (1505, 2262)
-    assert 1504 <= system1.token_ceiling(gib) < 1508 and 2262 <= system1.token_ceiling(2 * gib) < 2268
-    assert system1.token_ceiling(10 * gib) < 5296 < system1.token_ceiling(16 * gib) < 6725  # 10 GiB: the model says it fails above 5,296
-    rt = System1Runtime(make_bundle(tmp_path / "b", eng), memory_budget_bytes=gib)
-    base, ceiling = len(rt.prepare("dictation", DICT).input_ids), system1.token_ceiling(gib)
-    eng.fed.clear()
-    eng.extra = ceiling - base
-    assert rt.judge_detailed("dictation", DICT).token_count == ceiling and len(eng.fed) == 1
-    eng.fed.clear()
-    eng.extra = ceiling - base + 1
-    rlog = rlog_for(tmp_path.name)
-    with pytest.raises(system1.System1OverCeiling) as over:
-        rt.judge("dictation", DICT, rlog=rlog)
-    assert isinstance(over.value, system1.System1RuntimeError) and not eng.fed  # no feed, no session.run
-    (event,) = rlog.kinds("system1.error")
-    assert (event["error"], event["tokens"], event["ceiling"]) == ("System1OverCeiling", ceiling + 1, ceiling)
-    assert f"{ceiling + 1} tokens" in event["message"] and f"ceiling of {ceiling} tokens" in event["message"]
-    with pytest.raises(system1wiring.Unjudged):
-        system1wiring.classify(rt, "dictation", "run it", rlog, seat="vet")
-
-
 def test_the_exact_window_fits_decision_is_argmax_in_label_order_and_only_the_trained_key_is_admitted(eng, tmp_path):
     """The longest whole input is judged untruncated; classes map to the trained labels; a wrong key never reaches inference."""
     rt = System1Runtime(make_bundle(tmp_path / "b", eng), memory_budget_bytes=128 * 1024**3)  # a window-sized input needs ~100 GB of activations

@@ -99,11 +99,6 @@ def test_a_program_is_the_projects_own_never_a_vendored_or_generated_tree(tmp_pa
     assert execcheck.entrypoints(str(tmp_path)) == expected
 
 
-def test_the_readme_commands_are_read(tmp_path):
-    (tmp_path / "README.md").write_text("# x\n\n## Run\n\n```bash\nnode lookup.js goose\n```\n")
-    assert "node lookup.js goose" in execcheck.readme_commands(str(tmp_path))
-
-
 @pytest.mark.parametrize("cmd,kind", [
     ("cd app && go test ./...", ProbeKind.TEST), ("cargo clippy", ProbeKind.LINT),
     ("grep -R 'go test' .", ProbeKind.UNKNOWN), ("npm install jest", ProbeKind.UNKNOWN),

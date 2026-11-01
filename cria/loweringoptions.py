@@ -42,8 +42,7 @@ class Definition:
 
 _HOOKS = (Reference("cria/server.py", "CriaHandler._translate_out"),
           Reference("cria/writeproxy.py", "_edit_command"))
-_REGRESSION = Reference("tests/server_config/test_server_config_levelreg_lowering_options.py",
-                        "test_the_lowered_edit_command_carries_each_option_exactly_at_its_rung_and_honours_its_opt_out")
+_REGRESSION = Reference("tests/write_edit/test_write_edit_programs.py", "test_an_edit_applies_only_on_one_match_and_reports_facts_otherwise")
 
 PACKING = Definition(Policy(
     "harness-plumbing-packing", STAGE, 4, family_id="F26",

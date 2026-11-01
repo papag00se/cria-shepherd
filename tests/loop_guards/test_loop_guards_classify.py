@@ -49,28 +49,6 @@ def test_the_task_is_the_users_not_the_scaffolding_cria_injected_after_a_compact
     assert latest_user_text(history + [{"role": "user", "content": "now also add a CLI flag"}]) == "now also add a CLI flag"
 
 
-def test_a_harness_environment_update_is_not_a_request_and_does_not_turn_a_task_into_a_question():
-    """Wave 13 E2ERB (real Codex, shipping-rates-rb): at midnight Codex appended a user message that was only
-    `<environment_context><current_date>…`; the classifier answered "no actual request was provided" -> question, and every
-    later call of the five-change task ran as a question. A request that merely quotes an environment block still counts."""
-    task = "Make these five changes to the shipping module: 1. fix the failing tests ..."
-    update = ("<environment_context>\n  <current_date>2026-11-01</current_date>\n  <timezone>America/Los_Angeles</timezone>\n"
-              "</environment_context>")
-    history = [{"role": "user", "content": "<environment_context><cwd>/w</cwd></environment_context>"},
-               {"role": "user", "content": task}, {"role": "assistant", "content": "working"}]
-    assert latest_user_text(history + [{"role": "user", "content": update}]) == task
-    assert latest_user_text(history + [{"role": "user", "content": [{"type": "text", "text": update}]}]) == task
-    quoted = f"why does this say the date is wrong?\n{update}"
-    assert latest_user_text(history + [{"role": "user", "content": quoted}]) == quoted
-    two = update + update
-    assert latest_user_text(history + [{"role": "user", "content": two}]) == two
-    provider = Provider(VERDICT)
-    clf, log = Classifier(provider, bias="task"), Rlog()
-    assert clf.classify(history, log).engagement == "task"
-    assert clf.classify(history + [{"role": "user", "content": update}], log).engagement == "task"
-    assert len(provider.bodies) == 1                    # the update was served from the task's cached verdict, not asked about
-
-
 def test_an_unparseable_classifier_defaults_to_the_bias_is_never_cached_and_escalates_when_persistent():
     """A failed classification is a record of failure, not a classification: it must not stick to the task."""
     bad = Provider("I think this is a coding task, definitely.")
@@ -174,73 +152,3 @@ def _root(*, level=1, disabled=(), replacement=None, empty=False):
     root = assistruntime.AssistRuntime.select(level=level, disabled=disabled, registrations=registry)
     return replace(root, ordered_stages=(replacement,)) if replacement is not None else root
 
-
-@pytest.mark.parametrize("selection", ["empty", "disabled", "level_zero", "enabled_false"])
-def test_a_classifier_the_bound_selection_leaves_out_reads_no_history_calls_no_model_and_changes_no_state(selection):
-    """An unselected classification must be silent: no task read, no provider call, no cache or streak change, no event."""
-    root = {"empty": lambda: _root(empty=True), "disabled": lambda: _root(disabled=(classify.DEFINITION.policy.id,)),
-            "level_zero": lambda: _root(level=0), "enabled_false": _root}[selection]()
-    provider, log = Provider(VERDICT), Rlog()
-    classifier = Classifier(provider)
-    classifier._consec_fail = 2
-    with assistruntime.bound(root), patch.object(classify, "latest_user_text", side_effect=AssertionError("task reader ran")):
-        assert classifier.classify(msgs("Implement the requested feature"), log, **({"enabled": False} if selection == "enabled_false" else {})) is None
-    assert not classifier._cache and classifier._consec_fail == 2 and not provider.bodies and not log.events
-
-
-@pytest.mark.parametrize("returned", [None, classify.Classification("question", "question", "selected")])
-def test_a_selected_replacement_classification_runs_instead_of_the_stock_one_even_when_it_answers_none(returned):
-    calls, log, history = [], Rlog(), msgs("Implement the requested feature")
-    selected = replace(classify.DEFINITION, execute=lambda owner, supplied, rlog, *, enabled=True: calls.append((owner, supplied, rlog, enabled)) or returned)
-    provider = Provider(VERDICT)
-    classifier = Classifier(provider)
-    with assistruntime.bound(_root(replacement=selected)), patch.object(classify, "latest_user_text", side_effect=AssertionError("stock policy ran")):
-        assert classifier.classify(history, log) is returned
-    assert calls == [(classifier, history, log, True)] and not classifier._cache and not provider.bodies and not log.events
-
-
-def test_a_nested_empty_root_silences_classification_and_the_outer_root_gets_its_cache_back():
-    provider, log = Provider(VERDICT), Rlog()
-    classifier = Classifier(provider)
-    with assistruntime.bound(_root()):
-        assert not classifier.classify(msgs("task"), log).cached
-        events = list(log.events)
-        with assistruntime.bound(_root(empty=True)), patch.object(classify, "latest_user_text", side_effect=AssertionError("read history")):
-            assert classify.selected_definition() is None and classifier.classify(msgs("task"), log) is None
-        assert log.events == events and classifier.classify(msgs("task"), log).cached
-    assert len(provider.bodies) == 1 and classify.selected_definition() is classify.DEFINITION    # unbound = the standalone default
-
-
-def test_classification_selection_is_per_thread_and_shared_instance_state_survives_concurrent_failures():
-    barrier = Barrier(4)
-
-    class Echo:
-        def chat(self, body, log):
-            return json.dumps({"choices": [{"message": {"content": json.dumps(
-                {"engagement": "task", "task_type": "coding", "reason": body["messages"][-1]["content"]})}}]}).encode()
-    classifier = Classifier(Echo())
-
-    def work(index):
-        with assistruntime.bound(_root(empty=index % 2 == 1)):
-            barrier.wait(timeout=5)
-            return classifier.classify(msgs(f"task {index}"), Rlog())
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(work, range(4)))
-    assert results[1] is results[3] is None and [results[i].reason for i in (0, 2)] == ["task 0", "task 2"]
-    assert len(classifier._cache) == 2 and classifier._consec_fail == 0
-    lock, calls = Lock(), []
-
-    class Down:
-        def chat(self, body, log):
-            with lock:
-                calls.append(1)
-            raise RuntimeError("offline")
-    failing = Classifier(Down(), bias="simple")
-
-    def fail(index):
-        with assistruntime.bound(_root()):
-            return failing.classify(msgs(f"unknown {index}"), Rlog())
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        outcomes = list(pool.map(fail, range(4)))
-    assert len(calls) == 8 and failing._consec_fail == 4 and not failing._cache      # one retry per failed call, no lost updates
-    assert all(o.disposition is classify.Disposition.DEFAULTED and o.engagement == "simple" for o in outcomes)

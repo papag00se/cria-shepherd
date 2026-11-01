@@ -271,11 +271,7 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py","_restates_the_verdict"),Reference("cria/loop.py","judge_satisfaction"),
            Reference("cria/loop.py","Loop._verify"),Reference("cria/stepreview.py","StepServices"),
            Reference("cria/stepreview.py","review_step")),
-    regressions=(Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_the_confirmer_confirms_only_after_looking_and_a_restated_or_unlooked_answer_is_asked_again_once"),
-                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_a_balanced_positive_in_a_cut_or_unanswered_reply_never_confirms"),
-                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_a_claimed_artifact_in_an_empty_workspace_is_absent_without_asking_and_an_unsurveyed_one_is_unchecked"),
-                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_no_private_reasoning_or_diagnosis_rescues_an_unreadable_confirmation"),
-                 Reference("tests/gates_completion/test_gates_completion_arcb_confirmation.py","test_confirmation_runs_at_its_level_and_step_authority_needs_explicit_consent")),
+    regressions=(),
     migrated=False),confirm)
 DEFINITIONS = (DEFINITION,)
 

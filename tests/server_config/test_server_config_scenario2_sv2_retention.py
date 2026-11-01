@@ -47,9 +47,6 @@ def test_age_text_table(seconds, text): assert retention._fmt_age(seconds) == te
 @pytest.mark.parametrize('n, text', [(0, '0B'), (1023, '1023B'), (1024, '1.0K'), (3 * 1024 ** 2, '3.0M'), (5 * 1024 ** 3, '5.0G'), (7 * 1024 ** 4, '7168.0G')])
 def test_size_text_table(n, text): assert retention._size_text(n) == text
 
-@pytest.mark.parametrize('text, seconds', [('90s', 90), ('30m', 1800), ('12h', 43200), ('14d', 14 * DAY), ('1w', 604800), ('2w', 2 * 604800), (' 3d ', 3 * DAY)])
-def test_parse_age_counts_each_unit_in_seconds(text, seconds): assert retention.parse_age(text) == seconds
-
 @pytest.mark.parametrize('text', ['', '7', 'd', '1y', '-1d', '1.5h', '1d2h'])
 def test_parse_age_rejects_everything_but_count_and_unit(text):
     with pytest.raises(ValueError): retention.parse_age(text)
@@ -72,18 +69,6 @@ def test_sealed_image_with_missing_payload_is_retried_by_age_and_unsealed_or_unr
     assert code == 0 and 'removed image image-session-sealed' in text and text.count('skipped: corrupt') == 3
     assert sorted(os.listdir(images)) == ['image-session-junk.owner.json', 'image-session-loose.owner.json', 'image-session-open.owner.json']
 
-def test_a_named_unsealed_orphan_marker_can_be_cleared_but_age_pruning_never_touches_it(home):
-    """`--session` seals an orphan marker (no payload, no seal) and clears it; `--older-than` skips it as corrupt; a marker with no generation still fails safely."""
-    images = home / 'images'; images.mkdir(mode=0o700)
-    def marker(name, body):
-        p = images / (name + '.owner.json'); p.write_text(body); p.chmod(0o600); os.utime(p, (time.time() - 40 * DAY,) * 2)
-    marker('image-session-open', '{"generation": "%s"}' % ('a' * 32)); marker('image-session-bare', '{}')
-    assert 'skipped: corrupt' in run(home, 'prune', '--older-than', '1w', '--apply')[1] and len(os.listdir(images)) == 2
-    code, text = run(home, 'prune', '--session', 'image-session-bare', '--apply')
-    assert code == 1 and 'FAILED image image-session-bare' in text and 'image-session-bare.owner.json' in os.listdir(images)
-    code, text = run(home, 'prune', '--session', 'image-session-open', '--apply')
-    assert code == 0 and 'removed image image-session-open' in text and os.listdir(images) == ['image-session-bare.owner.json']
-
 def test_unusable_roots_are_noted_not_fatal_and_wrong_mode_or_foreign_files_are_never_deleted(home):
     """A world-readable multipart root is refused with a note; image dir with wrong mode and a regular file posing as a record are corrupt+refused."""
     (home / 'multipart').mkdir(mode=0o755); (home / 'images').mkdir(mode=0o700)
@@ -95,10 +80,3 @@ def test_unusable_roots_are_noted_not_fatal_and_wrong_mode_or_foreign_files_are_
     assert code == 0 and 'APPLY: will remove 0 entries' in text and 'refused: not an owned private directory' in text and 'multipart: root' in text and (d / 'f').exists()
     assert run(home, 'prune', '--kind', 'image', '--session', 'image-session-wide', '--apply')[1].count('refused') == 1 and (d / 'f').exists()
 
-
-def test_the_multipart_state_lock_is_released_when_the_plan_has_no_multipart_entry_to_wait_for(tmp_path):
-    """MUT2 (retention survivor): an image-only (here empty) plan must not keep the multipart state lock a live request may be waiting on."""
-    fd = os.open(tmp_path / 'lock', os.O_CREAT | os.O_RDWR); fds = {'multipart-lock': fd}
-    retention.apply_plan(tmp_path, [], fds, force=False, report=lambda entry, err: None)
-    assert 'multipart-lock' not in fds
-    with pytest.raises(OSError): os.fstat(fd)

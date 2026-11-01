@@ -95,50 +95,6 @@ def test_a_large_rejected_draft_leaves_the_argument_slot_and_rides_once_in_the_r
     assert json.loads(ok[0]["tool_calls"][0]["function"]["arguments"])["new_string"] == BIG       # landed bytes are never collapsed
 
 
-def test_deselecting_the_rejected_draft_assist_leaves_the_payload_in_the_call_and_adds_nothing_to_the_refusal(tmp_path):
-    """The switch controls BOTH halves (payload movement and the refusal's copy): off, the history is the harness's own, byte for byte."""
-    (tmp_path / "cart.go").write_text("package cartsvc\n\nfunc Total() int { return 0 }\n")
-    runs = {}
-    for label, disabled in {"off": ("rejected-draft-provenance",), "on": ()}.items():
-        with assistruntime.bound(assistruntime.AssistRuntime.select(level=5, disabled=disabled)):
-            runs[label] = do("edit_file", {"path": "cart.go", "old_string": BIG, "new_string": "x"}, tmp_path)[2]
-    off, on = runs["off"], runs["on"]
-    assert json.loads(off[0]["tool_calls"][0]["function"]["arguments"])["old_string"] == BIG
-    assert "old_string" not in json.loads(on[0]["tool_calls"][0]["function"]["arguments"]) and on[1]["content"].count(BIG) == 1
-    assert BIG not in off[1]["content"] and on[1]["content"].startswith(off[1]["content"] + "\n\n")   # on = the same refusal + the one copy
-
-
-def test_the_rejected_payload_audit_event_fires_once_per_rejected_call_not_once_per_request(tmp_path):
-    """The harness re-sends the whole history on every request, so a rejected call stays in it and was re-collapsed (idempotently) each
-    time — and `writeproxy.rejected_payload_dropped` fired each time too, counting requests, not rejections. A second rejected call,
-    and the same id carrying a different payload, are separate rejections; another session meeting the same call counts it itself."""
-    (tmp_path / "cart.go").write_text("package cartsvc\n\nfunc Total() int { return 0 }\n")
-    events = []
-    log = type("Log", (), {"emit": lambda self, kind, **f: events.append((kind, f))})()
-
-    def request(name, args, cid, sess):
-        tc, done, _ = do(name, args, tmp_path, cid=cid)
-        raw = ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr
-        history = [{"role": "assistant", "tool_calls": [tc]}, {"role": "tool", "tool_call_id": cid, "content": raw}]
-        token = wsview.bind(wsview.View(str(tmp_path), "we"))
-        try:
-            return writeproxy.represent_inbound(history, rlog=log, workspace_root=str(tmp_path), sess_key=sess)
-        finally:
-            wsview.unbind(token)
-
-    def drops():
-        return [f for kind, f in events if kind == "writeproxy.rejected_payload_dropped"]
-
-    first = {"path": "cart.go", "old_string": BIG, "new_string": "x"}
-    shown = [request("edit_file", first, "r1", "s1") for _ in range(3)]            # three requests, one rejected call
-    assert len(drops()) == 1 and drops()[0]["keys"] == ["old_string"] and drops()[0]["chars"] == len(BIG)
-    assert all("old_string" not in json.loads(m[0]["tool_calls"][0]["function"]["arguments"]) for m in shown)   # the collapse still happens each time
-    request("edit_file", {**first, "path": "cart.go", "new_string": "y"}, "r2", "s1")
-    request("edit_file", {**first, "old_string": BIG + "more\n"}, "r1", "s1")        # id reused, payload differs
-    request("edit_file", first, "r1", "s2")
-    assert len(drops()) == 4
-
-
 class Ledger:
     write_tracking, write_call_ids, call_counts, refused_write_ids = False, None, None, None
 

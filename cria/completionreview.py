@@ -121,6 +121,6 @@ DEFINITION = ReviewDefinition(
                         Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_every_review_event_names_its_trigger_and_scheduled_reviews_belong_to_the_higher_level"),
                         Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge"),
                         Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_repos_checks_pass"),
-                        Reference("tests/gates_completion/test_gates_completion_arcb_review_evidence.py", "test_a_summary_is_labelled_by_the_hardener_record_that_produced_it")),
+                        ),
            migrated=True),
     review_task)

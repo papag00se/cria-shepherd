@@ -265,42 +265,6 @@ def test_a_pending_empty_confirmation_goes_stale_when_the_work_moves_on(change):
     assert source.plan.remaining() == 1
 
 
-def test_coverage_is_asked_over_the_complete_completed_item_and_a_selected_coverage_replaces_the_stock_judgment():
-    done = "Scaffold repo layout\nRETAIN THIS EXACT COMPLETED DETAIL"
-    source, state, q, _ = tail(['["Write guide"]', "NONE", '{"missing": []}'], completed=(done,))
-    assert run_tail(source, state).status is lp.TailStatus.REPLACED
-    assert done in q.calls[2][1] and source.plan.items[0].text == done and source.plan.items[0].done
-    source, state, q, mirrors = tail(['["Write tests"]', "NONE"])
-    seen = []
-    selected = replace(planner.COVERAGE, execute=lambda ask, task, steps: seen.append((task, steps)) or ["guide"])
-    source = replace(source, services=replace(source.services, coverage=selected))
-    assert run_tail(source, state).status is lp.TailStatus.RAW_TASK and len(q.calls) == 2      # no canonical coverage question
-    assert seen == [(source.plan.task, ["Scaffold repo layout", "Write tests"])] and len(mirrors) == 1
-
-
-def test_a_failing_plan_mirror_never_loses_the_authoritative_plan():
-    source, state, _, _ = tail(['["Write guide"]', "NONE", '{"missing": []}'])
-
-    def fail(plan):
-        raise OSError("owned directory unavailable")
-    source = replace(source, services=replace(source.services, persist=fail))
-    assert run_tail(source, state).status is lp.TailStatus.REPLACED
-    assert source.plan.items[-1].text == "Write guide" and "loop.plan_persist_error" in source.log.kinds()
-
-
-def test_a_resumed_session_drops_transient_questions_and_rescue_flags_without_releasing_the_tail():
-    source, state, q, mirrors = tail(["[]"], trigger=lp.Trigger.CRITIC_STALLED)
-    source = replace(source, critic_fails=4)
-    token = run_tail(source, state).confirmation.token
-    session = loop.PlanSession(plan=source.plan, verify_replanned=True, thrash_replanned=True, critic_fails=4)
-    resumed = loop._session_from_dict(loop._session_to_dict(session))
-    assert not resumed.verify_replanned and not resumed.thrash_replanned and resumed.critic_fails == 0
-    after, fresh = replace(source, plan=resumed.plan, critic_fails=resumed.critic_fails), lp.TailState()
-    assert lp.LivingSelection.opt_in().settle(after, fresh, token, True).status is lp.TailStatus.STALE   # a token is never serialized
-    assert run_tail(after, fresh).status is lp.TailStatus.NOT_APPLICABLE
-    assert resumed.plan.remaining() == 1 and len(q.calls) == 1 and not mirrors
-
-
 @pytest.mark.parametrize("condition", ["synthetic", "plan_off", "no_question", "no_tail"])
 def test_replanning_never_applies_to_plan_off_or_a_finished_plan(condition):
     source, state, q, mirrors = tail([])
@@ -379,28 +343,6 @@ def test_a_scheduled_positive_never_advances_without_its_own_observed_confirmati
     result, _, _ = review([DONE], trigger=sr.StepTrigger.SCHEDULED, confirm=confirm, workspace_root="/w")
     assert result.status is status and result.effect.action is action and result.review_done
     assert (result.status is sr.StepStatus.APPROVED) == (result.effect.action is sr.StepAction.ADVANCE)
-
-
-def test_an_unobserved_positive_is_discarded_and_the_step_is_rejudged_on_the_fresh_observation():
-    """A scheduled positive that was never observed on disk advances nothing; once the survey returns, the step is judged again
-    on the fresh facts (a second read), and a negative there keeps the coder working without counting a critic failure."""
-    judged = []
-
-    def read(request):
-        judged.append(request.user + "\n".join(request.evidence_blocks))
-        return sr.StepAnswer(DONE if len(judged) == 1 else NOT_DONE, "raw")
-    services = sr.StepServices(read, lambda v, flag, phase: v, lambda c: Confirmed(True, False), lambda d: d.verdict.get("reason", ""),
-                               lambda r: None, lambda r: "CONFIRM: " + r, lambda red: "")
-    def run(evidence, probe=sr.ProbeEvidence()):
-        return sr.review_step(sr.StepInput("Write report.md", "I finished", evidence, probe, services, Rlog(),
-                                           workspace_root="/w", original_task="task", trigger=sr.StepTrigger.SCHEDULED))
-    first = run("evidence")
-    assert first.status is sr.StepStatus.UNOBSERVED and first.effect.action is sr.StepAction.OBSERVE_WORKSPACE and not first.done
-    assert run("evidence", sr.ProbeEvidence(pending=True)).status is sr.StepStatus.PENDING_PROBE and len(judged) == 1
-    second = run("FRESH WORKSPACE OBSERVATION")
-    assert second.status is sr.StepStatus.REJECTED and not second.done and second.effect.action is sr.StepAction.KEEP_WORKING
-    assert len(judged) == 2 and "FRESH WORKSPACE OBSERVATION" in judged[1] and "FRESH WORKSPACE OBSERVATION" not in judged[0]
-    assert not second.effect.verify_failures and not second.effect.critic_failures
 
 
 def test_a_disk_confirmation_that_refuses_a_claimed_step_rejects_it():

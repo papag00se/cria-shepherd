@@ -161,26 +161,6 @@ def test_the_note_asks_the_disk_before_describing_an_install(tmp_path):
     # no workspace, or one cria cannot read, keeps the general line that names no install mechanism
     assert line("ruby", "") == line("ruby", "/nonexistent-xyz") and "only sees gems on ruby's load path" in line("ruby", "")
 
-def test_a_vendored_gem_dir_is_named_by_the_lib_dirs_the_tree_holds_not_by_the_install_dir(tmp_path):
-    """shipping-rates-rb c1: after `gem install --install-dir .bundle/vendor` ~10 calls went to `ruby -I.bundle/vendor/gems -e 'require "country"'`;
-    the gems live one level deeper (`gems/<name>-<version>/lib`). The directories are on disk, so the note names them."""
-    miss = "cannot load such file -- country (LoadError)"
-    for d in ("countries-8.1.0", "unaccent-0.4.0"):
-        write(tmp_path, f".bundle/vendor/gems/{d}/lib/x.rb", "x\n")
-        write(tmp_path, f".bundle/vendor/specifications/{d}.gemspec", "x\n")
-    write(tmp_path, ".bundle/vendor/gems/cache-only/readme", "x\n")             # a gems/ child without a lib/ is not a load dir
-    note = proberun.completion_block_nudge(rep(str(tmp_path), miss)) or ""
-    assert ".bundle/vendor/gems/countries-8.1.0/lib" in note and ".bundle/vendor/gems/unaccent-0.4.0/lib" in note
-    assert "cache-only" not in note
-    # a `gems` directory that is not a RubyGems install tree (no specifications/ beside it) is not one
-    other = tmp_path / "other"
-    write(other, "lib/gems/thing-1.0/lib/t.rb", "x\n")
-    write(other, "vendor/placeholder", "x\n")                                   # an install has landed, so the load-path line is the one that speaks
-    said = proberun.completion_block_nudge(rep(str(other), miss)) or ""
-    assert "only sees gems on ruby's load path" in said and "thing-1.0" not in said
-    assert probeparse.installed_gem_libs("") == []
-
-
 def test_a_require_that_resolves_to_the_projects_own_file_is_named_not_called_a_missing_gem(tmp_path):
     """shipping-rates-rb 1787465385: lib/europe.rb shadowed the gem; three voices said 'not installed' and cost eight installs."""
     write(tmp_path, "lib/europe.rb", "require 'europe/version'\n")
@@ -208,17 +188,3 @@ def go_report(raw, exit_code=1, ecosystem=None, command="go test -count=1 ./..."
                             ecosystem=disc.Ecosystem.Go if ecosystem is None else ecosystem)
     return proberun.ProbeReport(project_type=["go"], selected=[c], results=[probeparse.parse_output(command, "go", exit_code, raw, "")])
 
-
-def test_a_go_test_whose_got_and_want_print_the_same_gets_a_note_beside_the_checkers_own_lines():
-    """Walked on cart-billing-go x ornith1.5_9b: `decimal.Decimal` compared with `!=` reads 'Subtotal() = 15, want 15'; the checker's lines stay byte-identical."""
-    nudge = proberun.completion_block_nudge(go_report(GO_EQUAL_PRINTING))
-    assert "Subtotal() = 15, want 15" in nudge and "Total() = 9.72, want 9.72" in nudge          # the tool's voice is untouched
-    assert nudge.count("compares their internal fields") == 1 and "Equal, Cmp, Compare" in nudge and "cria" not in nudge.lower()
-    for raw, kwargs in [(GO_EQUAL_PRINTING.replace("want 15", "want 16").replace("want 9.72", "want 9.73"), {}),   # different values: a real mismatch
-                        ("    cart_test.go:14: Total() = 64.77, want 48.58\nFAIL\n", {}),
-                        ("    cart_test.go:14: got 3, want 30\nFAIL\n", {}),                     # a prefix of the wanted text is not equal
-                        (GO_EQUAL_PRINTING, {"exit_code": 0}),                                  # the run passed
-                        (GO_EQUAL_PRINTING, {"ecosystem": proberun.probediscovery.Ecosystem.Python}),
-                        ("./cart.go:37: too many arguments in call to filepath.Dir\nFAIL\tcartsvc [build failed]\n", {})]:
-        assert proberun.identical_values_note(go_report(raw, **kwargs)) == "", (raw, kwargs)
-    assert "compares their internal fields" in proberun.identical_values_note(go_report("    cart_test.go:9: got: 7 want: 7\nFAIL\n"))

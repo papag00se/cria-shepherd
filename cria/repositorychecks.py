@@ -525,8 +525,7 @@ DEFINITION = Definition(Policy(
                  Reference("tests/gates_completion/test_gates_completion_scenario2_rp2_repochecks_lifecycle.py", "test_a_survey_only_first_gate_is_replanned_once_and_a_transport_unknown_repeatedly_stops_vetoing"),
                  Reference("tests/gates_completion/test_gates_completion_scenario_periodic_checks.py", "test_a_compacted_history_reissues_the_check_twice_then_gives_up_rather_than_reading_silence_as_green"),
                  Reference("tests/gates_completion/test_gates_completion_scenario2_rp2_repochecks_lifecycle.py", "test_a_gate_that_never_ran_is_logged_and_a_compacted_step_history_neither_reissues_nor_recovers_a_periodic_check"),
-                 Reference("tests/loop_orientation/test_loop_orientation_repository_checks.py", "test_an_unselected_check_lifecycle_calls_no_service_and_leaves_state_alone_and_a_selected_replacement_owns_the_stage"),
-        Reference("tests/gates_completion/test_gates_completion_litter.py",
+                 Reference("tests/gates_completion/test_gates_completion_litter.py",
                   "test_a_rebuilt_history_keeps_the_original_scope_of_a_cleanup_receipt_and_a_foreign_one_authenticates_nothing"),), migrated=False),
     admit, resume, observe_acting_turn, completion_result, replan, reissue)
 DEFINITIONS = (DEFINITION,)

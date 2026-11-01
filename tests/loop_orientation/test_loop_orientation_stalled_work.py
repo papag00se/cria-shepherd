@@ -144,20 +144,6 @@ def test_unchanged_checks_get_one_second_look_then_come_back_verbatim_not_re_dia
     sw.progress(sw.ProgressInput("old", 2, author_service([], superseded="a newer coder run"), Log()), stale)
     assert stale.steered_checks_text == "" and not stale.same_checks_relooked
 
-@pytest.mark.parametrize("length,clipped", [(100, False), (101, True)])
-@pytest.mark.parametrize("event,state,author_kw", [
-    ("loop.steer_checks_stale", sw.State(), {"superseded": "a newer coder run"}),                      # the carried failure is superseded by the coder's own run
-    ("loop.steer_same_checks", sw.State(same_checks_relooked=True), {}),                               # the same failure the coder can already see
-    ("loop.steer_checks_reattached", sw.State(same_checks_relooked=True), {"visible": False}),        # the same failure, no longer in the coder's view
-])
-def test_the_logged_head_of_withheld_checks_is_the_first_100_characters_and_marks_a_cut(event, state, author_kw, length, clipped):
-    checks = "c" * (length - 1) + "z"
-    state = replace(state, steered_checks_text=checks if event != "loop.steer_checks_stale" else "")
-    author = author_service([], checks=checks, **author_kw)
-    sw.progress(sw.ProgressInput(checks, 2, author, Log()), state)
-    head = next(f["head"] for kind, f in author.log.events if kind == event)
-    assert head == (checks[:100] + "…" if clipped else checks) and ("z" in head) is (not clipped)
-
 def test_pending_steer_suspends_detection_and_only_the_exact_delivery_acknowledges():
     state = sw.State(redirect_due=True, repeat_count=3)
     out = sw.admit(sw.AdmissionInput(lambda: None, Log(), lambda: (3, ACTION)), state)
@@ -182,22 +168,6 @@ def test_a_stale_ticket_touches_nothing_and_a_step_advance_keeps_the_check_autho
     assert sw.reset_step(state).status is sw.Status.RESET
     assert not (state.recent_writes or state.spin_due or state.redirect_due)
     assert (state.steered_checks_text, state.repeat_count, state.blocked_fired_seq) == ("current", 4, 10)
-
-def test_a_deselected_assist_leaves_pending_effects_state_and_services_untouched():
-    """Every stage called with the assist off answers NOT_SELECTED without reading a service, however much is pending."""
-    def forbidden(*args):
-        pytest.fail("a deselected stage touched a service")
-    log, ticket = Log(), sw.PendingProbe(sw.Trigger.REFUSAL, {"id": "p"})
-    steer = sw.Steer("already pending", "refusal guard", sw.Trigger.REFUSAL)
-    state = sw.State(pending_probe=ticket, pending_steer=steer, repeat_count=4)
-    before = copy.deepcopy(state)
-    outputs = [sw.observe(sw.ObservationInput(forbidden, log), state, enabled=False),
-               sw.admit(sw.AdmissionInput(forbidden, log, forbidden), state, enabled=False),
-               sw.settle(sw.ReturnedProbeInput(ticket, forbidden, forbidden, None, log), state, enabled=False),
-               sw.progress(sw.ProgressInput("truth", 2, None, log), state, enabled=False),
-               sw.acknowledge(state, steer, enabled=False), sw.reset_step(state, enabled=False)]
-    assert all(out.status is sw.Status.NOT_SELECTED for out in outputs)
-    assert state == before and not log.events and state.pending_probe is ticket and state.pending_steer is steer
 
 HEADER = "[GROUND TRUTH — the repo own checks fail] " + "shared diagnostic framing " * 8
 

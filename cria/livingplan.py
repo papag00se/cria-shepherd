@@ -386,10 +386,10 @@ DEFINITION = LivingDefinition(Policy(
     regressions=(Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_tail_rederivation_outcomes_and_what_they_do_to_the_plan"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_an_empty_tail_is_a_question_and_only_a_confirmed_one_prunes_without_releasing_the_task"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_rescue_replans_fire_only_past_their_threshold_and_once_per_step"),
-                 Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_coverage_is_asked_over_the_complete_completed_item_and_a_selected_coverage_replaces_the_stock_judgment"),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_coverage_includes_completed_and_raw_task_is_persisted"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_pending_empty_confirmation_goes_stale_when_the_work_moves_on"),
-                 Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_failing_plan_mirror_never_loses_the_authoritative_plan"),
-                 Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_resumed_session_drops_transient_questions_and_rescue_flags_without_releasing_the_tail")),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_resume_discards_transient_questions_and_rescue_flags_without_releasing_tail"),
+                 Reference("tests-before-reset-20261031:tests/test_living_plan_policy.py", "test_source_reuses_legacy_questions_parsers_and_exact_reask_counts")),
     migrated=False), rederive_tail, settle_empty)
 DEFINITIONS = (DEFINITION,)
 

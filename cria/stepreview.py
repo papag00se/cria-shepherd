@@ -370,7 +370,7 @@ DEFINITION = StepDefinition(Policy(
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_pending_or_periodic_probe_never_reaches_the_critic"),
                  Reference("tests/loop_rest/test_loop_rest_judge_protocol.py", "test_a_cut_off_unclosed_or_failed_answer_never_approves"),
                  Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_a_scheduled_positive_never_advances_without_its_own_observed_confirmation"),
-                 Reference("tests/loop_planner/test_loop_planner_plan_on.py", "test_an_unobserved_positive_is_discarded_and_the_step_is_rejudged_on_the_fresh_observation")),
+                 Reference("tests-before-reset-20261031:tests/test_optional_step_policy.py", "test_observation_discards_positive_and_rejudges_fresh_facts")),
     migrated=False), review_step)
 DEFINITIONS = (DEFINITION,)
 

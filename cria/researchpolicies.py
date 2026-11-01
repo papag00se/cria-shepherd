@@ -309,23 +309,23 @@ SEARCH = SearchDefinition(Policy(
            Reference("cria/webfetch.py", "gate_search"),
            Reference("cria/loop.py", "guard_search_query"),
            Reference("cria/planner_tools.py", "gate_search")),
-    regressions=(Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_the_selected_search_stage_clears_once_per_session_and_refuses_the_rest"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_a_deselected_search_stage_neither_detects_nor_spends_a_clearance_but_keeps_the_facts"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_a_replaced_stage_runs_instead_of_the_canonical_detector_and_owns_the_state"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_an_empty_selection_stops_every_research_stage_in_every_entry_at_once")),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_one_use_semantic_clearance_and_session_isolation"),
+                 Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_disabled_search_skips_detector_and_clearance_settlement_but_keeps_facts"),
+                 Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_replaced_search_owns_prior_clearance_and_admission"),
+                 Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_projected_disabled_canonical_search_leaves_other_stages_selected")),
     migrated=False), search_admission)
 DOMAIN = DomainDefinition(Policy(
     "search-domain-advice", "research-domain-advice", 2, family_id="F51",
     prompts=("webfetch_guards",), services=("original-search-query",),
     hooks=(Reference("cria/webfetch.py", "_search_input"),
            Reference("cria/planner_tools.py", "gate_search")),
-    regressions=(Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_domain_advice_is_its_own_switch_and_never_changes_admission"),),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_domain_advice_is_independently_selected_and_does_not_change_admission"),),
     migrated=False), domain_advice)
 FETCH = FetchDefinition(Policy(
     "fetch-repeat-admission", "research-fetch-admission", 2, family_id="F51",
     prompts=("webfetch_guards",), services=("visible-fetch-identities", "document-cache", "verified-spill"),
     hooks=(Reference("cria/webfetch.py", "fetch_nav"),),
-    regressions=(Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_a_fetch_is_identified_by_url_find_cursor_and_raw_and_a_deselected_fetch_stage_keeps_the_exact_transport_bytes"),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_fetch_identity_preserves_find_cursor_and_raw"),
                  Reference("tests/research_discovery/test_research_discovery_cov_policies.py", "test_a_repeat_fetch_is_refused_with_the_reason_its_visible_attempt_actually_had")),
     migrated=False), fetch_admission)
 FAILURE = FailureDefinition(Policy(
@@ -334,7 +334,7 @@ FAILURE = FailureDefinition(Policy(
     services=("fetch-status", "protocol-discovery-status"),
     hooks=(Reference("cria/webfetch.py", "fetch_nav"),
            Reference("cria/webfetch.py", "reset_session")),
-    regressions=(Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_the_failure_streak_is_owned_by_its_stage_and_ignores_internal_hosts"),
+    regressions=(Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_failure_lifecycle_threshold_success_discovery_unknown_and_disabled"),
                  Reference("tests/research_discovery/test_research_discovery_cov_policies.py", "test_the_failure_streak_counts_consecutive_external_failures_resets_on_success_and_ignores_internal_hosts")),
     migrated=False), failure_observation)
 SPILL = SpillDefinition(Policy(
@@ -344,7 +344,7 @@ SPILL = SpillDefinition(Policy(
     hooks=(Reference("cria/researchpolicies.py", "ResearchSelection.spill_read"),
            Reference("cria/loop.py", "Loop._judge_search_reads")),
     regressions=(Reference("tests/research_discovery/test_research_discovery_cov_policies.py", "test_a_search_spill_is_judged_once_and_only_an_off_target_verdict_poisons_it_unless_the_task_host_vetoes"),
-                 Reference("tests/research_discovery/test_research_discovery_arcc_selection.py", "test_a_deselected_or_replaced_spill_stage_owns_all_detection_and_settlement")),
+                 Reference("tests-before-reset-20261031:tests/test_research_policy_lifecycles.py", "test_spill_poisoning_owns_judgment_repeat_and_recommendation")),
     migrated=False), spill_read_judgment)
 DEFINITIONS = (SEARCH, DOMAIN, FETCH, FAILURE, SPILL)
 

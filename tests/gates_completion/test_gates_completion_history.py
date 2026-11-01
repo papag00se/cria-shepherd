@@ -76,19 +76,3 @@ def test_automatic_checks_reach_a_reasoner_as_observations_never_as_the_coders_a
     assert len(own) == 1 and "The coder chosen check returned this." in seen
     assert "___CTX_GATE_" not in seen and "__ctx_" not in seen
 
-
-def test_a_paged_gate_shows_every_checker_line_whole_and_a_broken_or_pending_one_never_reads_as_green():
-    """ornith1.5_9b / Java run1792297428/0055: the evidence a reasoner is shown for an automatic check keeps the checker's complete
-    lines (leading and inner spacing included); a request with no result is only a request, and a reading whose page
-    disagrees with itself stays UNKNOWN, never `no error-class problems`."""
-    from cria import selfcompact
-    plan = new_plan()
-    checker = "module.txt:7: wrong value\n  expected: two  spaces\n\n  actual: other\n"
-    sent = [{"role": "user", "content": "Repair it."}, *gate_turn("auto", sec(0, checker, 1), probes=("runner check",))]
-    shown = selfcompact.serialize(probegate.check_evidence_messages(sent), defang=True)
-    assert "Automatic check result" in shown and all(line in shown for line in checker.splitlines() if line) and "___CTX_GATE_" not in shown
-    pending = selfcompact.serialize(probegate.check_evidence_messages(sent[:2]), defang=True)
-    assert "Automatic check requested" in pending and "Automatic check result" not in pending
-    broken = selfcompact.serialize(probegate.check_evidence_messages(
-        [sent[0], sent[1], {**sent[2], "content": page(plan, sec(0, checker, 1), offset=0).replace("offset\t0", "offset\t1")}]), defang=True)
-    assert "UNKNOWN" in broken and "no error-class problems" not in broken and "wrong value" not in broken

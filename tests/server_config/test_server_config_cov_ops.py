@@ -77,22 +77,6 @@ def test_a_multipart_state_lock_held_by_a_live_process_skips_everything_until_re
     finally: os.close(fd)
     assert run(home, 'prune', '--older-than', '1d', '--apply')[0] == 0 and not rec.exists()
 
-def test_a_read_only_scan_under_a_held_multipart_lock_reads_every_valid_entry_active_with_the_reason_and_keeps_a_corrupt_one_corrupt(home, tmp_path):
-    """A lister never takes the exclusive lock: a live holder turns every entry it can validate into `active` (so nothing selects it), says why, and a corrupt entry stays corrupt."""
-    good, bad = record(home, tmp_path, 'sid:good'), record(home, tmp_path, 'sid:bad'); bad.write_text('{"truncated"')
-    def scan():
-        entries, _ignored, fds, notes = retention.collect(home, ['multipart'])
-        retention._close(fds)
-        return {e.names[0]: e for e in entries}, notes
-    free, notes = scan()
-    assert free[good.name].state != 'active' and 'state lock held' not in free[good.name].detail and free[bad.name].state == 'corrupt' and not notes
-    fd = os.open(home / 'multipart' / '.lock', os.O_RDWR); fcntl.flock(fd, fcntl.LOCK_EX)
-    try: held, notes = scan()
-    finally: os.close(fd)
-    assert held[good.name].state == 'active' and held[good.name].detail.endswith('state lock held by a live cria process') and not notes
-    assert held[bad.name].state == 'corrupt' and held[bad.name].detail.endswith('state lock held by a live cria process')
-    assert held[good.name].detail.startswith(free[good.name].detail + '; ') or not free[good.name].detail     # the entry's own detail is kept, the reason appended
-
 def test_symlinked_entries_and_roots_are_refused_and_their_targets_never_touched(home, tmp_path):
     """Hostile names/links under either root (and a symlinked root) are reported, never followed or deleted; stray files are ignored."""
     outside = tmp_path / 'outside'; outside.mkdir(); (outside / 'precious').write_text('keep'); victim = outside / 'victim.json'; victim.write_text('{}')

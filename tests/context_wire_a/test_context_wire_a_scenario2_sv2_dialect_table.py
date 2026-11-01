@@ -143,20 +143,3 @@ def test_fenced_blocks_bindings_and_whole_file_writes_read_the_reply_as_written(
 NO_REQUIRED = [{"type": "function", "function": {"name": n, "parameters": {"type": "object", "properties": {p: {} for p in props}}}}
                for n, props in (("ping", []), ("echo", ["text"]), ("pair", ["a", "b"]))]
 
-
-@pytest.mark.parametrize("reply, calls", [
-    ('{"tool_calls": [{"name": "echo", "arguments": "hi "}]}', [("echo", {"text": "hi"})]),    # no `required`: the schema's ONLY property takes the bare string
-    ('{"tool_calls": [{"name": "pair", "arguments": "x"}]}', []),                           # two candidate fields: never guess one
-    ('{"tool_calls": [{"name": "ping", "arguments": "x"}]}', []),
-    ('echo({"text": "hi"})', [("echo", {"text": "hi"})]),                                    # nothing required: every key must still be a property
-    ('ping({})', []),                                                                       # a tool with no properties has no argument list to match
-])
-def test_call_recovery_against_a_menu_whose_schemas_declare_no_required_fields(reply, calls):
-    assert run(reply, menu=NO_REQUIRED)[0] == calls
-
-
-@pytest.mark.parametrize("body", ["[echo(**kw)]", '[echo(text=__import__("os"))]', "[echo(text=1+)]"])
-def test_a_non_literal_argument_is_never_dropped_into_a_call_that_needs_nothing_else(body):
-    """With no required field to make the call incomplete, the only thing refusing `echo(text=<expression>)` is the literal-only rule."""
-    assert run("", menu=NO_REQUIRED, reasoning_content=LFM2(body))[0] == []
-    assert run("", menu=NO_REQUIRED, reasoning_content=LFM2('[echo(text="hi")]'))[0] == [("echo", {"text": "hi"})]

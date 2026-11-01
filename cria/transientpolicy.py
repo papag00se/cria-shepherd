@@ -150,7 +150,7 @@ TRANSIENT_RECOVERY = Definition(Policy(
     hooks=(Reference("cria/transientpolicy.py", "choose"),),
     regressions=(Reference("tests/loop_orientation/test_loop_orientation_small_owners.py", "test_a_transient_failure_is_retried_routed_or_failed_by_its_kind"),
                  Reference("tests/context_wire_a/test_context_wire_a_scenario2_sv2_upstream_errors.py", "test_a_buffered_timeout_is_retried_once_after_a_wait_then_surfaces"),
-                 Reference("tests/server_config/test_server_config_fail_chain_failover.py", "test_a_failed_first_endpoint_walks_to_the_next_role_on_every_wire_mode")),
+                 Reference("tests-before-reset-20261031:tests/test_transient_recovery_production_binding.py", "test_original_chat_timeout_bytes")),
 ), choose)
 DEFINITIONS = (TRANSIENT_RECOVERY,)
 

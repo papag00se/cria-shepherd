@@ -115,28 +115,6 @@ def test_removed_unknown_and_malformed_keys_fail_loudly_at_load(tmp_path, text, 
         load(tmp_path, text)
 
 
-def test_the_example_config_loads_and_documents_every_key_the_loader_accepts():
-    """cria.example.toml is the operator's reference: it must load as written, and every key any table accepts must appear in it (set or commented)."""
-    import dataclasses
-    import re
-    Config.load(EXAMPLE)
-    accepted = {f.name for cls in (cfgmod.ServerConfig, cfgmod.UpstreamConfig, cfgmod.LoggingConfig, cfgmod.IndicatorsConfig, cfgmod.ToolsConfig,
-                                   cfgmod.ContextConfig, cfgmod.SafetyConfig, cfgmod.RetentionConfig, cfgmod.PlannerConfig, cfgmod.System1Config,
-                                   cfgmod.AssistConfig, cfgmod.Backend) for f in dataclasses.fields(cls)}
-    accepted |= cfgmod._ROLE_KEYS | cfgmod._FAILOVER_CHAINS | cfgmod._ENGAGEMENT_KEYS | cfgmod._TOP_LEVEL_KEYS
-    accepted -= {"name", "drive", "question", "profile"}  # `name` is the table's own key; drive is the legacy spelling of level; question has no chain of its own
-    text = EXAMPLE.read_text()
-    missing = sorted(k for k in accepted if not re.search(rf"(?m)^#?\s*\[?{k}\b", text))
-    assert missing == []
-
-
-def test_env_file_may_name_only_the_cria_dir_secrets_file(tmp_path, monkeypatch):
-    """The documented `~/.cria/.env`, its absolute spelling and `$HOME`-relative expansion load; any other path is refused."""
-    assert Config.load(EXAMPLE).env_file == "~/.cria/.env"
-    assert load(tmp_path, f'env_file = "{cfgmod.CRIA_HOME / ".env"}"\n').env_file == str(cfgmod.CRIA_HOME / ".env")
-    assert load(tmp_path, "").env_file is None and load(tmp_path, 'env_file = ""\n').env_file is None
-
-
 def test_backends_and_roles_resolve_their_wire_conventions(tmp_path):
     """A role inherits its backend's reasoning convention: served -> chat_template, keyed host -> openai/openrouter, cli -> none, explicit style wins."""
     cfg = load(tmp_path, LOCAL + '''

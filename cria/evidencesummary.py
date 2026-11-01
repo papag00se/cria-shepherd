@@ -94,8 +94,8 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "_summarised_evidence")),
     regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_cov_context.py", "test_repeated_identical_action_blocks_fold_to_one_copy_and_a_count_without_losing_distinct_actions"),
                  Reference("tests/compaction_handoff/test_compaction_handoff_cov_context.py", "test_settlement_records_whether_the_selected_evidence_itself_was_delivered_not_whether_anything_was"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_arcc_evidence_fold.py", "test_repeated_actions_are_folded_losslessly_and_the_oversize_that_remains_is_passed_whole_never_summarised"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_arcc_evidence_fold.py", "test_the_selection_never_reads_a_role_or_provider_and_is_not_reused_between_tasks"),
+                 Reference("tests-before-reset-20261031:tests/test_evidence_summary_policy.py", "test_exact_post_fold_threshold_question_options_and_label"),
+                 Reference("tests-before-reset-20261031:tests/test_evidence_summary_policy.py", "test_threshold_uses_real_folded_output_not_raw_size_or_count_reconstruction"),
                  Reference("tests/loop_rest/test_loop_rest_scenario2_la2_contracts.py", "test_a_valid_evidence_selection_is_consumed_and_settled_with_exactly_what_was_delivered"),
                  Reference("tests/loop_rest/test_loop_rest_scenario2_la2_contracts.py", "test_an_evidence_replacement_that_breaks_the_typed_contract_stops_the_turn")),
     migrated=False), select, settle)

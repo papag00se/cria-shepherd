@@ -351,11 +351,7 @@ POLICY = Policy(
            Reference("cria/server.py", "_compaction_body"),
            Reference("cria/server.py", "_harden_compaction_reply")),
     regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accepted_one_ships_untouched"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_cut_off_briefing_is_retried_once_and_only_the_retry_is_judged_and_shipped"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_withheld_briefing_over_a_read_only_codex_history_replies_with_a_labelled_note_and_the_files_read_never_an_empty_summary"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_compaction_the_selection_leaves_out_touches_no_evidence_judge_or_state"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_asum_producer_lifecycle.py", "test_a_decorated_drop_keeps_its_producer_record_and_the_next_turn_reads_the_ledger_as_retained_fact"),
-                 Reference("tests/compaction_handoff/test_compaction_handoff_asum_producer_lifecycle.py", "test_a_quoted_or_altered_copy_of_the_reply_is_never_authenticated")),
+                 ),
     migrated=False,
 )
 

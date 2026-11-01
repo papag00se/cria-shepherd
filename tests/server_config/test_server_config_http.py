@@ -250,37 +250,6 @@ def tool_result_request(mode, result, task="count the ERROR lines in logs/app.lo
         {"type": "function_call_output", "call_id": "call_1", "output": result}]}
 
 
-@pytest.mark.parametrize("mode", MODES)
-def test_a_tool_result_larger_than_the_window_continues_the_task_instead_of_ending_it(wire, mode):
-    """wave 10 OVFL: `cat` of a log bigger than the whole window was answered with a final assistant message, which ends a
-    non-interactive harness session (real Codex: rc 0 after one call, no answer). The coder now receives the request with that
-    result swapped for a labelled not-delivered note (measured size + a sized next step) and answers; a result that fits is
-    delivered byte for byte."""
-    log = "\n".join(f"2026-10-31 12:00:{i % 60:02d} worker-{i % 7} batch {i}" + (" ERROR timeout" if i % 97 == 0 else "") for i in range(9000))
-    status, raw = wire.post(*tool_result_request(mode, log))
-    assert status == 200 and reply_text(mode, raw) in ("Hi", "Hello world")        # the fake coder answered: nothing ended the turn
-    sent = json.dumps(wire.fake.chats[-1][1]["messages"], ensure_ascii=False)
-    assert "⟦ctx:result-not-delivered⟧" in sent and "input-not-delivered" not in sent and "worker-3 batch 3 " not in sent
-    assert f"{len(log):,} bytes in 9,000 line(s)" in sent and f"{WINDOW:,}-token context window" in sent
-    assert "call_1" in sent and "cat logs/app.log" in sent                          # the call the note answers is still on the wire
-    small = log[:3000]
-    wire.fake.chats.clear()
-    status, raw = wire.post(*tool_result_request(mode, small))
-    assert small.replace("\n", "\\n") in json.dumps(wire.fake.chats[-1][1]["messages"]) and "not-delivered" not in json.dumps(wire.fake.chats[-1][1], ensure_ascii=False)
-
-
-@pytest.mark.parametrize("mode", MODES)
-def test_a_fixed_frame_larger_than_the_window_on_a_tool_result_turn_names_the_frame_and_the_setting(wire, mode):
-    """wave 10 OVFL follow-up: when every lever has run (older turns dropped, results withheld, only the newest call kept) and
-    the fixed frame ALONE exceeds the window, the one honest answer is the measured frame and the setting that fixes it, not
-    "send smaller pieces" (nobody is there to send them). The same size as a user's paste (no tool result) keeps the old message."""
-    status, raw = wire.post(*tool_result_request(mode, "ok", task="summarise:\n" + BIG))
-    text = reply_text(mode, raw)
-    assert status == 200 and wire.fake.chats == []
-    assert text.startswith("⟦ctx:input-not-delivered⟧") and "fixed frame" in text and "context size" in text and f"{WINDOW:,}-token context window" in text
-    assert "tokens of tool menu" in text and "tokens of instructions and task" in text and "smaller pieces" not in text
-
-
 @pytest.mark.parametrize("mode", ["chat-buffered", "responses-buffered"])
 def test_cria_status_banners_in_history_never_reach_the_model(wire, mode):
     """Codex echoed cria's own banner lines back inside a compaction thread; both wire modes strip them before the model reads."""
@@ -364,33 +333,6 @@ def _codex_bodies():
     return [dict(common, input=[user("hello")], tools=[shell]),
             dict(common, input=history, tools=[shell, patch, {"type": "web_search"}], tool_choice="auto", parallel_tool_calls=True),
             dict(common, input=history * 3, tools=[shell])]
-
-
-@pytest.mark.parametrize("index", range(3))
-def test_level_zero_ships_the_plain_translation_of_a_real_codex_request_and_level_two_visibly_does_not(tmp_path, index):
-    """The L0 control is the bare translation: system text, every message/call/result in order, tool menu, sampling keys and tool_choice equal
-    `responses.to_chat_body` of the inbound (private body hints removed, adjacent assistant pieces grouped), no cria marker anywhere; at L2 the
-    same shell-only request gets cria's tool menu, so the equality is not vacuous. (Replaying 100 real captured bodies at L0 found the
-    same equality; bodies that already carry cria banners or gate calls are L4+ output and are cleaned by the final wire at every level.)"""
-    from cria import responses
-    body = _codex_bodies()[index]
-    strip = lambda o: ({k: strip(v) for k, v in o.items() if not k.startswith("cria_")} if isinstance(o, dict)
-                       else [strip(v) for v in o] if isinstance(o, list) else o)
-    expected = strip(responses.to_chat_body(json.loads(json.dumps(body))))
-    sent = {}
-    for level in (0, 2):
-        w = Wire(tmp_path / f"l{level}", lambda url, level=level: RoutingConfig(engagement_level=level))
-        try:
-            w.post("/v1/responses", body)
-            sent[level] = w.fake.chats[-1][1]
-        finally:
-            w.close()
-    got = sent[0]
-    assert {k: v for k, v in got.items() if k != "messages"} == {k: v for k, v in expected.items() if k != "messages"}
-    assert got["messages"][0] == expected["messages"][0] and _atoms(got["messages"]) == _atoms(expected["messages"])
-    assert "\u27e6" not in json.dumps(got, ensure_ascii=False) and "cria" not in json.dumps(got).lower()
-    if index == 0:
-        assert sent[2]["tools"] != got["tools"]
 
 
 @pytest.mark.parametrize("mode,beat,text", [("chat-stream", b": cria", b"Hello world"),

@@ -141,6 +141,6 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "Loop._coder_turn")),
     regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_cov_context.py", "test_restoration_fills_the_inline_budget_in_recency_order_and_names_what_no_longer_fits"),
                  Reference("tests/compaction_handoff/test_compaction_handoff_cov_context.py", "test_restoration_names_files_whose_current_bytes_may_have_changed_instead_of_serving_stale_text"),
-                 Reference("tests/loop_main/test_loop_main_arcd_context_selection.py", "test_an_unselected_context_stage_never_runs_its_detector_and_the_history_ships_untouched"),
-                 Reference("tests/loop_main/test_loop_main_arcd_context_selection.py", "test_restoration_credit_is_earned_only_for_text_that_survives_the_final_wire_floor")),
+                 Reference("tests-before-reset-20261031:tests/test_context_restoration_policy.py", "test_render_source_parity"),
+                 Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
     migrated=False), restore)

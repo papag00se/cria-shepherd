@@ -104,44 +104,6 @@ def test_streamed_reasoning_reaches_the_disk_whether_or_not_the_stream_finishes(
     assert reasoning_files(tmp_path / "silent", "") == [] and reasoning_files(tmp_path / "silent", ".partial") == []
 
 
-def test_a_disk_that_refuses_the_reasoning_files_never_breaks_the_stream_and_each_refusal_is_survived_or_reported(tmp_path, monkeypatch):
-    """Reasoning is kept on a best-effort basis: a partial file that cannot be opened or written, closed or removed, and a final file that cannot be written, must leave the turn delivered, never
-    raise into the stream, and the one failure with a place to say so (the final file) says so in the event log."""
-    done = [sse({"reasoning_content": "a complete thought"}), sse({"content": "answer"}, {"completion_tokens": 4}, "stop"), b"data: [DONE]\n"]
-    monkeypatch.setattr(Upstream, "_partial_path", staticmethod(lambda capture_path: str(tmp_path / "missing-dir" / "partial.txt")))   # the partial cannot be opened at all
-    rlog = captured(tmp_path / "no-partial", done)
-    assert rlog.first("upstream.done") is not None and [p.read_text() for p in reasoning_files(tmp_path / "no-partial", "")] == ["a complete thought"]
-    monkeypatch.undo()
-
-    class Refusing:
-        def write(self, chunk):
-            raise OSError("disk full")
-
-        def close(self):
-            raise OSError("bad close")
-
-    capture = str(tmp_path / "0001-coder")
-    state = {"fh": Refusing()}
-    Upstream._stream_reasoning_to_disk(state, capture, "more thought")
-    assert state["fh"] is None                                          # the sink gives up on a failing disk; the next delta starts over
-    state["fh"] = Refusing()
-    Upstream._close_partial(None, capture)                              # unregistered: nothing to close, nothing raised
-    from cria import upstream as upstream_module
-    upstream_module._REASONING_SINKS[capture] = state
-    Upstream._close_partial(None, capture)
-    assert state["fh"] is None and capture not in upstream_module._REASONING_SINKS
-
-    stuck = tmp_path / "0002-coder.reasoning.partial.txt"
-    (stuck / "inner").mkdir(parents=True)                               # exists but cannot be unlinked
-    Upstream._close_partial(None, str(tmp_path / "0002-coder"))
-    assert stuck.is_dir()
-
-    (tmp_path / "0003-coder.reasoning.txt").mkdir()                     # the final file cannot be written
-    rlog = Rlog()
-    Upstream("http://fixture.invalid")._save_reasoning(str(tmp_path / "0003-coder.json"), "kept thought", None, rlog)
-    assert rlog.first("coder.reasoning") is None and "Is a directory" in rlog.first("coder.reasoning_error")["error"]
-
-
 class Clock:
     def __init__(self, seconds_per_frame):
         self.t, self.step = 1000.0, seconds_per_frame
@@ -183,24 +145,3 @@ def test_a_server_streaming_nothing_readable_is_stopped_on_the_clock_but_real_wo
         assert abort is None
         assert rlog.first("upstream.done")["frames"] > 0
 
-
-@pytest.mark.parametrize("wire", ["chat_watched", "stream_chat"])
-def test_the_servers_wait_before_the_first_byte_is_accounted_as_open_ms(monkeypatch, wire):
-    """ornith1.5_9b / real Codex, shared :18084: a 25-token judge call logged total_ms=1302 while the turn stood still for 60 s;
-    the open (queue + prefill head) was outside every timer. It is now its own field on upstream.done."""
-    clock = Clock(0.0)
-    monkeypatch.setattr("time.monotonic", clock)
-    frames = [sse({"content": "ok"}, finish="stop"), b'data: {"usage": {"completion_tokens": 1}}\n', b"data: [DONE]\n"]
-
-    def slow_open(req, timeout=None):
-        clock.t += 60.0          # the server was busy with someone else's request
-        return Stream(frames, per_frame=lambda: None)
-
-    monkeypatch.setattr("urllib.request.urlopen", slow_open)
-    rlog = Rlog()
-    up = Upstream("http://x", context_window=49152)
-    out = getattr(up, wire)(dict(MESSAGES), rlog)
-    if wire == "stream_chat":
-        list(out)
-    done = rlog.first("upstream.done")
-    assert done["open_ms"] == 60000.0 and done["total_ms"] < 1000

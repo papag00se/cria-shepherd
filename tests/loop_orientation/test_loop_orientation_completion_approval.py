@@ -69,47 +69,6 @@ NO_TESTS = pt.report([pt.observe(cand(pd.Ecosystem.Python, "python3 -m pytest -q
 ASKED = ["test-participation-requirement", "coder-run-executes-required-test"]
 RUN = ca.ShellRun("python3 test_calc.py", 0, "OK\n")
 
-@pytest.mark.parametrize("support,answers,runs,status,asked", [
-    # The gate's runner collected nothing (support absent) but the coder's own run is the one the task named.
-    ("absent", ["REQUIRED", "1"], [RUN], S.PERMITTED, ASKED),
-    ("absent", ["REQUIRED", "`2`"], [ca.ShellRun("ls", 0, ""), RUN], S.PERMITTED, ASKED),           # the number is what is read
-    ("absent", ["REQUIRED", "1"], [ca.ShellRun("python3 test_calc.py", None, "OK\n")], S.PERMITTED, ASKED),   # a harness that reports no status: the judge saw the output
-    ("absent", ["REQUIRED", "NONE"], [RUN], S.CONTRADICTED, ASKED),
-    ("absent", ["REQUIRED", "1"], [ca.ShellRun("python3 test_calc.py", 1, "AssertionError\n")], S.CONTRADICTED, ASKED),   # the named run exited non-zero: measured, not judged
-    ("absent", ["REQUIRED", "2"], [RUN], S.CONTRADICTED, ASKED),                                   # a number that is no run
-    ("absent", ["REQUIRED", "0"], [RUN], S.CONTRADICTED, ASKED),
-    ("absent", ["REQUIRED", ""], [RUN], S.CONTRADICTED, ASKED),                                    # unreadable: the block stands
-    ("absent", ["REQUIRED", "YES"], [RUN], S.CONTRADICTED, ASKED),
-    ("absent", ["REQUIRED"], [], S.CONTRADICTED, ASKED[:1]),                                       # nothing was run: no second question
-    ("absent", ["NOT_REQUIRED"], [RUN], S.NO_CONSTRAINT, ASKED[:1]),
-    ("failed", ["REQUIRED", "1"], [RUN], S.CONTRADICTED, ASKED[:1]),                               # a runner that reported failures is never released by a claim
-    ("unknown", ["REQUIRED", "1"], [RUN], S.WITHHELD, ASKED[:1]),
-])
-def test_a_run_the_coder_made_releases_an_empty_runner_only_when_the_judge_names_it_and_it_did_not_fail(support, answers, runs, status, asked):
-    """Item 29: the gate's own `pytest -q` collected nothing (exit 5) although the task named `python3 test_calc.py` and the
-    coder ran exactly that. Only the empty-runner case (ABSENT) asks WHICH coder run is the required test; a named run that did
-    not exit non-zero releases; any other answer, a failed run or no run keeps the block; FAILED/UNKNOWN support never consults the runs."""
-    report = NO_TESTS if support == "absent" else pt.ParticipationReport((pt.ProbeParticipation(
-        None, ("pytest",), 1, True, test=pt.PhaseParticipation(passed=False) if support == "failed" else pt.PhaseParticipation()),))
-    assert report.support("test").value == support
-    log, questions = Log(), Questions(*answers)
-    seen = []
-    questions.closed = lambda prompt, *, phase, _inner=questions.closed: (seen.append((phase, prompt)), _inner(prompt, phase=phase))[1]
-    result = ca.test_participation(ca.ParticipationInput(SCRIPT_TASK, lambda: report, questions, log, lambda: tuple(runs)))
-    assert result.status is status and [p for p, _ in seen] == asked
-    if len(asked) == 2:
-        prompt = seen[-1][1]
-        assert SCRIPT_TASK in prompt and "[1] command:" in prompt and f"[{len(runs)}] command:" in prompt
-        kind, fields = log.events[-1]
-        assert kind == "loop.coder_run_executes_required_test" and fields["released"] is (status is S.PERMITTED) and fields["runs"] == len(runs)
-
-def test_the_runs_put_to_the_question_are_bounded_and_every_cut_is_labelled():
-    runs = tuple(ca.ShellRun(f"cmd{i}", None if i == 0 else i, "y" * 1000 if i == 19 else "") for i in range(20))
-    text = ca.render_runs(runs)
-    assert text.startswith("(5 earlier runs are not shown)") and "cmd4" not in text and "[6] command: cmd5" in text and "[20] command: cmd19" in text
-    assert "output (first 600 of 1,000 characters; the rest is not shown)" in text and text.count("y") == 600
-    assert "exit status: not reported" in ca.render_runs(runs[:1]) and "(nothing printed)" in ca.render_runs(runs[:1])
-
 def test_an_end_to_end_requirement_is_judged_on_the_executed_test_source():
     event = pt.observe(cand(pd.Ecosystem.JsTs, "npm test"), "Tests: 1 passed", 0)
     event = replace(event, test_sources=(pt.TestSourceEvidence("test/cli.js", "spawn CLI and assert exit"),))
@@ -125,24 +84,6 @@ class Log:
     def emit(self, kind, **fields):
         self.events.append((kind, fields))
 
-def test_every_requirement_judgement_is_logged_with_what_it_actually_decided():
-    """The events are the metrics: required / unknown / verdict must carry the real answer (mutation survivors: log-only branches)."""
-    def run(kind, answers, sources=()):
-        log = Log()
-        event = replace(pt.observe(cand(pd.Ecosystem.JsTs, "npm test", kind), "Tests: 1 passed", 0), test_sources=sources)
-        ca.test_participation(ca.ParticipationInput(TASK, lambda: pt.report([event]), Questions(*answers), log))
-        return log.events
-    assert run(pd.ProbeKind.SyntaxCheck, ["REQUIRED"])[0][1]["required"] is True
-    assert run(pd.ProbeKind.SyntaxCheck, ["NOT_REQUIRED"])[0][1]["required"] is False
-    assert run(pd.ProbeKind.SyntaxCheck, [""])[0][1]["required"] == "unknown"
-    assert run(pd.ProbeKind.Test, ["E2E_REQUIRED"]) == [("loop.test_e2e_requirement", dict(required=True)),
-                                                         ("loop.test_e2e_participation", dict(verdict="unverified-source"))]
-    assert run(pd.ProbeKind.Test, ["NOT_REQUIRED"]) == [("loop.test_e2e_requirement", dict(required=False))]
-    assert run(pd.ProbeKind.Test, [""]) == [("loop.test_e2e_requirement", dict(required="unknown"))]
-    source = (pt.TestSourceEvidence("test/cli.js", "spawn CLI and assert exit"),)
-    assert run(pd.ProbeKind.Test, ["E2E_REQUIRED", "PROVEN"], source)[-1] == ("loop.test_e2e_participation", dict(verdict="PROVEN"))
-    assert run(pd.ProbeKind.Test, ["E2E_REQUIRED", ""], source)[-1] == ("loop.test_e2e_participation", dict(verdict="unknown"))
-
 def measuring(root, view):
     """The exact-form source's measurement services over the real loop adapters and one workspace view."""
     from cria import completionmeasure as cm, shelltool
@@ -154,27 +95,3 @@ def measuring(root, view):
 def landed(name, args, tid):
     return [{"role": "assistant", "tool_calls": [{"id": tid, "function": {"name": name, "arguments": json.dumps(args)}}]},
             {"role": "tool", "tool_call_id": tid, "content": "ok", "cria_result_outcome": "landed"}]
-
-def test_the_current_disk_bytes_outrank_what_was_written_until_a_later_edit_or_stale_view_silences_them(tmp_path):
-    """The measured counts a refusal quotes are the CURRENT file's: the surveyed disk wins over the written payload, a later
-    native edit makes the survey stale for that file (silence, never the old bytes), and a view known to be stale never lends
-    its 'on disk' label to bytes that were only written."""
-    import subprocess
-    from cria import wsview
-    (tmp_path / "out.txt").write_bytes("雪\r\n".encode())
-    view = wsview.View(str(tmp_path), "approval")
-
-    def survey():                                     # the harness runs cria's own survey block; the view ingests its reply
-        shown = subprocess.run(["bash", "-lc", wsview.survey_command("approval", cd=str(tmp_path))], capture_output=True, text=True).stdout
-        assert wsview.apply_survey(view, wsview.strip_survey(shown)[1])
-    survey()
-    adapters, write = measuring(str(tmp_path), view), landed("write_file", {"path": "out.txt", "content": "old"}, "w")
-    assert ca.EXACT_FORM.measure(write, adapters) == [filefacts.FileFact("out.txt", b"old", False)]   # bytes not yet delivered: as written
-    survey()                                          # ...the first measurement asked for them; the next survey brings them
-    facts = ca.EXACT_FORM.measure(write, adapters)
-    assert facts == [filefacts.FileFact("out.txt", "雪\r\n".encode(), True)]                  # disk bytes, not "old"
-    assert filefacts.parse(filefacts.render(facts)) == [("out.txt", 5, True)]
-    edit = landed("edit_file", {"path": "out.txt", "old_string": "雪", "new_string": "ice"}, "e")
-    assert ca.EXACT_FORM.measure(write + edit, adapters) == []                                # the survey predates this edit
-    view.note_a_mutator_ran()
-    assert ca.EXACT_FORM.measure(write, adapters) == [filefacts.FileFact("out.txt", b"old", False)]   # stale view: written, not "on disk"

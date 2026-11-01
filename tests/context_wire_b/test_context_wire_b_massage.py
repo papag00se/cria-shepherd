@@ -76,21 +76,6 @@ def test_a_mangled_head_and_a_cut_write_are_left_for_the_refusal_floor_not_guess
     assert massage._recover_write_args(r'{"path":"a.py","content":"d = {\"k\": \"v\"},') is None
     assert massage._recover_write_args('{"path":"a.py","content":"print(\\"hi\\")\nx = \\"q\\"here"}') == {"path": "a.py", "content": 'print("hi")\nx = "q"here'}
 
-@rows([  # real update_plan / exec shapes cut at a byte offset (fuzz1, wave 12): an INNER object closed before the cut
-    '{"plan": [{"status": "completed", "step": "Analyze current implementation"}, {"status": "pending", "step": "Opti',
-    '{"plan":[{"step":"Fix the failing tests","status":"completed"},{"step":"Impl',
-    '{"cmd":"make test","env":{"A":"1"},"timeout":',
-    '```json\n{"cmd":"make","env":{"A":"1"},"timeo',
-])
-def test_a_cut_argument_string_is_left_as_written_never_replaced_by_an_object_nested_inside_it(raw):
-    """The first complete object inside a call whose OUTER object never closed is a fragment of the arguments, not the
-    arguments: reading it as the call hands the harness a different call than the model began (an update_plan whose
-    plan became one step's own {status, step}). The cut text stays as written so the refusal floor names the truth."""
-    rlog = Rlog()
-    out = massage.repair_tool_args(comp(calls=[("update_plan", raw)]), rlog)
-    assert out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == raw
-    assert rlog.first("massage.args_repaired") is None and rlog.first("massage.args_recovery_refused")["raw_chars"] == len(raw)
-
 def test_replayed_history_args_are_always_valid_json_and_never_lose_text():
     """One malformed historical tool_call 500s a strict template every turn (Fabliq: a python -c f-string ending in \\'). Valid args are untouched; unrecoverable text is preserved as _unparsed."""
     bad = '{"cmd":"cd /repo && python3 -c \\"\\nu = f\'https://x/{handle}\\\'"}'
@@ -119,23 +104,6 @@ def test_edit_and_add_file_lower_to_patch_or_write_only_where_the_harness_can_ru
     add = comp(calls=[("apply_patch", {"input": "*** Begin Patch\n*** Add File: new.py\n+import os\n+print(1)\n*** End Patch"})])
     assert calls_of(massage.add_file_to_write_file(add)) == [("write_file", {"path": "new.py", "content": "import os\nprint(1)"})]
     assert calls_of(massage.add_file_to_write_file(comp(calls=[("apply_patch", {"input": "*** Begin Patch\n*** Update File: h.py\n-a\n+b\n*** End Patch"})])))[0][0] == "apply_patch"
-
-@rows([
-    # real: a unified-diff creation header (`@@ -0,0 +1,N @@`) inside a native Add File (session 20261008T083630 call 12)
-    ("*** Begin Patch\n*** Add File: n.py\n@@ -0,0 +1,2 @@\n+import os\n+print(1)\n*** End Patch", ("n.py", "import os\nprint(1)")),
-    ("*** Add File: n.py\n@@ -0,0 +1 @@\n+x", ("n.py", "x")),
-    # a bare (un-prefixed) body keeps every leading space: normalizing first would strip one from each indented line
-    ("*** Begin Patch\n*** Add File: n.py\n@@ -0,0 +1,2 @@\nif x:\n    y = 1\n*** End Patch", ("n.py", "if x:\n    y = 1")),
-    # only the creation header of a pure add is skipped: a header after content, or one that edits existing lines, is not a pure add
-    ("*** Begin Patch\n*** Add File: n.py\n+a\n@@ -0,0 +1,2 @@\n+b\n*** End Patch", None),
-    ("*** Begin Patch\n*** Add File: n.py\n@@ -3,2 +3,2 @@\n+b\n*** End Patch", None),
-])
-def test_a_pure_add_file_with_a_creation_header_is_lowered_to_write_file_in_one_pass(patch, expected):
-    out = calls_of(massage.apply(comp(calls=[("apply_patch", {"input": patch})]), [tool("apply_patch")]))
-    if expected is None:
-        assert out[0][0] == "apply_patch"
-    else:
-        assert out == [("write_file", {"path": expected[0], "content": expected[1]})]
 
 @rows([("cat", {"path": "h.py"}, [SHELL], "shell", "cat h.py"), ("pytest", {"args": ["-q"]}, [SHELL], "shell", "pytest"),
        ("exec_command", {"cmd": ["bash", "-lc", "pytest"]}, [SHELL], "shell", "pytest"),

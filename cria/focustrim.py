@@ -845,10 +845,10 @@ DUPLICATES = FocusDefinition(
                   Reference("cria/loop.py", "Loop._work_item"),
                   Reference("cria/loop.py", "Loop._drive_single_item"),
                   Reference("cria/server.py", "CriaHandler._focus_trim")),
-           regressions=(Reference("tests/context_wire_b/test_context_wire_b_arca_focus.py", "test_only_the_selected_focus_stages_act_on_the_real_history_and_hard_failures_are_never_folded"),
-                        Reference("tests/context_wire_b/test_context_wire_b_arca_focus.py", "test_an_absent_selection_returns_the_very_history_without_reading_it"),
+           regressions=(Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_focus_order_selection_and_replacement_are_real_execution"),
+                        Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_disabled_focus_does_not_scan_history"),
                         Reference("tests/context_wire_b/test_context_wire_b_focustrim.py", "test_a_repeat_of_the_latest_call_is_collapsed_with_a_counted_note_so_the_body_changes"),
-                        Reference("tests/loop_main/test_loop_main_arca_focus_selection.py", "test_the_coder_is_sent_the_collapsed_history_only_when_the_duplicate_stage_is_selected")),
+                        Reference("tests/context_wire_b/test_context_wire_b_focustrim.py", "test_what_is_not_superseded_is_left_whole")),
            migrated=False), _collapse_duplicates)
 FAILURES = FocusDefinition(
     Policy("focus-soft-failure-history", "coder-focus", 3, family_id="F73",
@@ -857,8 +857,8 @@ FAILURES = FocusDefinition(
                   Reference("cria/loop.py", "Loop._work_item"),
                   Reference("cria/loop.py", "Loop._drive_single_item"),
                   Reference("cria/server.py", "CriaHandler._focus_trim")),
-           regressions=(Reference("tests/context_wire_b/test_context_wire_b_arca_focus.py", "test_only_the_selected_focus_stages_act_on_the_real_history_and_hard_failures_are_never_folded"),
-                        Reference("tests/context_wire_b/test_context_wire_b_arca_focus.py", "test_an_absent_selection_returns_the_very_history_without_reading_it"),
+           regressions=(Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_focus_order_selection_and_replacement_are_real_execution"),
+                        Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_disabled_focus_does_not_scan_history"),
                         Reference("tests/context_wire_a/test_context_wire_a_repeats.py", "test_a_run_of_proven_refusals_folds_losslessly_and_the_newest_stay_whole"),
                         Reference("tests/context_wire_a/test_context_wire_a_repeats.py", "test_failures_are_kept_whole_not_deleted_by_their_wording")),
            migrated=False), _squash_failures)
@@ -873,9 +873,9 @@ SUPERSESSION = FocusDefinition(
                   Reference("cria/server.py", "CriaHandler._focus_trim"),
                   Reference("cria/upstream.py", "Upstream._prep")),
            regressions=(Reference("tests/context_wire_b/test_context_wire_b_focustrim.py", "test_only_the_newest_whole_file_write_survives_and_the_removal_is_stated"),
-                        Reference("tests/context_wire_b/test_context_wire_b_arca_focus.py", "test_a_promise_to_keep_the_newest_write_is_qualified_when_the_floor_removes_it_and_kept_when_nothing_is_removed"),
+                        Reference("tests-before-reset-20261031:tests/test_c21_superseded_preservation_wire.py", "test_real_floor_pressure_qualifies_the_missing_write_not_the_later_source"),
                         Reference("tests/context_wire_b/test_context_wire_b_focustrim.py", "test_what_is_not_superseded_is_left_whole"),
-                        Reference("tests/context_wire_b/test_context_wire_b_arca_focus.py", "test_only_the_selected_focus_stages_act_on_the_real_history_and_hard_failures_are_never_folded")),
+                        Reference("tests-before-reset-20261031:tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
            migrated=False),
     _drop_superseded_writes, superseded_writes_truth)
 # One order shared by the whole-stage compatibility API and the typed entry.

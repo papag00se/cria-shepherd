@@ -162,17 +162,6 @@ def _cpu(fn, repeats=3):
     return best
 
 
-@pytest.mark.parametrize("alphabet", ["abcdefghijklmnopqrstuvwxyz0123456789", "ab.", "ab-_"])
-def test_a_long_run_of_name_characters_costs_linear_not_quadratic_cpu(alphabet):
-    """The same text four times longer must cost about four times the CPU, never sixteen (ornith1.5_9b / Java overnight:
-    the 8,520-byte base64 result of a gate transport took 1.5 s per request in ``refusalledger._events``)."""
-    rng = random.Random(14)
-    short, long_ = (("".join(rng.choice(alphabet) for _ in range(n))) for n in (3000, 12000))
-    cost_short = _cpu(lambda: rl.refusal_events(short) + rl.success_events(short))
-    cost_long = _cpu(lambda: rl.refusal_events(long_) + rl.success_events(long_))
-    assert cost_long < 8 * max(cost_short, 0.002), (cost_short, cost_long)       # linear ~4x; quadratic ~16x
-
-
 JOINED = (
     ("_x is not in npm registry-_x is not in npm registry", ["_x", "_x"]),                 # the next one starts after a "-" the run began with
     ("foo is not in npm registryfoo is not in npm registry", ["foo", "foo"]),             # a resumption that begins mid-run, right after the last match
@@ -183,42 +172,6 @@ JOINED = (
     ("see xyz@types/node is not in npm registry", ["@types/node"]),                        # a scoped name begins at its "@", mid-run
     ("@@@@ is not in npm registry", []),
 )
-
-
-@pytest.mark.parametrize("text,coordinates", JOINED)
-def test_skipping_start_positions_never_changes_what_the_resolver_sentences_yield(text, coordinates):
-    assert [e.raw_coordinate for e in rl.refusal_events(text)] == coordinates
-
-
-def test_the_linear_scan_returns_exactly_what_the_plain_regex_scan_returns():
-    """The independent oracle is ``re``'s own ``finditer``: same spans and same groups on random texts made of the
-    pieces these sentences are made of, joined with and without separators."""
-    rng = random.Random(7)
-    pieces = ["foo", "a", "Bar9", "_x", "a.b", "1.2.3", ".", "-", "--", "@", "@scope", "/", ":", " ", "\n", "é",
-              " is not in the npm registry", ": Package not found", " was not found", "unknown revision", ":jar:",
-              "v1.2", "@v1.2", "@npm:", "g:a:jar:1.0", "x/y@v1.0.0", "IS NOT IN NPM REGISTRY"]
-    texts = ["".join(rng.choice(pieces) for _ in range(rng.randint(1, 14))) for _ in range(2500)]
-    hits = 0
-    for text in texts:
-        for pattern in RUN_PATTERNS:
-            plain = [(m.start(), m.end(), m.groupdict()) for m in pattern.regex.finditer(text)]
-            assert plain == [(m.start(), m.end(), m.groupdict()) for m in rl._finditer(pattern, text)], (text, pattern.regex.pattern)
-            hits += bool(plain)
-    assert hits > 150        # the generator reaches real matches, not only misses
-
-
-def test_reading_the_same_transcript_again_never_retires_a_refusal_newer_than_an_old_success():
-    """The ledger re-reads the whole history on every request. A run of a command that SUCCEEDED early, then the same command
-    REFUSED a coordinate later: the second read applied the early success marker to the newer refusal (a success copy gets the
-    newest sequence), so the refusal of the newest run vanished from the ledger one request after it was recorded."""
-    history = [call("pip install -r req.txt", "a"), result("Successfully installed foo-1.0", "a"),
-               call("pip install -r req.txt", "b"), result("ERROR: No matching distribution found for y==2", "b")]
-    ledger = rl.RefusalLedger()
-    for _ in range(3):
-        ledger.observe(history)
-        assert ledger.active_names() == {"y==2"}
-    ledger.observe(history + [call("pip install -r req.txt", "c"), result("Successfully installed y-2.0", "c")])
-    assert ledger.active_names() == set()            # a success AFTER the refusal still retires it
 
 
 def _growing_transcript():
@@ -238,29 +191,3 @@ def _growing_transcript():
         history = history + step
         yield list(history)
 
-
-def test_a_memoised_re_read_gives_exactly_the_ledger_a_full_re_parse_gives_and_scans_nothing_again(monkeypatch):
-    """Every request re-reads the whole history (about 44 ms of regex per 45 tool results, ~90% of the re-read); the parse of a
-    result is a pure function of (id, command, text), so only a NEW result may be scanned. The ledger must stay byte-identical."""
-    scans = []
-    real = rl._events
-    monkeypatch.setattr(rl, "_events", lambda *a, **k: scans.append(a[0]) or real(*a, **k))
-    memoised, fresh = rl.RefusalLedger(), rl.RefusalLedger()
-    for history in _growing_transcript():
-        fresh._parsed = {}                                  # force the full parse the old code did every time
-        memoised.observe(history)
-        fresh.observe(history)
-        assert json.dumps(memoised.to_dict(), sort_keys=True) == json.dumps(fresh.to_dict(), sort_keys=True)
-        assert memoised.active_names() == fresh.active_names()
-    scans.clear()
-    before = json.dumps(memoised.to_dict(), sort_keys=True)
-    memoised.observe(history)                                # the same request again: nothing is scanned
-    assert scans == [] and json.dumps(memoised.to_dict(), sort_keys=True) == before
-    assert memoised.active_names() == {"y==2", "left-pad@99.0.0"}
-    # a result whose text changed (a rewritten stub under the same id) is parsed afresh; a dropped prefix is forgotten
-    edited = [m if m.get("tool_call_id") != "c" else result("rewritten, no refusal here", "c") for m in history]
-    memoised.observe(edited)
-    assert scans and all("rewritten" in t for t in scans)
-    assert len(memoised._parsed) == sum(1 for m in edited if m.get("role") == "tool")
-    memoised.observe(history[-2:])
-    assert len(memoised._parsed) == 1

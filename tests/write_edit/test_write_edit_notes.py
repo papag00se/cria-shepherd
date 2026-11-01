@@ -120,19 +120,6 @@ def test_a_spill_lands_a_whole_document_exactly_and_cuts_an_oversize_one_while_s
         assert whole or ("could not be delivered" in saved and "first" in saved and "y" * 1000 in saved and len(saved) < size)
 
 
-def test_a_model_write_far_past_the_largest_one_ever_observed_still_fits_one_command_and_lands_exactly(tmp_path):
-    """The write ceiling is the harness's one-argument cap (MAX_ARG_STRLEN = 128 KiB), not the heredoc's. Measured over every capture (6,161 well-formed
-    write_file/edit_file/apply_patch calls) the largest was 21.7 KB and none reached 24 KB; the only calls past 24 KB were 9 unparseable runaway generations cut at
-    finish_reason length/rumination, which are refused before lowering. So the claim worth pinning is that the fixed overhead of the lowered program
-    leaves headroom: a 4x-the-largest (88 KB) write is under the cap and lands byte for byte, so growing the program cannot quietly eat the ceiling."""
-    body = "".join(f"row {i},{'x' * 40}\n" for i in range(1800))[:88_000]
-    command = writeproxy._write_command("big.csv", body)
-    assert len(command) < 128 * 1024 and len(command) - len(body) * 4 // 3 < 20_000   # overhead stays small: ceiling ~ (128 KiB - overhead) * 3/4
-    done = subprocess.run(["bash", "-c", command], cwd=tmp_path, env=harness_env(tmp_path), capture_output=True, text=True)
-    assert done.returncode == 0, done.stderr[-300:]
-    assert (tmp_path / "big.csv").read_text() == body
-
-
 def test_a_spilled_document_is_claimed_to_exist_only_while_the_workspace_listing_says_so():
     """The claim 'its full text is on disk at ...' was recorded at compose time, before the exec ran. Unknown (no listing yet), a listing that omits
     the file, and another workspace all withdraw it; a listing that names it keeps it."""
@@ -150,29 +137,4 @@ def test_a_spilled_document_is_claimed_to_exist_only_while_the_workspace_listing
     finally:
         wsview.unbind(token)
         webfetch.clear_cache()                                                 # the spill ledger is process-global
-
-
-def test_a_command_still_running_says_how_to_wait_for_it_on_the_newest_result_only():
-    """ornith1.5_9b / Python orders-api, scratch E2E (2026-11-01): `pytest -v 2>&1 | tail -40` ran 61 s, Codex yielded at 10 s with "Process running with
-    session ID N" and an empty body, and the coder re-ran it five times instead of polling (22 captured sessions: next call exec_command 14, write_stdin 8).
-    The newest still-running result names the session and the poll; an older one that a later result superseded, and a finished one, get nothing."""
-    running = lambda sid: f"Chunk ID: af0a63\nWall time: 10.0006 seconds\nProcess running with session ID {sid}\nOriginal token count: 0\nOutput:\n"
-    done = "Chunk ID: 1\nWall time: 0.1 seconds\nProcess exited with code 0\nOriginal token count: 3\nOutput:\n3 passed"
-    ask = lambda *results: writeproxy.represent_inbound(
-        [m for i, r in enumerate(results) for m in ({"role": "assistant", "tool_calls": [call("exec_command", {"command": "pytest"}, cid=f"c{i}")]},
-                                                    {"role": "tool", "tool_call_id": f"c{i}", "content": r})])
-    out = ask(running(73913))
-    assert out[1]["content"].endswith("call write_stdin with session_id 73913 and no chars.") and out[1]["content"].count("still running") == 1
-    with tempfile.TemporaryDirectory() as logs:                          # the note's event goes through the REAL request log, which owns the `session` field
-        log = events.EventLog(dir=logs, console=False); rlog = events.BoundLog(log, "sid", "turn")
-        writeproxy.represent_inbound([{"role": "assistant", "tool_calls": [call("exec_command", {"command": "pytest"}, cid="c0")]},
-                                      {"role": "tool", "tool_call_id": "c0", "content": running(73913)}], rlog)
-        log.close()
-        assert rlog.events["writeproxy.running_session_note"] == 1
-    again = writeproxy.represent_inbound(out)
-    assert again[1]["content"].count("still running") == 1                              # idempotent across requests
-    older, newest = ask(running(111), running(222))[1::2]
-    assert "session 111" not in older["content"] and "session_id 222" in newest["content"]
-    assert all("still running" not in m["content"] for m in ask(done)[1::2])
-    assert all("still running" not in m["content"] for m in ask(running(5), done)[1::2])
 

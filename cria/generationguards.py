@@ -543,8 +543,8 @@ TRUNCATION = TruncationDefinition(
            hooks=(Reference("cria/loop.py", "guard_truncation"),),
            regressions=(Reference("tests/loop_guards/test_loop_guards_recovery.py", "test_truncation_recovery_retries_with_the_true_reason_then_refuses_the_cut_call"),
                         Reference("tests/loop_guards/test_loop_guards_recovery.py", "test_disabled_guards_still_quarantine_cut_calls_and_never_coach"),
-                        Reference("tests/loop_guards/test_loop_guards_recovery.py", "test_the_final_cut_call_chooses_the_wording_and_the_other_calls_in_the_reply_are_named_as_withheld"),
-                        Reference("tests/loop_guards/test_loop_guards_recovery.py", "test_when_several_calls_are_cut_the_last_one_chooses_the_notice")), migrated=False),
+                        Reference("tests-before-reset-20261031:tests/test_generation_guard_policies.py", "test_final_cut_call_controls_wording_and_other_calls_remain_evidence"),
+                        Reference("tests-before-reset-20261031:tests/test_generation_guard_policies.py", "test_truncation_exhaustion_refuses_the_final_reply_without_synthetic_success")), migrated=False),
     recover_truncation)
 DEFINITIONS = (RUNAWAY, TRUNCATION)
 

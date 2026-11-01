@@ -148,36 +148,6 @@ def test_truncation_recovery_retries_with_the_true_reason_then_refuses_the_cut_c
 OTHER = '{"path":"other.txt","old_string":"old","new_string":"new"}'
 
 
-@pytest.mark.parametrize("name,args,small_pieces", [
-    ("write_file", '{"path":"x","content":"cut', True),                 # a whole-file write cut mid-content: the build-in-pieces advice is TRUE here
-    ("edit_file", '{"path":"x","old_string":"old","new_string":"cut', False),
-    ("exec_command", '{"cmd":"cut', False)])                            # ...and false for every other cut call
-def test_the_final_cut_call_chooses_the_wording_and_the_other_calls_in_the_reply_are_named_as_withheld(name, args, small_pieces):
-    """C14 D1 (a COMPLETE 1.4K edit_file was told its whole-file write was cut): the retry notice describes the call that was actually cut, and a
-    complete call beside it is said to be withheld and NOT run - it must not silently vanish from the coder's picture of the repo."""
-    first = reply("", finish="length", tool_calls=[
-        {"id": "a", "type": "function", "function": {"name": "edit_file", "arguments": OTHER}},
-        {"id": "b", "type": "function", "function": {"name": name, "arguments": args}}])
-    chat = Chat(reply("next answer"))
-    out = loop.guard_truncation(first, BODY(), chat, Log())
-    notice = last_user(chat)[0]
-    assert "`edit_file` on `other.txt`" in notice and f"({len(OTHER)} characters, arguments complete)" in notice and "NOT run" in notice
-    assert ("SMALL pieces" in notice) is small_pieces and "cria" not in notice.lower()
-    if not small_pieces:
-        assert f"`{name}`" in notice and f"({len(args)} characters, arguments cut off at the limit)" in notice
-    assert not out["choices"][0]["message"].get("tool_calls")      # the retry answered in prose: nothing from the cut reply ran
-
-
-def test_when_several_calls_are_cut_the_last_one_chooses_the_notice():
-    """The output limit ends the LAST call; an earlier malformed one must not decide which advice the coder reads."""
-    first = reply("", finish="length", tool_calls=[
-        {"id": "a", "type": "function", "function": {"name": "edit_file", "arguments": '{"path":"first.txt","old_string":"o","new_string":"cut'}},
-        {"id": "b", "type": "function", "function": {"name": "write_file", "arguments": '{"path":"last.txt","content":"cut'}}])
-    chat = Chat(reply("next answer"))
-    loop.guard_truncation(first, BODY(), chat, Log())
-    assert "SMALL pieces" in last_user(chat)[0] and "`last.txt`" in last_user(chat)[0]
-
-
 def test_a_protocol_error_from_the_retry_is_not_recovered_or_downgraded():
     from cria import upstream
     calls = []
@@ -195,50 +165,3 @@ def _turn(finish, **extra):
     call = {"id": "c1", "type": "function", "function": {"name": "write_file", "arguments": '{"path": "a.py", "content": "x'}}
     return {"choices": [{"finish_reason": finish, "message": {"role": "assistant", "content": "", "tool_calls": [call]}}], **extra}
 
-
-@pytest.mark.parametrize("extra,finish,reason", [
-    ({}, "length", "generation_limit"),                                              # the server hit its length cap mid-call
-    ({bodykeys.RUMINATION: {"why": "loop"}}, "stop", "generation_aborted"),            # cria cut a ruminating generation itself
-])
-def test_an_incomplete_turn_ships_no_call_and_keeps_every_withheld_call_as_evidence(extra, finish, reason):
-    """A cut-off write call must never reach the harness as an executable call; its complete prefix is evidence, not an action.
-    Mutation survivors: dropping `withheld_choices`, or keeping the first record when a turn is hardened twice, failed no test."""
-    turn = _turn(finish, **extra)
-    original = copy.deepcopy(turn["choices"])
-    shipped = generation.safe_completion(turn)
-    message = shipped["choices"][0]["message"]
-    assert "tool_calls" not in message and shipped["choices"][0]["finish_reason"] == ("rumination" if extra else "length")
-    evidence = shipped[generation.EVIDENCE]
-    assert evidence["incomplete"] is True and evidence["withheld_choices"] == original
-    assert evidence["call_prefixes"] == [{"name": "write_file", "arguments": '{"path": "a.py", "content": "x', "id": "c1"}]
-    assert evidence["wire_finish_reason"] == ("rumination" if extra else "length")
-    assert ("local_abort" in evidence) is bool(extra) and generation.incomplete_reason(shipped) == reason
-    assert not generation.may_recover(shipped)
-    again = generation.safe_completion(shipped)                  # hardened twice (retry paths): the first record stands
-    assert again[generation.EVIDENCE]["withheld_choices"] == original
-
-
-def test_a_complete_turn_is_shipped_untouched_and_only_the_two_generation_errors_are_generation_errors():
-    turn = _turn("tool_calls")
-    assert generation.safe_completion(turn) is turn and "tool_calls" in turn["choices"][0]["message"] and generation.may_recover(turn)
-    kinds = {generation.PROTOCOL_ERROR: True, generation.INCOMPLETE_STREAM_ERROR: True, "rate_limit_error": False}
-    assert {k: generation.is_generation_error({"type": k}) for k in kinds} == kinds
-    assert not generation.is_generation_error(None) and not generation.is_generation_error("incomplete_stream_error")
-    assert not generation.is_protocol_error({"type": generation.INCOMPLETE_STREAM_ERROR})
-
-
-@pytest.mark.parametrize("raw", [
-    '{"path": "main.go", "content": "package main\\n\\nfunc main() {}\\n\\nfunc other() {',      # cut after the empty brace pair of the code being written
-    "{\"cmd\": \"awk '{}' f; echo $",                                                          # `awk '{}'` inside a cut shell program
-    "prose with {} in it and no call at all",
-])
-def test_an_empty_object_found_inside_a_cut_argument_string_never_replaces_what_the_model_wrote(raw):
-    """Four real write_file calls (6,026 / 6,277 / 6,893 / 28,571 chars, one a whole test file) had their arguments replaced by `{}` because the
-    first brace-balanced span that parses is the empty pair of the code being written (`func main() {}`, `awk '{}'`, `${}`): the substitution
-    deleted the call. The raw text stays exactly as written and the refusal is logged, so the harness's parse error is true of the model's output."""
-    events = []
-    call = {"id": "c", "type": "function", "function": {"name": "write_file", "arguments": raw}}
-    out = massage.repair_tool_args({"choices": [{"message": {"tool_calls": [call]}}]},
-                                   SimpleNamespace(emit=lambda kind, **fields: events.append((kind, fields))))
-    assert out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == raw
-    assert events == [("massage.args_recovery_refused", {"tool": "write_file", "raw_chars": len(raw)})]

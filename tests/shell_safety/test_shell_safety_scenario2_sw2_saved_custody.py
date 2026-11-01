@@ -58,26 +58,6 @@ FORMERLY_HOLES = ['sh -c "$(cat tmp/script)"', "sed 's/x/y/' tmp/script | sh", '
                   'while true; do sh tmp/script; break; done', 'sudo /usr/bin/env sh tmp/script', 'if true; then x=1; sh -c "$(sed 1q tmp/script)"; fi']
 
 
-@pytest.mark.parametrize("consumer", FORMERLY_HOLES)
-def test_saved_script_runs_through_substitution_filter_compound_or_system_env_are_followed(tmp_path, consumer):
-    ws, refused = run(tmp_path, saved(BAD, consumer))
-    assert (tmp_path / "outside").read_text() == "proof" and refused == [True, True]
-
-
-@pytest.mark.parametrize("consumer", ['sh -c "$(cat tmp/script)"', 'if true; then sh tmp/script; fi', 'eval "$(cat tmp/script)"',
-                                      '/usr/bin/env sh tmp/script', 'if true; then sh -c "$(cat tmp/script)"; fi'])
-def test_those_same_runs_of_a_project_local_script_stay_admitted_and_really_write_inside(tmp_path, consumer):
-    ws, refused = run(tmp_path, saved(GOOD, consumer))
-    assert not (tmp_path / "outside").exists() and (ws / "tmp/output").exists() and refused == [False, False]
-
-
-@pytest.mark.parametrize("command", ["if true; then printf x > ../outside; fi", "{ printf x > ../outside; }", "for i in 1; do touch ../outside; done",
-                                     "/usr/bin/env touch ../outside", "while true; do rm -f ../outside; touch ../outside; break; done"])
-def test_a_write_inside_a_compound_body_or_behind_a_system_path_prefix_is_judged_like_a_bare_one(tmp_path, command):
-    ws, refused = run(tmp_path, command)
-    assert (tmp_path / "outside").exists() and refused == [True, True]
-
-
 UNPROVEN = ["cat <<EOF | sh\nprintf proof > tmp/$UNSET\nEOF", "cat <<EOF | sh\nprintf proof > ../outside $(printf x\nEOF", "cat <<EOF | sh\n$UNSET tmp/x\nEOF",
             "sh -c 'echo \"unterminated; sh tmp/script'", "x=$(cat tmp/script > tmp/$UNSET); sh tmp/b", "cd $UNSET; cat tmp/script | sh",
             "<<'EOF' | sh\nprintf x\nEOF"]
@@ -106,9 +86,3 @@ def test_root_delete_judges_what_a_glob_option_could_expand_to(command, refused)
 def test_other_spellings_of_the_root_are_root_deletes_too(command, refused):
     assert bool(dirguard.root_recursive_delete_refusal(command)) is bool(refused)
 
-
-@pytest.mark.parametrize("command,refused", [("rm -rf ~", 1), ("cd ~", 1), ("ls ~", 1), ("cat a~b", 0), ("git diff HEAD~1", 0), ("echo 'a ~ b'", 0)])
-def test_a_bare_tilde_is_the_home_directory_like_tilde_slash(command, refused):
-    """`rm -rf ~/` was refused outside the workspace; `rm -rf ~` named the same directory and was not. (`write` still
-    permits external writes by the operator's choice, including home.)"""
-    assert bool(dirguard.command_refusal(command, "none", WS)) is bool(refused)

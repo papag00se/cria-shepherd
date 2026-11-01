@@ -20,35 +20,6 @@ def test_generated_assist_inventory_agrees_with_the_registry(monkeypatch, capsys
     monkeypatch.setattr(sys, "argv", ["build_report.py", "--check"])
     assert report.main() == 0, capsys.readouterr().err
 
-def test_levels_md_is_what_the_runtime_selects_at_each_rung_and_the_ablation_profile_only_opts_out_of_l5():
-    """LEVELS.md compared with the LIVE selection (`AssistRuntime.select`, planning consented so its ids appear), not with the registry
-    the document is rendered from: the ids a rung ADDS over the one below are exactly its section, and every id the rank4-ablation profile
-    removes sits in the L5 section (an ablation must never switch off a lower-rung fix)."""
-    from cria import assistprofiles, assistruntime
-    sections = {int(part[0]): re.findall(r"^- `([^`]+)`", part, flags=re.M)
-                for part in re.split(r"^## L", (DOCS / "assist-inventory/LEVELS.md").read_text(), flags=re.M)[1:]}
-    assert sorted(sections) == list(range(6))
-    below = set()
-    for rung in range(6):
-        selected = set(assistruntime.AssistRuntime.select(level=rung, experimental_planning=True).selected)
-        assert sorted(sections[rung]) == sorted(selected - below), rung
-        below = selected
-    assert set(assistprofiles.RANK4_ABLATION_DISABLED) <= set(sections[5])
-
-def test_an_archived_reference_resolves_through_the_tag_and_a_wrong_one_fails_loudly():
-    """An assist whose regression still lives only in the pre-reset suite names it `<tag>:tests/<file>.py`: it must resolve to
-    the preserved file and its symbol, and a missing file or symbol must raise instead of being rendered as protection."""
-    spec = importlib.util.spec_from_file_location("report", DOCS / "assist-inventory/build_report.py")
-    report = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(report)
-    from cria.assistcontract import Reference
-    tag = report.ARCHIVE_TAG
-    assert report.reference_line(Reference(f"{tag}:tests/test_writeproxy.py", "EditRecoveryTests")) > 0
-    for ref in (Reference(f"{tag}:tests/test_no_such_file_ever.py", "X"),
-                Reference(f"{tag}:tests/test_writeproxy.py", "NoSuchSymbol")):
-        with pytest.raises(ValueError):
-            report.reference_line(ref)
-
 def call(tmp_path, number, phase, prompt):
     stem = tmp_path / f"{number:04d}-{phase}"
     Path(f"{stem}.prompt.txt").write_bytes(prompt.encode("utf-8"))

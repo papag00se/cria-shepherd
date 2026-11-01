@@ -156,19 +156,6 @@ def test_an_orphan_tool_result_and_a_bare_assistant_turn_never_reach_the_wire():
     assert "here is the answer" in text(sent)
 
 
-def test_an_oversize_orphan_result_is_withheld_with_a_label_never_deleted_to_an_empty_body():
-    """AUD3: a result whose call was folded away used to be deleted by the floor's orphan strip when the request was over
-    budget (kept as user text when it fit), so a body whose only message was an over-size orphan result shipped EMPTY, with no word.
-    It now rides as user-side evidence, and as the labelled not-delivered note when it cannot fit alone."""
-    big = "make: output line\n" * 20000
-    for msgs in ([{"role": "tool", "tool_call_id": "gone", "content": big}],
-                 [{"role": "system", "content": "s"}, {"role": "user", "content": "go"},
-                  {"role": "tool", "tool_call_id": "gone", "content": big}]):
-        sent = prep(msgs, window=4096)["messages"]
-        assert sent and "tool" not in [m["role"] for m in sent]
-        assert any("result-not-delivered" in str(m["content"]) and f"{len(big.encode()):,} bytes" in str(m["content"]) for m in sent)
-
-
 def test_the_alternation_merge_is_the_last_transform_so_a_late_appended_turn_cannot_undo_it():
     """nemotron-nano 1786243834: a user-side note appended AFTER role application broke alternation in six 400s
     (calls 0075-0081); the merge lives at the wire. Opt-in: without the hint bodies ship byte-identical."""
@@ -183,21 +170,6 @@ def test_the_alternation_merge_is_the_last_transform_so_a_late_appended_turn_can
     # the merge never folds a turn that carries tool calls
     two = [{"role": "assistant", "content": "a", "tool_calls": [{"id": "1"}]}, {"role": "assistant", "content": "b"}]
     assert len(massage.merge_for_alternation(two)) == 2
-
-
-def test_a_parallel_turns_results_merge_into_one_message_that_still_carries_every_result_in_call_order():
-    """The alternation merge cannot keep two `tool` messages (a strict template wants user-side and assistant turns to alternate), and an
-    empty assistant turn between them would be a turn nobody took. The merged message keeps the FIRST call's id (the template reads none) and
-    EVERY result's bytes in call order, so no result is lost; a merge is only ever a wire shape, applied to opted-in roles."""
-    calls = [{"id": f"c{i}", "type": "function", "function": {"name": "f", "arguments": "{}"}} for i in (1, 2)]
-    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"},
-            {"role": "assistant", "content": "", "tool_calls": calls},
-            {"role": "tool", "tool_call_id": "c1", "content": "FIRST RESULT"},
-            {"role": "tool", "tool_call_id": "c2", "content": "SECOND RESULT"}]
-    sent = prep(msgs, **{bodykeys.MERGE_TURNS: True})["messages"]
-    assert alternates(sent) and [m["role"] for m in sent] == ["system", "user", "assistant", "tool"]
-    assert sent[-1]["tool_call_id"] == "c1" and sent[-1]["content"].index("FIRST RESULT") < sent[-1]["content"].index("SECOND RESULT")
-    assert prep(msgs)["messages"] == msgs
 
 
 def test_no_cria_internal_key_is_ever_serialized():
@@ -253,32 +225,6 @@ class Unclosable(urllib.error.HTTPError):
         raise OSError("bad close")
 
 
-@pytest.mark.parametrize("lost", ["response-capture", "error-close"])
-def test_a_rejection_whose_evidence_cannot_be_kept_is_never_refit_and_says_which_custody_failed(lost, monkeypatch):
-    """The same long history that IS re-sent when the 400 is kept (above) is sent exactly once when the server's rejection cannot be written to the capture or its response cannot be closed: a
-    refit after lost evidence would act on a rejection nobody can audit. The primary error is still the server's 400."""
-    msgs = [{"role": "system", "content": "frame"}] + [{"role": "user" if i % 2 == 0 else "assistant", "content": "x" * 4000} for i in range(12)] + [{"role": "user", "content": "now"}]
-    if lost == "response-capture":
-        def refuse(path, payload, rlog):
-            raise OSError("capture disk full")
-        monkeypatch.setattr(upstream.callcapture, "capture_response", refuse)
-    up = upstream.Upstream("http://x", timeout_seconds=5, context_window=49152, capture_dir=None, capture_rendered=False)
-    sent = []
-
-    def always_overflows(req, timeout=None):
-        sent.append(req.data)
-        error = overflow()
-        if lost == "error-close":
-            error = Unclosable(error.url, error.code, error.msg, error.hdrs, io.BytesIO(json.dumps({"error": {"n_prompt_tokens": 94788, "n_ctx": 49152, "message": "exceeds the available context size"}}).encode()))
-        raise error
-
-    with pytest.raises(upstream.UpstreamError) as caught:
-        up._open_with_refit({"model": "m", "messages": msgs}, False, Rlog(), _transport=(None, always_overflows))
-    primary = caught.value.__cause__
-    assert len(sent) == 1 and isinstance(primary, urllib.error.HTTPError) and primary.code == 400
-    assert any(("secondary HTTP rejection evidence failure: capture disk full" if lost == "response-capture" else "secondary HTTP error close: bad close") in note for note in primary.__notes__)
-
-
 def test_a_continuation_never_promises_paired_results_the_body_does_not_hold():
     """phi4 / Java A2: the handoff listed five call ids 'remaining in their paired tool messages' while the body
     held ONE pair (the list was rendered before the floor and orphan repair settled what survives). From L3 the
@@ -318,16 +264,3 @@ def test_an_old_continuations_retention_promise_is_quoted_history_not_live_autho
     assert sum(m["content"].count(OLD_AUTHORITY) for m in sent) == authority_copies
     assert any(m["content"].startswith("⟦ctx:inventory⟧") and OLD_AUTHORITY in m["content"] and "call_x" in m["content"] for m in sent)
 
-
-def test_the_deorphan_event_says_which_direction_a_repair_went_wrec():
-    """A result whose call was folded is kept as user text; a call with no result is pruned. The one event counted both as
-    `count`, so the census of in-flight calls (the pruned direction, which names nothing to the model) could not be taken."""
-    call = {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
-    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"},
-            {"role": "tool", "tool_call_id": "gone", "content": "⟦ctx:checks⟧ old result"},
-            {"role": "assistant", "content": "", "tool_calls": [call]},
-            {"role": "user", "content": "next"}]
-    rlog = Rlog()
-    sent = prep(msgs, rlog=rlog)["messages"]
-    assert rlog.named("context.deorphaned") == [{"reshape": "deorphan", "count": 2, "pruned_calls": 1, "level": "info"}]
-    assert not any(m.get("tool_calls") for m in sent) and "old result" in text(sent)

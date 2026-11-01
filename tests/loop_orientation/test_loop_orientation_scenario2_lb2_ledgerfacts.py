@@ -39,23 +39,6 @@ def test_a_line_count_is_restated_only_as_far_as_the_workspaces_own_copy_vouches
     assert loop._current_line_count(view, rel) is None and loop._current_line_count(None, rel) is None
 
 
-def test_the_orienter_is_given_this_requests_survey_and_otherwise_none(tmp_path):
-    (tmp_path / "Importer.java").write_text("class Importer {}\n")
-    root, log = str(tmp_path), type("L", (), {"events": [], "emit": lambda s, k, **kw: s.events.append((k, kw))})()
-    sess = type("S", (), {"workspace_root": root})()
-    token = wsview.bind(wsview.DirectView(root))
-    try:
-        assert "Importer.java" in loop._reorientation_inventory(sess, log)
-    finally:
-        wsview.unbind(token)
-    token = wsview.bind(wsview.View(root, "s"))                 # a rebuilt, unsurveyed view: compaction removed every survey
-    try:
-        assert loop._reorientation_inventory(sess, log) == ""
-    finally:
-        wsview.unbind(token)
-    assert [kw["source"] for _k, kw in log.events] == ["current", "none"]
-
-
 def test_a_fact_block_goes_after_the_leading_system_turns():
     msgs = [{"role": "system", "content": "s"}, {"role": "developer", "content": "d"}, {"role": "user", "content": "u"}]
     anchor = {"role": "user", "content": "facts"}

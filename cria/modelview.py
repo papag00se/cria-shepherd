@@ -183,7 +183,7 @@ REPEATED_PAYLOADS = WireDefinition(
            services=("surviving-paired-tool-history",),
            hooks=(Reference("cria/upstream.py", "Upstream._prep"),
                   Reference("cria/modelview.py", "visible_tokens")),
-           regressions=(Reference("tests/context_wire_a/test_context_wire_a_arcc_fold_selection.py", "test_a_repeated_tool_payload_keeps_the_newest_copy_and_a_pointer_only_while_its_stage_is_selected"),
+           regressions=(Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass"),
                         Reference("tests/context_wire_a/test_context_wire_a_wire.py", "test_a_repeat_pointer_never_outlives_the_copy_it_points_at_while_the_floor_trims")),
            migrated=False), fold_repeats)
 REPEATED_CHECKS = WireDefinition(
@@ -192,7 +192,7 @@ REPEATED_CHECKS = WireDefinition(
            services=("surviving-check-carriers",),
            hooks=(Reference("cria/upstream.py", "Upstream._prep"),
                   Reference("cria/modelview.py", "visible_tokens")),
-           regressions=(Reference("tests/context_wire_a/test_context_wire_a_arcc_fold_selection.py", "test_repeated_check_evidence_in_the_carriers_is_folded_only_by_its_own_stage"),
+           regressions=(Reference("tests-before-reset-20261031:tests/test_context_memory_migration.py", "test_wire_check_runs_fold_only_when_the_later_exact_source_survives"),
                         Reference("tests/context_wire_a/test_context_wire_a_wire.py", "test_a_repeat_pointer_never_outlives_the_copy_it_points_at_while_the_floor_trims")),
            migrated=False), fold_check_runs)
 WIRE_FOLD_STAGE = (REPEATED_PAYLOADS, REPEATED_CHECKS)

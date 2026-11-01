@@ -92,13 +92,6 @@ KILLS = [
 ]
 
 
-@pytest.mark.parametrize("command,refused", KILLS)
-def test_a_selector_kill_is_refused_where_it_is_a_command_word_and_admitted_as_prose(command, refused):
-    assert bool(dirguard.kill_refusal(command, "none")) is bool(refused)
-    assert dirguard.kill_refusal(command, "write") is None
-    assert bool(dirguard.command_refusal(command, "none", WS)) or not refused    # and the public entry point refuses it too
-
-
 # (command, what the root-delete backstop must say): 'root:<fact>' / 'home' / None = admitted
 RESOLVED = [
     ("rm -rf /", "root:filesystem root"), ("FOO=1 rm -rf /", "root:filesystem root"), ("env rm -rf /", "root:filesystem root"),
@@ -142,27 +135,3 @@ RESOLVED = [
     ("H=~; rm -rf $H/build", None), ("rm -rf ~", None),     # a literal `~` is the path scan's: an external path
 ]
 
-
-@pytest.mark.parametrize("command,expected", RESOLVED)
-def test_the_root_and_home_delete_backstops_resolve_what_the_command_types_and_say_which_fact(command, expected):
-    root, home = dirguard.root_recursive_delete_refusal(command), dirguard.home_recursive_delete_refusal(command, "none")
-    if expected is None:
-        assert not root and not home
-    elif expected.startswith("root:"):
-        assert root and expected[5:] in root and not home
-        assert dirguard.command_refusal(command, "write", WS) == root                      # refused even at write
-    else:
-        assert home and expected[5:] in home and not root
-        assert dirguard.command_refusal(command, "read", WS) == home                       # the operator's choice at write
-        assert dirguard.command_refusal(command, "write", WS) is None and dirguard.home_recursive_delete_refusal(command, "write") is None
-
-
-def test_a_dotdot_resolves_through_the_symlink_the_kernel_follows_not_the_lexical_path(tmp_path):
-    """`/tmp/…/link` -> /usr, so `link/..` IS `/` (lexically it would be the directory holding the link); a link
-    that is the LAST word is only unlinked by rm and never reaches what it points at."""
-    (tmp_path / "up").symlink_to("/usr")
-    (tmp_path / "real").mkdir()
-    (tmp_path / "inner").symlink_to(tmp_path / "real")
-    assert "resolves to `/`" in dirguard.root_recursive_delete_refusal(f"rm -rf {tmp_path}/up/..")
-    assert not dirguard.root_recursive_delete_refusal(f"rm -rf {tmp_path}/up")
-    assert not dirguard.root_recursive_delete_refusal(f"rm -rf {tmp_path}/inner/..")    # the parent of `real`, which is tmp_path

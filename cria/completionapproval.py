@@ -226,8 +226,7 @@ PARTICIPATION = ParticipationDefinition(
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_a_required_test_is_released_only_by_proven_participation_and_a_readable_answer"),
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_an_end_to_end_requirement_is_judged_on_the_executed_test_source"),
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_measured_non_participation_is_contradicted_not_merely_unknown"),
-               Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_a_run_the_coder_made_releases_an_empty_runner_only_when_the_judge_names_it_and_it_did_not_fail"),
-               Reference("tests/loop_orientation/test_loop_orientation_participation.py", "test_a_completion_the_empty_gate_runner_cannot_prove_is_released_by_the_coders_own_named_run")),
+               ),
            migrated=False), test_participation)
 EXACT_FORM = ExactFormDefinition(
     Policy("exact-file-form-approval", "completion-approval", 4, family_id="F35",
@@ -238,7 +237,7 @@ EXACT_FORM = ExactFormDefinition(
            regressions=(
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_exact_form_contradicts_only_a_grounded_requirement_against_measured_bytes"),
                Reference("tests/loop_rest/test_loop_rest_exact_form.py", "test_facts_describe_the_current_content_or_stay_silent"),
-               Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_the_current_disk_bytes_outrank_what_was_written_until_a_later_edit_or_stale_view_silences_them")),
+               Reference("tests-before-reset-20261031:tests/test_completion_approval_policies.py", "test_measurement_lifecycle_matches_current_mutation_invalidation")),
            migrated=False), exact_form, written_file_facts)
 # Preserve current short-circuit order: participation first, exact form second.
 PRE_RELEASE = (PARTICIPATION, EXACT_FORM)

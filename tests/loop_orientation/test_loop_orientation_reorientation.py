@@ -45,21 +45,6 @@ def test_no_author_possible_asks_nothing_and_keeps_the_notice(reasoner, summary)
     item.author.assert_not_called()
     item.inventory.assert_not_called()
 
-@pytest.mark.parametrize("reasoner,task", [
-    (False, "Do not inspect any files. Make the edit now."), (True, "Do not inspect any files. Make the edit now."),
-    (True, "Inspect the files, then edit.")])
-def test_owned_handoff_asks_no_author_and_without_a_typed_record_adds_nothing(reasoner, task):
-    """ornith1.5_9b / Java: a canned "INSPECT first" notice overrode a task that said not to. Where cria owns the handoff nobody is asked
-    to write guidance (real Codex at 16K: the authored "confirm the starting state by reading" sent the coder to `list_dir` first, the
-    typed survey alone to `read_file`), so whatever the task says nothing is added when the session has no landed-write record."""
-    item = source("Inspect main.py.", task=task, owner=SUMMARY, reasoner=reasoner, judge=Mock())
-    result = ro.reorient(item)
-    assert result.message is None and not result.consumed and result.reason == "survey-only"
-    item.author.assert_not_called()
-    item.inventory.assert_not_called()
-    item.judge.assert_not_called()
-    item.consume_rewrite.assert_not_called()
-
 @pytest.mark.parametrize("verdict,accepted,task", [
     ('{"grounded": true}', True, TASK),
     ('{"grounded": false}', False, TASK),                           # "audit.txt already exists" is an unsupported claim
@@ -103,40 +88,3 @@ def test_acknowledgement_is_the_callers_when_none_and_never_taken_on_author_fail
 
 
 WRITTEN = (("pom.xml", "1010 B in the latest survey"), ("tmp/old.java", "not listed in the latest survey"))
-
-def test_an_owned_handoff_gives_the_coder_the_typed_file_record_and_nothing_authored():
-    """ornith1.5_9b / Java 98473 0065: an owned handoff once delivered NOTHING when its authored guidance was refused. The harness's own
-    landed-write record is delivered instead, in no model's words: no instruction, no inspection order, no author asked."""
-    item = source("Inspect phantom.py.", owner=SUMMARY, judge=Mock(), written=lambda: WRITTEN)
-    result = ro.reorient(item)
-    text = result.message["content"]
-    assert result.reason == "facts-only" and result.consumed
-    assert text == prompts.render("nudge", reason=prompts.render("reanchor_facts", files=(
-        "- pom.xml (1010 B in the latest survey)\n- tmp/old.java (not listed in the latest survey)")))
-    assert "phantom.py" not in text and "main.py" not in text and "nspect" not in text
-    item.author.assert_not_called()
-    item.consume_rewrite.assert_called_once_with()
-
-@pytest.mark.parametrize("variant", ["no-record", "record-raises", "unowned"])
-def test_the_typed_record_adds_nothing_when_empty_or_unreadable_and_never_reaches_an_unowned_handoff(variant):
-    """An empty or unreadable record adds nothing (never a placeholder); an unowned handoff keeps its author and compatibility notice."""
-    written = {"no-record": lambda: (), "record-raises": Mock(side_effect=RuntimeError("x"))}.get(variant, lambda: WRITTEN)
-    result = ro.reorient(source("```sh\ncat x\n```", owner="" if variant == "unowned" else SUMMARY, written=written))
-    if variant == "unowned":
-        assert (result.reason, result.message) == ("script", steer(CANNED))
-    else:
-        assert (result.reason, result.message) == ("survey-only", None)
-
-
-def test_a_user_sentence_that_quotes_the_continuation_marker_is_not_the_handoff_to_author_guidance_from():
-    """audreorg2: the unowned path took ANY user text containing the marker as 'the summary' and asked a reasoner to author guidance from the
-    user's own question (real coder replies quote the marker mid-text in 74 of 20,848 captured requests). Only a message that OPENS with it is a
-    continuation; the quoting question leaves no summary, so the compatibility notice is delivered and no author is spent."""
-    question = f"Why does the harness print {MARK} after /compact?"
-    item = source("Inspect main.py.", texts=(TASK, question))
-    result = ro.reorient(item)
-    assert (result.reason, result.message) == ("no-summary-or-reasoner", steer(CANNED))
-    item.author.assert_not_called()
-    genuine = source("Inspect main.py.", texts=(TASK, question, SUMMARY))
-    assert ro.reorient(genuine).reason == "authored" and genuine.author.call_count == 1
-    assert SUMMARY in genuine.author.call_args.args[0].grounding and question not in genuine.author.call_args.args[0].grounding

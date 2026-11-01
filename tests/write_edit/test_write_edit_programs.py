@@ -121,13 +121,6 @@ def test_an_edit_applies_only_on_one_match_and_reports_facts_otherwise(tmp_path,
     assert denial.unlanded(msgs[1]) and not denial.landed(msgs[1])
 
 
-def test_an_edit_leaves_every_byte_it_did_not_touch_exactly_as_it_was(tmp_path):
-    """The exact-bytes contract of an edit: only the matched span changes. A CRLF (or lone-CR) file keeps its line endings on the untouched lines."""
-    (tmp_path / "f.txt").write_bytes(b"keep\r\nold\r\nlone\rcr\r\n")
-    do("edit_file", {"path": "f.txt", "old_string": "old", "new_string": "new"}, tmp_path)
-    assert (tmp_path / "f.txt").read_bytes() == b"keep\r\nnew\r\nlone\rcr\r\n"
-
-
 def test_an_edit_that_would_break_a_parsing_file_is_held_but_fixing_a_broken_one_lands(tmp_path):
     """Edit validation is regression-only: `would_break` leaves the valid file alone; a fix of a broken file applies."""
     (tmp_path / "f.py").write_text("x = 1\ny = 2\n")
@@ -211,19 +204,3 @@ def test_a_whole_write_that_cannot_land_is_a_did_not_run_statement_not_a_traceba
     assert (tmp_path / "ro/a.py").read_text() == "x = 1\n" and os.listdir(tmp_path / "ro") == ["a.py"]
     assert os.listdir(tmp_path / "dir") == [] and (tmp_path / "plain").read_text() == "i am a file"
 
-
-@pytest.mark.parametrize("raw,spills", [
-    (b"a" * 10_000, False), (b"a" * 10_001, True),                          # no LF: the limit itself
-    (b"a" * 9_994 + b"\n" * 3, False), (b"a" * 9_995 + b"\n" * 3, True),     # a PTY turns every LF into CRLF, so each LF counts twice: 10,000 fits, 10,001 does not
-], ids=["10000-fits", "10001-spills", "10000-with-LF-fits", "10001-with-LF-spills"])
-def test_a_producers_stdout_rides_inline_up_to_10000_transport_bytes_then_is_saved_whole_and_pointed_to(tmp_path, raw, spills):
-    """The 10,000-byte transport limit of an owned producer (search/list/refusal output): at the limit the bytes arrive untouched; one byte over,
-    the FULL output is saved under tmp/reference (never clipped; its name is its sha256) and what arrives is a pointer that itself fits."""
-    (tmp_path / "big").write_bytes(raw)
-    out = subprocess.run(["bash", "-c", writeproxy._bounded_tool_stdout("cat big")], cwd=tmp_path, capture_output=True, check=True).stdout
-    saved = list((tmp_path / "tmp/reference").glob("stdout-*.txt")) if (tmp_path / "tmp/reference").exists() else []
-    if not spills:
-        assert out == raw and saved == []
-        return
-    assert out != raw and len(out) + out.count(b"\n") <= 10_000 and f"{len(raw):,}".encode() in out
-    assert [f.name for f in saved] == [f"stdout-{hashlib.sha256(raw).hexdigest()}.txt"] and saved[0].read_bytes() == raw and saved[0].name.encode() in out

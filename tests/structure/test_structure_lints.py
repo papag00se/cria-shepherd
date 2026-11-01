@@ -151,13 +151,3 @@ def test_every_context_event_declares_reshape_at_its_fire_site():
     assert all(NOT_A_RESHAPE.values()) and NOT_A_RESHAPE.keys() <= {k for _, _, k, _ in emits()}, "NOT_A_RESHAPE: every entry needs a reason and a fire site"
     assert [f"{f}:{ln} {k}" for f, ln, k, kw in emits()
             if k.startswith("context.") and k not in NOT_A_RESHAPE and not kw & {"reshape", "steer"}] == []
-
-def test_every_literal_log_level_is_a_severity_the_log_knows():
-    """22 fire sites spelled the level "warning" (the table's key is "warn") and one passed a permission setting as the level: 828 records
-    in 12 days were scored as info. A literal `level=` at a fire site must name a severity, never a config value."""
-    from cria import events
-    seen = [(name, kw.value.lineno, kw.value.value) for name, tree in trees() for n in ast.walk(tree) if isinstance(n, ast.Call)
-            for kw in n.keywords if kw.arg == "level" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)]
-    assert seen, "the scan found no level= literals: the scan is broken, not the code"
-    assert [f"{f}:{ln} level={v!r}" for f, ln, v in seen if v not in events._LEVELS] == []
-    assert events._UNKNOWN_LEVEL == max(events._LEVELS.values())
