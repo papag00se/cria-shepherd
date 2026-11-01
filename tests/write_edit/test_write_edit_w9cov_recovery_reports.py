@@ -55,3 +55,19 @@ def test_the_order_note_is_rewritten_above_the_directive_and_escalation_is_logge
     log.events.clear()
     er.recover(token({"path": "", "anchor": "a", "line": 3}), steered("f.txt", 2), log)                   # no identifiable file: not blind, 1st miss: surgical
     assert log.events == []
+
+
+@pytest.mark.parametrize("fail", [{"mode": "phantom", "path": "a.py", "anchor": "x"}, {"mode": "would_break", "path": "a.py"},
+                                  {"mode": "multi", "path": "a.py", "n": 3}, {"mode": "multi_flex", "path": "a.py"},
+                                  {"mode": "identical", "path": "a.py"}])
+def test_a_self_resolving_miss_is_answered_the_same_however_many_times_the_file_already_failed(fail):
+    """MUT2 (editrecovery survivor): old_string==new_string, a phantom anchor, an ambiguous match ... are complete facts on their own;
+    only the can't-pin-the-text family escalates with the clock, and then it says STOP."""
+    assert er.compose(fail, 0) == er.compose(fail, er.ESCALATE_AFTER + 6) and "STOP editing it." not in er.compose(fail, 9)
+    assert "STOP editing it." in er.compose({"mode": "anchor", "path": "a.py", "current": "c"}, 9)
+
+
+def test_a_file_the_coder_wrote_is_grounded_without_ever_being_read_and_an_untouched_one_is_blind():
+    from cria import prompts
+    wrote = [{"role": "tool", "content": prompts.render("write_confirm", path="src/a.py").strip()}]
+    assert er._is_grounded_in(wrote, "a.py") and not er._is_grounded_in(wrote, "b.py") and not er._is_grounded_in([], "a.py")
