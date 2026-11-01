@@ -3266,6 +3266,12 @@ class Loop:
             return
         kept = []
         root = getattr(sess, 'workspace_root', None) or ''
+
+        def here(path):
+            # ONE spelling of "this file" for both sides of the comparison: a call's path is as the coder wrote it
+            # (usually relative), a receipt's and the draft's are workspace-joined. Comparing only one side joined
+            # never credited the recovered write when the frame itself was matched (w10 COV2).
+            return posixpath.normpath(posixpath.join(root, path))
         for choice in (retained or {}).get('choices', []):
             for call in (choice.get('message') or {}).get('tool_calls') or []:
                 cid = call.get('id')

@@ -12,12 +12,7 @@ from loop_main_helpers import Chat, Rlog, body, completion, plan_off_loop, loop_
 from test_loop_main_scenario_pasted_file import CODING, LINES, SHELL, TASK, WRITE
 
 
-RELATIVE = pytest.param("same", True, id="relative-path", marks=pytest.mark.xfail(strict=True, reason=(
-    "real defect (docs/open-threads.md, w10 COV2): the receipt-less arm of Loop._retain_pasted_reply compares the call's RELATIVE path with the "
-    "workspace-joined one, so the very write it recovered is never credited; only an absolute path matches (the server always passes receipts)")))
-
-
-@pytest.mark.parametrize("edit,delivered", [RELATIVE, ("absolute", True), ("other_content", False), ("other_path", False)])
+@pytest.mark.parametrize("edit,delivered", [("same", True), ("absolute", True), ("other_content", False), ("other_path", False)])
 def test_the_forwarded_write_is_recorded_as_the_drafts_delivery_only_when_it_is_the_draft(tmp_path, edit, delivered):
     """The final frame is what the harness gets: if it still carries the recovered write (same content, same path) the delivery is recorded
     at once; if the frame was changed before sending, nothing is credited to the draft."""
@@ -30,7 +25,7 @@ def test_the_forwarded_write_is_recorded_as_the_drafts_delivery_only_when_it_is_
     out = loop.drive(body(TASK, tools=[WRITE, SHELL]), "sid:d", CODING, rlog, pasted_delivery=held.append)
     call = out["choices"][0]["message"]["tool_calls"][0]
     args = json.loads(call["function"]["arguments"])
-    here = str(tmp_path / "app.py")        # absolute: the relative spelling is the recorded defect above and would mask every other row
+    here = str(tmp_path / "app.py")
     args = {**args, **({"content": args["content"] + "# edited\n", "path": here} if edit == "other_content" else {"path": str(tmp_path / "other.py")} if edit == "other_path"
                        else {"path": here} if edit == "absolute" else {})}
     sent = {"choices": [{"message": {"tool_calls": [{**call, "function": {**call["function"], "arguments": json.dumps(args)}}]}}]}
