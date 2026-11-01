@@ -16,12 +16,33 @@ LFM2 = lambda body: "<|tool_call_start|>" + body + "<|tool_call_end|>"
     ('<|tool_call>call:write_file{path:<|"|>a.py<|"|>,content:<|"|>print(1', [("write_file", {"path": "a.py", "content": "print(1"})], None, "massage.leaked_recovered"),  # cut: what arrived, not nothing
     ('<|tool_call>call:ls{cmd:<|"|>ls<|"|>}<tool_call|>', [("shell", {"cmd": "ls"})], None, "massage.leaked_recovered"),   # a shell binary named as a tool is the shell
     ("<|tool_call>call:{path:x}<tool_call|>", [], "<|tool_call>call:{path:x}<tool_call|>", None),
+    ("<|tool_call>call:read_file<tool_call|>", [], "<|tool_call>call:read_file<tool_call|>", None),                               # no argument object at all
+    ('<|tool_call>call:read_file{path:[<|"|>a<|"|>,<|"|>b<|"|>', [("read_file", {"path": ["a", "b"]})], None, "massage.leaked_recovered"),   # cut inside an array: what arrived
+    ("<|tool_call>call:read_file{path:{x:1,y:", [("read_file", {"path": {"x": 1, "y": ""}})], None, "massage.leaked_recovered"),
+    ("<|tool_call>call:read_file{path:{}}<tool_call|>", [("read_file", {"path": {}})], None, "massage.leaked_recovered"),
+    ('```json\n{"name": "read_file", "arguments": {"path": }\n```', [], '```json\n{"name": "read_file", "arguments": {"path": }\n```', None),   # an unparseable fenced call is text
+    ("```json\n[1]\n```", [], "```json\n[1]\n```", None),
     ('{"plan": "x", "commands": [{"name": "read_file", "arguments": {"path": "a"}}]}', [("read_file", {"path": "a"})], None, "massage.envelope_recovered"),
     ('{"tool_calls": [{"name": "exec_command", "arguments": "ls -la"}]}', [("exec_command", {"cmd": "ls -la"})], None, "massage.envelope_recovered"),  # a bare string lands on the schema's sole required field
     ('{"tool_calls": [{"name": "exec_command", "arguments": 5}]}', [], '{"tool_calls": [{"name": "exec_command", "arguments": 5}]}', None),
     ('{"tool_calls": [{"name": "nuke", "arguments": {}}]}', [], '{"tool_calls": [{"name": "nuke", "arguments": {}}]}', None),
     ('<tool_call>{"name": "read_file", "arguments": {"path": "a"}}</tool_call>', [("read_file", {"path": "a"})], None, "massage.leaked_recovered"),
     ('<tool_call>{"name": "read_file", "arguments": {"path": }</tool_call>', [], '<tool_call>{"name": "read_file", "arguments": {"path": }</tool_call>', None),
+    ('{"tool_calls": ["junk", {"name": 5, "arguments": {}}, {"name": "read_file", "arguments": {"path": "a"}}]}', [("read_file", {"path": "a"})], None, "massage.envelope_recovered"),   # junk entries are skipped, the real one kept
+    ('{"tool_calls": [{"name": "read_file"}]}', [], '{"tool_calls": [{"name": "read_file"}]}', None),                              # no arguments key: not a call
+    ('<tool_call>{"name": "read_file", "arguments": "{\\"path\\": \\"a\\"}"}</tool_call>', [("read_file", {"path": "a"})], None, "massage.leaked_recovered"),   # arguments double-encoded as a string
+    ("<tool_call>[1]</tool_call>", [], "<tool_call>[1]</tool_call>", None),
+    ('read_file({"path": "a"}) read_file({"path": "b"', [("read_file", {"path": "a"})], ' read_file({"path": "b"', "massage.call_syntax_recovered"),   # the cut second call stays text
+    ('read_file({"path": "a", "bogus": 1})', [], 'read_file({"path": "a", "bogus": 1})', None),                                    # a key the tool does not have: not its argument list
+    ("read_file([1])", [], "read_file([1])", None), ("read_file({1: 2})", [], "read_file({1: 2})", None), ('nuke({"path": "a"})', [], 'nuke({"path": "a"})', None),
+    ("read_file(path=\"a\")", [], "read_file(path=\"a\")", None),                                                                   # Python keyword syntax is not the JSON-object form
+    ("<function=read_file><parameter=path>a<parameter=x>b</parameter></function>", [("read_file", {"path": "a", "x": "b"})], None, "massage.leaked_recovered"),
+    ("<function=read_file><parameter=path><parameter=q>z</parameter>a</parameter></function>", [("read_file", {"path": "<parameter=q>z</parameter>a", "q": "z"})], None, "massage.leaked_recovered"),   # nested tags keep the outer value
+    ("<function=read_file><parameter=path>a</function>", [("read_file", {"path": "a"})], None, "massage.leaked_recovered"),         # never closed: ends at the hard boundary
+    ('<|tool_call>call:read_file{path:<|"|>a<|"|> junk}<tool_call|>', [("read_file", {"path": "a"})], None, "massage.leaked_recovered"),
+    ('<|tool_call>call:read_file{path:[<|"|>a<|"|>,{x:1},2]}<tool_call|>', [("read_file", {"path": ["a", {"x": 1}, 2]})], None, "massage.leaked_recovered"),
+    ('<|tool_call>call:read_file{path:[<|"|>a<|"|> junk]}<tool_call|>', [("read_file", {"path": ["a"]})], None, "massage.leaked_recovered"),   # junk after an element ends the array, not the call
+    ("<|tool_call>call:read_file{path:a b c,}<tool_call|>", [("read_file", {"path": "a b c"})], None, "massage.leaked_recovered"),
     ('```json\n{"tool": "read_file", "args": {"path": "a"}}\n```', [("read_file", {"path": "a"})], None, "massage.fenced_call_recovered"),   # any one-string + one-object pair
     ('```json\n{"name": "read_file", "description": "x", "parameters": {}}\n```', [], None, None),                                   # a schema echo is not a call
     ('<|channel>thought<channel|>read_file({"path":"a"})', [("read_file", {"path": "a"})], None, "massage.call_syntax_recovered"),
@@ -50,6 +71,8 @@ def test_dialect_table_content_recovery(reply, calls, left, event):
     (LFM2('[os.read_file(path="a")]'), []),                 # an attribute call is not a menu tool
     (LFM2('[read_file(path=b"a")]'), []),                   # a literal the wire cannot carry
     (LFM2("[read_file(path=]"), []),                        # truncated grammar
+    (LFM2("[read_file(**kw)]"), []),                        # not a literal argument list
+    (LFM2("[read_file(path=1+)]"), []), (LFM2('[read_file(path=__import__("os"))]'), []),   # not a literal: never evaluated
     ('<|tool_call_start|>[read_file(path="a")]', []),       # no close: generation was cut mid-emission
     ('<tool_call>{"name":"read_file","arguments":"{\\"path\\": \\"a\\"}"}</tool_call>', [("read_file", {"path": "a"})]),
     ('<tool_call>{"arguments":{}}</tool_call>', []),
@@ -115,3 +138,25 @@ def test_fenced_blocks_bindings_and_whole_file_writes_read_the_reply_as_written(
     assert callsyntax.content_text([{"type": "text", "text": "a"}, "junk", {"text": None}, {"text": "b"}]) == "a  b" and callsyntax.content_text(None) == ""
     assert callsyntax.turn_text({"content": "  ", "reasoning_content": " thought "}) == "thought" and callsyntax.turn_text({"content": "x", "reasoning": "r"}) == "x"
     assert callsyntax.turn_text({"content": None, "reasoning": " "}) == "" and callsyntax.turn_text("not a dict") == ""
+
+
+NO_REQUIRED = [{"type": "function", "function": {"name": n, "parameters": {"type": "object", "properties": {p: {} for p in props}}}}
+               for n, props in (("ping", []), ("echo", ["text"]), ("pair", ["a", "b"]))]
+
+
+@pytest.mark.parametrize("reply, calls", [
+    ('{"tool_calls": [{"name": "echo", "arguments": "hi "}]}', [("echo", {"text": "hi"})]),    # no `required`: the schema's ONLY property takes the bare string
+    ('{"tool_calls": [{"name": "pair", "arguments": "x"}]}', []),                           # two candidate fields: never guess one
+    ('{"tool_calls": [{"name": "ping", "arguments": "x"}]}', []),
+    ('echo({"text": "hi"})', [("echo", {"text": "hi"})]),                                    # nothing required: every key must still be a property
+    ('ping({})', []),                                                                       # a tool with no properties has no argument list to match
+])
+def test_call_recovery_against_a_menu_whose_schemas_declare_no_required_fields(reply, calls):
+    assert run(reply, menu=NO_REQUIRED)[0] == calls
+
+
+@pytest.mark.parametrize("body", ["[echo(**kw)]", '[echo(text=__import__("os"))]', "[echo(text=1+)]"])
+def test_a_non_literal_argument_is_never_dropped_into_a_call_that_needs_nothing_else(body):
+    """With no required field to make the call incomplete, the only thing refusing `echo(text=<expression>)` is the literal-only rule."""
+    assert run("", menu=NO_REQUIRED, reasoning_content=LFM2(body))[0] == []
+    assert run("", menu=NO_REQUIRED, reasoning_content=LFM2('[echo(text="hi")]'))[0] == [("echo", {"text": "hi"})]
