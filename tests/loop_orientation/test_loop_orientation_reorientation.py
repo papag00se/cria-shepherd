@@ -45,17 +45,19 @@ def test_no_author_possible_asks_nothing_and_keeps_the_notice(reasoner, summary)
     item.author.assert_not_called()
     item.inventory.assert_not_called()
 
-@pytest.mark.parametrize("mode,task", [
-    ("no-reasoner", "Do not inspect any files. Make the edit now."),
-    ("judge-error", "Do not inspect any files. Make the edit now."), ("keep-task", "Inspect the files, then edit.")])
-def test_owned_handoff_with_unusable_guidance_adds_nothing(mode, task):
-    """ornith1.5_9b / Java: a canned "INSPECT first" notice overrode a task that said not to. Where cria owns the
-    handoff, guidance that cannot be authored AND grounded is omitted — whatever the task says."""
-    answer = {"fenced": "```sh\ncat main.py\n```", "keep-task": "KEEP_TASK"}.get(mode, "Inspect phantom.py.")
-    judge = Mock(side_effect=RuntimeError("down")) if mode == "judge-error" else None
-    item = source(answer, task=task, owner=SUMMARY, reasoner=mode != "no-reasoner", judge=judge)
+@pytest.mark.parametrize("reasoner,task", [
+    (False, "Do not inspect any files. Make the edit now."), (True, "Do not inspect any files. Make the edit now."),
+    (True, "Inspect the files, then edit.")])
+def test_owned_handoff_asks_no_author_and_without_a_typed_record_adds_nothing(reasoner, task):
+    """ornith1.5_9b / Java: a canned "INSPECT first" notice overrode a task that said not to. Where cria owns the handoff nobody is asked
+    to write guidance (real Codex at 16K: the authored "confirm the starting state by reading" sent the coder to `list_dir` first, the
+    typed survey alone to `read_file`), so whatever the task says nothing is added when the session has no landed-write record."""
+    item = source("Inspect main.py.", task=task, owner=SUMMARY, reasoner=reasoner, judge=Mock())
     result = ro.reorient(item)
-    assert result.message is None and not result.consumed
+    assert result.message is None and not result.consumed and result.reason == "survey-only"
+    item.author.assert_not_called()
+    item.inventory.assert_not_called()
+    item.judge.assert_not_called()
     item.consume_rewrite.assert_not_called()
 
 @pytest.mark.parametrize("verdict,accepted,task", [
@@ -102,33 +104,25 @@ def test_acknowledgement_is_the_callers_when_none_and_never_taken_on_author_fail
 
 WRITTEN = (("pom.xml", "1010 B in the latest survey"), ("tmp/old.java", "not listed in the latest survey"))
 
-@pytest.mark.parametrize("mode,answer", [("fenced", "```sh\ncat main.py\n```"), ("ungrounded", "Inspect phantom.py."),
-                                         ("judge-error", "Inspect phantom.py.")])
-def test_a_refused_owned_handoff_still_gives_the_coder_the_typed_file_record_and_nothing_authored(mode, answer):
-    """ornith1.5_9b / Java 98473 0065: the author wrote guidance, the name check or judge refused it, and an owned
-    handoff then delivered NOTHING. The harness's own landed-write record is delivered instead, in no model's words:
-    no instruction, no inspection order, none of the refused text."""
-    judge = Mock(side_effect=RuntimeError("down")) if mode == "judge-error" else Mock(return_value='{"grounded": false}')
-    item = source(answer, owner=SUMMARY, judge=judge, written=lambda: WRITTEN)
+def test_an_owned_handoff_gives_the_coder_the_typed_file_record_and_nothing_authored():
+    """ornith1.5_9b / Java 98473 0065: an owned handoff once delivered NOTHING when its authored guidance was refused. The harness's own
+    landed-write record is delivered instead, in no model's words: no instruction, no inspection order, no author asked."""
+    item = source("Inspect phantom.py.", owner=SUMMARY, judge=Mock(), written=lambda: WRITTEN)
     result = ro.reorient(item)
     text = result.message["content"]
     assert result.reason == "facts-only" and result.consumed
     assert text == prompts.render("nudge", reason=prompts.render("reanchor_facts", files=(
         "- pom.xml (1010 B in the latest survey)\n- tmp/old.java (not listed in the latest survey)")))
     assert "phantom.py" not in text and "main.py" not in text and "nspect" not in text
+    item.author.assert_not_called()
     item.consume_rewrite.assert_called_once_with()
 
-@pytest.mark.parametrize("variant", ["no-record", "record-raises", "keep-task", "authored", "unowned"])
-def test_the_typed_record_never_replaces_a_decision_or_an_accepted_directive(variant):
-    """KEEP_TASK, an accepted directive and an unowned handoff keep their own outcomes; an empty or unreadable
-    record adds nothing (never a placeholder)."""
+@pytest.mark.parametrize("variant", ["no-record", "record-raises", "unowned"])
+def test_the_typed_record_adds_nothing_when_empty_or_unreadable_and_never_reaches_an_unowned_handoff(variant):
+    """An empty or unreadable record adds nothing (never a placeholder); an unowned handoff keeps its author and compatibility notice."""
     written = {"no-record": lambda: (), "record-raises": Mock(side_effect=RuntimeError("x"))}.get(variant, lambda: WRITTEN)
-    answer = {"keep-task": "KEEP_TASK", "authored": "Inspect main.py."}.get(variant, "```sh\ncat x\n```")
-    owner = "" if variant == "unowned" else SUMMARY
-    result = ro.reorient(source(answer, owner=owner, written=written))
-    if variant == "authored":
-        assert (result.reason, result.message) == ("authored", steer("Inspect main.py."))
-    elif variant == "unowned":
+    result = ro.reorient(source("```sh\ncat x\n```", owner="" if variant == "unowned" else SUMMARY, written=written))
+    if variant == "unowned":
         assert (result.reason, result.message) == ("script", steer(CANNED))
     else:
-        assert result.message is None and result.reason in ("script", "task-preserved")
+        assert (result.reason, result.message) == ("survey-only", None)

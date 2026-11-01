@@ -56,10 +56,9 @@ def test_a_handoff_cria_produced_never_overrides_the_task_with_a_canned_inspecti
     framed, _ = prepare(monkeypatch, after_work(task, SUMMARY), answer="Inspect phantom.py before editing.", origin=origin)
     assert steers(framed) == [] and any(m.get("content") == task for m in framed["messages"])
 
-def test_a_refused_authored_steer_leaves_the_coder_the_sessions_typed_write_record(monkeypatch):
-    """The owned handoff's authored directive names a file nothing supports and is refused; through the real
-    _prepare_coder_context the coder is still told, from the session's landed-write record and the survey, which files
-    its own writes produced — and nothing the author wrote."""
+def test_an_owned_handoff_leaves_the_coder_the_sessions_typed_write_record(monkeypatch):
+    """An owned handoff asks no author; through the real _prepare_coder_context the coder is told, from the session's
+    landed-write record and the survey, which files its own writes produced — and nothing a model wrote."""
     drv, sess, body = driver()
     drv._ctx.reasoner_role = Role(name="reasoner", backend="local")
     sess.handoff_origin = loop._HandoffOrigin("Earlier work", "", False, continuation=SUMMARY)
@@ -72,22 +71,6 @@ def test_a_refused_authored_steer_leaves_the_coder_the_sessions_typed_write_reco
     assert reoriented and "- pom.xml (no workspace survey yet)" in note and "- src/Importer.java (" in note
     assert "phantom" not in note
     assert note.startswith("⟦ctx:steer⟧ Harness record of this session's own earlier work, not guidance")
-
-@pytest.mark.parametrize("recorded_for,root,shown", [
-    ("same", "/w", True),                       # the listing the briefing writer saw reaches the orienter
-    ("other-boundary", "/w", False),            # a continuation cria did not produce gets no listing
-    ("same", "/elsewhere", False),              # a listing for another workspace root is not this disk
-])
-def test_orienter_sees_the_disk_the_briefing_was_written_against(monkeypatch, recorded_for, root, shown):
-    """ornith1.5_9b / Java run 4 (01a18337): compaction removed every survey, so the orienter's inventory was empty in
-    28 of 32 prompts; it read a folded line as the whole tree, and the coder restored the seed over its rewrite (2%)."""
-    other = f"{loop.CONTINUATION_MARKER} A handoff cria did not produce."
-    origin = loop._HandoffOrigin("Built Importer.java.", "", False,
-                                 continuation=SUMMARY if recorded_for == "same" else other)
-    origin.inventory, origin.inventory_root = LISTING, "/w"
-    _, author = prepare(monkeypatch, after_work(TASK, SUMMARY), origin=origin, root=root)
-    assert ("Importer.java (11796 B)" in author.call_args.args[3]) is shown
-
 
 @pytest.mark.parametrize("plan_off", [True, False])
 def test_a_gap_named_by_the_scheduled_review_reaches_the_coder_turn_it_precedes_and_is_consumed(monkeypatch, plan_off):
@@ -114,28 +97,23 @@ def test_a_gap_named_by_the_scheduled_review_reaches_the_coder_turn_it_precedes_
     assert not sess.nudge_reason
 
 
-@pytest.mark.parametrize("task,amendment,worked,allowed", [
-    ("Do not inspect any files. Make the first requested edit immediately.", None, False, False),
-    ("Inspect the relevant files before editing.", "Actually do not inspect; make the edit immediately.", False, False),
-    ("Inspect the relevant files before making changes, then complete the requested edit.", None, False, True),
-    ("Inspect the relevant files before editing.", "Actually do not inspect; make the edit immediately.", True, False),
-    ("Do not inspect any files. Make the first requested edit immediately.", "Actually inspect the relevant files first.", True, True),
-    ("Inspect the relevant files before editing.", f"{loop.CONTINUATION_MARKER} Actually do not inspect; make the edit immediately.", True, False),
-], ids=["negative-task", "negative-amendment", "positive-inspection", "negative-post-work", "positive-post-work", "negative-marker"])
-def test_the_current_task_and_any_later_amendment_decide_whether_the_coder_is_told_to_inspect(monkeypatch, task, amendment, worked, allowed):
-    """The authored steer is delivered only when the AUTHOR is given the task and the user's latest word and still answers; a marker
-    on a later user turn is text, not an owned continuation. The coder keeps the task and the amendment verbatim either way."""
+@pytest.mark.parametrize("task,amendment,worked", [
+    ("Do not inspect any files. Make the first requested edit immediately.", None, False),
+    ("Inspect the relevant files before editing.", "Actually do not inspect; make the edit immediately.", False),
+    ("Inspect the relevant files before making changes, then complete the requested edit.", None, True),
+    ("Inspect the relevant files before editing.", "Actually do not inspect; make the edit immediately.", True),
+], ids=["negative-task", "negative-amendment", "positive-inspection", "negative-post-work"])
+def test_an_owned_handoff_is_never_followed_by_an_authored_inspection_order(monkeypatch, task, amendment, worked):
+    """Real Codex at 16K: the authored "confirm the starting state by reading" cost a `list_dir` turn after every compaction, where the typed
+    ⟦ctx:files⟧ survey alone sent the coder to `read_file` (8 of 8 against 8 and 4 of 8). No author is asked for a cria-owned handoff, so a task
+    or amendment that forbids inspection is never contradicted; the coder keeps the task and the amendment verbatim."""
     messages = [{"role": "user", "content": task}, {"role": "user", "content": SUMMARY}]
     if worked:
         messages.append({"role": "assistant", "content": "Earlier work."})
     if amendment:
         messages.append({"role": "user", "content": amendment})
-    answer = "Inspect the relevant files before making changes." if allowed else "KEEP_TASK"
     origin = loop._HandoffOrigin("Earlier account", "", False, continuation=SUMMARY)
-    framed, author = prepare(monkeypatch, messages, answer=answer, origin=origin)
+    framed, author = prepare(monkeypatch, messages, answer="Inspect the relevant files before making changes.", origin=origin)
     text = str(framed["messages"])
     assert task in text and (not amendment or amendment in text)
-    assert steers(framed) == ([prompts.render("nudge", reason=answer)] if allowed else [])
-    assert author.call_count == 1
-    if amendment:       # the author is told which user turn is the producer's own continuation: never one that merely carries the marker
-        assert json.dumps([amendment, False], ensure_ascii=False) in author.call_args.args[3]
+    assert steers(framed) == [] and author.call_count == 0

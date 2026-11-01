@@ -4,7 +4,6 @@ The author uses the shared provider transport; F49 owns its distinct name ground
 No driver policy is imported. The original task is never used as a summary.
 """
 from dataclasses import dataclass
-import json
 import re
 from typing import Callable, Protocol
 
@@ -138,11 +137,18 @@ def _reason(source: ReorientationInput) -> tuple[str | None, str]:
     facts = source.facts()
     owned_summary = (facts.historical_continuation if facts.historical_continuation
                      and facts.historical_continuation in facts.user_texts else "")
-    # An owned handoff has a governing task. If guidance cannot be authored
-    # and grounded, omit this optional steer instead of imposing inspection.
-    # Unowned callers retain their existing compatibility notice.
-    canned = None if owned_summary else prompts.load("reanchor")
-    summary = owned_summary or next((s for s in reversed(facts.user_texts) if CONTINUATION_MARKER in s), "")
+    if owned_summary:
+        # An owned handoff is NOT followed by an authored directive. The coder's request already carries the
+        # typed ⟦ctx:files⟧ survey (what exists, re-derived from the disk every turn) and the handoff's own
+        # account; an authored "confirm the starting state by reading ..." sent a 16K coder to `list_dir`
+        # first on 8 of 8 and 4 of 8 real replays, where the survey alone sent it to `read_file` on 8 of 8
+        # (nothing wrote or executed either way: the steer's only measured cost was the wasted turn), and the
+        # author could not honour a task that forbids inspection except by guessing. What stays is the typed
+        # landed-write record, in no model's words, when the session has one.
+        return _facts_only(source, "survey-only")
+    # Unowned callers (a continuation cria did not produce) retain their compatibility notice and author.
+    canned = prompts.load("reanchor")
+    summary = next((s for s in reversed(facts.user_texts) if CONTINUATION_MARKER in s), "")
     if not facts.reasoner_available or not summary.strip():
         return canned, "no-summary-or-reasoner"
     if DROPPED_PROSE_LEAD in summary:
@@ -156,21 +162,13 @@ def _reason(source: ReorientationInput) -> tuple[str | None, str]:
         task = prompts.load("reanchor_missing_task")
     author_context = prompts.render("reanchor_context", task=task, summary=summary,
                                     inventory=inventory)
-    system = prompts.load("reanchor_reasoned")
-    if owned_summary:
-        system = prompts.load("reanchor_task_authority")
-        author_context = prompts.render("reanchor_author_context", task=task, summary=summary,
-            inventory=inventory, user_context=json.dumps(tuple((text, text == owned_summary)
-                for text in facts.user_texts), ensure_ascii=False))
-    text = source.author(AuthorRequest(system, author_context))
-    if owned_summary and (not text or text.strip() == "KEEP_TASK"):
-        return "", "task-preserved"
+    text = source.author(AuthorRequest(prompts.load("reanchor_reasoned"), author_context))
     if not text:
         return canned, "empty"
     lines = len(shellshape.command_lines(text))
     if "```" in text or lines >= MAX_COMMAND_LINES:
         source.log.emit("loop.reanchor_refused", level="warn", lines=lines, head=_head(text))
-        return _facts_only(source, "script") if owned_summary else (canned, "script")
+        return canned, "script"
     invented = invented_names(text, grounding)
     if invented and independent_task and source.judge is not None:
         # Spelling gathers the candidates, never decides their semantic role.
@@ -194,7 +192,7 @@ def _reason(source: ReorientationInput) -> tuple[str | None, str]:
     if invented:
         source.log.emit("loop.reanchor_ungrounded", level="warn",
                         names=prompts.named_list(invented), head=_head(text))
-        return _facts_only(source, "ungrounded") if owned_summary else (canned, "ungrounded")
+        return canned, "ungrounded"
     return text, "authored"
 
 
@@ -202,7 +200,7 @@ def reorient(source: ReorientationInput, *, enabled: bool = True) -> Reorientati
     if not enabled or not source.rewritten:
         return ReorientationResult(None, "not-selected" if not enabled else "no-rewrite", False)
     text, reason = _reason(source)
-    if text is None or reason == "task-preserved":
+    if text is None:
         return ReorientationResult(None, reason, False)
     message = {"role": "user", "content": prompts.render("nudge", reason=text)}
     # Optional standalone reporting happens only after successful framing.
@@ -221,16 +219,16 @@ class Definition:
 DEFINITION = Definition(Policy(
     "history-rewrite-reorientation", "post-history-rewrite", 4, family_id="F49",
     prompts=("reanchor", "reanchor_facts", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge",
-             "reanchor_name_grounding", "reanchor_candidate", "reanchor_task_authority", "reanchor_author_context"),
+             "reanchor_name_grounding", "reanchor_candidate"),
     state="optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache",
     services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider", "shared-closed-question"),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
-    regressions=(Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py", "test_the_current_task_and_any_later_amendment_decide_whether_the_coder_is_told_to_inspect"),
+    regressions=(Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py", "test_an_owned_handoff_is_never_followed_by_an_authored_inspection_order"),
                  Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py",
                            "test_author_gets_the_task_apart_from_the_history_and_the_coder_keeps_the_task"),
                  Reference("tests/loop_orientation/test_loop_orientation_reorientation.py", "test_unowned_author_output_is_delivered_only_when_usable"),
-                 Reference("tests/loop_orientation/test_loop_orientation_reorientation.py", "test_a_refused_owned_handoff_still_gives_the_coder_the_typed_file_record_and_nothing_authored"),
+                 Reference("tests/loop_orientation/test_loop_orientation_reorientation.py", "test_an_owned_handoff_gives_the_coder_the_typed_file_record_and_nothing_authored"),
                  Reference("tests/loop_main/test_loop_main_arcd_context_selection.py", "test_an_unselected_context_stage_never_runs_its_detector_and_the_history_ships_untouched"),
-                 Reference("tests/loop_orientation/test_loop_orientation_reorientation.py", "test_owned_handoff_with_unusable_guidance_adds_nothing")),
+                 Reference("tests/loop_orientation/test_loop_orientation_reorientation.py", "test_owned_handoff_asks_no_author_and_without_a_typed_record_adds_nothing")),
     migrated=False), reorient)
