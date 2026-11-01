@@ -435,13 +435,22 @@ class ProgressiveMessage:
     Chat wire. Every post-processing step still runs on the COMPLETE completion afterwards; ``settle``
     then delivers the rest of that final text and closes the item. If the final text does not start
     with what was already shown, ``settle`` raises ``ProgressiveDivergence`` instead of showing two
-    different answers: the caller ends the stream with a retryable ``response.failed``."""
+    different answers: the caller ends the stream with a retryable ``response.failed``.
+
+    The ONE exception is a completion that carries tool calls. Recovery reads a call out of the whole
+    text (a JSON envelope, ``name({...})`` call syntax, a fenced ``{name, arguments}`` block - none
+    has a marker the stream could cut at) and drops that text, so text already shown is then not a
+    prefix of the final text although the turn is exactly the one the buffered path answers. Failing
+    it would send the harness to retry a model that writes the same call the same way; instead the
+    item closes with the FINAL text (what the buffered path stores) and ``rewritten`` records that
+    what was shown differed."""
 
     def __init__(self, emit, detect, holdback: int, index: int):
         self._emit, self._detect, self._holdback, self.index = emit, detect, holdback, index
         self.content = ""
         self.sent = 0
         self.captured = False
+        self.rewritten = False
         self.item_id: str | None = None
 
     @property
@@ -472,7 +481,7 @@ class ProgressiveMessage:
         if safe > self.sent:
             self._send(self.content[self.sent:safe])
 
-    def settle(self, final_text: str | None) -> tuple[list[bytes], dict]:
+    def settle(self, final_text: str | None, has_calls: bool = False) -> tuple[list[bytes], dict]:
         final_text = final_text or ""
         if not self.opened:
             raise ProgressiveDivergence("nothing was delivered")
@@ -481,10 +490,12 @@ class ProgressiveMessage:
         # screen then ends in whitespace the final text lacks. That is the same text, not a rewrite.
         whitespace_only_surplus = shown.startswith(final_text) and not shown[len(final_text):].strip()
         if not (final_text.startswith(shown) or whitespace_only_surplus):
-            raise ProgressiveDivergence(
-                f"final text ({len(final_text)} chars) does not start with the {self.sent} chars already shown")
+            if not has_calls:
+                raise ProgressiveDivergence(
+                    f"final text ({len(final_text)} chars) does not start with the {self.sent} chars already shown")
+            self.rewritten = True   # a call was recovered from text already shown; the item still closes
         evs: list[bytes] = []
-        if len(final_text) > self.sent:
+        if len(final_text) > self.sent and not self.rewritten:
             tail = final_text[self.sent:]
             evs.append(_event("response.output_text.delta", {"item_id": self.item_id, "output_index": self.index,
                                                              "content_index": 0, "delta": tail}))
@@ -548,7 +559,7 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
     if progressive is not None and progressive.opened:
         # Its text already left; settle() ends it and shows only what the final completion adds.
         # The lead is empty by the caller's contract, and a lead would break the prefix.
-        evs, done = progressive.settle(text)
+        evs, done = progressive.settle(text, has_tool_calls)
         out_items.append(done); idx += 1
         yield from evs
     elif text:

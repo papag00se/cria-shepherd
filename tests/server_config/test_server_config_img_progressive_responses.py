@@ -167,3 +167,30 @@ def test_decorated_turns_keep_the_whole_answer_first_path(gated):
     answer = [e["delta"] for e in events if e["type"] == "response.output_text.delta" and "first sentence" in e["delta"]]
     assert len(answer) == 1 and SECOND.strip() in answer[0]
     assert events[-1]["type"] == "response.completed"
+
+
+NO_MARKER_CALLS = {
+    "json envelope": '{"commands": [{"name": "shell", "arguments": {"command": ["ls", "-la", "/some/long/directory"]}}]}',
+    "call syntax": 'shell({"command": ["ls", "-la", "/some/long/directory/path/here"]})',
+    "fenced envelope": 'I will list the files in that directory now.\n```json\n'
+                       '{"name": "shell", "arguments": {"command": ["ls", "-la"]}}\n```',
+}
+
+
+@pytest.mark.parametrize("written", NO_MARKER_CALLS.values(), ids=NO_MARKER_CALLS.keys())
+def test_a_call_written_as_text_without_a_leak_marker_is_still_a_call_never_a_failed_stream(gated, written):
+    """The buffered path recovers a call the model wrote as JSON data / call syntax / a fenced envelope and
+    drops that text; the streamed path must end in the same function_call, not in a retryable failure the model
+    reproduces on every retry (the text had already left before the recovery could read it whole)."""
+    w = gated()
+    w.fake.script = [written[:40], written[40:]]
+    buffered = json.loads(w.post("/v1/responses", H.resp_body("explain it at length", tools=TOOLS))[1])
+    assert [i["type"] for i in buffered["output"]][-1] == "function_call", buffered["output"]
+    events = sse_events(open_stream(w, TOOLS).read().decode())
+    assert [e["type"] for e in events].count("response.completed") == 1 and events[-1]["type"] == "response.completed", \
+        [e["type"] for e in events][-3:]
+    final = events[-1]["response"]["output"]
+    assert [i["type"] for i in final][-1] == "function_call"
+    assert final[-1]["arguments"] == buffered["output"][-1]["arguments"]
+    said = lambda items: "".join(c["text"] for i in items if i["type"] == "message" for c in i["content"])
+    assert said(final) == said(buffered["output"])          # the transcript the harness stores is the buffered one
