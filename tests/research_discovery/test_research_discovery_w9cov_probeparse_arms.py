@@ -87,3 +87,16 @@ def test_pycompile_and_nodecheck_and_config_floors_localize_or_say_nothing():
         ("pyproject.toml", 2, 12, "Invalid value (at line 2, column 12)"),
         ("tsconfig.json", 2, 1, "Expecting value: line 2 column 1")]
     assert pairs(pp.parse_config_syntax("a.json: Expecting value: line 5\n")) == [("a.json", 5, None, "Expecting value: line 5")]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("--- PASS: TestA (0.00s)\nPASS\nok  x 0.1s\n", ("go", "0f/1p")),       # a Go run with only passing tests is still a Go tally
+    ("--- FAIL: TestB (0.00s)\nFAIL\n", ("go", "1f/0p")),                    # ... and so is one with only failures
+    ("--- PASS: A\n--- FAIL: B\n", ("go", "1f/1p")), ("nothing to see\n", ("", "")), (None, ("", ""))])
+def test_the_runner_and_tally_is_named_from_whichever_go_rows_exist(text, expected):
+    assert pp.runner_and_tally(text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [("4294967295", 4294967295), ("4294967296", None), ("+7", 7), ("007", 7), ("", None), ("-1", None), ("1_0", None)])
+def test_a_rust_u32_is_up_to_exactly_u32_max(text, expected):
+    assert pp.parse_u32(text) == expected
