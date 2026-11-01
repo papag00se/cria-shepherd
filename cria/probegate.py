@@ -1555,6 +1555,22 @@ def _timeout_note(plan, sid: str, printed: str) -> str:
     return note
 
 
+def _not_launched_note(plan, sid: str, code: int, printed: str) -> str:
+    """One entry for a check that never produced a result. A tool cria launched DIRECTLY (a floor probe) that exits 127 is a fact
+    about the machine: it is not installed. Anything else (a declared `npm run test` whose script runs a missing tool also exits 127)
+    only says what the exit code says, and shows what the checker printed, so its own words are never replaced."""
+    try:
+        c = plan.candidates[int(sid.split("-", 1)[1])]
+    except (AttributeError, IndexError, ValueError, TypeError):
+        c = None
+    words = prompts.load_map("checks_not_launched")
+    program = proberun._head_program(c.command) if c is not None and getattr(c, "command", None) else ""
+    if program and code == proberun.NOT_FOUND_EXIT_CODE and getattr(c, "composed_by_cria", False):
+        return prompts.fill(words["absent"], program=f"`{program}`", code=code)
+    note = prompts.fill(words["other"], command=f"`{_command_for_sid(plan, sid)}`" if _command_for_sid(plan, sid) else "a check", code=code)
+    return note + (" " + prompts.fill(words["printed"], printed=printed) if printed else "")
+
+
 def _is_hard_failure(plan, sid: str) -> bool:
     """Is section ``sid`` a probe whose non-zero exit is a REAL failure regardless of how its output
     looks? Test / typecheck / build — `plan.candidates` is in section order, so probe-N is candidate N.
@@ -1614,6 +1630,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     findings: list[str] = []
     dropped_advisories = 0
     could_not_run = False
+    not_launched: list[str] = []    # a check that never started is named; it does not erase the checks that did run
+    ran_a_check = False
     failed_no_detail = False
     saw_probe = False
     timed_out_output: list[str] = []
@@ -1622,11 +1640,13 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     zero_collected_output: list[str] = []
     discovery_observations: list[str] = []
 
-    def finish(message: str, *, include_completed: bool = True) -> str:
+    def finish(message: str, *, include_completed: bool = True, include_not_launched: bool = True) -> str:
         # Native zero-collected evidence is independent of the winning diagnostic/timeout branch.
         # Discovery metadata must never replace it; other successful output keeps its clean-branch scope.
         if include_completed and zero_collected_output:
             message += "\n" + prompts.render("checks_completed", results="\n".join(zero_collected_output))
+        if not_launched and include_not_launched:
+            message += "\n" + "\n".join(not_launched)
         if discovery_observations:
             message += "\n" + prompts.fill(prompts.load_map("discovery_observations")["section"],
                 observations="\n".join(dict.fromkeys(discovery_observations)))
@@ -1656,7 +1676,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # to "fix", never a pass. Sniffing text for "no such file" would misread a real error that just
         # mentions it (a FileNotFoundError, a missing #include) as couldn't-run.
         if code in proberun.LAUNCH_FAILURE_EXIT_CODES:
-            could_not_run = True    # never launched → there is nothing it could have printed
+            not_launched.append(_not_launched_note(plan, sid, code, text.strip()))    # never launched → nothing it could have printed
             continue
         if code is None:
             # The section header arrived but its EXIT sentinel never did: the HARNESS returned (its
@@ -1684,6 +1704,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             could_not_run = True
             timeout_notes.append(_timeout_note(plan, sid, text.strip()))
             continue
+        ran_a_check = True
         # Keep successful/zero-test output as evidence. An exit code describes this command,
         # not the task or another source tree; never replace the checker's words with ours.
         if code == 0 or proberun.is_no_tests_collected(code, output=text):
@@ -1893,10 +1914,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
                          + prompts.render("checks_timeout_printed",
                                           printed="\n".join(timed_out_output)))
         return finish(CHECKS_MARKER + " " + "\n".join(parts))
-    if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
+    if could_not_run or (not_launched and not ran_a_check):    # nothing ran to a result → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
-        return finish(CHECKS_MARKER + " " + prompts.load("checks_no_usable_result"))
+        # Nothing ran to a result, so nothing was lost: the placeholder alone (it is what `_is_no_signal_check` drops from history).
+        return finish(CHECKS_MARKER + " " + prompts.load("checks_no_usable_result"), include_not_launched=False)
     # This is evidence, not an authored success verdict. Preserve all completed checker output;
     # only the final wire floor owns size pressure. Scope/zero-test lines must survive even when
     # later discovery metadata changes or a historical transport no longer has its live plan.
@@ -2724,6 +2746,10 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             participation_events.append(participation.observe(c, "", None, event_missing=True))
             continue
         raw, code = proberun.scrape_exit(body)
+        if code == proberun.NOT_FOUND_EXIT_CODE and c.composed_by_cria:
+            # THE GATE'S OWN 127 IS GROUND TRUTH ABOUT THE CODER'S SHELL, for a tool cria composed to launch directly (an
+            # eslint/pyflakes/node floor probe): remember it so the next gate does not compose the same absent tool.
+            wsview.current().note_program_absent(proberun._head_program(c.command))
         result = proberun.interpret_probe_output(
             c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S)
         results.append(result)

@@ -1,0 +1,7 @@
+# One entry per check that never produced a result, shown in the same message as the checks that DID run (a launch failure used to
+# erase them: "the automatic checks produced no usable result"). Keyed on the measured exit code (127 is the shell's own "command not
+# found") and on whether cria launched the tool DIRECTLY: a declared `npm run test` also exits 127 when a tool INSIDE the script is
+# missing, so it is never called "not installed" - the checker's own words ride instead. Parsed by prompts.load_map.
+absent = {{PROGRAM}} is not installed (the shell could not find it, exit {{CODE}}), so that check did not run.
+other = {{COMMAND}} did not run to a result (exit {{CODE}}: the shell could not find or start a command).
+printed = It printed:\n{{PRINTED}}

@@ -227,7 +227,7 @@ class View:
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_outputs", "_bodies", "_body_generation", "_stale",
-                 "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
+                 "_progs", "_progs_prior", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
                  "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed",
                  "_body_freshness", "_body_revisions", "_observed_bodies", "_cache_revision",
                  "_freshness", "_snapshot_revision")
@@ -268,6 +268,9 @@ class View:
         self._body_confirmed: dict[str, tuple[tuple, int]] = {}
         self._stale: set[str] = set()                    # rel whose body changed since it was known
         self._progs: dict[str, str] = {}                 # program name -> resolved name ("" = absent)
+        # What this SESSION's earlier requests learned about the coder's shell (a view is rebuilt per request, and a gate's own
+        # survey or exit 127 is applied once): the answer to `program` until a survey of this request answers it afresh.
+        self._progs_prior: dict[str, str] = dict(_PROG_CACHE.get(sess) or {}) if sess else {}
         # Paths OUTSIDE the workspace the harness was asked about by name — a dependency cache
         # (`~/.m2/repository`), an install prefix. There is no listing of these and there must not
         # be one: cria names the exact path it wants tested, and the survey answers that path.
@@ -776,6 +779,10 @@ class View:
             return None
         if name in self._progs:
             return self._progs[name] or ""
+        if name in self._progs_prior:
+            if not self._progs_prior[name]:
+                want_program(self._sess, name)      # an absence is re-checked by the next survey: the coder may install it
+            return self._progs_prior[name]
         want_program(self._sess, name)
         return None
 
@@ -996,19 +1003,40 @@ class View:
             if ok and path:
                 self._outside[path] = line.partition("\t")[2]
 
-    def _ingest_progs(self, body: str) -> None:
+    def _ingest_progs(self, body: str, *, unanswered_only: bool = False) -> None:
         for line in body.splitlines():
             enc, _, resolved = line.partition("\t")
             name, ok = _unb64(enc)
             hit, hit_ok = _unb64(resolved, "replace") if resolved else ("", True)
-            if ok and name and hit_ok:
-                self._progs[name] = hit
+            if ok and name and hit_ok and not (unanswered_only and name in self._progs):
+                self._answer_program(name, hit)
+
+    def note_program_absent(self, name: str) -> None:
+        """A check cria composed to launch ``name`` directly exited 127 in the coder's own shell: that shell cannot find it. Said
+        once, so no later gate composes the same absent tool again (the survey's answer, when there is one, still replaces it)."""
+        if name:
+            self._answer_program(name, "")
+
+    def _answer_program(self, name: str, resolved: str) -> None:
+        self._progs[name] = resolved
+        if not self._sess:
+            return
+        # ONLY ABSENCES TRAVEL: a presence is replayed from the conversation (the coder's own successful run, every survey in its
+        # history) by every request, while a gate's own answer is read once and nothing replays it.
+        if len(_PROG_CACHE) > 512:
+            _PROG_CACHE.clear()
+        bucket = _PROG_CACHE.setdefault(self._sess, {})
+        bucket.pop(name, None)
+        if not resolved:
+            bucket[name] = ""
+        while len(bucket) > _MISS_MAX:
+            bucket.pop(next(iter(bucket)))
 
     def note_program_ran(self, name: str) -> None:
         """The coder's own command launched ``name`` and exited 0: its shell resolves that name, which no survey can contradict.
         Answers `program` at once, without the survey a write has to carry (a coder looping on raw shell commands rides none)."""
         if name:
-            self._progs[name] = name
+            self._answer_program(name, name)
 
     def note_written(self, path, content: str, *, current: bool = True) -> None:
         """cria lowered a whole-content write for this path and the harness reported it landed:
@@ -1408,6 +1436,7 @@ def _subview(v: View, sub: str) -> View:
     out._cache_candidates.update(
         {p[n:]: b for p, b in v._cache_candidates.items() if p.startswith(pre)})
     out._progs = v._progs
+    out._progs_prior = v._progs_prior
     out._surveyed = v._surveyed
     out._survey_generation = v._survey_generation
     # THE BOUND FLAG TRAVELS WITH THE SUBTREE. `_complete` defaults True on a fresh View, so a
@@ -1428,6 +1457,7 @@ def _subview(v: View, sub: str) -> View:
 # asks. Bounded like every other per-session store in cria.
 _BODY_MISSES: dict[str, list[str]] = {}
 _PROG_MISSES: dict[str, list[str]] = {}
+_PROG_CACHE: dict[str, dict[str, str]] = {}      # session -> program -> resolved name ("" = absent), across requests
 _OUTSIDE_MISSES: dict[str, list[str]] = {}
 _MISS_MAX = 64
 
@@ -2046,13 +2076,24 @@ def apply_survey(view: View, survey_text: str) -> bool:
     observation = _OBSERVATION.get()
     if observation is None and view._body_freshness.pending:
         _note_reject("unresolved-observation")
+        _keep_machine_facts(view, secs)
         return False
     if observation is not None and (view._superseded(observation) or not view.observation_current(observation)):
         _note_reject("overtaken-observation")
+        _keep_machine_facts(view, secs)
         return False
     if observation is None:
         observation = view.begin_observation()
     return from_observation(observation, _ingest_validated_survey, view, secs, done, ran_in)
+
+
+def _keep_machine_facts(view, secs) -> None:
+    """A survey the tree refuses (a later read or write overtook it) still answers what the CODER'S SHELL resolves: the program
+    sweep is about the machine, not the tree, and no file write can overtake it. It fills only names nobody has answered, so an
+    answer from a newer survey is never replaced by an older one. Measured: 52 `overtaken-observation` refusals in one Node cell,
+    each dropping its program answers, so the gate composed the same absent `eslint` again."""
+    if secs.get("progs"):
+        view._ingest_progs(secs["progs"], unanswered_only=True)
 
 
 def _ingest_validated_survey(view, secs, done, ran_in):
