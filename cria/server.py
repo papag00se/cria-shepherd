@@ -31,7 +31,7 @@ from . import imageassembly
 from . import upstream as _image_wire
 from .imageprotocol import ImageUnavailable
 
-from . import bodykeys, dirguard, handoffdistill, memoryhandoff, privatenames, system1wiring, windowcaps
+from . import bodykeys, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify, loweringoptions
@@ -2049,11 +2049,36 @@ class CriaHandler(BaseHTTPRequestHandler):
         finally:
             _image_current.reset(token)
 
+    def _handoff_evidence(self, sess_key: str, body: dict, rlog) -> str:
+        """What a harness handoff reads besides the request body: the session's gate facts and the workspace
+        listing the writer is shown. A reused briefing must have been made on exactly this (`handoffmemo`). The
+        carried ledger is not in it: it follows from the body and from the producer record the briefing's own
+        commit replaces."""
+        facts = _handoff_facts(self.server, sess_key, body, rlog, _handoff_session(self.server, sess_key))
+        return handoffmemo.digest(facts.workspace_root, facts.original_task, facts.gate_flag, facts.gate_age,
+                                  facts.checks, _workspace_listing(facts.workspace_root),
+                                  groundtruth.workspace_inventory(facts.workspace_root, flavor="briefing"))
+
     def _produce_completion_once(self, body: dict, rlog, sess_key: str, progressive=None):
         """Run the pipeline and return ``(chat-completion dict, Indicator|None)`` —
         the plan loop's completion, or a routed+massaged+lowered one. Raises
         ``UpstreamError`` on a model failure (callers turn that into a clean error).
-        Shared by the buffered chat path and the Responses adapter."""
+        Shared by the buffered chat path and the Responses adapter.
+
+        A harness compaction (the harness offers no tools) is produced ONCE per identical request of a session:
+        the harness retries a failed request up to three times, and each retry used to re-run the briefing
+        writer and every validator lens. ``handoffmemo`` answers the retry with the first reply's exact bytes."""
+        if (_selected_handoff(self.server) is None or body.get("tools")
+                or not self.server.cfg.routing.context_fixes):
+            return self._produce_completion_fresh(body, rlog, sess_key, progressive)
+        with handoffmemo.of(self.server).claim(sess_key, handoffmemo.digest(body)) as claim:
+            kept = claim.recall(lambda: self._handoff_evidence(sess_key, body, rlog))
+            if kept is not None:
+                rlog.emit("handoff.memo_reused", session=sess_key)
+                return kept
+            return self._produce_completion_fresh(body, rlog, sess_key, progressive, claim)
+
+    def _produce_completion_fresh(self, body: dict, rlog, sess_key: str, progressive=None, claim=None):
         server: CriaServer = self.server
         # Recognized ONCE per request — see _produce_stream's twin call for the same reasoning.
         handoff = _selected_handoff(server)
@@ -2107,6 +2132,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             raise UpstreamError("upstream returned a non-JSON 200 body: "
                                 + repr(content_reduce.clip(raw, 200))) from e
         commit_handoff = None
+        decided = None   # the verdict watch of a hardened handoff; None when no handoff ran
         def defer_handoff(commit):
             nonlocal commit_handoff
             commit_handoff = commit
@@ -2116,7 +2142,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             # or dialect-only "answer" recovers the summary from the model's reasoning.
             comp = massage.coerce_text_answer(comp, rlog)
             if compaction:
-                comp = _harden_compaction_reply(comp, body, provider, server, rlog, sess_key,
+                decided = handoffmemo.VerdictWatch(rlog)
+                comp = _harden_compaction_reply(comp, body, provider, server, decided, sess_key,
                     definition=handoff, _defer_commit=defer_handoff, _owner=owner, _facts=facts)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
@@ -2137,6 +2164,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                 definitions=server.pilot_runtime.wire_folds), rlog, reply_estimate=reply_estimate)
         if commit_handoff is not None:
             commit_handoff(out)
+        if (claim is not None and decided is not None and not decided.undecided
+                and not massage.is_truncated(comp) and not generation.incomplete(comp)):
+            claim.remember(self._handoff_evidence(sess_key, body, rlog), (out, indic))
         return out, indic
 
     def _chat_progressive(self, provider, pbody: dict, progressive, rlog) -> bytes:
