@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cria import bodykeys, prompts, upstream
+from cria import bodykeys, brave, prompts, upstream
 
 ROOT = Path(__file__).resolve().parents[2]
 TEXTS = {p.name[:-4]: p.read_text(encoding="utf-8") for p in sorted((ROOT / "cria/prompts").glob("*.txt"))}
@@ -105,7 +105,7 @@ def test_lowered_commands_carry_no_trace_of_the_product(tmp_path):
         "read": filecommands._read_command({"path": "a/b.py"}),
         "read-range": filecommands._read_command({"path": "a/b.py", "start_line": 3, "end_line": 9}),
         "list": writeproxy._list_command({"path": "."}),
-        "search": writeproxy._search_command({"query": "x"}, "key"),
+        "search": writeproxy._search_command({"query": "x"}, brave.Answer(body='{"web": {"results": []}}')),
         "spill": writeproxy._spill_command("./tmp/read-only/x.txt", "hello", "msg"),
         "survey": wsview.survey_command("s", cd="/w"),
         "survey-pack": wsview.survey_command("s", cd="/w", pack=True),

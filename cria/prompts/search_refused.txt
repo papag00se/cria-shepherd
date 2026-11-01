@@ -1,0 +1,6 @@
+# The search service REFUSED a search (HTTP 429/503): the one fact cria holds about how long, read from the service's own
+# headers by the shared rate-limit reader and kept in the process's wait state. Said once, in the result the coder reads.
+# It names no cause beyond "the service declined this request": a refusal is not a statement about the site or API the
+# coder is working on, and the wait is the service's, not cria's.
+wait = search API error: the search service refused this search (HTTP {{STATUS}}: it is rate limiting requests). Searches are NOT sent for {{SECONDS}} more seconds (sending one earlier only extends the wait). This says nothing about the site or API you are working on. Work on something else meanwhile, such as fetching a URL directly, and search again after that time.
+no_wait = search API error: the search service refused this search (HTTP {{STATUS}}: it is rate limiting requests) and named no wait. This says nothing about the site or API you are working on. Work on something else meanwhile, such as fetching a URL directly, then search again.

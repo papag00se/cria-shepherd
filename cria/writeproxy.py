@@ -94,7 +94,10 @@ def _externalize_coder(source: OutboundCall) -> str:
     if prior is not None:
         prior.delivery.cancel()
         owner.externalization_offers.pop(cid, None)
-    inline = (_search_command(args, request.brave_key) if search else
+    # THE SEARCH IS MADE HERE, ONCE, IN-PROCESS (as a fetch is), never by a harness-run curl: cria alone holds the process's wait
+    # state, so a 429 is waited out or reported with the service's own stated wait, and the key never rides in the command.
+    answer = brave.search(str(args.get('query') or ''), request.brave_key, _SEARCH_MAX_RESULTS) if search else None
+    inline = (_search_command(args, answer) if search else
               _fetch_command(args, request.session, request.workspace_root))
     if definition is None:
         return inline
@@ -108,7 +111,7 @@ def _externalize_coder(source: OutboundCall) -> str:
         target = webfetch.search_spill_name(str(args.get('query') or ''))
         program = definition.search_program(content_reduce_mod.INLINE_RESULT_MAX_BYTES)
         detect = lambda: e.SearchOffer(target, program)
-        offer = lambda spill: _search_command(args, request.brave_key, search_offer=spill, operation=operation)
+        offer = lambda spill: _search_command(args, answer, search_offer=spill, operation=operation)
         record = lambda spill: webfetch.note_search_spill(request.session, str(args.get('query') or ''), spill.target)
     else:
         url = str(args.get('url') or '')
@@ -239,7 +242,6 @@ _SEARCH_NAMES = {"web_search", "local_web_search"}
 # finished (see `_EDIT_SEQ_BLOCK`). Rendered into prose by `render_edit_echo` / `editrecovery.recover`.
 EDIT_ORDER_LATE = editrecovery.ORDER_LATE
 _TMP_SUFFIX = ownedfiles.TEMP_SUFFIX   # shared atomic resource contract; no PID-derived allocations
-_FETCH_TIMEOUT_S = 20
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
 # actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
 # total count, so the model is never silently capped at the top few and knows how many exist. 20 is
@@ -1163,12 +1165,22 @@ def _pyq(s: str) -> str:
     return _json.dumps(s).replace("'", "\\u0027")
 
 
-def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=None) -> str:
-    """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
-    shared `brave` module (same request the planner's in-process search builds), then parsed to
-    compact "title / url / description" lines the model can pair with web_fetch. Requests Brave's
-    per-request maximum and prints EVERY returned result (no display slice) with a total-count header
+def _search_refusal(refused: int, wait_ms: int) -> str:
+    """The result of a search the service refused: its own stated wait (`wait_ms`, from the shared reader), said once."""
+    say = prompts.load_map("search_refused")
+    return (prompts.fill(say["wait"], status=refused, seconds=-(-wait_ms // 1000)) if wait_ms > 0
+            else prompts.fill(say["no_wait"], status=refused))
+
+
+def _search_command(args: dict, answer: "brave.Answer", *, search_offer=None, operation=None) -> str:
+    """Brave web search lowered to a parse of the answer cria itself fetched (`brave.search`: the shared endpoint, %-encoded
+    query and headers, through the shared rate-limit opener), printed as compact "title / url / description" lines the model
+    can pair with web_fetch. A refused search (429/503) is lowered to a refusal naming the wait the service stated. Requests
+    Brave's per-request maximum and prints EVERY returned result (no display slice) with a total-count header
     so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
+    if answer.refused:
+        message = _search_refusal(answer.refused, answer.wait_ms)
+        return _bounded_tool_stdout(_refusal_command(message), denial.mark(message))
     query = str(args.get("query") or "")
     # Composed before the parse below, which needs both: the spill path to write, and the pointer to
     # print when the brief listing does not fit inline.
@@ -1186,8 +1198,6 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
     # pointers now say the same sentence, so one regex reads both (#23).
     inline_note = (prompts.fill(prompts.load("search_inline_note"), target=target, query=query)
                    if search_offer is not None else '')
-    url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
-    header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load
     # succeeds, `.get("web")` is None, and this used to print the literal "no results" — telling the
     # model the web holds nothing for its query when the API had in fact refused the request, and its
@@ -1273,7 +1283,7 @@ def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=
     # a plain pipeline rather than a redirect-then-announce.
     # With a search offer the PROGRAM prints the first record (it carries the stored fact); otherwise the shell does.
     lead = "" if search_offer is not None else denial.ran_command()
-    command = (f"{lead}curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
+    command = (f"{lead}printf %s {_qbash(answer.body)} | {parse} "
                f"|| printf %s {_qbash(denial.frame(denial.RAN) + fallback if search_offer is not None else fallback)}")
     return command
 

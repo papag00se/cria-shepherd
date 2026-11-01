@@ -1,11 +1,14 @@
 """Outbound HTTP honours a server's stated rate limit: every dialect of "wait" is read, the wait is shared across the process,
 a request is never sent early, and the one retry comes after exactly the stated time (fake server, injected clock)."""
 import http.server
+import json
+import subprocess
 import threading
+from unittest import mock
 
 import pytest
 
-from cria import apidiscovery, ratelimit, webfetch
+from cria import apidiscovery, brave, ratelimit, webfetch, writeproxy
 
 NOW = 1_700_000_000.0
 
@@ -210,3 +213,73 @@ def test_a_redirect_to_another_protocol_is_not_followed_and_a_redirect_to_http_s
     seen.clear()
     followed = webfetch.fetch(url + "/a")
     assert followed.status == 200 and "landed" in followed.body and [p for p, _ in seen] == ["/a", "/b"]
+
+
+BRAVE_RESULTS = json.dumps({"web": {"results": [{"title": "Walrus op", "url": "https://x.test/w", "description": "The := operator", "thumbnail": {"src": "x" * 5000}}]}}).encode()
+BRAVE_429 = (429, {"X-RateLimit-Limit": "1, 15000", "X-RateLimit-Remaining": "0, 14999", "X-RateLimit-Reset": "1, 2345678"},
+             b'{"type":"ErrorResponse","error":{"id":"a","status":429,"code":"RATE_LIMITED","detail":"Request rate limit exceeded for plan","meta":{"plan":"Free","rate_limit":1}}}')
+
+
+def _lower_search(query="walrus", key="brv-secret-key-123456"):
+    comp = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "c", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": query})}}]}}]}
+    shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
+    lowered = writeproxy.translate_outbound(comp, shell, injected={"web_search"}, brave_key=key, session="sid:brave")
+    return json.loads(lowered["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
+
+
+def _run(command, cwd):
+    return subprocess.run(["bash", "-c", command], capture_output=True, text=True, cwd=cwd)
+
+
+@pytest.fixture
+def brave_at(limited, monkeypatch):
+    url, script, seen, clock = limited
+    monkeypatch.setattr(brave, "ENDPOINT", url + "/res/v1/web/search")
+    return script, seen, clock
+
+
+def test_a_brave_429_is_waited_out_once_and_the_search_the_model_asked_for_is_returned(brave_at, tmp_path):
+    """The free plan is one request a second: the harness-run curl could neither wait nor retry. cria runs the search itself, sleeps
+    exactly the stated second, retries once, and the key never rides in the command the harness executes."""
+    script, seen, clock = brave_at
+    script += [BRAVE_429, (200, {}, BRAVE_RESULTS)]
+    command = _lower_search()
+    done = _run(command, tmp_path)
+    assert clock.slept == [1.0] and len(seen) == 2 and "brv-secret-key-123456" not in command
+    assert done.returncode == 0 and "1 results:\nWalrus op\n  https://x.test/w" in done.stdout and "5000" not in command
+    assert "x" * 100 not in command                                  # only the printed fields travel, not the API's thumbnails
+
+
+@pytest.mark.parametrize("script, shown", [
+    ([BRAVE_429[:1] + ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "3"},) + BRAVE_429[2:]], "3 more seconds"),   # still refused after the one retry
+    ([(429, {"Retry-After": "120"}, b'{"error": "quota"}')], "120 more seconds"),                                         # too long to hold: NOT retried
+    ([(429, {}, b"")], "1 more seconds"),                                                                                 # no stated delay: the 1 s default, retried once
+    ([(503, {}, b"")], "named no wait"),                                                                                  # a 503 states none and is not guessed
+])
+def test_a_brave_refusal_tells_the_model_how_long_to_wait_and_the_next_search_inside_the_window_is_not_sent(brave_at, tmp_path, script, shown):
+    s, seen, clock = brave_at
+    s += script
+    done = _run(_lower_search(), tmp_path)
+    assert done.returncode == 1 and shown in done.stdout and ("(HTTP 429" in done.stdout or "(HTTP 503" in done.stdout) and "rate limiting" in done.stdout
+    assert "RATE_LIMITED" not in done.stdout and "quota" not in done.stdout              # the refusal is the answer, not the raw API body
+    if "120" in shown:
+        before = len(seen)
+        again = _run(_lower_search("another query"), tmp_path)
+        assert len(seen) == before and again.returncode == 1 and "120 more seconds" in again.stdout and clock.slept == []
+
+
+def test_a_brave_search_that_spent_the_window_makes_the_next_search_wait_the_stated_second(brave_at, tmp_path):
+    script, seen, clock = brave_at
+    script += [(200, {"X-RateLimit-Remaining": "0, 14999", "X-RateLimit-Reset": "1, 2345678"}, BRAVE_RESULTS), (200, {}, BRAVE_RESULTS)]
+    assert _run(_lower_search("one"), tmp_path).returncode == 0 and clock.slept == []
+    assert _run(_lower_search("two"), tmp_path).returncode == 0 and clock.slept == [1.0] and [n for _, n in seen] == [0, 1]
+
+
+def test_a_brave_api_error_body_and_an_unreachable_service_keep_their_own_words(brave_at, tmp_path):
+    script, seen, clock = brave_at
+    script += [(401, {}, b'{"type":"ErrorResponse","error":{"code":"SUBSCRIPTION_TOKEN_INVALID","status":401}}')]
+    done = _run(_lower_search(), tmp_path)
+    assert done.returncode == 0 and "search API error:" in done.stdout and "SUBSCRIPTION_TOKEN_INVALID" in done.stdout
+    answer = brave.search("x", "k", opener=mock.Mock(side_effect=OSError("down")))
+    assert answer == brave.Answer() and "could not be read" in _run(writeproxy._search_command({"query": "x"}, answer), tmp_path).stdout

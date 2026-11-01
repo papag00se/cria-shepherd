@@ -88,3 +88,12 @@ def _fresh_rate_limit_state():
     ratelimit.STATE.clear()
     yield
     ratelimit.STATE.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_test_talks_to_brave(monkeypatch):
+    """The coder's web_search is made in-process while a call is lowered: a test that lowers one and pins no transport must reach a
+    refused local port (a transport failure), never the real search API with a fake key. A test that exercises the search points
+    `brave.ENDPOINT` (or passes an opener) at its own server."""
+    from cria import brave
+    monkeypatch.setattr(brave, "ENDPOINT", "http://127.0.0.1:9/res/v1/web/search")

@@ -1,10 +1,11 @@
-"""A turn's tool calls across the wire: web_search lowered to a real curl program that RUNS (only `curl` is faked) and spills
+"""A turn's tool calls across the wire: web_search made in-process (only `urlopen` is faked) and lowered to a real parser program that RUNS and spills
 its descriptions into the workspace, routing to a harness-native search, the model-facing result of each call, and the
 last-resort backstops on the history the model reads: the search key redacted everywhere, a binary payload replaced by a named
 fact, a harness cut noticed, an unknown native effect making held facts uncertain."""
+import io
 import json
-import os
 import subprocess
+from unittest import mock
 
 from cria import wsview, writeproxy
 from write_edit_helpers import ENVELOPE, call, command_of, harness_env, lower, surveyed_view
@@ -14,15 +15,19 @@ BRAVE = '{"web":{"results":[{"title":"Walrus op","url":"https://x.test/w","descr
 
 
 def test_a_search_call_runs_spills_its_descriptions_and_the_model_sees_the_tool_it_called_without_the_key(tmp_path):
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "bin/curl").write_text(f"#!/bin/sh\necho '{BRAVE}'\n")
-    os.chmod(tmp_path / "bin/curl", 0o755)
     ws = tmp_path / "ws"
     ws.mkdir()
-    tc = lower([call("web_search", {"query": "python walrus"}, "q1")], injected=("web_search",), brave_key=KEY, session="s")[0]
-    assert tc["function"]["name"] == "exec_command" and KEY in command_of(tc)          # the real curl carries the real key
-    env = {**harness_env(ws), "PATH": f"{tmp_path}/bin:" + harness_env(ws)["PATH"]}
-    done = subprocess.run(["bash", "-c", command_of(tc)], cwd=ws, env=env, capture_output=True, text=True, timeout=30)
+    sent = []
+
+    def urlopen(req, timeout=None):
+        sent.append(req.get_header("X-subscription-token"))
+        reply = io.BytesIO(BRAVE.encode())
+        reply.status, reply.headers = 200, {}
+        return reply
+    with mock.patch("urllib.request.urlopen", urlopen):
+        tc = lower([call("web_search", {"query": "python walrus"}, "q1")], injected=("web_search",), brave_key=KEY, session="s")[0]
+    assert tc["function"]["name"] == "exec_command" and sent == [KEY] and KEY not in command_of(tc)     # cria's own request carries the key; the harness's command never does
+    done = subprocess.run(["bash", "-c", command_of(tc)], cwd=ws, env=harness_env(ws), capture_output=True, text=True, timeout=30)
     spill = next((ws / "tmp/reference").glob("search-python_walrus-*.txt"))
     assert done.returncode == 0 and "The := operator" in spill.read_text()
     echoed = {"role": "tool", "tool_call_id": "q1", "content": ENVELOPE.format(rc=0) + done.stdout + "\ncurl -H 'X-Subscription-Token: " + KEY + "'"}
