@@ -278,6 +278,39 @@ def test_a_frame_the_eight_newest_messages_overflow_keeps_only_the_newest_call_a
     assert rep.over_budget and rep.protected_dropped == 0 and out[-2:] == msgs[-2:]    # a protected read: lever 7 does not run
 
 
+def test_a_note_this_fit_wrote_is_never_withheld_again_and_the_event_counts_what_the_body_carries():
+    """audit AUD3 (lever 6 after 3b): a request still over after lever 3b's note re-ran the withholding over the note itself, and the
+    note-about-a-note said "626 bytes" for a 20,000-byte result: the one number the coder needs to size its next read was gone
+    and the event counted two withholdings for one result. Cross-store: the label's byte count is the result's, the event's
+    count is the notes in the body, and a result that merely QUOTES the marker is still withheld (provenance is identity, not text)."""
+    def one(size, text=None):
+        msgs = [{"role": "system", "content": "s" * 3344}, u("task"), a("", "c1", "exec_command", '{"cmd": "cat app.log"}'), tool("c1", text or "A" * size)]
+        out, _, rep = cf.fit(msgs, None, window=1000, reserve=100, safety=1.0)
+        return out[-1]["content"], rep
+    note, rep = one(20000)
+    assert rep.results_withheld == 1 and "it is 20,000 bytes in 1 line(s)" in note
+    quoted = "⟦ctx:result-not-delivered⟧ already\n" + "B" * 20000
+    note, rep = one(0, quoted)
+    assert rep.results_withheld == 1 and f"it is {len(quoted.encode()):,} bytes in 2 line(s)" in note
+
+
+def test_lever_seven_keeps_every_result_of_the_newest_parallel_call_with_its_call():
+    """audit AUD3 (lever 7): the live tail was the newest two MESSAGES, so for one assistant turn that issued three parallel calls
+    the tail was two of the three results; the call itself was droppable, and the orphan strip then deleted the results the tail was
+    meant to keep (window 3,600: every result the coder was answering gone, though 600 bytes of them fit easily). The tail is closed
+    over call/result pairs in both directions, so the newest call and ALL its results survive and the request is paired."""
+    def call(i):
+        return {"id": i, "type": "function", "function": {"name": "read_file", "arguments": '{"path": "p"}'}}
+    live = [{"role": "assistant", "content": "", "tool_calls": [call("c0"), call("c1"), call("c2")]},
+            *[tool(f"c{n}", "rqz"[n] * 200) for n in range(3)]]
+    msgs = [{"role": "system", "content": "sys " + "s" * 2000}, u("task " + "t" * 2000), *[a("w" * 1600) for _ in range(6)], *live]
+    for window in (3600, 2600):
+        out, _, rep = cf.fit(msgs, None, window=window, reserve=600, safety=1.5)
+        assert not rep.over_budget and rep.protected_dropped > 0 and notes(out), window
+        assert out[-4:] == live, window                                             # the call and all three results, in order
+        assert out[0] == msgs[0] and out[1] == msgs[1] and rep.orphans_removed == 0
+
+
 @pytest.mark.parametrize("count,desc,window,fits", [(60, 600, 20000, True), (120, 900, 49152, True), (100, 200, 512, False), (3, "Word " * 30 + "end. " + "tail " * 600, 4000, True)],
                          ids=["60-tools", "120-tools-big-system", "cannot-fit", "sentence-descriptions"])
 def test_a_fat_tool_menu_is_compressed_never_deleted(count, desc, window, fits):

@@ -561,6 +561,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
     fits_at_start = est_total(messages, tools) <= target_est and not rep.tools_compressed
     work = list(messages)
+    notes: list[dict] = []     # the not-delivered notes THIS fit wrote: never withheld again, and what results_withheld counts
     if est_total(messages, tools) > target_est:
         # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
         work, rep.caller_reduced = _reduce_caller_spans(work)
@@ -571,9 +572,9 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # --- Lever 3b: a tool result that cannot fit even ALONE beside the frame (system text, the request,
         # the tool menu). Dropping every older turn cannot make room for it, so it is withheld BEFORE levers 4-5
         # spend history on a fit they cannot reach. A result that merely competes with history is left to them.
-        work, rep.results_withheld = _withhold_oversized_results(
+        work, _ = _withhold_oversized_results(
             work, tools, window=window, reserve=reserve, safety=safety, overhead=rep.wire_overhead,
-            unfittable_alone=True, **protected)
+            unfittable_alone=True, notes=notes, **protected)
         hard_budget = msg_budget
         if headroom and _msgs_tokens(work) > hard_budget:
             # Headroom never initiates reduction on a fitting request and never
@@ -625,8 +626,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # is there to answer it (Upstream raises InputOverflow, a truthful message with sizes).
         work, more = _withhold_oversized_results(
             work, tools, window=window, reserve=reserve, safety=safety,
-            overhead=rep.wire_overhead, **protected)
-        rep.results_withheld += more
+            overhead=rep.wire_overhead, notes=notes, **protected)
         if more:
             rep.msg_tokens_after = _msgs_tokens(work)
             over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
@@ -646,14 +646,15 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         if over:
             work, more = _withhold_oversized_results(
                 work, tools, window=window, reserve=reserve, safety=safety,
-                overhead=rep.wire_overhead, **protected)
-            rep.results_withheld += more
+                overhead=rep.wire_overhead, notes=notes, **protected)
             over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
     if over:
         required = math.ceil((est_total(work, tools) + rep.wire_overhead) * safety)
         if required <= window:
             rep.reserve = min(reserve, window - required)
             over = False
+    # What the event says is what the body carries: a note lever 7 later dropped with its turn is not "withheld".
+    rep.results_withheld = sum(1 for m in work if any(m is note for note in notes))
     rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
@@ -662,7 +663,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
 
 def _withhold_oversized_results(messages: list[dict], tools, *, window: int, reserve: int, safety: float,
-                                overhead: int, protected_call_ids=(), unfittable_alone=False) -> tuple[list[dict], int]:
+                                overhead: int, protected_call_ids=(), unfittable_alone=False,
+                                notes: list | None = None) -> tuple[list[dict], int]:
     """Swap the LARGEST tool results for a labelled not-delivered note, one at a time, until the request fits
     (``fits``, default: the whole request under the window) or none is left. Nothing else is touched, and a
     request that already fits never reaches it.
@@ -680,8 +682,10 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
     that cannot fit. It is derived from the result and its call alone, so every later request carrying the same
     result (the harness keeps it in its history) is answered the same way — no state.
 
-    Left alone: a protected read (its own overflow path), a result carrying an image, cria's own gate output, and
-    any result too small to be the reason (a stand-in must save something)."""
+    Left alone: a protected read (its own overflow path), a result carrying an image, cria's own gate output, a note
+    this fit already wrote (``notes``, by identity: a note about a note reported the NOTE's size as the result's, and the
+    result's real size was gone), and any result too small to be the reason (a stand-in must save something)."""
+    notes = [] if notes is None else notes
     # The frame no lever drops: system text, the request being answered, the tool menu. Lever 3b only ever takes a
     # result answering the request (after the last user message, which lever 4 never drops): anything earlier is
     # history, and history is the drop levers' to spend.
@@ -691,7 +695,7 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
         return (est_total(w, tools) + overhead) * safety <= window - reserve
     preserved = _preserved_indices(messages, protected_call_ids) | _marker_protected(messages)   # cria's gate output too
     sized = sorted(((est_tokens(_msg_text(m)), i) for i, m in enumerate(messages)
-                    if m.get("role") == "tool" and i not in preserved
+                    if m.get("role") == "tool" and i not in preserved and not any(m is note for note in notes)
                     and (not unfittable_alone or (i > last_user and (est_tokens(_msg_text(m)) + frame + overhead) * safety > window - reserve))),
                    reverse=True)
     out, n = list(messages), 0
@@ -704,6 +708,7 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
         if est_tokens(note) >= size:
             break                      # sorted largest first: no later one can save more
         out[i] = {k: v for k, v in out[i].items() if k not in _READ_CLAIMS} | {"content": note}
+        notes.append(out[i])
         n += 1
     return out, n
 
@@ -978,7 +983,21 @@ def _historical_annotation(message: dict) -> bool:
 
 
 def _live_tail(messages: list[dict], keep: int = OVERFLOW_KEEP_TAIL) -> set[int]:
-    return set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-keep:])
+    """The newest ``keep`` live messages, closed over call/result pairs in BOTH directions. A cut through one parallel turn kept a
+    result without its call (the orphan strip then deleted the very results the tail was there to keep) or a call without its
+    other results; the unit the coder is answering is the call and all its results, whatever ``keep`` says."""
+    tail = set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-keep:])
+    while True:
+        ids = {m.get("tool_call_id") for i, m in enumerate(messages) if i in tail and m.get("role") == "tool"}
+        ids |= {tc.get("id") for i, m in enumerate(messages) if i in tail and m.get("role") == "assistant"
+                for tc in m.get("tool_calls") or []}
+        ids.discard(None)
+        grown = tail | {i for i, m in enumerate(messages)
+                        if m.get("tool_call_id") in ids or (m.get("role") == "assistant"
+                                                             and any(tc.get("id") in ids for tc in m.get("tool_calls") or []))}
+        if grown == tail:
+            return tail
+        tail = grown
 
 
 def _input_core(messages: list[dict], pinned_task: str, *, protected_call_ids=()) -> list[dict]:
