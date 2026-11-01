@@ -3281,15 +3281,13 @@ class Loop:
                 if admitted_writes is not None:
                     fact = admitted_writes.get(cid)
                     admitted = (fact is not None and fact.content == prepared.content
-                                and posixpath.normpath(fact.path) == posixpath.normpath(
-                                    posixpath.join(root, prepared.path)))
+                                and here(fact.path) == here(prepared.path))
                 else:
                     fn = call.get('function') or {}
                     args = _args_of(fn.get('arguments'))
                     admitted = (fn.get('name') in writeproxy_names
                                 and args.get('content', args.get('contents')) == prepared.content
-                                and posixpath.normpath(_write_path(fn) or '') == posixpath.normpath(
-                                    posixpath.join(root, prepared.path)))
+                                and here(_write_path(fn) or '') == here(prepared.path))
                 if admitted:
                     kept.append(call)
         result = definition.forwarded(state, prepared,
