@@ -18,7 +18,23 @@ STDOUT_LIMIT = 10_000
 # first of them also fits beside a few KB of noise untruncated.
 REFETCH_LIMITS = (2000, 1000, 500)
 MAX_REFETCH = 8
+ROOM_SAFETY_BYTES = 300     # a record beside a harness cut: noise a little longer than the one measured must not cut it (the gate's own margin)
 _CUT_MARK = re.compile('…(\\d+) chars truncated…')
+
+
+def room_beside_noise(before: int, after: int, cut_side: str | None) -> int:
+    """The bytes one record may occupy on the wire beside what a login shell printed around it (``before`` / ``after``, measured off a
+    result the record survived in). The harness keeps a result whole up to STDOUT_LIMIT, else only its first and last halves: a record
+    fits whole when the result is not cut (the limit less both noises, or a half less either: the larger), in the head (a half less
+    the noise before it) or in the tail (a half less the noise after it). ``cut_side`` is where the record sat relative to the
+    harness's cut marker: ``"head"`` (before it), ``"tail"`` (after it) or None (no cut). The ONE owner of this arithmetic: the
+    multipart pages and the completion gate's transport pages both size to it."""
+    half = STDOUT_LIMIT // 2
+    if cut_side == 'tail':
+        return half - after
+    if cut_side == 'head':
+        return half - before
+    return max(STDOUT_LIMIT - before - after, half - before, half - after)
 
 
 class InvalidPage(ValueError):
@@ -93,8 +109,7 @@ class MultipartRead:
     write_outcome: str | None = None
     snapshot: tuple | None = None       # (mode, reason, taken) as the FIRST page declared; later pages must repeat mode and taken
     snapshot_now: tuple | None = None   # the path's identity as of the LAST page; compared with `taken` at delivery
-    noise: int = 0                      # the most bytes seen around a page record (shell output before/after the program)
-    intact: int = 0                     # the largest record that survived a harness cut whole (a floor for the page size)
+    room: int = STDOUT_LIMIT            # the bytes a record may occupy beside the shell output measured around the last page (`room_beside_noise`)
     misses: int = 0                     # consecutive cut results whose record did not survive
     refetches: int = 0
     _parts: list[bytes] = field(default_factory=list, repr=False)
@@ -118,11 +133,11 @@ class MultipartRead:
 
     @property
     def limit(self) -> int:
-        """The record byte limit of the NEXT page command: the harness limit less the noise measured around the last
-        records (a re-fetch uses its smaller probe limit), never below a record already seen to arrive whole."""
+        """The record byte limit of the NEXT page command: the room measured beside the shell's output around the last page (a
+        re-fetch uses its smaller probe limit)."""
         if self.misses:
             return REFETCH_LIMITS[self.misses - 1]
-        return max(STDOUT_LIMIT - self.noise, self.intact)
+        return self.room
 
     def take(self, text: str, cut: bool = False) -> bool:
         """Consume one harness result that may carry shell output around the producer's record.
@@ -155,12 +170,16 @@ class MultipartRead:
             self._parts.clear()
             raise (CutPage if cut else InvalidPage)('no page record in the output')
         record = payload[start:end]
-        noise = len(payload) - len(record) + (int(mark.group(1)) - len(mark.group(0).encode()) if mark else 0)
+        before, after = start, len(payload) - end
         complete = self.accept(record)
         self.misses = 0
-        self.noise = max(self.noise, noise)
-        if cut:
-            self.intact = max(self.intact, len(record))
+        # Measured off THIS result, never accumulated: a record the harness kept whole in its tail has the tail less what the shell printed
+        # after it, however large the noise before it (the elided noise is not in the way). The record that arrived is a floor.
+        if mark:
+            room = room_beside_noise(before, after, 'head' if at >= end else 'tail') - ROOM_SAFETY_BYTES
+        else:
+            room = room_beside_noise(before, after, None)      # not cut (or cut with no marker to place the record against): the whole result is on the wire
+        self.room = max(min(STDOUT_LIMIT, room), len(record))
         return complete
 
     def _accept(self, wire):

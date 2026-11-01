@@ -1784,13 +1784,22 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             content = str(paired_result.get("content") or "")
             off = _payload_offset(content)
             found = resultpacket.find_record(content, off, token)
-            if found is None and declaration.get("sv") == 1:
+            if found is None:
                 # A shell that printed >5 KB before the program leaves the harness's tail holding the records (it keeps the first and
-                # last halves). Record 1 is taken from there only when its DECLARED second record follows it on the very next line:
-                # a quoted record in a command's tail is never followed by a valid survey of the same receipt.
+                # last halves). Record 1 is taken from there only on a proof the cut did not destroy: its DECLARED second record follows it
+                # on the very next line (a quoted record in a command's tail is never followed by a valid survey of the same receipt), or
+                # the call is one of cria's own write/edit programs (declared and recomputed from this call's id, name and arguments) and
+                # nothing but whitespace follows the record: those programs print NO other output after a landed / unapplied record 1
+                # (a survey rides only every SURVEY_EVERY-th call, so most results carry none), so the record that ENDS the result is
+                # the program's own last word. Anything printed after it (a failure message, shell noise after the program) leaves the
+                # result UNKNOWN, as before. A read never qualifies: its tail is the file.
                 found = resultpacket.find_record(content, off, token, past_cut=True)
-                if found is not None and resultpacket.read_record(content, found[1].end, token, survey=True) is None:
-                    found = None
+                if found is not None:
+                    survey_follows = (declaration.get("sv") == 1
+                                      and resultpacket.read_record(content, found[1].end, token, survey=True) is not None)
+                    ends_the_result = declaration.get("name") in _SURVEYABLE and not content[found[1].end:].strip()
+                    if not (survey_follows or ends_the_result):
+                        found = None
             if found is None:
                 continue
             first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped, as multipart drops it

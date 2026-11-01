@@ -49,6 +49,7 @@ from . import groundtruth, participation, probediscovery, probeparse, prompts, p
 _LOC_PREFIX = re.compile(r"^\S.*?:\d+(?::\d+)?:?\s+")
 
 from .proberun import ProbeReport
+from .multipart import STDOUT_LIMIT, room_beside_noise
 # runner_tally lives in probeparse now (it parses runner OUTPUT, and the tally must be taken at
 # parse time while the raw text still exists). Re-exported so existing callers are unmoved.
 from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: F401
@@ -83,7 +84,7 @@ TRANSPORT_RAW_PAGE_MAX = 65_536
 # middle used to end the whole transport UNKNOWN (the gate was then re-composed, and re-cut, until the run's wall clock ended). Each page
 # says how much noise surrounded it (`_learn_noise`), the next page is asked for at the size that fits beside it, and a page the harness
 # cut anyway is asked for again at the next of TRANSPORT_REFETCH_BUDGETS (never more than three times in a row, then the old UNKNOWN).
-TRANSPORT_RESULT_BYTES = 10_000
+TRANSPORT_RESULT_BYTES = STDOUT_LIMIT      # the harness's own bound, one number with the multipart pages
 TRANSPORT_REFETCH_BUDGETS = (1_500, 750, 375)
 TRANSPORT_MIN_BUDGET = 128
 TRANSPORT_SAFETY_BYTES = 300       # envelope header, CRLF expansion and anything else the measure cannot see
@@ -597,13 +598,7 @@ def _learn_noise(plan: GatePlan, text: str, start: int, stop: int, data_len: int
     base = envelope.record_start if envelope is not None else 0
     cut = _HARNESS_CUT_MARK.search(text)
     before, after = start - base, len(text) - stop
-    half = TRANSPORT_RESULT_BYTES // 2
-    if cut is None:
-        room = max(TRANSPORT_RESULT_BYTES - before - after, half - before, half - after)
-    elif cut.end() <= start:
-        room = half - after                    # the page survived in the tail
-    else:
-        room = half - before                   # the page survived in the head
+    room = room_beside_noise(before, after, None if cut is None else 'tail' if cut.end() <= start else 'head')
     overhead = (stop - start) - data_len if data_len is not None else _RUNNING_PAGE_OVERHEAD
     plan.transport_budget = max(TRANSPORT_MIN_BUDGET, min(TRANSPORT_CHUNK_BYTES, 3 * ((room - overhead - TRANSPORT_SAFETY_BYTES) // 4)))
     plan.transport_cuts = 0
