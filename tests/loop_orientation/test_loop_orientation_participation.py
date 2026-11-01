@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from cria import loop, participation as pt, probediscovery as pd, wsview
+from cria import loop, participation as pt, probediscovery as pd, probegate, wsview
 from loop_orientation_helpers import Log, local_workspace_view  # noqa: F401
 
 E = pd.Ecosystem
@@ -111,3 +111,37 @@ def test_a_positive_satisfaction_verdict_cannot_promote_a_required_test_that_nev
     chat = lambda body, _log: json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]}).encode()
     ok, _reason, _fix = loop.judge_satisfaction(task, "Wrote lookup.js", chat, None, Log(), sess=state)
     assert ok is satisfied and not queue
+
+
+def _run(cid, cmd, output, code):
+    call = {"role": "assistant", "tool_calls": [{"id": cid, "type": "function",
+                                                  "function": {"name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]}
+    result = {"role": "tool", "tool_call_id": cid,
+              "content": f"Chunk ID: ab12\nWall time: 0.0 seconds\nProcess exited with code {code}\nOriginal token count: 1\nOutput:\n{output}"}
+    return [call, result]
+
+CALC_TASK = "Create test_calc.py that prints OK, and run `python3 test_calc.py` to confirm it prints OK."
+
+@pytest.mark.parametrize("command,output,code,answers,approved", [
+    ("python3 test_calc.py", "OK\n", 0, ["REQUIRED", "YES"], True),                          # item 29: the named run, exit 0, the runner found no tests
+    ("python3 test_calc.py", "OK\n", 0, ["REQUIRED", "NO"], False),                          # the judge says it is not the required test
+    ("python3 test_calc.py", "Traceback\nAssertionError\n", 1, ["REQUIRED", "NO"], False),   # a failing run is shown with its exit status
+    ("python3 calc.py", "", 0, ["REQUIRED", "NO"], False),                                    # a different command
+])
+def test_a_completion_the_empty_gate_runner_cannot_prove_is_released_by_the_coders_own_named_run(command, output, code, answers, approved):
+    """Real shape from the e2e Calc cells: the gate's `pytest -q` exits 5 ('no tests ran'), the coder ran the task's own command.
+    The judge is shown the CODER's runs with their exit statuses (never cria's own gate command); its YES releases, its NO keeps the block."""
+    gate_command = probegate._gate_sentinel(["python3 -m pytest -q"]) + "\ncd /ws && python3 -m pytest -q"
+    history = [*_run("c1", command, output, code), *_run("gate", gate_command, "no tests ran in 0.00s", 5)]
+    state = loop.GuardState()
+    state.last_gate_participation = pt.report([pt.observe(cand(E.Python, "python3 -m pytest -q"), "no tests ran in 0.00s", 5)])
+    state.gate_fresh = True
+    queue, asked = [SATISFIED, *answers], []
+    def chat(body, _log):
+        asked.append(json.dumps(body["messages"]))
+        return json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]}).encode()
+    ok, _reason, _fix = loop.judge_satisfaction(CALC_TASK, "Wrote test_calc.py", chat, None, Log(), sess=state, messages=history)
+    assert ok is approved and not queue
+    question = asked[-1]
+    assert f"[1] command: {command}" in question and f"exit status: {code}" in question
+    assert "[2]" not in question and "_gate_" not in question and "cd /ws" not in question

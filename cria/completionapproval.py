@@ -57,11 +57,38 @@ class ExactFormInput:
 
 
 @dataclass(frozen=True)
+class ShellRun:
+    """One command the coder ran and got a result for: ground truth gathered from the transcript."""
+    command: str
+    exit_code: int | None
+    output: str
+
+
+@dataclass(frozen=True)
 class ParticipationInput:
     task: str
     report: Callable[[], participation.ParticipationReport | None]
     questions: Questions
     log: EventLog | None = None
+    runs: Callable[[], tuple[ShellRun, ...]] = lambda: ()
+
+
+RUNS_SHOWN = 15           # newest runs put to the question; the omission is labelled
+OUTPUT_HEAD = 600         # characters of each run's output; the cut is labelled
+
+
+def render_runs(runs: tuple[ShellRun, ...]) -> str:
+    """The coder's runs as the question reads them, every reduction labelled."""
+    shown = runs[-RUNS_SHOWN:]
+    lines = [f"({len(runs) - len(shown)} earlier runs are not shown)"] if len(shown) < len(runs) else []
+    for number, run in enumerate(shown, len(runs) - len(shown) + 1):
+        status = "not reported" if run.exit_code is None else str(run.exit_code)
+        head = run.output[:OUTPUT_HEAD].rstrip()
+        cut = f" (first {OUTPUT_HEAD:,} of {len(run.output):,} characters; the rest is not shown)" \
+            if len(run.output) > OUTPUT_HEAD else ""
+        lines += [f"[{number}] command: {run.command}", f"    exit status: {status}", f"    output{cut}:",
+                  *("      " + line for line in (head.splitlines() or ["(nothing printed)"]))]
+    return "\n".join(lines)
 
 
 def exact_form(source: ExactFormInput) -> ApprovalResult:
@@ -114,6 +141,22 @@ def exact_form(source: ExactFormInput) -> ApprovalResult:
     return ApprovalResult(ApprovalStatus.CONTRADICTED, prompts.render("exact_form_unmet", facts=facts)) if contradicted else ApprovalResult(ApprovalStatus.PERMITTED)
 
 
+def _coder_ran_required_test(source: ParticipationInput) -> bool:
+    """The gate's own runner collected nothing, so the only evidence of the task's named run is the coder's
+    own: ask ONE question of its recorded runs. An unreadable answer, or no recorded run, is a NO (the block
+    stands, bounded by the caller's completion-check limit)."""
+    runs = source.runs()
+    if not runs:
+        return False
+    answer = source.questions.closed(
+        prompts.render("coder_run_executes_required_test", task=source.task, runs=render_runs(runs)),
+        phase="coder-run-executes-required-test").strip().upper()
+    if source.log is not None:
+        source.log.emit("loop.coder_run_executes_required_test", runs=len(runs),
+                        executed=(answer == "YES") if answer else "unknown")
+    return answer == "YES"
+
+
 def test_participation(source: ParticipationInput) -> ApprovalResult:
     report = source.report()
     if report is None:
@@ -127,6 +170,8 @@ def test_participation(source: ParticipationInput) -> ApprovalResult:
         if source.log is not None:
             source.log.emit("loop.test_participation_requirement", support=support.value,
                             required=(answer == "REQUIRED") if answer else "unknown")
+        if answer == "REQUIRED" and support is participation.Support.ABSENT and _coder_ran_required_test(source):
+            return ApprovalResult(ApprovalStatus.PERMITTED)
         return ApprovalResult(ApprovalStatus.NO_CONSTRAINT if answer == "NOT_REQUIRED" else
                               ApprovalStatus.CONTRADICTED if answer == "REQUIRED" and support in
                               (participation.Support.ABSENT, participation.Support.FAILED) else ApprovalStatus.WITHHELD)
@@ -167,7 +212,7 @@ class ParticipationDefinition:
 
 PARTICIPATION = ParticipationDefinition(
     Policy("task-required-test-participation", "completion-approval", 4, family_id="F43",
-           prompts=("test_participation_requirement", "test_e2e_requirement", "test_e2e_participation"),
+           prompts=("test_participation_requirement", "coder_run_executes_required_test", "test_e2e_requirement", "test_e2e_participation"),
            services=("lazy-gate-participation", "closed-question", "inspecting-critic"),
            hooks=(Reference("cria/loop.py", "judge_satisfaction"),),
            regressions=(

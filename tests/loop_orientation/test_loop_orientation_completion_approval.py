@@ -63,6 +63,45 @@ def test_measured_non_participation_is_contradicted_not_merely_unknown():
         report = pt.ParticipationReport((pt.ProbeParticipation(None, ("test",), 0, True, test=phase),))
         assert ca.test_participation(ca.ParticipationInput(TASK, lambda: report, Questions("REQUIRED"))).status is S.CONTRADICTED
 
+SCRIPT_TASK = "Create test_calc.py that prints OK, and run `python3 test_calc.py` to confirm it prints OK."
+NO_TESTS = pt.report([pt.observe(cand(pd.Ecosystem.Python, "python3 -m pytest -q"), "no tests ran in 0.00s", 5)])
+
+@pytest.mark.parametrize("support,answers,runs,status,asked", [
+    # The gate's runner collected nothing (support absent) but the coder's own run is the one the task named.
+    ("absent", ["REQUIRED", "YES"], 1, S.PERMITTED, ["test-participation-requirement", "coder-run-executes-required-test"]),
+    ("absent", ["REQUIRED", "NO"], 1, S.CONTRADICTED, ["test-participation-requirement", "coder-run-executes-required-test"]),
+    ("absent", ["REQUIRED", ""], 1, S.CONTRADICTED, ["test-participation-requirement", "coder-run-executes-required-test"]),  # unreadable: the block stands
+    ("absent", ["REQUIRED", "MAYBE"], 1, S.CONTRADICTED, ["test-participation-requirement", "coder-run-executes-required-test"]),
+    ("absent", ["REQUIRED"], 0, S.CONTRADICTED, ["test-participation-requirement"]),   # nothing was run: no second question
+    ("absent", ["NOT_REQUIRED"], 1, S.NO_CONSTRAINT, ["test-participation-requirement"]),
+    ("failed", ["REQUIRED", "YES"], 1, S.CONTRADICTED, ["test-participation-requirement"]),   # a runner that reported failures is never released by a claim
+    ("unknown", ["REQUIRED", "YES"], 1, S.WITHHELD, ["test-participation-requirement"]),
+])
+def test_a_run_the_coder_made_releases_an_empty_runner_only_when_the_judge_says_it_is_the_required_test(support, answers, runs, status, asked):
+    """Item 29: the gate's own `pytest -q` collected nothing (exit 5) although the task named `python3 test_calc.py` and the
+    coder ran exactly that. Only the empty-runner case (ABSENT) asks about the coder's runs; YES releases; NO, nothing readable
+    or nothing run keeps the block; FAILED/UNKNOWN support never consults the runs."""
+    report = NO_TESTS if support == "absent" else pt.ParticipationReport((pt.ProbeParticipation(
+        None, ("pytest",), 1, True, test=pt.PhaseParticipation(passed=False) if support == "failed" else pt.PhaseParticipation()),))
+    assert report.support("test").value == support
+    log, questions = Log(), Questions(*answers)
+    seen = []
+    questions.closed = lambda prompt, *, phase, _inner=questions.closed: (seen.append((phase, prompt)), _inner(prompt, phase=phase))[1]
+    shell = tuple(ca.ShellRun("python3 test_calc.py", 0, "OK\n") for _ in range(runs))
+    result = ca.test_participation(ca.ParticipationInput(SCRIPT_TASK, lambda: report, questions, log, lambda: shell))
+    assert result.status is status and [p for p, _ in seen] == asked
+    if "coder-run-executes-required-test" in asked:
+        prompt = seen[-1][1]
+        assert SCRIPT_TASK in prompt and "[1] command: python3 test_calc.py" in prompt and "exit status: 0" in prompt
+        assert log.events[-1] == ("loop.coder_run_executes_required_test", dict(runs=1, executed=answers[1] == "YES" if answers[1] else "unknown"))
+
+def test_the_runs_put_to_the_question_are_bounded_and_every_cut_is_labelled():
+    runs = tuple(ca.ShellRun(f"cmd{i}", None if i == 0 else i, "y" * 1000 if i == 19 else "") for i in range(20))
+    text = ca.render_runs(runs)
+    assert text.startswith("(5 earlier runs are not shown)") and "cmd4" not in text and "[6] command: cmd5" in text and "[20] command: cmd19" in text
+    assert "output (first 600 of 1,000 characters; the rest is not shown)" in text and text.count("y") == 600
+    assert "exit status: not reported" in ca.render_runs(runs[:1]) and "(nothing printed)" in ca.render_runs(runs[:1])
+
 def test_an_end_to_end_requirement_is_judged_on_the_executed_test_source():
     event = pt.observe(cand(pd.Ecosystem.JsTs, "npm test"), "Tests: 1 passed", 0)
     event = replace(event, test_sources=(pt.TestSourceEvidence("test/cli.js", "spawn CLI and assert exit"),))

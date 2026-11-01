@@ -1881,7 +1881,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
             for definition in assistruntime.current().pre_release:
                 if isinstance(definition, completionapproval.ParticipationDefinition):
                     source = completionapproval.ParticipationInput(
-                        task, lambda: getattr(sess, "last_gate_participation", None), questions, rlog)
+                        task, lambda: getattr(sess, "last_gate_participation", None), questions, rlog,
+                        runs=lambda: _coder_shell_runs(messages))
                     withheld = "required_test_unverified"
                 else:
                     source = completionapproval.ExactFormInput(
@@ -6399,6 +6400,23 @@ def _shell_runs(messages: list[dict]):
                 yield tid, calls[tid], c
 
 
+def _coder_shell_runs(messages: list[dict] | None) -> tuple[completionapproval.ShellRun, ...]:
+    """The commands the CODER ran and got a result for (never cria's own gate command), each with the exit
+    status its result envelope reports (None when the harness reports none) and the output after the
+    envelope's own header. Ground truth for a question about what the coder actually executed."""
+    from .resultnotes import exec_envelope
+    own = probegate.gate_call_ids(messages or [])
+    runs = []
+    for tid, cmd, res in _shell_runs(messages):
+        if tid in own:
+            continue
+        envelope = exec_envelope(res)
+        runs.append(completionapproval.ShellRun(
+            cmd, envelope.exit_code if envelope is not None else None,
+            res[envelope.payload_start:] if envelope is not None else res))
+    return tuple(runs)
+
+
 def _command_names_path(command: str, rel: str) -> bool:
     """Does ``command`` name ``rel`` as a whole path (relative, or as the tail of an absolute one)?"""
     return re.search(rf"(?<![\w.-]){re.escape(rel)}(?![\w/-]|\.\w)", command) is not None
@@ -7554,7 +7572,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
             rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
-                      accepted=False, reason="judge unavailable")
+                      accepted=False, reason="judge unavailable", lens="unavailable")
         return False
 
     candidate = prompts.render("compaction_candidate", briefing=briefing.strip())
@@ -7568,7 +7586,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         answers["figures"] = "UNGROUNDED " + ", ".join(unread)
         if rlog is not None:
             rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
-                      accepted=False, answers=answers)
+                      accepted=False, answers=answers, lens="figures")
         return False
 
     def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
@@ -7623,8 +7641,10 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
             answers["build"] = "UNRUN " + unbuilt
             accepted = False
     if rlog is not None:
+        # The lens that refused is the last one asked (each lens runs only after the earlier ones accepted).
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
-                  level="info" if accepted else "warn", accepted=accepted, answers=answers)
+                  level="info" if accepted else "warn", accepted=accepted, answers=answers,
+                  lens="" if accepted else next(reversed(answers), "unavailable"))
     return accepted
 
 
