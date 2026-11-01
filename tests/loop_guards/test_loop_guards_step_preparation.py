@@ -184,3 +184,25 @@ def test_a_remediation_directive_replaces_the_step_cursor_without_running_step_p
     directed = sp.with_directive(base, prompts.load("completion_remediation"), prompts.load("plan_ack"))
     assert directed[-1]["content"] == prompts.load("completion_remediation") and not asked
     assert [m for m in directed if m.get("content") == TASK] and cursor not in directed
+
+
+@pytest.mark.parametrize("rules_first", [True, False])
+def test_the_first_persona_wins_at_its_exact_offset_and_a_build_location_is_annotated_after_its_result_not_put_in_the_system(rules_first):
+    """Two persona-bearing caller messages behind a rules-only one: the span is the FIRST persona, addressable by offset into the
+    joined caller text; a build-dependency location a tool printed rides after that tool result, never in the step frame's system."""
+    other = "You are a second persona."
+    messages = history()
+    messages[2:2] = [{"role": "developer", "content": other, bodykeys.CALLER_INSTRUCTIONS: True, bodykeys.CALLER_PERSONA: other}]
+    messages.append({"role": "tool", "content": "launch: -Dmaven.repo.local=/shared/m2/repo"})
+    if rules_first:
+        messages.insert(1, {"role": "developer", "content": "Rules only, no persona.", bodykeys.CALLER_INSTRUCTIONS: True})
+    perms = 4 if rules_first else 3
+    messages[perms] = {**messages[perms], "content": "The sandbox permits editing files in `cwd` and `writable_roots`.\n The writable roots are `/shared`.\n"}
+    source, _ = make(messages=messages)
+    out = prepare(source)
+    system = out.messages[0]
+    span = system[bodykeys.CALLER_SPAN]
+    assert span["text"] == PERSONA and system["content"][span["start"]:span["start"] + len(PERSONA)] == PERSONA
+    assert "resolves its dependencies" not in system["content"] and "/shared/m2/repo" not in system["content"]
+    notes = [m["content"] for m in out.messages if m["role"] == "user" and "/shared/m2/repo" in m["content"]]
+    assert len(notes) == 1
