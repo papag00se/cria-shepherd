@@ -141,3 +141,22 @@ def test_confirmation_runs_at_its_level_and_step_authority_needs_explicit_consen
             selection.run(authority, lambda: source(authority=other), lambda: svc)
     with pytest.raises(ValueError, match="authority"):
         selection.run("step", lambda: source(), lambda: svc)
+
+@pytest.mark.parametrize("claim,root,top,absent", [
+    ("Write `report.md`", "/workspace", [], "report.md"),
+    (None, "/workspace", [], ""),                       # a step with no text names no artifact (and must not crash the reader)
+    ("Write `report.md`", "", [], ""),                  # no root: nothing to look at, whatever the inventory says
+    ("Write `report.md`", "/workspace", None, ""),      # unknown inventory is not emptiness
+    ("Write `report.md`", "/workspace", ["src"], ""),   # a nonempty workspace is never judged here
+])
+def test_an_artifact_is_absent_only_from_a_known_empty_workspace_and_a_missing_claim_or_root_names_nothing(claim, root, top, absent):
+    assert cc.absent_artifact(claim, root, cc.Facts(lambda r: True, lambda r: top)) == absent
+
+@pytest.mark.parametrize("length,clipped", [(120, False), (121, True)])
+def test_the_restated_claim_event_carries_at_most_the_first_120_characters_and_marks_a_cut(length, clipped):
+    why = "x" * (length - 1) + "y"
+    request = source(reason=why)
+    svc, _sent = services([completion(f'{{"consistent":false,"why":"{why}"}}')] * 2)
+    assert cc.confirm(request, svc).status is S.UNVERIFIED
+    head = next(f["head"] for name, f in request.log.events if name == "loop.confirm_restated_claim")
+    assert head == (why[:120] + "…" if clipped else why) and ("y" in head) is (not clipped)
