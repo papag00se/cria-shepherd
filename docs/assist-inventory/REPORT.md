@@ -1617,7 +1617,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: webfetch_guards. Dependencies: none.
   Hooks: [`cria/webfetch.py:fetch_nav`](../../cria/webfetch.py#L1460).
-  Regressions: [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_a_fetch_is_identified_by_url_find_cursor_and_raw_and_a_deselected_fetch_stage_keeps_the_exact_transport_bytes`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L94), [`tests/research_discovery/test_research_discovery_cov_policies.py:test_a_repeat_fetch_is_refused_with_the_reason_its_visible_attempt_actually_had`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L47).
+  Regressions: [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_a_fetch_is_identified_by_url_find_cursor_and_raw_and_a_deselected_fetch_stage_keeps_the_exact_transport_bytes`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L94), [`tests/research_discovery/test_research_discovery_cov_policies.py:test_a_repeat_fetch_is_refused_with_the_reason_its_visible_attempt_actually_had`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L50).
 - `fetch-failure-streak` — [`cria/researchpolicies.py:FAILURE`](../../cria/researchpolicies.py); execute `failure_observation`.
   Stage `research-fetch-observation`; default level 2; scope `runtime`.
   State: task-local consecutive external failures; reset on success/task/fork. Services: fetch-status, protocol-discovery-status.
@@ -1625,7 +1625,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: webfetch_guards. Dependencies: none.
   Hooks: [`cria/webfetch.py:fetch_nav`](../../cria/webfetch.py#L1460), [`cria/webfetch.py:reset_session`](../../cria/webfetch.py#L287).
-  Regressions: [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_the_failure_streak_is_owned_by_its_stage_and_ignores_internal_hosts`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L111), [`tests/research_discovery/test_research_discovery_cov_policies.py:test_the_failure_streak_counts_consecutive_external_failures_resets_on_success_and_ignores_internal_hosts`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L51).
+  Regressions: [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_the_failure_streak_is_owned_by_its_stage_and_ignores_internal_hosts`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L111), [`tests/research_discovery/test_research_discovery_cov_policies.py:test_the_failure_streak_counts_consecutive_external_failures_resets_on_success_and_ignores_internal_hosts`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L54).
 - `search-spill-read-judgment` — [`cria/researchpolicies.py:SPILL`](../../cria/researchpolicies.py); execute `spill_read_judgment`.
   Stage `research-spill-read`; default level 5; scope `runtime`.
   State: task-local judged/poisoned paths and recommendation; reset on task/fork. Services: original-spill-query, current-spill-bytes, task, search-judge, task-host-veto.
@@ -1633,7 +1633,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: search_read_denied. Dependencies: none.
   Hooks: [`cria/researchpolicies.py:ResearchSelection.spill_read`](../../cria/researchpolicies.py#L366), [`cria/loop.py:Loop._judge_search_reads`](../../cria/loop.py#L3721).
-  Regressions: [`tests/research_discovery/test_research_discovery_cov_policies.py:test_a_search_spill_is_judged_once_and_only_an_off_target_verdict_poisons_it_unless_the_task_host_vetoes`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L65), [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_a_deselected_or_replaced_spill_stage_owns_all_detection_and_settlement`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L136).
+  Regressions: [`tests/research_discovery/test_research_discovery_cov_policies.py:test_a_search_spill_is_judged_once_and_only_an_off_target_verdict_poisons_it_unless_the_task_host_vetoes`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L68), [`tests/research_discovery/test_research_discovery_arcc_selection.py:test_a_deselected_or_replaced_spill_stage_owns_all_detection_and_settlement`](../../tests/research_discovery/test_research_discovery_arcc_selection.py#L136).
 - `overlapping-search-new-direction` — [`cria/semanticquery.py:REHUNT`](../../cria/semanticquery.py); execute `rehunt`.
   Stage `outgoing-search-rehunt`; default level 5; scope `runtime`.
   State: Reference-backed per-session bool answers; cache-owned unspent-grant metadata; canonical owner consumes one-use clearance. Services: selected-search-repeat-public-api, shared-task-and-tool-facts, summary-provider.
@@ -1936,7 +1936,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: api_discovery. Dependencies: none.
   Hooks: [`cria/discoverypolicy.py:discovery`](../../cria/discoverypolicy.py#L115).
-  Regressions: [`tests/research_discovery/test_research_discovery_cov_policies.py:test_discovery_substitutes_the_get_body_only_for_a_truthy_observed_contract_and_every_failure_leaves_the_get_alone`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L87).
+  Regressions: [`tests/research_discovery/test_research_discovery_cov_policies.py:test_discovery_substitutes_the_get_body_only_for_a_truthy_observed_contract_and_every_failure_leaves_the_get_alone`](../../tests/research_discovery/test_research_discovery_cov_policies.py#L90).
 - `automatic-document-guidance` — [`cria/documentguidance.py:DEFINITION`](../../cria/documentguidance.py); execute `guidance`.
   Stage `document-guidance`; default level 0; scope `runtime`.
   State: none; invocation-local result, discard on cancel and recompute on retry. Services: parsed document navigation facts, prompt loader.
