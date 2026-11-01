@@ -21,6 +21,7 @@ RANK4_DISABLED = (
     "environment-failure-advice",
     "empty-search-note",
     "filtered-failure-note",
+    "running-session-note",
     "missing-dependency-note",
     "dependency-source-note",
     "dependency-api-evidence",

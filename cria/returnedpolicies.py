@@ -447,6 +447,29 @@ def filtered_failure(source: ReturnedResult) -> dict | None:
     return None
 
 
+def _note_running_session(source: ReturnedHistory) -> None:
+    """Say how to get the rest of a command that is still running — on the NEWEST tool result only.
+
+    ornith1.5_9b / Python orders-api, scratch E2E (2026-11-01): the coder ran `pytest -v 2>&1 | tail -40`, a 61 s
+    run; Codex yielded at 10 s with "Process running with session ID N … Output:" and an empty body, and the coder
+    re-ran the command five times instead of waiting. The harness's own `write_stdin` schema says an empty `chars`
+    polls, but nothing beside the result says this result is a session to poll. Across the captured sessions the next
+    call after such a result was `exec_command` 14 times in 22 and `write_stdin` 8. Only the newest result: an older
+    one may since have finished, and a note saying it is still running would be false."""
+    last = next((m for m in reversed(source.messages) if m.get("role") == "tool"), None)
+    if last is None or not isinstance(last.get("content"), str):
+        return
+    envelope = exec_envelope(last["content"])
+    if envelope is None or not envelope.running or not envelope.session:
+        return
+    note = prompts.fill(prompts.load("running_command_note").strip(), session=envelope.session)
+    if note in last["content"]:
+        return
+    append_note(last, note)
+    if source.log is not None:
+        source.log.emit("writeproxy.running_session_note", level="info", session=envelope.session)
+
+
 RESULTS = (
     ReturnedDefinition(Policy('edit-failure-recovery', 'returned-result', 2, family_id='F17',
         services=('prior-edit-results',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
@@ -484,6 +507,11 @@ HISTORY = (
                      Reference('tests/research_discovery/test_research_discovery_arcc_returned.py',
                                'test_deselected_history_stages_touch_no_session_dependency_state')),
         migrated=False), _note_dependency_surface),
+    HistoryDefinition(Policy('running-session-note', 'returned-history', 2, family_id='F14',
+        prompts=('running_command_note',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
+        regressions=(Reference('tests/write_edit/test_write_edit_notes.py',
+                               'test_a_command_still_running_says_how_to_wait_for_it_on_the_newest_result_only'),),
+        migrated=False), _note_running_session),
 )
 REJECTED_DRAFT = DraftDefinition(Policy('rejected-draft-provenance', 'rejected-draft', 2,
     family_id='F15', services=('paired-refusal',), prompts=('rejected_candidate',),

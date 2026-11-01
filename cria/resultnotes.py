@@ -38,6 +38,7 @@ class ExecEnvelope(NamedTuple):
     exit_code: int | None
     running: bool
     cut_warning: str
+    session: str | None = None
 
 
 def exec_envelope(content: str) -> ExecEnvelope | None:
@@ -62,7 +63,7 @@ def exec_envelope(content: str) -> ExecEnvelope | None:
             break
         pos = end
     return ExecEnvelope(match.end(), pos, int(match["exit"]) if match["exit"] is not None else None,
-                        match["session"] is not None, "".join(warnings))
+                        match["session"] is not None, "".join(warnings), match["session"])
 
 
 def _strip_exec_envelope(content: str, *, preserve_eof: bool = False) -> str:

@@ -1,0 +1,1 @@
+⟦ctx:note⟧ That command is still running in session {{SESSION}}; the output above is only what it printed so far. To wait for the rest, call write_stdin with session_id {{SESSION}} and no chars.

@@ -39,6 +39,7 @@
 - `missing-dependency-note` — [F20](REPORT.md#f20)
 - `dependency-source-note` — [F20](REPORT.md#f20)
 - `dependency-api-evidence` — [F20](REPORT.md#f20)
+- `running-session-note` — [F14](REPORT.md#f14)
 - `rejected-draft-provenance` — [F15](REPORT.md#f15)
 - `search-repeat-admission` — [F51](REPORT.md#f51)
 - `search-domain-advice` — [F51](REPORT.md#f51)

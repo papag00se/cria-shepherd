@@ -1,6 +1,6 @@
 # Assist families and executable migration
 
-**63 current maintenance families; 76 registered atomic definitions.** The remaining navigation map is pending R1/R7 migration, not accepted executable coverage. Required wire contracts are explicitly classified foundations, not selectable atomics.
+**63 current maintenance families; 77 registered atomic definitions.** The remaining navigation map is pending R1/R7 migration, not accepted executable coverage. Required wire contracts are explicitly classified foundations, not selectable atomics.
 
 Canonical family metadata: [`cria/assistfamilies.py`](../../cria/assistfamilies.py). Atomic metadata and implementation come directly from production `assistruntime.DEFINITIONS`; this report never executes policies or creates a second atomic catalog.
 
@@ -580,6 +580,14 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Prompts: filtered_failure_note. Dependencies: none.
   Hooks: [`cria/writeproxy.py:represent_inbound`](../../cria/writeproxy.py#L1879).
   Regressions: [`tests/write_edit/test_write_edit_notes.py:test_an_empty_filtered_failure_and_an_empty_search_say_what_they_measured_and_nothing_else_does`](../../tests/write_edit/test_write_edit_notes.py#L19).
+- `running-session-note` — [`cria/returnedpolicies.py:HISTORY[3]`](../../cria/returnedpolicies.py); execute `_note_running_session`.
+  Stage `returned-history`; default level 2; scope `runtime`.
+  State: none. Services: none.
+  Caller triggers: none.
+  Structural migration claim: pending integration.
+  Prompts: running_command_note. Dependencies: none.
+  Hooks: [`cria/writeproxy.py:represent_inbound`](../../cria/writeproxy.py#L1879).
+  Regressions: [`tests/write_edit/test_write_edit_notes.py:test_a_command_still_running_says_how_to_wait_for_it_on_the_newest_result_only`](../../tests/write_edit/test_write_edit_notes.py#L154).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/filecommands.py:_read_command`](../../cria/filecommands.py#L308)

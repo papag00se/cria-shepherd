@@ -149,3 +149,23 @@ def test_a_spilled_document_is_claimed_to_exist_only_while_the_workspace_listing
     finally:
         wsview.unbind(token)
         webfetch.clear_cache()                                                 # the spill ledger is process-global
+
+
+def test_a_command_still_running_says_how_to_wait_for_it_on_the_newest_result_only():
+    """ornith1.5_9b / Python orders-api, scratch E2E (2026-11-01): `pytest -v 2>&1 | tail -40` ran 61 s, Codex yielded at 10 s with "Process running with
+    session ID N" and an empty body, and the coder re-ran it five times instead of polling (22 captured sessions: next call exec_command 14, write_stdin 8).
+    The newest still-running result names the session and the poll; an older one that a later result superseded, and a finished one, get nothing."""
+    running = lambda sid: f"Chunk ID: af0a63\nWall time: 10.0006 seconds\nProcess running with session ID {sid}\nOriginal token count: 0\nOutput:\n"
+    done = "Chunk ID: 1\nWall time: 0.1 seconds\nProcess exited with code 0\nOriginal token count: 3\nOutput:\n3 passed"
+    ask = lambda *results: writeproxy.represent_inbound(
+        [m for i, r in enumerate(results) for m in ({"role": "assistant", "tool_calls": [call("exec_command", {"command": "pytest"}, cid=f"c{i}")]},
+                                                    {"role": "tool", "tool_call_id": f"c{i}", "content": r})])
+    out = ask(running(73913))
+    assert out[1]["content"].endswith("call write_stdin with session_id 73913 and no chars.") and out[1]["content"].count("still running") == 1
+    again = writeproxy.represent_inbound(out)
+    assert again[1]["content"].count("still running") == 1                              # idempotent across requests
+    older, newest = ask(running(111), running(222))[1::2]
+    assert "session 111" not in older["content"] and "session_id 222" in newest["content"]
+    assert all("still running" not in m["content"] for m in ask(done)[1::2])
+    assert all("still running" not in m["content"] for m in ask(running(5), done)[1::2])
+
