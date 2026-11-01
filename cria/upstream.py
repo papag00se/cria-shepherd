@@ -1182,9 +1182,17 @@ class Upstream:
                 # The reply's room is part of the fit. A prompt that merely fits the window
                 # leaves the answer no space: a self-compaction briefing measured 48,192 of a
                 # 49,152 window and was cut off after 959 tokens (run 1792480002 call 0051).
-                if real > window - rep.reserve:
+                held = rep.reserve
+                if read_bindings:
+                    # A protected read is never withheld (it earns read credit), so the floor CLAMPS the reply reserve to
+                    # whatever the read leaves, and `real > window - rep.reserve` then holds only when the read does not
+                    # fit at all: 49,145 tokens in a 49,152 window shipped as `reserve 7` (finish_reason=length after 6
+                    # tokens, the identical request resent four times). A read must leave the reply the floor's own reply
+                    # room (the one ordinary results are withheld for), judged against the reserve the request ASKED for.
+                    held = max(held, contextfloor.reply_room_floor(rep.reserve_requested, window))
+                if real > window - held:
                     if read_bindings and data == _previous_fit:
-                        raise ReadFitOverflow(MeasuredReadOverflow(window, real, rep.reserve, read_bindings, data))
+                        raise ReadFitOverflow(MeasuredReadOverflow(window, real, held, read_bindings, data))
                     if data == _previous_fit:
                         raise InputOverflow("Measured input cannot fit the context window without losing protected input",
                                             real, window, rep.reserve, True, self._other_tokens(out, safety, rlog), frame=_frame_of(out, real / max(sent_estimate, 1)),

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from cria import bodykeys, tokenratio
+from cria import bodykeys, contextfloor, tokenratio
 from cria.upstream import MeasuredReadOverflow, ProtectedRead, ReadFitCallbacks, ReadFitOverflow, ReadFitUnknown, Upstream
 from test_context_wire_a_scenario2_sv2_upstream_errors import Buffered
 from test_context_wire_a_stream import Rlog
@@ -194,3 +194,65 @@ def test_a_read_in_a_request_with_an_image_is_unknown_because_vision_cost_is_not
     with pytest.raises(ReadFitUnknown) as err:
         prep(Llama(8192), request(messages), 5, rlog)
     assert err.value.reason == "visual_capacity_unavailable" and rlog.first("context.image_fit_unknown")
+
+
+def sized_request(window, tokens, reserve, old=0):
+    """A request whose protected read makes the FINAL wire measure exactly `tokens` on the fake tokenizer (3 characters a token): the empty read is sized first, in a window nothing can press."""
+    def build(n):
+        text = "R" * n
+        return {"model": "m", "max_tokens": reserve, "messages": history(old=old, text=text), bodykeys.PROTECTED_READS: (read_of(text),)}
+    base = tokens_of(prep(Llama(10**7), build(0))) * 3
+    body = build(3 * tokens - base)
+    wire = prep(Llama(10**7), body)
+    assert tokens_of(wire) == tokens
+    # The density a session has learned by its tenth turn (level 5 fits at it): the floor's estimate of the read IS its measured size.
+    tokenratio.reset()
+    for _ in range(60):
+        tokenratio.record("m", tokens, contextfloor.est_total(json.loads(wire)["messages"], None))
+    return body
+
+
+# (window, reply room the request asked for, what the read leaves the reply, the floor's own reply room there, what happens)
+READ_LEAVES = [
+    (49152, 16384, 7, 4096, "refused"),            # the incident: big.log measured 49,145 tokens in a 49,152 window, shipped with reserve 7 four times
+    (49152, 16384, 331, 4096, "refused"),          # a squeeze the real run answered in 293 tokens: now refused by the same rule
+    (49152, 16384, 686, 4096, "refused"),          # the cut at 685 tokens mid-reasoning
+    (49152, 16384, 4095, 4096, "refused"),         # one token under the floor
+    (49152, 16384, 4096, 4096, "delivered"),       # exactly the floor
+    (49152, 16384, 9000, 4096, "delivered"),       # less than asked for, more than the floor: the squeeze stands, as before
+    (32768, 16384, 2729, 2730, "refused"),         # the floor scales with the window (windowcaps), not a fixed number
+    (32768, 16384, 2730, 2730, "delivered"),
+    (24576, 16384, 2047, 2048, "refused"),
+    (24576, 16384, 2048, 2048, "delivered"),
+    (16384, 16384, 2047, 2048, "refused"),
+    (16384, 16384, 2048, 2048, "delivered"),
+    (49152, 1000, 999, 1000, "refused"),           # never more than the reply room asked for
+    (49152, 1000, 1000, 1000, "delivered"),
+]
+
+
+@pytest.mark.parametrize("window,asked,leaves,floor,outcome", READ_LEAVES)
+def test_a_protected_read_that_leaves_the_reply_less_than_the_floors_reply_room_is_the_measured_overflow(window, asked, leaves, floor, outcome):
+    """The comparison is against the reply room the request ASKED for (never the reserve the floor had already clamped to whatever the read left, which satisfied the
+    test by construction: `reserve 7`, finish_reason=length after 6 tokens, the identical request resent four times). Delivered means the one request the model gets."""
+    assert contextfloor.reply_room_floor(asked, window) == floor
+    body, rlog, llama = sized_request(window, window - leaves, asked), Rlog(), Llama(window)
+    if outcome == "delivered":
+        wire = prep(llama, body, 5, rlog)
+        assert results(wire)["r1"] == body[bodykeys.PROTECTED_READS][0].model_content and window - tokens_of(wire) == leaves
+        assert "chat" not in llama.paths
+    else:
+        with pytest.raises(ReadFitOverflow) as err:
+            prep(llama, body, 5, rlog)
+        measured = err.value.measurement
+        assert measured.window == window and measured.tokens == window - leaves == tokens_of(measured.final_wire) and measured.tokens + measured.reserve > window
+        assert measured.reads[0].call_id == "r1" and "chat" not in llama.paths
+
+
+def test_a_squeezing_read_is_offered_the_loops_compaction_first_and_then_ends_as_the_overflow_with_guidance():
+    """The same route as every measured overflow: compaction is asked once and, when it frees nothing, the overflow ends with the owner's guidance."""
+    asked, body = [], sized_request(8192, 8192 - 7, 4096, old=3)
+    body[bodykeys.READ_FIT_CALLBACKS] = ReadFitCallbacks(lambda sent, reads: asked.append(reads[0].call_id) or sent, lambda measured: "narrower pieces")
+    with pytest.raises(ReadFitOverflow) as err:
+        prep(Llama(8192), body)
+    assert asked == ["r1"] and err.value.guidance == "narrower pieces" and err.value.measurement.tokens > 8192 - 2048
