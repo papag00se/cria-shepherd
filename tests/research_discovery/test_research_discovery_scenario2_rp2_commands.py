@@ -33,6 +33,7 @@ T, L, TC, F, B, U = K.TEST, K.LINT, K.TYPECHECK, K.FORMAT_CHECK, K.BUILD_CHECK, 
     ("git status", U, None, 0, ""), ("time", U, None, 0, ""), ("env", U, None, 0, ""),
     ("docker run --rm app pytest -q", T, "pytest", 40, "s"), ("docker exec web pytest", T, "pytest", 40, "s"), ("docker compose run web go test ./...", T, "go", 38, "s"),
     ("podman run x cargo test", T, "cargo", 38, "s"), ("docker compose up", U, None, 0, ""), ("docker compose exec web pytest", U, None, 0, ""), ("docker build .", U, None, 0, ""), ("docker run app echo hi", U, None, 0, ""),
+    ("zig build", U, None, 0, ""), ("mvn test:foo", U, None, 0, ""), ("mvn site:run", U, None, 0, ""), ("nix develop path:. -c pytest", T, "pytest", 90, ""),
     ("nix develop -c pytest", T, "pytest", 90, ""), ("nix develop -c", U, None, 0, ""), ("nix develop", U, None, 0, ""),
     ("make test", T, "task-alias", 50, ""), ("make -j4 lint", L, "task-alias", 50, ""), ("just build", B, "task-alias", 50, ""), ("make", U, None, 0, ""),
     ("tox -e py311", T, "tox", 55, ""), ("nox -s tests", T, "nox", 55, ""), ("npm t", T, "package-script", 50, ""), ("npm start", U, None, 0, ""),
@@ -78,3 +79,32 @@ def test_the_tokenizer_keeps_quoted_escaped_and_unterminated_words_as_the_shell_
     assert tokenize("a 'b c' \"d\\\"e\" f\\ g \\") == ["a", "b c", 'd"e', "f g", ""]       # single quotes opaque, \" inside double quotes, escaped space, lone trailing backslash
     assert tokenize("x \"a\\b\" ''") == ["x", "a\\b", ""]                                       # a backslash before an ordinary char stays; '' is an empty word
     assert tokenize("pytest 'unterminated") == ["pytest", "unterminated"] and tokenize("   ") == []
+
+
+@pytest.mark.parametrize("cmd,segments,operators", [
+    ("a||b", ["a", "b"], {"||"}), ("a|b", ["a", "b"], {"|"}), ("a&&b", ["a", "b"], {"&&"}), ("a&b", ["a", "b"], {"&"}),
+    ("a &", ["a"], {"&"}), ("a |", ["a"], {"|"}), ("a ||", ["a"], {"||"}), ("a &&", ["a"], {"&&"}),      # an operator that ends the line
+    ("a|b&&c||d", ["a", "b", "c", "d"], {"|", "&&", "||"}),
+    (";a", ["a"], {";"}), ("&a", ["a"], {"&"}), ("a||;b", ["a", "b"], {"||", ";"}), ("a&&;b", ["a", "b"], {"&&", ";"}),   # the first character and the one after a doubled operator count
+])
+def test_split_chain_and_its_operator_report_agree_on_every_operator_even_unspaced_or_last(cmd, segments, operators):
+    assert split_chain(cmd) == segments and top_level_operators(cmd) == operators
+
+
+@pytest.mark.parametrize("word,assignment", [
+    ("A=1", True), ("Z=1", True), ("a=1", True), ("z=1", True), ("_x=1", True), ("xazAZ09_=1", True), ("a9=", True),
+    ("9a=1", False), ("=1", False), ("a-b=1", False), ("a b=1", False), ("[=1", False), ("`=1", False), ("{=1", False), ("@=1", False), ("é=1", False), ("abc", False)])
+def test_an_env_assignment_word_is_an_ascii_identifier_then_equals(word, assignment):
+    from cria.probeclassify import is_env_assignment
+    assert is_env_assignment(word) is assignment
+
+
+@pytest.mark.parametrize("wrap", [lambda c: "env " + c, lambda c: "sudo -n " + c, lambda c: "uv run " + c, lambda c: "nix develop -c " + c, lambda c: "bash -c '" + c.replace("'", "'\\''") + "'"],
+                         ids=["env", "sudo", "two-token", "nix", "shell"])
+def test_wrappers_are_followed_four_deep_and_no_further(wrap):
+    """MAX_DEPTH bounds the unwrapping: four nested wrappers still reach the probe, a fifth is UNKNOWN - for every wrapper kind."""
+    command = "pytest"
+    for depth in range(1, 6):
+        command = wrap(command)
+        assert (classify_command(command).kind is T) is (depth <= 4)
+    assert classify_command("bash -c 'pytest -q'").reasons[0] == "unwrapped `bash -c`"
