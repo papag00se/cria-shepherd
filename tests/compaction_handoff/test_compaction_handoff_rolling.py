@@ -259,3 +259,25 @@ def test_the_briefing_ask_echoed_back_is_stripped_per_call_site_and_a_real_brief
     assert res.state.summary == real
     refolded, _ = run(history(30), "n" * 9000, refold=lambda s, **k: sc._ask_sentences(refold_ask)[0] + "\nCONDENSED", refold_tokens=100)
     assert refolded.state.summary == "CONDENSED"
+
+
+@pytest.mark.parametrize("middle_tokens,standing,asks", [
+    (8, False, False),        # real Codex 0.159.3 at 16K: ONE ~120-character sentence ("Nothing has been built yet") was the whole middle
+    (400, False, True),       # a middle the rollup frame cannot outweigh is still folded
+    (8, True, False)])        # a standing rollup: the new sliver is not worth a second writer call either
+def test_a_view_that_even_an_empty_briefing_would_not_shrink_never_calls_the_writer(middle_tokens, standing, asks):
+    """An event with before == after cost a writer call plus validators in 8 of 11 real compactions (owner: rolling)."""
+    tail = history(2, 100)[1:]
+    state = sc.CompactState("EARLIER", covered=2, attempted=2) if standing else sc.CompactState()
+    msgs = [{"role": "system", "content": "sys"}] + ([asst(400)] if standing else []) + [asst(middle_tokens, "sliver")] + tail
+    kw = dict(room_tokens=100, keep_tail_tokens=200, recompact_tokens=1, files_list=f"{sc.FILES_MARKER} a.py (10 B)")
+    res, seen = run(msgs, state=state, **kw)
+    assert bool(seen) is asks
+    total = lambda ms: sum(est_tokens(text(m)) for m in ms)
+    if asks:
+        assert res.effect is Effect.REDUCED and total(res.messages) < total(msgs)
+    else:
+        assert (res.state.attempted, res.state.summary) == (state.attempted, state.summary)
+        assert res.effect is (Effect.REDUCED if standing else Effect.NO_OP)
+        assert (sc.SUMMARY_MARKER in text(res.messages[1]) or sc.SUMMARY_MARKER in text(res.messages[2])) is standing
+        assert standing or res.messages is msgs

@@ -1496,6 +1496,17 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
         anchored = _anchor_units(messages)
         summarizable = [_summarizable(m) for i, m in enumerate(messages[lo:tail_start], start=lo)
                         if i not in anchored]
+        if summarizable and not _would_shrink(messages, state, head_end, tail_start, lo,
+                                              pinned_task, files_list):
+            # A writer call (and its three validators) can only be paid back by a smaller view. When
+            # even an empty briefing would leave the compacted view no smaller than the one that stands
+            # (the middle is a sentence, the task header, the files list and the rollup frame outweigh
+            # it), nothing the writer says can help: real Codex 0.159.3 at 16K spent a writer call on ONE
+            # 120-character assistant sentence, and 8 of 11 compactions left the view the same size.
+            # Nothing is attempted, so the span is asked about again once it has grown.
+            return (RollingResult(messages, state, Effect.NO_OP) if not state.summary.strip()
+                    else RollingResult(_view(messages, state, head_end, tail_start, pinned_task,
+                                             files_list, rlog), state, Effect.REDUCED))
         if summarizable:
             # Record the attempt BEFORE accepting its answer. Empty means fail closed, not "try the
             # identical span again one coder turn later".
@@ -1556,6 +1567,23 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
 
     out = _view(messages, state, head_end, tail_start, pinned_task, files_list, rlog)
     return RollingResult(out, state, Effect.REDUCED, refold_effect=refold_effect)
+
+
+def _would_shrink(messages: list[dict], state: CompactState, head_end: int, tail_start: int, lo: int,
+                  pinned_task: str, files_list: str) -> bool:
+    """Could folding ``messages[lo:tail_start]`` leave a view smaller than the one that stands now? The
+    bound is the view with the shortest possible briefing (one character): if that is not smaller, no
+    briefing is. Deterministic arithmetic over the composer's own output (:func:`_view`), so it cannot
+    disagree with what would be sent."""
+    standing = (_view(messages, state, head_end, tail_start, pinned_task, files_list)
+                if state.summary.strip() and lo > head_end else messages)
+    appended = bool(state.summary and lo > head_end)
+    least = CompactState(summary=(state.summary + "\n\n.") if appended else ".", covered=tail_start,
+                         attempted=tail_start,
+                         parts=((state.parts or (state.summary,)) + (".",)) if appended else (".",),
+                         condensed=state.condensed if appended else 0)
+    folded = _view(messages, least, head_end, tail_start, pinned_task, files_list)
+    return sum(map(_msg_tokens, folded)) < sum(map(_msg_tokens, standing))
 
 
 def _view(messages: list[dict], state: CompactState, head_end: int, tail_start: int,

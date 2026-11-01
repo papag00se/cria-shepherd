@@ -42,3 +42,41 @@ def test_an_operator_reserve_above_half_a_small_window_leaves_the_history_its_ro
     assert lp._compaction_room(_Rlog(), lp._ctx.compactor_chat, frame_tokens, facts_text="")[0] == room
     nine = [{"role": "user", "content": "task"}] + [{"role": "assistant" if i % 2 else "tool", "content": "x" * 400} for i in range(8)]
     assert sc.expected_growth(nine) + len("x" * 400 * 8) // 4 < room   # the small view fits: nothing is due
+
+
+def _turns(n, size):
+    return [m for i in range(n) for m in (
+        {"role": "assistant", "content": None, "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"a.py"}'}}]},
+        {"role": "tool", "tool_call_id": f"c{i}", "content": "y" * size})]
+
+
+@pytest.mark.parametrize("result_chars,writer_asked", [(1200, False), (2400, True)])
+def test_floor_pressure_is_measured_with_the_persona_the_floor_would_already_have_reduced(result_chars, writer_asked):
+    """Real Codex at 16K: its ~17 KB persona (~4.2k tokens) counted in full, so any rejected briefing's view "would drop" and every
+    later coder request paid a writer call for a sliver (8 of 11 compactions left the view the same size). The floor reduces the persona
+    BEFORE it drops a turn (lever 2b); the question is whether it would still drop. A view that overflows even so is still folded."""
+    from cria import assistruntime, bodykeys, wsview
+    from cria.loop import PlanSession
+    from cria.plan import Plan, PlanItem
+    tokenratio._ratios["m"] = 1.0
+    asked = []
+    def writer(body, rlog):
+        asked.append(body)
+        return b'{"choices":[{"message":{"content":"BRIEF"}}]}'                       # no lens accepts it: the briefing is rejected, the attempt stands
+    persona = "P" * 17000
+    lp = _loop(16384, 16384, reserve=16384, chat=writer)
+    body = {"model": "m", "tools": [], "messages": [
+        {"role": "system", "content": persona + "\nTAIL", bodykeys.CALLER_INSTRUCTIONS: True, bodykeys.CALLER_PERSONA: persona},
+        {"role": "user", "content": "do task"}] + _turns(20, result_chars)}
+    sess = PlanSession(plan=Plan(id="p", task="do task", created="c", items=[PlanItem("do task")]), synthetic=True, plan_off=True)
+    token = wsview.bind(wsview.DirectView())
+    try:
+        with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+            lp._prepare_coder_context(sess, body, _Rlog(), synthetic=True)
+            assert asked and sess.compact_state.attempted > 0 and not sess.compact_state.summary    # the first briefing was offered and rejected
+            before = len(asked)
+            body["messages"] += _turns(1, result_chars)                                              # less than a new band: only pressure can ask again
+            lp._prepare_coder_context(sess, body, _Rlog(), synthetic=True)
+    finally:
+        wsview.unbind(token)
+    assert (len(asked) > before) is writer_asked

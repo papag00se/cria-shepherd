@@ -477,6 +477,14 @@ def est_total(messages: list[dict], tools) -> int:
     return est_tokens(content_text(messages, tools))
 
 
+def est_total_floor_frame(messages: list[dict], tools) -> int:
+    """:func:`est_total` of ``messages`` as the floor would SEND them once it is over budget: each system
+    message's caller span (the harness persona) already swapped for its stand-in (lever 2b, which runs
+    before any turn is dropped). The size to ask "would the floor have to DROP turns?" about: the full
+    persona overstates the frame by the span's size (Codex ~17 KB, ~4.2k of a 16,384 window)."""
+    return est_total(_reduce_caller_spans(messages)[0], tools)
+
+
 def _sniff_content_type(s: str) -> str | None:
     """Best-effort MIME for a tool output (chat tool results carry no content-type)."""
     t = s.lstrip()[:64].lower()

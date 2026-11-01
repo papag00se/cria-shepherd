@@ -3802,7 +3802,7 @@ class Loop:
 
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx, rlog, *, force: bool = False,
                       pinned_task: str | None = None, protected_prefix: bool = False,
-                      frame_tokens: int = 0) -> list[dict]:
+                      frame_tokens: int = 0, floor_frame_tokens: int | None = None) -> list[dict]:
         """THE self-compaction — one owner for BOTH drivers. Rolls the old work-history middle into a
         ⟦ctx:rollup⟧ summary via the shared summarize primitive. Orthogonal to sess.summary (the cheap
         completed-STEP axis in the protected system message). ``force`` (set at a step boundary)
@@ -3922,7 +3922,8 @@ class Loop:
             refold_tokens=windowcaps.resolve(selfcompact.REFOLD_TOKENS, coder_window),
             # Asked by the engine about the view it would SEND without a new summary, not about the
             # raw history in ``msgs`` (which only grows, so it read as overflow on every later turn).
-            floor_pressure=lambda view: self._floor_would_drop(view, rlog, frame_tokens),
+            floor_pressure=lambda view: self._floor_would_drop(
+                view, rlog, frame_tokens if floor_frame_tokens is None else floor_frame_tokens),
             # Common preparation holds required authority outside this historical scope.
             # Standalone compatibility callers still ask the source to publish its task frame.
             # The writer's task_fact above is grounding in either case, not output authority.
@@ -5287,7 +5288,8 @@ class Loop:
             history = self._self_compact(history, sess, index, rlog,
                 force=bool(not synthetic and sess.compact_pending), pinned_task=root_task,
                 protected_prefix=True,
-                frame_tokens=contextfloor.est_total(frame, body.get("tools")))
+                frame_tokens=contextfloor.est_total(frame, body.get("tools")),
+                floor_frame_tokens=contextfloor.est_total_floor_frame(frame, body.get("tools")))
         focus_bindings = runtime.bindings("coder-focus") if self._ctx.focus_trim else ()
         focused = focustrim.focus(focustrim.FocusInput(history), focus_bindings)
         history = focused.messages
