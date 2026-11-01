@@ -76,6 +76,11 @@ _MIN_ARENA_BUDGET_BYTES = 1024**3
 #: sub-directory of ``<calls>/<session>/`` holding this runtime's own (non-upstream) call records
 CAPTURE_NAMESPACE = "system1"
 _ARENA_CONFIG = "session.use_env_allocators"
+# ONNX Runtime's intra-op workers busy-wait for the next task by default. The judge is one call at a time on a
+# shared 4-core box, so the waiting is pure CPU burned on the cores the model servers and every other agent need:
+# measured on three real briefings (477, 444 and 692 tokens, 6 threads, ~45 runnable processes), 16.2 / 17.0 / 24.7
+# CPU-seconds with spinning against 7.0 / 5.7 / 9.5 without, with bit-identical logits and a shorter wall time.
+_NO_SPIN_CONFIG = ("session.intra_op.allow_spinning", "0")
 _ARENA_SHRINK = ("memory.enable_memory_arena_shrinkage", "cpu:0")
 _arena_lock = threading.Lock()
 #: ORT module -> the budget its process-wide shared CPU arena was registered with (idempotent).
@@ -405,6 +410,7 @@ class System1Runtime:
             options.intra_op_num_threads = threads
             options.inter_op_num_threads = 1
             options.add_session_config_entry(_ARENA_CONFIG, "1")  # use the bounded shared arena
+            options.add_session_config_entry(*_NO_SPIN_CONFIG)
             self._session = ort.InferenceSession(str(self._bundle.path("graph")), sess_options=options,
                                                  providers=["CPUExecutionProvider"])
             providers = list(self._session.get_providers())

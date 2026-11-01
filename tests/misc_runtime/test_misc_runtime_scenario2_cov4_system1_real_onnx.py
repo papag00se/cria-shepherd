@@ -84,7 +84,8 @@ SCRIPT = textwrap.dedent('''
         system1.System1Runtime(root, threads=1, memory_budget_bytes=3 * 1024**3); other = "accepted"
     except system1.System1BundleError as exc:
         other = str(exc)
-    print(json.dumps({"label": j.label, "logits": list(j.logits), "tokens": j.token_count, "ids": list(j.input_ids), "again": again.bundle_id, "other": other}))
+    print(json.dumps({"label": j.label, "logits": list(j.logits), "tokens": j.token_count, "ids": list(j.input_ids), "again": again.bundle_id, "other": other,
+                      "spin": rt._session.get_session_options().get_session_config_entry("session.intra_op.allow_spinning")}))
 ''')
 
 
@@ -98,4 +99,5 @@ def test_a_hand_built_onnx_graph_is_verified_loaded_under_the_bounded_arena_and_
     x = (sum(out["ids"]) + len(out["ids"])) * 0.001
     assert out["label"] == "DESCRIBES" and out["tokens"] == len(out["ids"]) > 100
     assert out["logits"] == pytest.approx([x, -x], abs=2e-3) and set(out["ids"]) <= {0, 128001, 128002}
+    assert out["spin"] == "0"       # idle intra-op workers sleep: spinning burned 2.3-2.9x the CPU of the same judgment (bit-identical logits)
     assert out["again"] == "real-onnx" and "already runs System 1 under a 2147483648-byte memory budget, not 3221225472" in out["other"]
