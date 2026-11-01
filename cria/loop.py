@@ -816,7 +816,7 @@ def _observe_history(gs, messages) -> int:
     recovery is selected, the gate registrar, and — inside `record` — the history that precedes a forwarded reply."""
     messages = messages or []
     writeobservation.observe_history(writeobservation.HistoryInput(
-        messages, frozenset(_unlanded_call_ids(messages, getattr(gs, "gate_marks", None))), gs, _note_write_results, _is_write_call))
+        messages, frozenset(denial.unlanded_call_ids(messages, getattr(gs, "gate_marks", None))), gs, _note_write_results, _is_write_call))
     return len(gs.write_call_ids)
 
 
@@ -1367,22 +1367,6 @@ def _task_confirm_applies(task: str, chat, role, rlog) -> bool:
 # So a path segment may not END on a separator or a dot, and a bare word/word with no dot and no
 # further separator is not a path.
 _GROUNDABLE_NAME = reorientation._GROUNDABLE_NAME
-
-# A SLASH BETWEEN WORDS WITH NO DOT ANYWHERE IS PROSE, NOT A PATH. `I/O`, `trim/normalise`,
-# `problems/risks`, `blank/non-numeric`, `SKU/quantity/price` — cria cannot tell those from a real
-# dotless directory path like `test/fixtures`, and the measured cost of guessing is 41% of this
-# seat's refusals thrown away with a whole model call behind each. Abstaining is the safe direction:
-# the guard exists to catch an INVENTED FILE, and a file has an extension (#3 — silence over noise).
-_PROSE_PAIRING = reorientation._PROSE_PAIRING
-
-
-def _invented_names(text: str, source: str) -> list[str]:
-    """Names in ``text`` that do not appear in ``source`` — a directive's inventions, in order.
-
-    Case-insensitive substring, so a directive may shorten `lib/shipping/rates.rb` to `rates.rb`
-    (still grounded) but not lengthen `rates.rb` into `lib/shipping.rb` (not grounded)."""
-    return reorientation.invented_names(text, source)
-
 
 def _workspace_basename_matches(root: str, name: str) -> list[str] | None:
     """Workspace-relative paths whose basename is ``name`` — ``None`` when cria cannot say.
@@ -7260,7 +7244,7 @@ def _record_dispatch(gs, coder, messages):
                   for ch in coder.get('choices', [])
                   for tc in (ch.get('message') or {}).get('tool_calls') or [])
     return writeobservation.record(writeobservation.WriteInput(
-        calls, messages or [], frozenset(_unlanded_call_ids(messages or [], getattr(gs, "gate_marks", None))), gs, _note_write_results,
+        calls, messages or [], frozenset(denial.unlanded_call_ids(messages or [], getattr(gs, "gate_marks", None))), gs, _note_write_results,
         _is_write_call))
 
 
@@ -7327,22 +7311,6 @@ def _repeat_observation(gs: GuardState) -> dict:
 # How much of the repeated action the redirect quotes back. Enough to IDENTIFY it (tool + path +
 # the leading args); never enough to re-supply a file body the model would otherwise have to retype.
 REPEAT_ACTION_CHARS = 200
-
-
-def _refused_call_ids(messages: list) -> set:
-    """Tool call ids whose result cria PROVED came from its own refusal branch — the call never ran.
-    One owner (:func:`denial.refused_call_ids`): the proof is the receipt `represent_inbound` checked, never
-    what the result says."""
-    return denial.refused_call_ids(messages)
-
-
-def _unlanded_call_ids(messages: list, extra=None) -> set:
-    """Tool call ids of writes/edits cria PROVED did not change the file: its own refusal branch ran, or its
-    edit program reported the edit not applied. A write that never reached disk is not a rewrite (phi4 A4 CALL
-    0039: nine refused edits read as "rewritten at least 5 times" while the file was byte-identical). A result
-    that merely QUOTES a marker, a reused call id, or a result with no hint is unknown, never unlanded. ``extra`` is the
-    completion marks a gate read back (`GuardState.gate_marks`): a witnessed ``did_not_run`` is proof too."""
-    return denial.unlanded_call_ids(messages, extra)
 
 
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
@@ -8065,7 +8033,7 @@ def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
                      and (m.get("tool_call_id") or m.get("call_id")) in automatic), default=-1)
     if last_gate < 0:
         return ""             # cannot establish that a coder invocation is newer than the gate
-    unlanded = _unlanded_call_ids(msgs)
+    unlanded = denial.unlanded_call_ids(msgs)
     mutations, pending = set(), set()
     last_mutation = -1
     for i, message in enumerate(msgs):
@@ -9556,14 +9524,6 @@ def _edit_results(messages: list[dict]):
                 yield idx, tid, calls[tid], res
 
 
-def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict, list[str]]:
-    """``(text, {rel: sha1 of the text carried}, [every rel the text speaks of])``. A file whose text cannot be
-    carried — the view holds no body for it, or a command that may have changed files ran since, so the body
-    may be behind the disk — is NAMED as not available (and its body asked for afresh), never left out: the
-    block is how the coder learns it holds no copy and must read the file (phi4 A10)."""
-    return contextrestoration.render(view, rels, touch)
-
-
 # NO CAP on the read ledger. It was 20 names out of an ALPHABETICALLY sorted list, so which files
 # vanished was arbitrary — a `z*.py` the coder read a moment ago always went first. The count that
 # replaced them answers a different question than the ledger's own stated purpose: "the KNOWLEDGE
@@ -10758,7 +10718,7 @@ def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | Non
                        skip: frozenset | set = frozenset()):
     """Paths of every write-class call (landed or not) after position ``idx`` — every target of a
     multi-file patch — or ``_ANY_PATH`` for a write whose targets are not fully known. ``skip`` names
-    call ids whose result says the call never changed anything (`_unlanded_call_ids`): they are not
+    call ids whose result says the call never changed anything (`denial.unlanded_call_ids`): they are not
     mutations. A call with no result yet is never in it, so it still counts."""
     for m in (messages or [])[idx + 1:]:
         if isinstance(m, dict) and m.get("role") == "assistant":
@@ -10875,7 +10835,7 @@ def _mutated_after_read(seen, position, path, root, history) -> bool:
         if tid is None or position is None:
             return True
     return any(target is _ANY_PATH or _same_workspace_file(target, path, root)
-               for target in _write_paths_after(history, position, root, _unlanded_call_ids(history)))
+               for target in _write_paths_after(history, position, root, denial.unlanded_call_ids(history)))
 
 
 def _generation_recovery(coder, body, coder_chat, rlog, *, step=None, phase="coder",

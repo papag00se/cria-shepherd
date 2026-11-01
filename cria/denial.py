@@ -393,5 +393,9 @@ def witnessed_completed_ids(messages, extra=None) -> set:
 def unlanded_call_ids(messages, extra=None) -> set:
     """Ids of write-class calls cria PROVED did not change anything: its own refusal branch ran, or its edit
     program reported the edit not applied - or, with no reply at all, its own executor-side completion mark says it
-    ended without changing the file. ONE owner for every reader that asks 'did this land?'."""
+    ended without changing the file. ONE owner for every reader that asks 'did this land?'. A write that never reached
+    disk is not a rewrite (phi4 A4 CALL 0039: nine refused edits read as "rewritten at least 5 times" while the file was
+    byte-identical); a result that merely QUOTES a marker, a reused call id, or a result with no hint is unknown, never
+    unlanded. ``extra`` is the completion marks a gate read back (`GuardState.gate_marks`): a witnessed ``did_not_run``
+    is proof too."""
     return _unambiguous(messages, unlanded) | witnessed_unlanded_ids(messages, extra)

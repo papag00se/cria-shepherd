@@ -107,7 +107,6 @@ def test_a_witnessed_did_not_run_is_proof_the_write_did_not_land_and_the_gate_do
     history = represent([{"role": "assistant", "tool_calls": [x]}], tmp_path)
     assert denial.unlanded_call_ids(history) == set()                                      # history alone proves nothing
     assert denial.unlanded_call_ids(history, state.gate_marks) == {"x"}
-    assert loop._unlanded_call_ids(history, state.gate_marks) == {"x"}
 
 
 def test_a_write_with_no_mark_is_unestablished_and_completion_is_not_approved_on_it(tmp_path, monkeypatch):

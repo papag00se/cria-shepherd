@@ -22,6 +22,11 @@ _GROUNDABLE_NAME = re.compile(
     r"(?:[\w.-]*/(?:[\w.-]+/)*[\w-]+(?:\.[A-Za-z][\w-]*)?)"
     r"|(?:\b[\w-]+\.(?:py|rb|go|java|js|ts|rs|php|json|toml|ya?ml|md|txt|cfg|ini|xml|lock)\b)"
     r"|(?:\bv?\d+\.\d+(?:\.\d+)?\b)")
+# A SLASH BETWEEN WORDS WITH NO DOT ANYWHERE IS PROSE, NOT A PATH. `I/O`, `trim/normalise`,
+# `problems/risks`, `blank/non-numeric`, `SKU/quantity/price` — cria cannot tell those from a real
+# dotless directory path like `test/fixtures`, and the measured cost of guessing is 41% of this
+# seat's refusals thrown away with a whole model call behind each. Abstaining is the safe direction:
+# the guard exists to catch an INVENTED FILE, and a file has an extension (#3 — silence over noise).
 _PROSE_PAIRING = re.compile(r"^[A-Za-z][\w-]*(?:/[A-Za-z][\w-]*)+$")
 
 
