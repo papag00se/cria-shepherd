@@ -339,7 +339,7 @@ def _author(source: AuthorServices, state: StateAccess, trigger: Trigger, truth:
     superseded = source.superseded_by_coder_run(checks)
     if superseded:
         source.log.emit("loop.steer_checks_stale", level="info", condition=trigger.value,
-                        tally=superseded, head=checks[:100] + ("…" if len(checks) > 100 else ""))
+                        tally=superseded, head=source.engine.facts.clip(checks, 100))
         checks, truth = "", ""
     if checks and checks == state.steered_checks_text and not state.same_checks_relooked:
         state.same_checks_relooked = True
@@ -353,7 +353,7 @@ def _author(source: AuthorServices, state: StateAccess, trigger: Trigger, truth:
                                   since=source.checks_ran_before(since))
             return AuthorResult(text, Status.STEER, True)
         source.log.emit("loop.steer_same_checks", level="info", condition=trigger.value,
-                        head=checks[:100] + ("…" if len(checks) > 100 else ""))
+                        head=source.engine.facts.clip(checks, 100))
         return AuthorResult(None, Status.WITHHELD)
     if checks != state.steered_checks_text:
         state.same_checks_relooked = False

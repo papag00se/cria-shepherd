@@ -148,10 +148,11 @@ def test_unchanged_checks_get_one_second_look_then_come_back_verbatim_not_re_dia
 @pytest.mark.parametrize("event,state,author_kw", [
     ("loop.steer_checks_stale", sw.State(), {"superseded": "a newer coder run"}),                      # the carried failure is superseded by the coder's own run
     ("loop.steer_same_checks", sw.State(same_checks_relooked=True), {}),                               # the same failure the coder can already see
+    ("loop.steer_checks_reattached", sw.State(same_checks_relooked=True), {"visible": False}),        # the same failure, no longer in the coder's view
 ])
 def test_the_logged_head_of_withheld_checks_is_the_first_100_characters_and_marks_a_cut(event, state, author_kw, length, clipped):
     checks = "c" * (length - 1) + "z"
-    state = replace(state, steered_checks_text=checks if event == "loop.steer_same_checks" else "")
+    state = replace(state, steered_checks_text=checks if event != "loop.steer_checks_stale" else "")
     author = author_service([], checks=checks, **author_kw)
     sw.progress(sw.ProgressInput(checks, 2, author, Log()), state)
     head = next(f["head"] for kind, f in author.log.events if kind == event)

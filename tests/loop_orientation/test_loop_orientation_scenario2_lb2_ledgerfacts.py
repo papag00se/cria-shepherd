@@ -1,5 +1,5 @@
 """The facts the coder is shown about files it read: a line count is dated against the workspace's own copy, the orienter's listing comes
-from this request's survey before the briefing's, and a fact block lands in the protected head after the system turns."""
+from this request's survey, and a fact block lands in the protected head after the system turns."""
 import pytest
 
 from cria import loop, prompts, wsview
@@ -39,27 +39,21 @@ def test_a_line_count_is_restated_only_as_far_as_the_workspaces_own_copy_vouches
     assert loop._current_line_count(view, rel) is None and loop._current_line_count(None, rel) is None
 
 
-def test_the_orienter_is_given_this_requests_survey_first_then_the_briefings_listing_and_otherwise_none(tmp_path):
+def test_the_orienter_is_given_this_requests_survey_and_otherwise_none(tmp_path):
     (tmp_path / "Importer.java").write_text("class Importer {}\n")
     root, log = str(tmp_path), type("L", (), {"events": [], "emit": lambda s, k, **kw: s.events.append((k, kw))})()
-    sess = type("S", (), {"workspace_root": root, "handoff_origin": None})()
-    summary = {"role": "user", "content": f"{loop.CONTINUATION_MARKER} built it"}
-    origin = loop._HandoffOrigin("r", "", False, continuation=summary["content"], inventory="LISTING", inventory_root=root)
+    sess = type("S", (), {"workspace_root": root})()
     token = wsview.bind(wsview.DirectView(root))
     try:
-        assert "Importer.java" in loop._reorientation_inventory(sess, [summary], log)
+        assert "Importer.java" in loop._reorientation_inventory(sess, log)
     finally:
         wsview.unbind(token)
     token = wsview.bind(wsview.View(root, "s"))                 # a rebuilt, unsurveyed view: compaction removed every survey
     try:
-        sess.handoff_origin = origin
-        assert loop._reorientation_inventory(sess, [summary], log) == "LISTING"
-        assert loop._reorientation_inventory(sess, [{"role": "user", "content": "unrelated"}], log) == ""
-        origin.inventory_root = "/elsewhere"                    # a listing never travels to another root
-        assert loop._reorientation_inventory(sess, [summary], log) == ""
+        assert loop._reorientation_inventory(sess, log) == ""
     finally:
         wsview.unbind(token)
-    assert [kw["source"] for _k, kw in log.events] == ["current", "boundary", "none", "none"]
+    assert [kw["source"] for _k, kw in log.events] == ["current", "none"]
 
 
 def test_a_fact_block_goes_after_the_leading_system_turns():
