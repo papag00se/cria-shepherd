@@ -812,7 +812,8 @@ def _note_failover(indic, rlog) -> None:
     if note and indic is not None:
         if not indic.note:
             indic.note = note
-        role, model = getattr(rlog, "failover_to", (None, None))
+        walked = getattr(rlog, "failover_to", None)
+        role, model = walked if isinstance(walked, tuple) else (None, None)
         if role:  # the route banner names the role/model that answered, not the one that was asked first
             indic.role, indic.model = role, model or indic.model
 
