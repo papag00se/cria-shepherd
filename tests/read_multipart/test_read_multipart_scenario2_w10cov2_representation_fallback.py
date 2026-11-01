@@ -38,6 +38,34 @@ def test_a_read_whose_representation_cannot_bind_continues_from_the_harness_hist
     assert [e["kind"] for e in events].count("multipart.representation_unavailable") == 1
 
 
+def test_after_the_fallback_the_requests_next_read_is_a_plain_lowered_command_the_bridge_never_registers(tmp_path, monkeypatch):
+    """The fallback disables multipart for the rest of that request: a read the model issues in the same turn must not be handed to the bridge
+    (it would register a paged continuation whose state the request just declared unavailable)."""
+    big, small = tmp_path / "f", tmp_path / "small.txt"
+    big.write_text(HEX)
+    small.write_text("tiny\n")
+
+    class Second(Backend):
+        def chat(self, body, rlog=None):
+            if len(self.bodies) != 1:
+                return super().chat(body, rlog)                 # first reply: the oversize read; every later one: "seen"
+            self.bodies.append(body)                            # the fallback request itself: the model asks for another read
+            call = {"id": "second", "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"path": str(small)})}}
+            return json.dumps({"id": "f", "object": "chat.completion", "created": 1, "model": "test-model", "choices": [{"index": 0, "finish_reason": "tool_calls",
+                               "message": {"role": "assistant", "content": None, "tool_calls": [call]}}]})
+    backend = Second(big)
+    real = CriaHandler._bind_multipart_read_facts
+    monkeypatch.setattr(CriaHandler, "_bind_multipart_read_facts",
+                        lambda self, body, rlog: False if getattr(self, "_multipart_facts", ()) else real(self, body, rlog))
+    with Wire(tmp_path, backend) as w:
+        registered = []
+        register = w.srv.multipart_bridge.register
+        w.srv.multipart_bridge.register = lambda original, *a, **k: (registered.append(original), register(original, *a, **k))[1]
+        msg, carriers = w.drive()
+    assert msg["content"] == "seen" and "tiny" in carriers[-1]        # the second read still reached the harness and ran
+    assert len(registered) == 1                                                 # only the first, pre-fallback read was ever registered
+
+
 def test_the_private_continuation_calls_of_an_oversize_read_stream_over_chat_sse_and_the_file_still_arrives_exact(tmp_path):
     """A streaming chat harness: cria's own paging calls are streamed as a tool_calls SSE (finish tool_calls, [DONE]) and the finished read reaches the model exact."""
     path = tmp_path / "f"
