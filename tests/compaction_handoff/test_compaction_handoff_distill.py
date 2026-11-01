@@ -40,9 +40,15 @@ def test_a_failed_piece_stays_verbatim_in_place_recent_turns_and_facts_are_untou
         sent.append(body)
         return chat_reply("{}" if len(sent) == 2 else GOOD)
     budget = hd.Budget(window=9000, reply=2000, density=1.0)
-    out = hd.distill(history + facts, history_count=12, budget=budget, chat_fn=chat, apply_role=lambda b: None, rlog=LOG)
+    events = []
+    rec = SimpleNamespace(session="distill", phase="proxy", emit=lambda kind, **f: events.append((kind, f)))
+    out = hd.distill(history + facts, history_count=12, budget=budget, chat_fn=chat, apply_role=lambda b: None, rlog=rec)
+    done = [f for k, f in events if k == "compaction.distilled"]
+    assert len(done) == 1 and done[0]["pieces"] == len(sent) and done[0]["extracted"] == len(sent) - 1 and done[0]["kept_verbatim"] == 1
+    assert done[0]["turns"] + done[0]["recent_verbatim"] == 12
     failed = [m["content"] for m in sent[1]["messages"] if m["content"].startswith("turn ")]
     states = [i for i, b in enumerate(out) if b.startswith(hd.MARKER)]
+    assert done[0]["recent_verbatim"] == len([b for b in out if b.startswith("turn ")]) - len(failed) >= 1      # the counter is the tail actually kept verbatim
     assert states[0] < out.index(failed[0]) < states[1]                          # the un-extractable piece keeps its chronological place
     assert out[-2:] == facts and out[-3] == history[-1]
     assert all(contextfloor._has_protect_marker({"role": "user", "content": out[i]}) for i in states)
@@ -50,8 +56,10 @@ def test_a_failed_piece_stays_verbatim_in_place_recent_turns_and_facts_are_untou
     n = len(sent)
     hd.distill(history, history_count=12, budget=budget, chat_fn=chat, apply_role=lambda b: None, rlog=LOG)
     assert len(sent) - n == 1                                                       # a retry over the same pieces re-asks only the one that failed
-    other = blocks(12, 500)
-    assert hd.distill(other, history_count=12, budget=budget, chat_fn=lambda b, r: chat_reply('{"summary": "nothing"}'), apply_role=lambda b: None, rlog=LOG) is other
+    other, events[:] = blocks(12, 500), []
+    assert hd.distill(other, history_count=12, budget=budget, chat_fn=lambda b, r: chat_reply('{"summary": "nothing"}'), apply_role=lambda b: None, rlog=rec) is other
+    (all_failed,) = [f for k, f in events if k == "compaction.distilled"]
+    assert all_failed["extracted"] == 0 and all_failed["kept_verbatim"] == all_failed["pieces"] > 1     # nothing extracted: every piece is counted as kept, none as read
 
 def test_the_production_compaction_body_fits_through_the_real_floor_without_dropping_turns():
     """The real compaction body, distilled, passes the real floor with no turn dropped and the summary reply reserve intact."""
