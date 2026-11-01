@@ -3,6 +3,7 @@ context carries a labelled, fallible account plus a reinspection reference; unkn
 import copy
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 import pytest
 from cria import bodykeys
 from cria.imageprotocol import CoderRoute, Delivery, ImageUnavailable, parse_observation
@@ -61,7 +62,8 @@ def test_a_bad_or_incomplete_observation_never_substitutes_the_original(rig, fai
     fenced = {'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': '```json\n' + json.dumps(OBS) + '\n```'}}]}
     assert parse_observation(fenced, terminal_complete=True).extracted_text == 'Save\nCancel'     # gemma4_12b answered in a fence
 
-@pytest.mark.parametrize('fault', ['provider', 'model', 'role', 'image', 'nonce', 'route-changed', 'task-changed', 'superseded'])
+@pytest.mark.parametrize('fault', ['provider', 'model', 'role', 'image', 'nonce', 'route-changed', 'route-cleared', 'task-changed', 'superseded',
+                                   'foreign-store', 'source-changed', 'task-scope', 'not-a-delivery'])
 def test_an_observation_only_counts_when_provider_role_model_image_attempt_and_task_all_correlate(rig, fault):
     """A receipt from another provider/model/role/image/attempt, a changed route or task, or an older concurrent attempt cannot mint an observation."""
     _, s, route, messages, prepared, ref, body, _ = rig
@@ -72,6 +74,11 @@ def test_an_observation_only_counts_when_provider_role_model_image_attempt_and_t
     if fault == 'image': receipt = replace(receipt, image_digest='wrong')
     if fault == 'nonce': receipt = replace(receipt, attempt='stale')
     if fault == 'route-changed': s.select_route(replace(route, provider=object()))
+    if fault == 'route-cleared': s.select_route(None)
+    if fault == 'foreign-store': attempt = replace(attempt, token=object())               # an attempt minted by another store/session lifetime
+    if fault == 'source-changed': attempt, receipt = replace(attempt, source_digest='other-bytes'), replace(receipt, image_digest='other-bytes')       # a consistent forgery: only the retained record still knows the real bytes
+    if fault == 'task-scope': attempt = replace(attempt, task_scope='other-task')
+    if fault == 'not-a-delivery': receipt = SimpleNamespace(**vars(receipt))               # every field right, but not minted at the wire boundary
     if fault == 'task-changed': newer = s.prepare(messages, 'Inspect the fine print instead.')
     if fault == 'superseded': s.begin(ref, TASK, route, body)
     with pytest.raises(ImageUnavailable): s.complete(attempt, receipt)
