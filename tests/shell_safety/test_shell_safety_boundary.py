@@ -46,6 +46,9 @@ ACCESS = [
     ("...", "cat > tmp/data <<EOF\n$\\\n(touch tmp/out)\nEOF"), ("RR.", "cat <<'EOF > tmp/data\ntext\nEOF"),   # unterminated quote: unproven
     ("RR.", "echo \"$(echo $'\\'' ; rm -rf /external/victim ; echo $'\\'')\""), ("RR.", "echo `echo a # c "), ("RR.", "echo $'\\c\\\\'  > /tmp/x"),
     ("RR.", 'echo "$( (echo a) ; touch ../out)"'), ("RR.", "Run `cat > REVIEW.md << 'EOF'` with file name"),
+    # `timeout N cmd` is the command it wraps: a shell body or a write target behind it was invisible to the guard
+    ("RR.", 'timeout 15 bash -c "echo x > /etc/foo"'), ("RR.", 'timeout -s KILL -k 3 15 sh -c "echo x > ../foo"'), ("RR.", "timeout 15 rm ../x"),
+    ("...", "timeout 15 grep -n x f"), ("...", 'timeout 15 bash -c "echo x > tmp/foo"'),
     ("RR.", "kill $(lsof -t -i :8081)"), ("RR.", "kill `pgrep -f node`"), ("RR.", 'echo "$(kill $(pgrep -f node))"'),
 ]
 ROOT_CASES = [   # harness-declared writable roots: READ-ONLY commands may read them; anything that could write stays refused
@@ -61,6 +64,11 @@ ROOT_CASES = [   # harness-declared writable roots: READ-ONLY commands may read 
     ("R", f"sed -n '1,5w {INSTALL}/m2/a' {INSTALL}/m2/b"), ("R", f"sed -n '1e' {INSTALL}/m2/a"), ("R", f"sed -i -n '1,5p' {INSTALL}/m2/a"),
     ("R", f"sed -n -f x {INSTALL}/m2/a"), ("R", f"sed -n '1,5p;w o' {INSTALL}/m2/a"), ("R", f"sed -n '1,5p' --in-place {INSTALL}/m2/a"),
     ("R", f"sed '1,5p' {INSTALL}/m2/a"),
+    # `timeout N <reader>` is that reader (cart-billing-go: refused as "timeout is not one of the read-only inspectors"); `go list -m` can
+    # fetch, `rm` and a shell body are not readers, and a variable assignment is still unproven (its effect on the reader is unknowable here).
+    (".", f"timeout 15 grep -n NewFromFloat {INSTALL}/m2/x/decimal.go"), (".", f"timeout -s KILL -k 3 15 cat {INSTALL}/m2/a | head"),
+    ("R", f"timeout 15 go list -m -json {INSTALL}/m2/x"), ("R", f"timeout 15 rm {INSTALL}/m2/a"), ("R", f'timeout 15 sh -c "rm {INSTALL}/m2/a"'),
+    ("R", f"timeout 15 find {INSTALL}/m2 -exec rm {{}} \\;"), ("R", f'DEC={INSTALL}/m2/x; grep -n New "$DEC"/decimal.go'),
     ("R", "cat tmp/in > \"$D/x\""), ("R", "for i in 1 2; do cat a > tmp/det_$i.txt; done"),   # a variable write target is unproven
 ]
 

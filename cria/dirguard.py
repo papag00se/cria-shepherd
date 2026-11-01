@@ -1247,6 +1247,8 @@ def _command_words(words: list[str]) -> list[str]:
             words = words[1:]
             while words and words[0].startswith("-"):
                 words = words[1:]
+        elif (inner := _without_timeout(words)) is not words:
+            words = inner      # `timeout 15 bash -c "echo x > /etc/y"` is a shell body like the bare one
         else:
             break
     return words
