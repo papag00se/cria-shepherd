@@ -283,13 +283,14 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
             text = ""
     fetch = services.fetch_facts(body.get("messages", []), location=False)
     inventory = services.listing(facts.workspace_root)
+    refused_by = _RefusedBy(rlog)
     if text:
         writer_inventory = services.inventory(facts.workspace_root)
         transcript = selfcompact.compaction_request_parts(
             evidence_messages(body.get("messages", []), services), gate_plan=facts.gate_plan)
         if not services.validate(chat_fn, role, text, files=writer_inventory,
                                  checks=facts.checks, transcript_blocks=transcript,
-                                 task=facts.original_task, rlog=rlog,
+                                 task=facts.original_task, rlog=refused_by,
                                  phase="harness-compaction-validate",
                                  messages=body.get("messages", [])):
             text = ""
@@ -299,7 +300,13 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
                                      carried=facts.carried_ledger, root=facts.workspace_root)
               if not text else "")
     notes = carried_notes(body.get("messages", []))
-    appendices = "\n\n".join(t for t in (ledger, fetch, notes, inventory, facts.checks) if t)
+    # A withheld briefing is a reduction the next window must be able to read: the check that refused it and
+    # the files read are typed facts (a read-only history has no ledger event, and without this the harness
+    # stored an EMPTY summary when no listing or check facts existed either).
+    withheld = (selfcompact.withheld_note(refused_by.lens or "none",
+                                          evidence_messages(body.get("messages", []), services), facts.workspace_root)
+                if not text else "")
+    appendices = "\n\n".join(t for t in (ledger, withheld, fetch, notes, inventory, facts.checks) if t)
     if appendices or text != completion_text(comp).strip():
         merged = (text + "\n\n" + appendices).strip()
         if not text and merged:
@@ -317,10 +324,26 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
     return HandoffResult(comp, Effect.DELIVERED if text else Effect.WITHHELD, retained_prose, ledger)
 
 
+class _RefusedBy:
+    """The log the briefing validator writes to, remembering which lens refused (``context.compaction_validation``'s ``lens``)."""
+
+    def __init__(self, rlog) -> None:
+        self._rlog, self.lens = rlog, ""
+
+    def emit(self, kind: str, **fields) -> None:
+        if kind == "context.compaction_validation" and fields.get("accepted") is False:
+            self.lens = str(fields.get("lens") or "")
+        self._rlog.emit(kind, **fields)
+
+    def __getattr__(self, name):
+        return getattr(self._rlog, name)
+
+
 POLICY = Policy(
     "harness-memory-handoff", "harness-memory", 3, family_id="F49",
     prompts=("recognize_compaction_request", "selfcompact_summary", "compaction_extract",
-             "compaction_extract_ask", "compaction_extracted_state", "compaction_extracted_labels"),
+             "compaction_extract_ask", "compaction_extracted_state", "compaction_extracted_labels",
+             "compaction_withheld_note"),
     state="session producer record; shared write-result evidence observed before facts resolution",
     services=("original task", "workspace inventory", "gate evidence", "transcript",
               "three-lens validator", "provider", "authenticated carried ledger", "producer settlement"),
@@ -329,6 +352,7 @@ POLICY = Policy(
            Reference("cria/server.py", "_harden_compaction_reply")),
     regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accepted_one_ships_untouched"),
                  Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_cut_off_briefing_is_retried_once_and_only_the_retry_is_judged_and_shipped"),
+                 Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_withheld_briefing_over_a_read_only_codex_history_replies_with_a_labelled_note_and_the_files_read_never_an_empty_summary"),
                  Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_compaction_the_selection_leaves_out_touches_no_evidence_judge_or_state"),
                  Reference("tests/compaction_handoff/test_compaction_handoff_asum_producer_lifecycle.py", "test_a_decorated_drop_keeps_its_producer_record_and_the_next_turn_reads_the_ledger_as_retained_fact"),
                  Reference("tests/compaction_handoff/test_compaction_handoff_asum_producer_lifecycle.py", "test_a_quoted_or_altered_copy_of_the_reply_is_never_authenticated")),

@@ -1275,6 +1275,38 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
     return prompts.fill(labels["header"], signature=labels["signature"], scope=labels["scope"], lines=lines)
 
 
+def files_read(msgs: list[dict], root: str = "") -> list[str]:
+    """The distinct files a native read tool was asked for in ``msgs``, in first-read order, each with a recorded result.
+
+    A call whose result is missing or which cria's own refusal marks as not run read nothing; a shell
+    command that reads (``cat``) is a ledger event, not listed here. ``root`` makes one file one path."""
+    results = _results_by_call(msgs)
+    unlanded = denial.unlanded_call_ids(msgs)
+    seen: list[str] = []
+    for m in msgs:
+        for tc in (m.get("tool_calls") or []) if isinstance(m, dict) else []:
+            fn = (tc or {}).get("function") or {}
+            if fn.get("name") not in toolargs.READ_TOOL_NAMES or tc.get("id") not in results or tc.get("id") in unlanded:
+                continue
+            path = toolargs.tool_path(toolargs.parse_args(fn.get("arguments"))) or ""
+            path = path[len(root) + 1:] if root and path.startswith(root.rstrip("/") + "/") else path
+            if path and path not in seen:
+                seen.append(_one_line(path))
+    return seen
+
+
+def withheld_note(lens: str, msgs: list[dict], root: str = "") -> str:
+    """The labelled note a withheld briefing leaves in its place: which check refused it, then the files read.
+
+    Wording is cria's own over typed fields (the lens that refused, the paths of native reads with a recorded
+    result); it claims nothing about the work. ``lens`` outside the closed set reads as an unusable summary."""
+    labels = prompts.load_map("compaction_withheld_note")
+    lens = lens if f"reason_{lens}" in labels else "none"
+    note = prompts.fill(labels["header"], lens=lens, reason=labels[f"reason_{lens}"])
+    read = files_read(msgs, root)
+    return note + ("\n" + prompts.fill(labels["reads"], files=", ".join(read)) if read else "")
+
+
 # How many of the session's most recent turns the growth measurement looks at.
 GROWTH_TURNS = 5
 

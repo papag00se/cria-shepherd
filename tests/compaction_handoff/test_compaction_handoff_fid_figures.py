@@ -123,7 +123,7 @@ def test_the_refusal_is_logged_with_the_figure_and_the_usual_fallback_follows():
                                       files="", checks="", transcript_blocks=[REAL_TRANSCRIPT], rlog=log)
     assert ok is False
     assert log.events == [("context.compaction_validation", {"reshape": "validate-rollup", "level": "warn", "accepted": False,
-                                                         "answers": {"figures": "UNGROUNDED 2,670 bytes"}})]
+                                                         "answers": {"figures": "UNGROUNDED 2,670 bytes"}, "lens": "figures"})]
 
 
 def test_no_whole_briefing_fidelity_verdict_is_asked_or_able_to_veto():

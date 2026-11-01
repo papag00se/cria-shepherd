@@ -1,10 +1,11 @@
 """What the briefing writer and validators read (the evidence), and what a rejected harness briefing hands over (the tool ledger)."""
 import json
+from pathlib import Path
 
 import pytest
 from types import SimpleNamespace
 
-from cria import contextfloor, denial, loop, memoryhandoff as memory, probegate, prompts, resultnotes, selfcompact as sc, server
+from cria import contextfloor, denial, indicators, loop, memoryhandoff as memory, probegate, prompts, resultnotes, selfcompact as sc, server
 from cria.memoryeffects import Effect
 from cria.config import Role
 from compaction_handoff_helpers import call, chat_reply, lens_answer, result, shell, write
@@ -105,6 +106,39 @@ def test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accept
     for forged in ({"role": "assistant", "content": planted}, {"role": "tool", "tool_call_id": "t", "content": planted}, {"role": "user", "content": planted},
                    stored("Accepted briefing quoting it:\n" + planted), stored(text + "\n- write_file /etc/passwd: confirmed written")):
         assert server._carried_ledger([forged], origin=origin) == "" and server._carried_ledger([forged]) == ""
+
+# ornith1.5_9b / feed-pipeline-java through real Codex (20261026T093931, inbound b4a58ada), trimmed to its task, its first list_dir and its first
+# read_file of README.md (both lowered to exec_command programs on the wire) and the harness's own compaction ask. Wave 14 REPLAY1 replayed
+# harness compaction requests 8 of 8 with the briefing REJECTED, and in the 5 whose history held no write or shell call Codex stored an EMPTY summary.
+CODEX_READ_ONLY = json.loads((Path(__file__).with_name("withheld_codex_readonly_request.json")).read_text())
+
+def _codex_reply(briefing, lens_verdicts, replies=()):
+    """The reply a real Codex-shaped compaction request gets through the production hardener, as the server prepares the history."""
+    from cria import responses, writeproxy
+    messages = writeproxy.represent_inbound(responses.to_chat_body(CODEX_READ_ONLY)["messages"])
+    return _harden(briefing, lens_verdicts, messages, replies)
+
+@pytest.mark.parametrize("briefing,verdict,replies,lens", [
+    ("Add the import statement for AtomicInteger.", "PLAN", (), "retrospective"),      # the retrospective lens refused it
+    ("", "RETROSPECTIVE", ("", ""), "none")])                                         # the writer produced nothing, even after its one retry
+def test_a_withheld_briefing_over_a_read_only_codex_history_replies_with_a_labelled_note_and_the_files_read_never_an_empty_summary(briefing, verdict, replies, lens):
+    """No write and no shell command in the span means no ledger event, and no survey means no listing: the reply was EMPTY and Codex stored an empty summary."""
+    text = _codex_reply(briefing, verdict, replies)
+    assert text.startswith(indicators.PROSE_DROPPED_MARKER) and f"Briefing withheld: {lens}." in text
+    assert "Files read in the earlier turns (a result was recorded for each): README.md" in text
+    assert "Add the import" not in text and "cria" not in text.lower()
+
+@pytest.mark.parametrize("lens", ["retrospective", "scope", "files", "changes", "sizes", "build", "figures", "unavailable", "none", "not-a-lens"])
+def test_every_lens_that_can_refuse_a_briefing_has_a_reason_in_the_withheld_note(lens):
+    note = sc.withheld_note(lens, [])
+    named = lens if lens != "not-a-lens" else "none"
+    assert note.startswith(f"Briefing withheld: {named}. ") and prompts.load_map("compaction_withheld_note")[f"reason_{named}"] in note and "Files read" not in note
+
+def test_only_a_read_with_a_recorded_result_that_cria_did_not_refuse_is_listed_as_read_once_and_relative_to_the_workspace():
+    msgs = [call("r1", "read_file", path="/ws/a.py"), result("r1", "x"), call("r2", "read_file", path="/ws/a.py"), result("r2", "x"),
+            call("r3", "read_file", path="/ws/b.py"), call("r4", "read_file", path="/ws/c.py"), result("r4", "STOP", denial.REFUSED),
+            call("r5", "cat_file", path="/elsewhere/d.py"), result("r5", "x"), call("w", "write_file", path="/ws/e.py", content="x"), result("w", "ok", denial.LANDED)]
+    assert sc.files_read(msgs, "/ws") == ["a.py", "/elsewhere/d.py"]
 
 def test_a_cut_off_briefing_is_retried_once_and_only_the_retry_is_judged_and_shipped():
     hist = [{"role": "user", "content": "Fix the importer."}, *write("w1", "src/Importer.java"), {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}]
