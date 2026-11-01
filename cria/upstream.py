@@ -287,15 +287,29 @@ class InputOverflow(UpstreamError):
     """The request cannot fit the window and holds nothing the floor may drop. ``tokens`` is the whole request's size,
     ``measured`` says whether the server's own tokenizer produced it (else it is the floor's estimate)."""
 
-    def __init__(self, message, tokens, window, reserve, measured):
+    def __init__(self, message, tokens, window, reserve, measured, frame=None):
         super().__init__(message)
         self.tokens, self.window, self.reserve, self.measured = int(tokens), int(window), int(reserve), measured
+        # (tool-menu tokens, remaining message tokens) when the turn answers a TOOL RESULT: every lever has run
+        # (older turns and the live tail dropped, results withheld), so what is left is the irreducible frame.
+        self.frame = frame
 
     def notice(self) -> str:
         """What the sender is told, in place of a bare error: the size, the room, that nothing was dropped."""
         size = (f"measured {self.tokens:,} tokens" if self.measured else f"is estimated at about {self.tokens:,} tokens")
-        return prompts.render("input_overflow", size=size, window=f"{self.window:,}",
-                              room=f"{max(self.window - self.reserve, 0):,}")
+        fields = dict(size=size, window=f"{self.window:,}", room=f"{max(self.window - self.reserve, 0):,}")
+        if self.frame is not None:
+            return prompts.render("input_overflow_frame", tools=f"{self.frame[0]:,}", rest=f"{self.frame[1]:,}", **fields)
+        return prompts.render("input_overflow", **fields)
+
+
+def _frame_of(out, rep):
+    """(tool-menu tokens, message tokens) of a request that overflows on a TOOL-RESULT turn, else None: a user message
+    that overflows is the person's to shorten; a tool-result turn has nobody to ask, so the notice names the frame."""
+    msgs = out.get('messages') if isinstance(out, dict) else None
+    if isinstance(msgs, list) and msgs and isinstance(msgs[-1], dict) and msgs[-1].get('role') == 'tool':
+        return rep.tool_tokens, rep.msg_tokens_after
+    return None
 
 
 _READ_FIT_SCOPE = __import__('contextvars').ContextVar('protected_read_fit', default=False)
@@ -1149,7 +1163,7 @@ class Upstream:
                         raise ReadFitOverflow(MeasuredReadOverflow(window, real, rep.reserve, read_bindings, data))
                     if data == _previous_fit:
                         raise InputOverflow("Measured input cannot fit the context window without losing protected input",
-                                            real, window, rep.reserve, True)
+                                            real, window, rep.reserve, True, frame=_frame_of(out, rep))
                     tighter = max(safety, real / max(sent_estimate, 1))
                     return self._prep(body, stream, rlog, safety_override=tighter,
                                       _previous_fit=data, _wire_overhead=_wire_overhead)
@@ -1161,7 +1175,7 @@ class Upstream:
             # POST or capture a request the one floor still knows cannot fit.
             if rep.over_budget or data == _previous_fit:
                 raise InputOverflow("Input cannot fit the context window without losing protected input",
-                                    sent_estimate * safety, window, rep.reserve, False)
+                                    sent_estimate * safety, window, rep.reserve, False, frame=_frame_of(out, rep))
             # Structural wire growth is measured in the same estimate space,
             # separately from model density and the role's generation reserve.
             overhead = max(_wire_overhead, sent_estimate - fitted_estimate)
@@ -1473,9 +1487,11 @@ class Upstream:
         caller to forward. Emits ``upstream.request`` / ``upstream.first_token`` /
         ``upstream.done`` with TTFT + tok/s. Token count uses the upstream ``usage``
         block when present, else counts content deltas as a proxy."""
+        t_open = time.monotonic()
         resp, sent_estimate, capture_path = self._open_with_refit(
             body, True, rlog, _transport=_transport)
         t0 = time.monotonic()
+        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
         t_first: float | None = None
         content_chunks = 0
         usage: dict | None = None
@@ -1511,11 +1527,9 @@ class Upstream:
                                     reasoning.append(rc)
                                     self._stream_reasoning_to_disk(_rsink, capture_path, rc)
                                     if t_first is None:
-        t_open = time.monotonic()
                                         # A reasoning delta IS a first token. Counting only CONTENT
                                         # meant a turn that thought for four minutes and then errored
                                         # looked, in the log, like a stream that never spoke.
-        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
                                         t_first = time.monotonic()
                                         rlog.emit("upstream.first_token",
                                                   ttft_ms=round((t_first - t0) * 1000, 1),
@@ -1543,6 +1557,7 @@ class Upstream:
                 tokens=tokens,
                 tok_per_s=tok_s,
                 from_usage=bool(usage),
+                open_ms=open_ms,
             )
 
     def chat(self, body: dict, rlog) -> bytes:
@@ -1581,7 +1596,6 @@ class Upstream:
                     resp.close()
                 break
             except (UpstreamError, OSError) as e:  # OSError → socket read-timeout mid-response
-                open_ms=open_ms,
                 # Proven capacity no-change is terminal regardless of provider wording.
                 # Preserve the original typed exception before any transient classification.
                 if isinstance(e, (ContextRefitNoChange, CallerContextRetryNoChange)):
@@ -1631,8 +1645,10 @@ class Upstream:
         # Ask for the usage block on the terminal chunk (llama.cpp honors this) so the assembled
         # completion carries real completion_tokens — the truncation guard reports them to the model.
         body = {**body, "stream_options": {"include_usage": True}}
+        t_open = time.monotonic()
         resp, sent_estimate, capture_path = self._open_with_refit(body, True, rlog)
         t0 = time.monotonic()
+        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
         t_first: float | None = None
 
         content: list[str] = []
@@ -1669,10 +1685,8 @@ class Upstream:
                 self._resolve_window(rlog), sent_estimate, self._window_guessed, watch, lambda: terminal))
             for raw in resp:
                 wire_raw.extend(raw)
-        t_open = time.monotonic()
                 if not raw.startswith(b"data:"):
                     continue
-        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
                 payload = raw[5:].strip()
                 if not payload or payload == b"[DONE]":
                     continue

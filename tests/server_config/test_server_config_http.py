@@ -27,7 +27,7 @@ BIG = " ".join("w%05d" % i for i in range(30000))  # ~70k tokens on the fake cha
 
 
 COMPACTION_JUDGES = {"Answer PLAN if": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES", "FAITHFUL": "FAITHFUL",
-                     "what role does the briefing give that file": "app.py | EXISTS", "ALREADY created": "app.py | NOT CHANGED",
+                     "present in the workspace right now": "app.py | PRESENT", "ALREADY created": "app.py | NOT CHANGED",
                      "which state of the code": "none", "what size does the briefing give": "none"}
 
 
@@ -231,18 +231,18 @@ def test_a_final_input_larger_than_the_window_is_answered_not_a_502(wire, mode):
     assert "Nothing was cut, summarised or dropped" in text
 
 
-def tool_result_request(mode, result, **kw):
+def tool_result_request(mode, result, task="count the ERROR lines in logs/app.log", **kw):
     """The task, the model's own `cat` call, and what the harness returned for it, in that wire mode's shape."""
     path = "/v1/chat/completions" if mode.startswith("chat") else "/v1/responses"
     stream, call = mode.endswith("stream"), {"cmd": "cat logs/app.log"}
     if mode.startswith("chat"):
         return path, {"model": "m", "stream": stream, "messages": [
-            {"role": "user", "content": "count the ERROR lines in logs/app.log"},
+            {"role": "user", "content": task},
             {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function", "function": {
                 "name": "exec_command", "arguments": json.dumps(call)}}]},
             {"role": "tool", "tool_call_id": "call_1", "content": result}], **kw}
     return path, {"model": "m", "stream": stream, "prompt_cache_key": "sid-1", **kw, "input": [
-        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "count the ERROR lines in logs/app.log"}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": task}]},
         {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": json.dumps(call)},
         {"type": "function_call_output", "call_id": "call_1", "output": result}]}
 
@@ -264,6 +264,18 @@ def test_a_tool_result_larger_than_the_window_continues_the_task_instead_of_endi
     wire.fake.chats.clear()
     status, raw = wire.post(*tool_result_request(mode, small))
     assert small.replace("\n", "\\n") in json.dumps(wire.fake.chats[-1][1]["messages"]) and "not-delivered" not in json.dumps(wire.fake.chats[-1][1], ensure_ascii=False)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_fixed_frame_larger_than_the_window_on_a_tool_result_turn_names_the_frame_and_the_setting(wire, mode):
+    """wave 10 OVFL follow-up: when every lever has run (older turns dropped, results withheld, only the newest call kept) and
+    the fixed frame ALONE exceeds the window, the one honest answer is the measured frame and the setting that fixes it, not
+    "send smaller pieces" (nobody is there to send them). The same size as a user's paste (no tool result) keeps the old message."""
+    status, raw = wire.post(*tool_result_request(mode, "ok", task="summarise:\n" + BIG))
+    text = reply_text(mode, raw)
+    assert status == 200 and wire.fake.chats == []
+    assert text.startswith("⟦ctx:input-not-delivered⟧") and "fixed frame" in text and "context size" in text and f"{WINDOW:,}-token context window" in text
+    assert "tokens of tool menu" in text and "tokens of instructions and task" in text and "smaller pieces" not in text
 
 
 @pytest.mark.parametrize("mode", ["chat-buffered", "responses-buffered"])
