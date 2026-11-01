@@ -5588,7 +5588,7 @@ def _plan_off_session(plan: Plan, briefing: str) -> PlanSession:
     A synthesized plan used to be able to hold a SECOND item, a model-authored reading step. That
     made plan-off a two-step plan, which framed the raw task as "Do ONLY this step (2 of 2)" and put
     a cage around a mode that has no planner. The step is gone (2026-08-19,
-    `docs/audits/base-vs-cria-footgun-patterns.md`), so this is one item again, always."""
+    `docs/decision-log.md`), so this is one item again, always."""
     return PlanSession(plan=plan, synthetic=True, plan_off=True, prior_work=briefing)
 
 
@@ -5609,8 +5609,8 @@ def _synthetic_plan(task: str, clock=None) -> Plan:
     and reaches every run in both arms.
 
     What the step cost instead: a second plan item, which is what made plan-off drive through the
-    multi-item machinery and pin "Do ONLY this step (1 of 2)" to every coder turn. Measured in
-    `docs/audits/base-vs-cria-footgun-patterns.md`: a run whose research step never cleared averaged
+    multi-item machinery and pin "Do ONLY this step (1 of 2)" to every coder turn. Measured (recorded in
+    `docs/decision-log.md`): a run whose research step never cleared averaged
     24% (n=5) against 55% (n=55) for one that did — the failure mode is not the step firing, it is the
     step never letting go.
 
@@ -5631,7 +5631,7 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     never see a Codex compaction and ``observe_shape`` watches the history LENGTH as well.
     ``task:``-keyed sessions never detect rewrites
     (``_stable_session`` gates it): their key derives from this very root, so a rewritten root
-    mints a new key and simply looks like a new session (recorded in docs/port-fidelity-audit.md)."""
+    mints a new key and simply looks like a new session."""
     text = selfcompact.root_text(messages)
     return (text, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()) if text is not None else ("", "")
 

@@ -29,20 +29,13 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 | **bonsai2** (27B; key was `ternary-bonsai-2` until 2026-09-27) *(was ternary-bonsai; Bonsai 1 retired + deleted 2026-09-18, sampling carried over unchanged)* | PQ2_0 (custom ternary g128) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **dory1.0_4b** (NVIDIA Nemotron-Labs-Dory1.0-4B, **three recurrent loops**) | Q5_K_M | coder/reasoner `temp 1.0, top_p 0.95, top_k 0, min_p 0, repeat_penalty 1`; classifier/compactor `temp 0`, no top-k/min-p restriction, repeat penalty 1 | [NVIDIA GGUF](https://huggingface.co/nvidia/NVIDIA-Nemotron-Labs-Dory1.0-4B-GGUF) | **Added 2026-10-20; registered, not activated.** Dedicated Dory runtime `9e2f3be`; 49,152 context, per-loop Q8/Q8 cache, Flash Attention, batch/microbatch 2048/1024, no context shifting or RAM prompt snapshots. No drafting by default; optional ngram-simple 12/32 for copying, no native MTP. RTX3090 measurements: ~56 tok/s on the short-context throughput workload; 39.2 tok/s at 46,039 input tokens, but that answer was only seven tokens—not a sustained decode benchmark. Copy-only drafting reached ~278 tok/s, not general coding speed. RTX3080 qualification and coding-usefulness evaluation remain pending. See [runtime, evidence and optimization guide](dory-runtime.md). |
 | **nemotron-elastic** (NVIDIA Nemotron-Labs-3-Elastic 12B-A2B) | Q4_K_M | coder/reasoner `temp 0.6, top_p 0.95`; classifier/compactor `temp 0` | [mradermacher GGUF](https://huggingface.co/mradermacher/NVIDIA-Nemotron-Labs-3-Elastic-12B-A2B-GGUF) (derived from DavidAU Elastic; exact historical stanza recovered from `models.toml.pre-retire-20260918`) | Historical path `/home/jesse/models/Nemotron-Elastic-12B/NVIDIA-Nemotron-Labs-3-Elastic-12B-A2B.Q4_K_M.gguf`; embedded template. Exact old per-model GPU-layer setting was inherited `auto`; current config preserves it explicitly. Q4_K_M is 9,641,803,360 bytes; downloaded from the verified repo and SHA-256 `7d6f134f14bde4b23dd3af537c510cb483b5119460b061b50a12a8747f0a22ce` matches its HF LFS OID. The same service ran successfully for 3d 13h (journal 2026-09-25); historical unit recorded 19.3G system memory peak / 9.1G swap peak, so observe host memory on reload. Historical 2026-09-27 ladder is L0–L4 only; old L5 is not a fresh result. |
-| **gemma4_12b** — historical non-QAT quantization (`gemma4` alias), **RETIRED + DELETED 2026-09-18**; historical settings kept for provenance, not a separate battery row | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — ALL roles | Gemma 4 defaults (same pair the finetune's card pinned; kept identical so the 2026-08-05 ablation isolated weights) | replaced the yuxinlu1 finetune 2026-08-05 after repeated runs showed stock completing substantially more of the same lane |
 | **ornith1.5_9b** (Ornith 1.5, 9B; executable alias `ornith1.5`, older alias `ornith15`) | Q6_K | coder `temp 0.6, top_p 0.95, top_k 20, min_p 0, presence_penalty 0, repeat_penalty 1`; reasoner `temp 1.0, top_p 0.95, top_k 20, min_p 0, presence_penalty 1.5, repeat_penalty 1` | [ornith-ai card](https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF) | **Current Ornith as of 2026-09-05.** Reasoning + XML tool calls are native in the embedded template; 262144-token training context. Previous testing was Ornith **1.0**, not 1.5. Stock b9893 cannot load the MTP block; dedicated upstream 74a7c897 does. Service and native tool/reasoning-toggle smoke verified at ~82 tok/s. |
-| **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`). The UNVERIFIED flag this row carried until 2026-08-08 is retired: V2 has run the ladder repeatedly at these values, and its newest capture (20260804T155422) shows `reasoning_content` on 20/20 sampled coder replies. **Re-confirmed 2026-09-18 from both ends:** file sha256 `dd39e148…` matches the `empero-ai/Qwythos-9B-v2-GGUF` LFS oid (it is the published Q6_K, not a stale/partial copy), and a direct toggle probe on the embedded template gave `enable_thinking` on = 322 chars `reasoning_content` / 137 tok, off = 0 / 4 tok, both answering correctly — so `models.toml`'s lingering "template UNVERIFIED" note was stale and is now removed |
-| **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
 | **gemma4_12b** — current QAT quantization (executable alias `gemma4-qat`) | UD-Q4_K_XL (QAT) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — same as gemma4 | Gemma 4 defaults, deliberately identical to the gemma4 row | **added 2026-09-18** (`unsloth/gemma-4-12B-it-qat-GGUF`, 6.72 GB). Google's quantization-AWARE-trained 4-bit release: the low-bit weights are what the model was trained to be, not a post-hoc rounding, so the usual Q4 tax should be largely absent. Loads at 49152 ctx / 7842 MiB; `llama-bench` (prism b10685 build, q8_0 KV) pp2048 2779 · tg128 75.3 · **pp@8K 2399 · tg@8K 70.5** — SWA keeps its KV tiny (408 MiB non-SWA + 255 MiB SWA at 48K), so it barely slows with depth. Added ALONGSIDE `gemma4`, not over it, so no recorded score changes weights underneath it. **Caveat for the ladder: this is UD-Q4_K_XL vs gemma4's Q4_K_M — two variables (training method + quant recipe). The non-QAT repo also ships UD-Q4_K_XL (7.37 GB); run that arm before crediting any delta to QAT itself.** |
-| **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a repeated usefulness gap is attributable to the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
-| **defiant-fable** — the historical service/GGUF name of the Qwen3.5 finetune now run as the logical model `qwen3.8_9b_distill` (see [official names](model-names.md); not a separate battery row; the next row is the current Qwen3.8 distill) (9B, Qwen3.5 finetune) | Q5_K_S **MTP** | `temp 0.6, top_p 0.95, top_k 20` (identical to qwen35) | [DavidAU card](https://huggingface.co/DavidAU/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-NEO-IMATRIX-MAX-MTP-GGUF): thinking/coding `0.6/0.95/20, min_p 0, presence 0, repeat 1.0` | **added 2026-09-25**. DavidAU + Nightmedia multi-stage heretic/abliterated merge of Qwen3.5-9B finetunes. File `Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-MTP-Q5_K_S.gguf` (note **`Uncnr`**, not the repo's `Uncensored` — the obvious name 404s), 7.14 GiB, sha256 `bf2e8ade…` = HF LFS oid. Set up like qwen35 (single 3080, `-ngl 99`, q8_0 KV, 48K, embedded template) with two MEASURED differences: **(1) binary** — the stock build rejects the MTP block (`missing tensor 'blk.32.ssm_conv1d.weight'`, the ornith15 failure), so it runs on the ornith15 build (upstream 74a7c897); **(2) `--spec-type draft-mtp --spec-draft-n-max 2`** — A/B on the 3080, same file and prompts: code decode **81.9 → 126.0 t/s (+54%, acceptance 0.95)**, prose **81.9 → 106.1 (+29%, 0.71)**, prefill ~19% slower. Sampling is held equal to qwen35 so a score gap is the weights. The card says to keep `repeat_penalty` at 1, because a higher value hurts MTP acceptance; do not carry over the 1.1 that the Bonsai rows use. The card's `reasoning_effort` / `{REASON:…}` modes belong to the separate Q6/Q8 **plusIQ** files; this file's template has only `enable_thinking` |
 | **qwen3.8_9b_distill** (9B, Qwen3.8 distill) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | [empero-ai card](https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF) | **added 2026-09-27.** `qwen35` hybrid with an inline **MTP head** (33 blocks). Upstream `7ac59a6` build. Measured on the 3080, decode on a code prompt / a whole-file-edit prompt: no spec 80/80 → `draft-mtp` n3 139/165 → **`draft-mtp,ngram-mod` n3 143/874 (LIVE)**. ub 2048 (+2% prefill), `-cms 2048` (real-traffic replay: −2% re-prefill; multi-slot and unlimited RAM cache measured no better). q8_0 KV, 48K, 8.9 GB. Tool calls + results verified; live cria/Codex run passed |
 | **ling3.0_tiny** (7.9B-A1.3B MoE; executable alias `ling3-tiny`) | Q6_K | `temp 1.0, top_p 0.95, top_k 20` | [bloomer010 card](https://huggingface.co/bloomer010/Ling-3.0-tiny-GGUF) quoting inclusionAI | **added 2026-09-27.** `bailingmoe3` (18 KDA + 6 MLA layers, no MTP) — needs upstream ≥ 2026-09-20 (Ling tool parser + PEG UTF-8 fix). **f16 KV** (MLA KV is tiny; tg@32K 200 vs 181 at q8_0), ub 2048 (prefill +10–35%), `ngram-mod` n-min 16: decode 216 code / **1361 edit**. 48K, 7.1 GB. Occasional mid-think termination is documented by the quantizer as inherent to the weights |
 | **phi4** (14B dense; LocalAI function-call fine-tune replaces the original weights) | i1-Q4_K_S | `temp 0` all roles; unchanged | [LocalAI-io fine-tune](https://huggingface.co/LocalAI-io/LocalAI-functioncall-phi-4-v0.3), [imatrix GGUF](https://huggingface.co/mradermacher/LocalAI-functioncall-phi-4-v0.3-i1-GGUF) | **Operator replacement, 2026-10-11**, not another battery row. Full 16K context, K q8_0 / V q4_0 and ngram settings retained. Tool integration is still under validation; not yet ready for a coding attempt. See [replacement protocol and verification](#phi4-function-call-replacement). Original scores/captures retain their original-weight provenance; historical speed measurements do not establish this replacement's performance. |
 | **k2_horizon_7b** (7B dense) | Q6_K | `temp 1.0, top_p 0.95` (reasoning_effort high = template default) | [IFM/K2-Horizon-7B card](https://huggingface.co/IFM/K2-Horizon-7B) | **added 2026-09-27.** Arch `k2-horizon` is NOT upstream: **MBZUAI-IFM fork `model/K2Horizon` (42adf01)**, built with FA_ALL_QUANTS. 36 layers × 8 KV heads, 250K vocab. **40K ctx at K q8_0 / V q4_0 = 9.08 GB** (48K = 9.58 GB, <300 MB free — rejected; q8_0/q8_0 caps near 32K). Decode decays with depth (84 → 57 @16K → 46 @28K) identically across KV pairs. `ngram-mod` n-min 16: 81 code / **1044 edit**. Template accepts both `enable_thinking` and `reasoning_effort`; XML tool calls parsed by the fork; live cria/Codex run passed |
-| **qwen38** (27B, Qwen3.8) — **NOT part of cria testing (2026-09-27): separate operator model, not a cria fleet member** | UD-Q4_K_S | `temp 0.7, top_p 0.80, top_k 20` (instruct mode; thinking mode `1.0/0.95/20`) | Qwen's own card | Historical dual-GPU bench details below are not current cria guidance. Arch reports as `qwen35` — hybrid Gated-DeltaNet with a full-attention layer every 4th, so only 16 of 65 blocks hold a growing KV: ~34.8 KB/token at q8_0, roughly a quarter of a same-size dense model. `ctx_train` **262144**. Needs the `~/src/llama.cpp-qwen38` build (§Server launch) — the stock b9893 tree has a `qwen35` builder but predates the NextN/MTP handling these GGUFs carry and will not load the file. KV **`q8_0` — do NOT use `iq4_nl`/4-bit here**, it cost 2.3× decode and 11× prefill in the field (§The field regression). Runs `--spec-type draft-mtp`; the draft block is **inline** in the GGUF (blk.64), so speculation costs one block, not a second model — but acceptance is only 47–76% on reasoning prose, so it is close to a wash on cria traffic. See §VRAM accounting on WSL for the `--fit-target` requirement — without it this model quietly runs a quarter of itself on the CPU |
 
-> ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or empirically before treating them as recommended.
 
 > **Dense vs MoE, read from GGUF headers** — `general.architecture` plus
 > `<arch>.expert_count` / `expert_used_count`, never a card or a name. The current run matrix is:
@@ -51,7 +44,6 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > |---|---|---|---|
 > | bonsai2 27B | `qwen35` | | |
 > | gemma4-qat 12B | `gemma4` | | |
-> | defiant-fable 9B | `qwen35` (33 blocks = 32 + 1 MTP) | | |
 > | ornith1.5 9B | `qwen35` | | |
 > | qwen3.8_9b_distill 9B | `qwen35` (33 blocks = 32 + 1 MTP) | | |
 > | dory1.0_4b 4B (three recurrent loops) | `dory` | | |
@@ -59,16 +51,7 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > | k2_horizon_7b 7B | `k2-horizon` | | |
 > | | | ling3-tiny 7.9B | `bailingmoe3` 128 (8) + 1 shared |
 >
-> **ternary-bonsai speculative decoding (verified 2026-07-28):** the Q2_0_g128 GGUF does **NOT** contain MTP layers (`--spec-type draft-mtp` is a FATAL load error — the service crash-loops, no graceful fallback). `--spec-type ngram-cache` works and **doubled decode: 8.3 → 17.1 tok/s** (48% draft acceptance on code; n_draft=8). Set per-model in llama-fleet models.toml extra_flags. KV: `-ctk q8_0 -ctv q4_0` (asymmetric; K drives logits, V tolerates 4-bit).
-
-> **draft-dspark — measured dead end on this box (2026-07-28):** the companion 3.6B drafter (`Ternary-Bonsai-27B-dspark-Q4_1.gguf`, 6 blocks, drafts 4-token blocks conditioned on target hidden-state taps at layers 1/16/31/46/61) *loads and runs* on the spare GTX 1080 (`cuda_device` widened to both GPUs, `--spec-draft-device CUDA1 --spec-draft-ngl all --spec-draft-n-max 4` — n-max MUST equal the drafter's `block_size=4`). Three structural costs sank it: (1) its staging forward covers the **full target context** (~216 KiB compute buffer per position on the draft device → 49K ctx needs 10.4 GiB, so ctx had to drop to 24K just to fit); (2) target-side tap capture cut **prefill ~3× (360 → ~112 tok/s)** and **disables prompt-cache reuse** — every agentic call would re-prefill its whole history; (3) each draft round is a full-context drafter forward on Pascal → **decode 4.2–4.8 tok/s**, *below the 8.3 no-spec baseline* and falling with depth. Acceptance itself was good (62%, ~3.5 tok/target-forward ≈ 29 tok/s if drafting were free) — the drafter wants a fast co-resident device, not a spare Pascal. Re-try only with a second fast GPU; until then ngram-cache stays.
-
-> **draft models are off the table for this target entirely (measured 2026-07-28):** a vocab-exact Qwen3.5-0.8B Q6 drafter co-resident on the 3080 (same `qwen35` family, 248320 vocab, fits in the spare ~2 GB at 49K — no dspark-style staging buffer) still measured **2.4 tok/s vs ngram's 7.1** on an identical deep-context (6.9K) benchmark, despite 51% acceptance and drafting costing only 2.8s of the 105s total. Root cause: the 27B is a **hybrid-SSM** (`qwen35` arch, recurrent layers) — its state cannot rewind, so every speculative round pays ~2s of checkpoint save/restore machinery (`-cms 8` changed nothing: it's the state copies, not re-prefill distance). Only opportunistic near-free drafting (ngram-cache) survives on a hybrid target; per-round draft speculation loses on ANY GPU. The 0.8B GGUF stays at `/home/jesse/models/Qwen3.5-0.8B/` for a future attention-only target.
-
-> **TurboQuant KV = THE win — live since 2026-07-28.** The "no fork has both" assumption died on
-> a search: **`jarkevithwlad/turboquant-prismml-cuda` v1.0.1** merges PrismML's Q2_0_g128 kernels with amesianx TurboQuant; the sm86 (RTX3090Ti) Linux release runs on the 3080 (needs `libnccl.so.2` — copied into the build dir from the `nvidia-nccl-cu12` pip wheel; KV type names are `tbq3/tbq4/tbqp3/tbqp4`, NOT the atomic fork's `turbo2/3/4`). Same-build A/B, ternary-27B on the 3080, `-fa on`: **tg128@d8192 11.3 → 48.7 t/s (4.3×)**, pp2048 168 → 845, pp@8K 22 → 189, shallow tg ~par (51.9 → 49.3). Decode becomes ~depth-independent. **CORRECTED MECHANISM (operator-prompted, f16 control 2026-07-28): the wall was the QUANTIZED-KV CODE PATH, not KV bandwidth.** Same build, tg64@d8192: q8_0/q4_0 = 11.3, tbq3 = 48.7, **f16 = 61.1** — plain f16 beats turbo. TurboQuant's real win is the COMBINATION: its cache code avoids the pathological quantized path AND fits 49K ctx (~5.6 GB f16 KV + 6.7 GB weights exceeds the 3080; f16 caps ctx at ~20K). Untested knob: tbq4 (more quality margin, still fits). Live serving verified 53 t/s with correct output; no `--spec-type` (build lacks the prism spec framework; pointless at 50 t/s anyway). Rollback = prism b9596 + ngram (in models.toml comments). **Quality at real agentic depth (20K+, long sessions) not yet proven — the next goal runs referee it.** *(Update, same day: run m15 completed the goal fully unaided on this config with zero incoherence — first quality referee PASSED.)* Earlier fun-sized data point: the AtomicBot fork (`~/src/llama.cpp-turboquant/`, types `turbo2/3/4`) also works, even on the Pascal 1080 (Qwythos-9B: +5% at 8K depth, −14% prefill) — but it lacks the prism kernels.
-
-> **Bonsai 2 27B replaces Bonsai 1 — and needs NO TurboQuant (measured 2026-09-18).** `prism-ml/Ternary-Bonsai-2-27B-gguf`, same `qwen35` hybrid arch, two new packings (`PTQ1_0` 5.95 GB dense trits, `PQ2_0` 7.21 GB 2-bit slots) that **only the official PrismML fork can load** — the live TurboQuant build has no `ptq1_0`/`pq2_0` symbols and no Hadamard activation runtime, and TurboQuant is now **discontinued** (archive notice, `amesianx/turboquant`), so tbq3 is a dead end for Bonsai 2 forever. Binary = `prism-b10685-7dffb15` at `~/src/llama.cpp-prism2/` (what `PrismML-Eng/Bonsai-demo` pins; the newer `b10687` tag ships Windows assets only). **The KV trap bit again:** carrying Bonsai 1's rollback-recipe `-ctv q4_0` over to Bonsai 2 reproduced the pathological quantized-KV path exactly as documented above — pp2048@d8192 **17.5 t/s with q8_0/q4_0 vs 1090 t/s with q8_0/q8_0** (tg128@d8192 8.0 → 58.8). A Bonsai 1 control on its own TurboQuant build at q8_0/q4_0 measured 17.5/8.8 — i.e. **the collapse was 100% the V-cache type, not the new model or the new binary.** Final A/B at q8_0/q8_0, same box, same bench: PQ2_0 **pp@8K 1090 / tg@8K 58.8** vs PTQ1_0 602 / 49.1 — PQ2_0 wins both phases for 1.26 GB more, and beats the LIVE Bonsai 1 + tbq3 baseline (188 / 43.3) by **5.8× prefill and 1.36× decode**. Live at `-c 49152`, 8728/10240 MiB VRAM. **So the fleet-wide `-ctk q8_0 -ctv q8_0` default is now truly fleet-wide — ternary-bonsai's override is gone with Bonsai 1.** Behavioral note: the card's default `xhigh` reasoning effort is real — cria's `reasoning = "on"` already maps to `medium` (auto-detected `openai` style), yet coder steps still ruminated 3.8–4.1K reasoning tokens and `rumination.abort` fired twice in a 3-turn live run (~200s each). Plan→coder→tool pipeline otherwise ran clean end-to-end. **No rollback as of 2026-09-18** — operator call to treat new models as replacements: `[models.ternary-bonsai]`, its unit, its GGUFs (8.5 GB) and both Bonsai-1-only binaries (`llama.cpp-tq-prism` TurboQuant, `llama.cpp-prism` b9596) are deleted. Reverting means re-downloading `prism-ml/Ternary-Bonsai-27B-gguf` — and the tbq3 config is **not** reconstructible as-is, since that build is gone from the box and TurboQuant upstream is discontinued. The TurboQuant paragraphs below are kept as the measurement record, not as a live option.
+> **Bonsai 2 27B replaces Bonsai 1 — and needs NO TurboQuant (measured 2026-09-18).** `prism-ml/Ternary-Bonsai-2-27B-gguf`, same `qwen35` hybrid arch, two new packings (`PTQ1_0` 5.95 GB dense trits, `PQ2_0` 7.21 GB 2-bit slots) that **only the official PrismML fork can load** — the live TurboQuant build has no `ptq1_0`/`pq2_0` symbols and no Hadamard activation runtime, and TurboQuant is now **discontinued** (archive notice, `amesianx/turboquant`), so tbq3 is a dead end for Bonsai 2 forever. Binary = `prism-b10685-7dffb15` at `~/src/llama.cpp-prism2/` (what `PrismML-Eng/Bonsai-demo` pins; the newer `b10687` tag ships Windows assets only). **The KV trap bit again:** carrying Bonsai 1's rollback-recipe `-ctv q4_0` over to Bonsai 2 reproduced the pathological quantized-KV path documented in [model-history](model-history.md) — pp2048@d8192 **17.5 t/s with q8_0/q4_0 vs 1090 t/s with q8_0/q8_0** (tg128@d8192 8.0 → 58.8). A Bonsai 1 control on its own TurboQuant build at q8_0/q4_0 measured 17.5/8.8 — i.e. **the collapse was 100% the V-cache type, not the new model or the new binary.** Final A/B at q8_0/q8_0, same box, same bench: PQ2_0 **pp@8K 1090 / tg@8K 58.8** vs PTQ1_0 602 / 49.1 — PQ2_0 wins both phases for 1.26 GB more, and beats the LIVE Bonsai 1 + tbq3 baseline (188 / 43.3) by **5.8× prefill and 1.36× decode**. Live at `-c 49152`, 8728/10240 MiB VRAM. **So the fleet-wide `-ctk q8_0 -ctv q8_0` default is now truly fleet-wide — ternary-bonsai's override is gone with Bonsai 1.** Behavioral note: the card's default `xhigh` reasoning effort is real — cria's `reasoning = "on"` already maps to `medium` (auto-detected `openai` style), yet coder steps still ruminated 3.8–4.1K reasoning tokens and `rumination.abort` fired twice in a 3-turn live run (~200s each). Plan→coder→tool pipeline otherwise ran clean end-to-end. **No rollback as of 2026-09-18** — operator call to treat new models as replacements: `[models.ternary-bonsai]`, its unit, its GGUFs (8.5 GB) and both Bonsai-1-only binaries (`llama.cpp-tq-prism` TurboQuant, `llama.cpp-prism` b9596) are deleted. Reverting means re-downloading `prism-ml/Ternary-Bonsai-27B-gguf` — and the tbq3 config is **not** reconstructible as-is, since that build is gone from the box and TurboQuant upstream is discontinued. The Bonsai 1 TurboQuant and drafter measurements are in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd), not a live option.
 
 > **The KV rule is MATCH K TO V, not "avoid q4_0" (measured 2026-09-18, Bonsai 2 PQ2_0, 3080).** The
 > morning's note here blamed a `q4_0` V cache specifically. That was wrong, and the corrected sweep is
@@ -91,7 +74,7 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > the Qwen3.8-27B multi-token-prediction head (15 `blk.64.*` tensors) grafted verbatim into the PQ2_0
 > GGUF, `block_count=65`, `nextn_predict_layers=1`, driving `--spec-type draft-mtp`. Nothing trained.
 > Because the head is the target's OWN next-token predictor rather than an external model guessing at
-> a foreign distribution, the "acceptance halved" finding above does not apply to it — which is why it
+> a foreign distribution, the "acceptance halved" finding below does not apply to it — which is why it
 > was worth testing against that prior.
 >
 > | arm | tok/s | acceptance | vram |
@@ -185,7 +168,7 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > offloads 49/49 correctly under `auto`, so this is a hybrid-architecture failure, not a universal one.
 
 > **Speculative decoding on Bonsai 2: acceptance HALVED versus Bonsai 1, and no paired drafter exists
-> (measured 2026-09-18).** Bonsai 1's numbers are the row above: dspark **62%**, generic Qwen3.5-0.8B
+> (measured 2026-09-18).** Bonsai 1's numbers (in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd)): dspark **62%**, generic Qwen3.5-0.8B
 > **51%**, ngram-cache **48%** on code. Bonsai 2, same box, same generic drafter: **21-28%**. The
 > third-party `ProCreations/…-DFlash2` head reports **35%** and a +0.54% throughput gain over its own
 > predecessor. Acceptance roughly halved across BOTH drafter kinds with the drafter held constant,
@@ -201,18 +184,9 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > the hub is paired to Bonsai 1 or the 1-bit Bonsai, and drafters are target-specific. Bonsai 2 was
 > two days old at the time of measuring, so this is likely "not yet" rather than "not coming".
 
-> **Fleet-wide TurboQuant sweep (2026-07-28): NO win for any other model — q8_0 stays the fleet default.** All 7 fleet models benched on the 3080 (AtomicBot build, q8_0 vs turbo3, shallow + 8K depth, r=3, zero errors): tg@8K deltas par to −13% (ornith par, qwythos/gemma4 noisy-worse, qwopus within its control's noise band). The ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only. **32K-depth follow-up (operator: "these weren't deep runs"): the loss GROWS with depth** — tg64@d32768 q8_0→turbo3: ornith 68→49, qwopus 67→50, gemma4 60→44, qwythos 67→64. The hybrids' KV stays small at depth, so turbo3's per-read dequant overhead scales while the savings never arrive.
-
-> **Context-vs-speed tradeoff, qwythos (measured 2026-07-28; tg64, tok/s):**
->
-> | depth | 8K | 32K | 65K | 131K | 196K | max fit |
-> |---|---|---|---|---|---|---|
-> | q8_0   | 80 | 68 | 51 | 38 | — | **~143K** |
-> | turbo3 | 76 | 59 | 49 | 33 | 26 | **~375K** |
->
-> Per-token KV (from the GGUF header: 8 attn layers × 4 kv-heads × 256+256): q8_0 ≈ 17 KiB, turbo3 ≈ 6.5 KiB. Rule: **q8_0 up to ~131K; turbo3 only past q8_0's ~143K ceiling** (3–12% slower at every shared depth — its gift is reach, not speed). qwythos trains to 1M so VRAM is the only limit; note the fleet's 49K default is conservative for this model — 131K on plain q8_0 fits TODAY. **the retired Ornith 1.0 and qwopus are KV-identical** (same 32 blocks / every-4th attention / 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K, which becomes their useful cap. WSL caveat (measured, correcting an earlier bogus-probe claim): a beyond-VRAM ctx neither loads nor fails fast — the load HANGS (>5 min timeout at 262K q8_0 on qwythos; WSL UVM). Derive ceilings by arithmetic (per-token KV × ctx + weights vs 10 GB), never by load-probing.
->
 > **gemma4 (measured 2026-07-28; tg64, tok/s):** q8_0 = 62 / 57 / 49 / 40 at 8K / 32K / 65K / 131K; turbo3 = 58 / 52 / 46 / 36 — **q8_0 wins every depth (~7–9%), and gemma4's SWA (1024-token window on most of its 48 layers) keeps KV small at any context, so turbo has no reach advantage either. TurboQuant: nothing to offer gemma4.** 131K verified on q8_0; the 262K training cap likely fits too.
+
+> **KV and speculation across the fleet.** `q8_0`/`q8_0` is the fleet default and every model measured keeps it: the 2026-07-28 sweep found TurboQuant (turbo3) a win only for the retired Bonsai 1 (2-bit weights made KV reads the dominant decode term) and a loss for every other model, growing with depth. Bonsai 1's TurboQuant/drafter notes, the retired models' per-model rows and the fleet-wide sweep are in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd).
 
 > **ternary-bonsai canonical cria.toml roles (operator-saved 2026-07-28, the exact settings that produced run m15 — the first fully unaided goal success):**
 >
@@ -269,11 +243,7 @@ cria writes every instruction it gives into a **system** message: the coder fram
 
 **When to set it.** Read the model's chat template, not its card alone. The question is whether the template has somewhere to PUT a system message:
 
-- **r1-llama** — the case that prompted the knob, but currently **OFF**. The template captures the message and emits it as `{{bos_token}}{{ns.system_prompt}}` — bare, after BOS, before the first `<｜User｜>` marker. The text reaches the model but lands outside the conversation structure it was trained on, and cria's system prompts run to thousands of characters. Its loop also keeps only the LAST system message, so a second one is discarded silently; the fold joins them in order instead.
-
-  **Why it is off anyway (researched 2026-08-08).** The card says no system prompt, but real-world reports are split. One of the model's own developers measured a system prompt at temp 0.7 as *"close to the 'no system prompt'"* result, and another user reports the QwQ system prompt working fine; against that, one credible report of the model *"hung up repeatedly second guessing itself in a loop"* inside the recommended temperature range, and cline filed a real degradation for exactly this. DeepSeek's own issue asking the question was closed as stale with no maintainer answer. So: a named failure mode to watch for, not a settled fact. cria also never sends more than one system message — measured, 527 of 527 captured bodies across six sessions — so the multi-message discard is hypothetical here. Turning the fold on for the first run would confound the question this model is on the ladder to answer. Flip it and re-run if the loop symptom appears.
-
-  Sources: HF discussions on the Qwen-32B and Qwen-7B distills, DeepSeek-R1 issue #33, cline #5477.
+- **r1-llama** — the case that prompted the knob (a rejected Llama-family candidate, currently **OFF**); its template analysis and the evidence for leaving it off are in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd).
 - **Everything else on the ladder** — does not. Qwen-, Gemma- and ternary-derived templates all have a real system slot.
 
 The fold preserves order, never drops text, and creates a user turn when a body has none (a judge asked system-only would otherwise lose its whole question).
@@ -288,14 +258,11 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 
 | Model | ON | OFF (`enable_thinking=false`) | Why |
 |-------|----|--------------------------------|-----|
-| **qwopus / ornith15 / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
+| **ornith15** (the retired qwopus and qwythos behaved identically) | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
 | **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
-| **gemma4-finetune** (retired) | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` — finetune-era record; gemma4 NOT yet verified for the OFF recipe |
-| **qwen3.5** | ✅ | ✅ clean direct answer | Qwen3.5 base — **verified at load 2026-08-08**: `enable_thinking=false` → 0 chars of `reasoning_content`, `true` → 649, both answered correctly |
-| **defiant-fable** | ✅ | ✅ clean direct answer | Qwen3.5 finetune, embedded template gates on `enable_thinking` (no `reasoning_effort`, so cria's default `chat_template` style is correct). **Verified at load 2026-09-25** through the systemd unit, MTP on: `false` → 0 chars, `true` → 659, both correct |
 | *system-line convention* | ✅ `detailed thinking on` | ✅ `detailed thinking off` | **cria's THIRD reasoning convention** (Llama-3.1 derivatives) — the switch is a sentence in the system prompt, not a body parameter. `reasoning.system_directive()` renders it; `config._set_reasoning_directive` prepends it to the leading system message (the mutation lives with the messages, same as the chat_template OFF prefill). Reasoning-unset leaves the model's own default alone |
 
-**Known native-OFF models** include qwopus, ornith15, and qwythos (verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF). Some template families empty `reasoning_content` under `enable_thinking=false` yet still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) — a model limitation to check when adding a model, not a missing manipulation.
+**Known native-OFF models** include ornith15 (and the retired qwopus and qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF). The retired qwen3.5 and defiant-fable rows of this table are in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd). Some template families empty `reasoning_content` under `enable_thinking=false` yet still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) — a model limitation to check when adding a model, not a missing manipulation.
 
 **The per-model "manipulation" you built** was exactly these `*-toggle.jinja` files (and, for a whole-instance off, `.reason-off` launch scripts that bake the `-nothink` template via `--chat-template-file`, plus `--reasoning-format deepseek` for ornith). qwopus's *stock* template hardcoded `<think>` with no gate — which is precisely why the toggle had to be hand-built.
 
@@ -305,7 +272,7 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 3. **strips any leaked reasoning** ahead of a `</think>` marker from the model's `content`.
 
 **Honest result (verified end-to-end 2026-07-08):**
-- **Native-off models** (qwopus, ornith15, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF) → OFF is **clean**.
+- **Native-off models** (ornith15; qwopus and qwythos when they ran; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF) → OFF is **clean**.
 - On a prose-deliberating template family, OFF engages and is clean on direct tasks, but reasoning-heavy prompts stay verbose (no `</think>` marker for the strip to catch). It never breaks cria — just chatty. A *harder* directive makes such models terser but **wrong** (a reasoning-trained model loses accuracy when starved of reasoning), so the directive is deliberately mild.
 
 **Guidance:**
@@ -329,88 +296,23 @@ The historical entries below used source/template overrides (including templates
 |-------|------|-----|
 | dory1.0_4b | `~/.local/share/cria/fleet/runtimes/dory-9e2f3be/bin/` (libraries there plus fleet `libs/cuda13`) | Dory architecture support and GPU scale/normalization placement fix, pinned `9e2f3be3947a7339ac8b93f9b9a8dabb8eeaf144`; source `~/src/llama.cpp-dory`. Do not substitute a stock binary without qualifying its Dory support. |
 | ternary-bonsai-2 **(live)** | `~/src/llama.cpp-prism2/b10685/llama-prism-b10685-7dffb15/` | `PQ2_0`/`PTQ1_0` ternary kernels + Hadamard activation runtime. Stock KV (`q8_0` both) — **never `-ctv q4_0`, it costs ~60× prefill at depth** |
-| defiant-fable | `~/src/llama.cpp-ornith15/build-cuda/bin/` (shared with ornith15) | Same failure, same fix: the stock build (upstream 2026-04-21 plus local CCCL patches) rejects the Qwen3.5 MTP block with `missing tensor 'blk.32.ssm_conv1d.weight'`. **Any qwen35 GGUF with `nextn_predict_layers=1` needs this build or a newer one** — check the header before assuming the stock build will do |
 | ornith15 | `~/src/llama.cpp-ornith15/build-cuda/bin/` | upstream 74a7c897. Stock b9893 rejects Ornith 1.5's final MTP block with missing `blk.32.ssm_conv1d.weight`; the dedicated current build loads it. |
-| qwen38 | `~/src/llama.cpp-qwen38/build-cuda/bin/` | upstream b10497 (9731ad3f2). NOT a fork — the stock tree is simply too old (b9893, Apr 22) and lacks the NextN/MTP layer handling. Built for `CMAKE_CUDA_ARCHITECTURES=61;86` so it drives the Pascal 1080 as well as the 3080; NCCL vendored at `vendor-nccl/`. ⚠ Rebuilds MUST run with `LD_LIBRARY_PATH` including `cuda-12.8-local/lib64`, or the executable link fails resolving `libcudart.so.12` |
 
 | Model | Source | Template |
 |-------|--------|----------|
 | dory1.0_4b | `-m ~/models/cria/dory1.0_4b/NVIDIA-Nemotron-Labs-Dory1.0-4B-Q5_K_M.gguf` (dedicated Dory runtime; explicit three-loop override above) | Embedded template; `enable_thinking`, native tool calls, Jinja. `force_nonempty_content` is not implemented by this template. |
-| ternary-bonsai | `-m …/Ternary-Bonsai-27B/Ternary-Bonsai-27B-Q2_0.gguf` **(PrismML fork binary + lib_dir)** | *(embedded ChatML)* |
-| gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
 | ornith15 | `-hf ornith-ai/Ornith-1.5-9B-GGUF --hf-file Ornith-1.5-9B-Q6_K.gguf` **(dedicated upstream 74a7c897 binary + lib_dir)** | *(embedded Qwen3 XML tools + `enable_thinking`)* |
-| qwopus | `-hf Jackrong/Qwopus3.5-9B-v3-GGUF:Q6_K` | `qwopus-toggle.jinja` |
-| qwythos | `-m …/Qwythos-9B-v2-Q6_K.gguf` | *(embedded)* |
-| qwen3.5 | `-m …/Qwen3.5-9B-Q6_K.gguf` | *(embedded)* |
-| defiant-fable | `-m …/Defiant-Fable-9B/Qwen3.5-9B-The-Defiant-Fable-Uncnr-Heretic-NEO-MAX-MTP-Q5_K_S.gguf` **(ornith15 binary + lib_dir; `--spec-type draft-mtp --spec-draft-n-max 2`)** | *(embedded Qwen3.5 w/ `enable_thinking`)* |
-| qwen38 | `-m …/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_S.gguf` **(b10497 binary + lib_dir; `--device CUDA0,CUDA1 -sm layer`)** | *(embedded ChatML w/ `enable_thinking`)* |
 
 - **`-ub 512` is required** — a larger prefill micro-batch overflows the 10 GB 3080.
-- **All fit the single 3080** (9Bs ~7.3 GB Q6_K; gemma4-qat 12B ~7 GB) — **except `qwen38`**, 14.3 GiB of weights across both cards.
+- **All fit the single 3080** (9Bs ~7.3 GB Q6_K; gemma4-qat 12B ~7 GB).
 - **Filename trap when pulling a quant:** unsloth model cards list K-quants WITHOUT the `UD-` prefix that the repo files actually carry. `Qwen3.8-27B-Q4_K_S.gguf` 404s to a 15-byte *Entry not found*. Always enumerate with `curl -s https://huggingface.co/api/models/<repo>?blobs=true` instead of trusting the card.
 - The `*-toggle.jinja` templates gate on `enable_thinking` so the per-request flag works. Keep `--reasoning-budget` at default — launching with `--reasoning-budget 0` pins the whole instance no-think and defeats per-request control.
 
 ---
 
-## VRAM accounting on WSL — the hidden CPU offload (found and cleared 2026-08-19)
-
-**Symptom.** `qwen38` loaded, served, and looked fine — but generated at 10.2 t/s and read prompts at 50.9 t/s. `nvidia-smi` showed the two cards holding ~13.5 GiB between them, *less than the 14.3 GiB of weights*, which was written off as WSL misreporting. It was not. `-ngl auto` had silently parked **15 of 66 layers (4.3 GB) in system RAM**, which a `triad` benchmark measures at **44 GB/s** — seven times slower than even the GTX 1080's 320 GB/s. llama.cpp does not mention this at default verbosity; it only appears as `load_tensors: layer N assigned to device CPU` under `-lv 5`.
-
-**Root cause — CUDA under-reports free VRAM inside the WSL guest.** Proven three ways, on an otherwise idle machine (monitor is on the iGPU; no display or compute process on either card):
-
-| State | CUDA (`cudaMemGetInfo`) | NVIDIA driver (`nvidia-smi`) | Windows host (`vmwp.exe`) |
-|---|---|---|---|
-| idle, nothing running | — | 3080 **0 MiB**, 1080 32 MiB | **0 MiB** dedicated, both cards |
-| **one bare CUDA context**, zero allocations | 3080 **1166 MiB**, 1080 **1005 MiB** | 3080 **214 MiB**, 1080 **136 MiB** | 3080 **213.3 MiB**, 1080 **104.6 MiB** |
-
-The host and the driver agree to within a MiB. **CUDA is the sole outlier, overstating by ~1.85 GB.** Nothing is reserved, retained, or cached — `vmwp.exe` (the Hyper-V worker that owns the VM's GPU memory) holds nothing between runs. The gap is a *reporting artifact*, and llama.cpp's auto-fit believes it.
-
-A direct ceiling test (`cudaMalloc` descending 256→0.25 MiB chunks until free hits 0) shows what is really reachable:
-
-| Card | `cudaMemGetInfo` free | actually allocatable | unreachable |
-|---|---|---|---|
-| RTX 3080 | 9073 MiB | **9538.0 MiB** (+465) | 701.5 MiB |
-| GTX 1080 | 7187 MiB | **7544.0 MiB** (+357) | 648.0 MiB |
-
-Of the unreachable remainder, 187/133 MiB is the driver's own declared `FB Reserved` and 214/105 MiB is the context itself; ~300/~410 MiB stays unexplained by any queryable source. **Do not assert a cause for it** — an earlier claim that it was "a WSL reservation" was disproved by the host-side reading above.
-
-**The fix — `--fit-target` (`-fitt`), and it accepts NEGATIVE values.** It sets the headroom the fitter holds back *per device* (default **1024 MiB each**, i.e. >2 GB withheld). Negative values tell the fitter to spend past the reported-free figure — which is not overcommitting, it is **correcting a bad reading**.
-
-| `-fitt` | layers on CPU | weights on GPU |
-|---|---|---|
-| `1024` (default) | **15** | 11316 MiB |
-| `384` | 8 | 12573 MiB |
-| `192` | 6 | 12961 MiB |
-| **`-600,-550`** ← set | **1** (the embedding only) | **13950 MiB** |
-| `-750,-650` | 0 — but `cudaMalloc` then FAILS on the 394 MiB compute buffer. **The wall.** |
-
-**Never use `-ngl` or `-ts` to chase this.** Setting either by hand makes the fitter abort outright (`tensor_split already set by user, abort` / `n_gpu_layers already set by user`), and nothing then reserves room for compute buffers — CUDA1 OOMs on a 394 MiB allocation and the unit restart-loops. `-fitt` *guides* the fitter; `-ngl`/`-ts` *disable* it. Shrinking `-b/-ub` also frees a little (`-b 512 -ub 128` reaches 4 CPU layers) but starves prefill, which is already the bottleneck — not taken.
-
-**What remains on CPU at `-fitt -600,-550`** — placement `CPU 0-0, CUDA0 1-41, CUDA1 42-65`. That is 66 entries for 65 blocks, so index 0 is the **input embedding**, not a transformer block: **all 65 blocks, and the MTP drafter, are on GPU.** CPU holds `token_embd.weight` (686 MiB ≈ 248320×5120 at ~4.5 bpw), 12.5 MiB of recurrent state, and **zero KV**. Leave it: an embedding is a row *lookup*, ~2.5 KB per token — a 4865-token prefill gathers ~12 MB from host RAM, ~0.3 ms of an 80 s prefill. Moving it costs 686 MiB of VRAM that does not exist.
-
-**Result** (ctx 49152, `--spec-type draft-mtp`, tg t/s; synthetic short-prompt probes — see the next subsection for why these overstate the field):
-
-| task | start | `-fitt 192` | `-fitt -600,-550` |
-|---|---|---|---|
-| code — merge sorted lists | 10.24 | 21.12 | **28.38** |
-| code — LRU cache class | — | 16.49 | **22.05** |
-| short prose | 9.49 | 13.58 | **18.57** |
-| long prose | 9.26 | — | **16.16** |
-| prefill, 4865 tok | 50.9 | 56.1 | **60.5** (95.6 s → 80.4 s) |
-
-**2.8× on code generation from hardware that did not change.** Draft acceptance tracks how predictable the output is — 93% on code, ~46% on prose — which is why speculation is worth keeping for cria's traffic and would not be for an essay workload.
-
-**Probe tools** — kept in [`scripts/vram-probes/`](../scripts/vram-probes/) with their own README:
-- `ctxprobe.cu` — cost of a bare CUDA context, CUDA's view vs the driver's.
-- `allocmax.cu` — real allocation ceiling, descending chunk sizes.
-- `probe_fit.sh` — boot the fleet config once with extra flags, print the **final** layer placement, kill it. Note the load log contains several *trial* fits; only the last `layer 0 assigned` block is the real one.
-
-> **Do not size a config on this box from `nvidia-smi` or from `cudaMemGetInfo`.** Measure the ceiling, then set `-fitt` against it.
-
-
 ### The field regression: 4-bit KV cost 2.3× decode and 11× prefill (2026-08-20)
 
-The offload fix above was measured with **40-token prompts, greedy sampling, thinking OFF, code output** — the single most favourable configuration. In real cria traffic the same server delivered **4.9 t/s weighted**. The synthetic 28.4 was not a lie, it was unrepresentative in four ways at once, and the gap is a lesson about benchmark design as much as about settings.
+The `-fitt` offload fix (the retired `qwen38` run, in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd)) was measured with **40-token prompts, greedy sampling, thinking OFF, code output** — the single most favourable configuration. In real cria traffic the same server delivered **4.9 t/s weighted**. The synthetic 28.4 was not a lie, it was unrepresentative in four ways at once, and the gap is a lesson about benchmark design as much as about settings.
 
 **Replay from captures, not synthetic probes.** `~/.cria/calls/<session>/NNNN-<phase>.json` stores the exact request body. Replay it verbatim — real tools, real message history, real sampling, `enable_thinking: true` — with only `stream:false` and a `max_tokens` cap added, so the *rate* is measured at real depth without waiting out an 8000-token generation. This reproduced the field number on the first try; no synthetic prompt did.
 
@@ -424,7 +326,7 @@ The offload fix above was measured with **40-token prompts, greedy sampling, thi
 | `q8_0` | **off** | `-350,-300` | 12.2 | 11.9 | 367–390 |
 | `q8_0` | **off** | `-500`/`-560` | 12.1 | 11.6 | 348–378 |
 
-**`iq4_nl` KV was the whole regression.** 4-bit KV has no fast attention kernel for this model's `head_dim 256` on this hardware and falls back to something pathological — it does not merely cost bandwidth, it costs **11× the prefill**. Switching to `q8_0` costs ~750 MiB and buys 2.3× decode at depth. **This was already a documented fleet finding** (see the TurboQuant sweep above: *"the wall was the QUANTIZED-KV CODE PATH, not KV bandwidth"*, f16 beating turbo3 on the same build, and *"q8_0 stays the fleet default"*). It was set anyway, for headroom, and not re-tested under real load. **`q8_0` is the default for a reason — deviate only with a measurement at real depth.**
+**`iq4_nl` KV was the whole regression.** 4-bit KV has no fast attention kernel for this model's `head_dim 256` on this hardware and falls back to something pathological — it does not merely cost bandwidth, it costs **11× the prefill**. Switching to `q8_0` costs ~750 MiB and buys 2.3× decode at depth. **This was already a documented fleet finding** (see the TurboQuant sweep in [model-history](model-history.md#retired-model-settings-and-lab-notes-moved-from-model-settingsmd): *"the wall was the QUANTIZED-KV CODE PATH, not KV bandwidth"*, f16 beating turbo3 on the same build, and *"q8_0 stays the fleet default"*). It was set anyway, for headroom, and not re-tested under real load. **`q8_0` is the default for a reason — deviate only with a measurement at real depth.**
 
 **Speculation is near-worthless for reasoning traffic.** Draft acceptance is 93% on clean code but **47–76% on reasoning prose**, and every cria coder call is reasoning-dominated — one captured call emitted 34,047 chars of reasoning for a 232-char answer. With `q8_0` it is roughly a wash on decode and **substantially slows prefill** (250 vs 375 t/s). Kept ON only because it edges ahead on decode, which dominates when a call emits thousands of tokens. Turn it off if prefill ever matters more.
 
@@ -461,13 +363,9 @@ python3 - <<'EOF'
 import json,glob,sys
 f=sorted(glob.glob('/home/jesse/.cria/calls/*/[0-9]*-coder-s1.json'))[-1]
 b=json.load(open(f))['body']; b['stream']=False; b['max_tokens']=400
-json.dump(b, open('/tmp/replay.json','w')); print('from', f)
+json.dump(b, open('/var/tmp/replay.json','w')); print('from', f)
 EOF
-curl -s 127.0.0.1:18084/v1/chat/completions -H 'Content-Type: application/json' -d @/tmp/replay.json \
+curl -s 127.0.0.1:18084/v1/chat/completions -H 'Content-Type: application/json' -d @/var/tmp/replay.json \
  | python3 -c 'import sys,json;t=json.load(sys.stdin)["timings"];d=t.get("draft_n",0);print(f"pp={t[\"prompt_per_second\"]:.0f} tg={t[\"predicted_per_second\"]:.2f} accept={100*t.get(\"draft_n_accepted\",0)/d if d else 0:.0f}%")'
 
-# WHERE THE LAYERS ACTUALLY WENT (the default log hides this — needs -lv 5).
-# Stop the unit first; this boots a second instance. Only the LAST block is the real fit.
-systemctl stop llama-qwen38 && llama-fleet qwen38 -lv 5 2>&1 | tee /tmp/fit.log | grep -m1 'listening on'
-awk '/layer +0 assigned/{d=""} /assigned to device/{split($0,a,"device ");split(a[2],b,",");c[b[1]]++} END{for(k in c)print k,c[k]}' /tmp/fit.log
 ```

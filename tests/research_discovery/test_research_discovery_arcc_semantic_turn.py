@@ -116,3 +116,25 @@ def test_a_deselected_rehunt_or_search_stage_never_asks_and_never_clears():
         assert rig.ask.call_count == 0 and rig.owner.semantic_pending is None
     assert rig.ask.call_count == 0 and not rig.cleared()
     assert denial.is_denied(webfetch.gate_search(SESSION, QUERY))            # nothing was cleared behind the off switch
+
+
+SPIRAL = ('go.mod decimal module golang.org/x/exp math/bits? no — "github.com/bsb" or "github.com/joelschaefer"? Actually: which Go '
+          'library provides a Decimal type for money, e.g. github.com/shopspring/supercharge? Let me search properly.')
+
+
+@pytest.mark.parametrize("query", [
+    SPIRAL,                                                                  # on-target subject, unusable as a query string
+    "web_search('Ada Handles API documentation')",                           # a literal wrapper
+    'Search for "Cardano Ada Handle openapi.json" or "api.handle.me spec"',  # an instruction sentence with two quoted candidates
+    "Cardano Python SDK package name",                                       # a case-only rewrite of an earlier search
+    "oklog decimal go module", "eu countries ruby gem",                      # the 404 and invented-registry incidents
+])
+def test_incident_search_strings_reach_the_coder_unchanged_and_ask_nothing(query):
+    """The removed search-relevance judge (docs/search-guidance.md): whatever the search string looks like, nothing is asked, rewritten,
+    noted or recorded for a query that does not overlap an earlier visible search, and no clearance is pending."""
+    rig = Rig()
+    reply = completion(query)
+    before = copy.deepcopy(reply)
+    assert rig.prepare(reply) is reply and reply == before
+    assert rig.ask.call_count == 0 and rig.events == [] and rig.owner.semantic_pending is None and not rig.owner.rehunt_verdicts
+    assert webfetch.gate_search(SESSION, query) is None                      # the repeat gate admits a first-time search

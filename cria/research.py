@@ -18,7 +18,7 @@ writing code against it" — which predates the step this module used to author 
 costs no model call, and reaches every run. The authored step, the reasoner call that wrote it, and
 the periodic check that cleared it were removed on 2026-08-19; across 174 captured authorings, 102
 said some version of "read the files already in the workspace" and the run was already doing that.
-The reasoning is in `docs/audits/base-vs-cria-footgun-patterns.md`.
+The reasoning is kept in `docs/decision-log.md` ("The authored research/reading step is gone").
 
 WHAT REMAINS is the deterministic half, and it is the half that was always trustworthy: cria records
 every fetch that came back and what was parsed out of it (``loop._extract_fetches`` → url → status,

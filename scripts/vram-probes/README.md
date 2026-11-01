@@ -19,7 +19,7 @@ The sweep compares Flash Attention, F16/Q8/Q4 cache combinations, prompt batch s
 `--arms NAME ...` selects existing arms for a follow-up comparison. `--novel-check` adds three distinct first-seen coding prompts; `--long-check` adds the large-context retrieval smoke. `--bench-temp 1` repeats throughput measurements at publisher-recommended sampling instead of the default greedy zero; narrow quality smokes remain deterministic. Output directories must be new; prior failures and measurements are not overwritten. The original vLLM's empty HTTP-200 health response is accepted; its model identity is checked with the container's existing API key without saving the key. Rate-limit signals abort this finite experiment with the server's delay preserved, rather than retrying that origin or contaminating timing results. Results and limits belong in [the Dory runtime guide](../../docs/dory-runtime.md). The older probes/accounting notes below describe the historical WSL setup, not a new allocation measurement on native Linux.
 
 Built 2026-08-19 while chasing a hidden CPU offload on the dual-GPU `qwen38` slot.
-Full write-up: [`docs/model-settings.md` → VRAM accounting on WSL](../../docs/model-settings.md).
+Full write-up: [`docs/model-history.md` → VRAM accounting on WSL](../../docs/model-history.md).
 
 On this box **neither `nvidia-smi` nor `cudaMemGetInfo` tells you what you can allocate.**
 CUDA overstates used VRAM by ~1.85 GB the moment a context exists; the NVIDIA driver and the
