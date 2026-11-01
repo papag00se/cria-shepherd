@@ -119,6 +119,23 @@ def test_edit_and_add_file_lower_to_patch_or_write_only_where_the_harness_can_ru
     assert calls_of(massage.add_file_to_write_file(add)) == [("write_file", {"path": "new.py", "content": "import os\nprint(1)"})]
     assert calls_of(massage.add_file_to_write_file(comp(calls=[("apply_patch", {"input": "*** Begin Patch\n*** Update File: h.py\n-a\n+b\n*** End Patch"})])))[0][0] == "apply_patch"
 
+@rows([
+    # real: a unified-diff creation header (`@@ -0,0 +1,N @@`) inside a native Add File (session 20261008T083630 call 12)
+    ("*** Begin Patch\n*** Add File: n.py\n@@ -0,0 +1,2 @@\n+import os\n+print(1)\n*** End Patch", ("n.py", "import os\nprint(1)")),
+    ("*** Add File: n.py\n@@ -0,0 +1 @@\n+x", ("n.py", "x")),
+    # a bare (un-prefixed) body keeps every leading space: normalizing first would strip one from each indented line
+    ("*** Begin Patch\n*** Add File: n.py\n@@ -0,0 +1,2 @@\nif x:\n    y = 1\n*** End Patch", ("n.py", "if x:\n    y = 1")),
+    # only the creation header of a pure add is skipped: a header after content, or one that edits existing lines, is not a pure add
+    ("*** Begin Patch\n*** Add File: n.py\n+a\n@@ -0,0 +1,2 @@\n+b\n*** End Patch", None),
+    ("*** Begin Patch\n*** Add File: n.py\n@@ -3,2 +3,2 @@\n+b\n*** End Patch", None),
+])
+def test_a_pure_add_file_with_a_creation_header_is_lowered_to_write_file_in_one_pass(patch, expected):
+    out = calls_of(massage.apply(comp(calls=[("apply_patch", {"input": patch})]), [tool("apply_patch")]))
+    if expected is None:
+        assert out[0][0] == "apply_patch"
+    else:
+        assert out == [("write_file", {"path": expected[0], "content": expected[1]})]
+
 @rows([("cat", {"path": "h.py"}, [SHELL], "shell", "cat h.py"), ("pytest", {"args": ["-q"]}, [SHELL], "shell", "pytest"),
        ("exec_command", {"cmd": ["bash", "-lc", "pytest"]}, [SHELL], "shell", "pytest"),
        ("shell", {"command": "ls -la"}, [SHELL], "shell", {"command": ["bash", "-lc", "ls -la"]}),

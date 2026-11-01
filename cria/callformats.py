@@ -91,12 +91,17 @@ def _read_command(args: dict) -> str:
     return _wp_read_command(_normalize_read_args(args)) or ""
 
 
+_NEW_FILE_HUNK = re.compile(r"^@@\s+-0(?:,0)?\s+\+\d+(?:,\d+)?\s+@@\s*$")
+
+
 def _pure_add_file(body: str):
     path, content = None, []
     for line in body.splitlines():
         s = line.strip()
         if s in ("*** Begin Patch", "*** End Patch"):
             continue
+        if path is not None and not content and _NEW_FILE_HUNK.match(line):
+            continue  # the unified-diff creation header (`@@ -0,0 +1,N @@`) numbers the added lines; it is not one
         if s.startswith("*** Add File:"):
             if path is not None:
                 return None  # more than one file — not a pure single add
