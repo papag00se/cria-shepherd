@@ -51,6 +51,9 @@ WITHIN = {('WITHIN_SCOPE', 'within')}
     ("f.swift", 'import Foundation\nFileManager.default.removeItem(at: URL(fileURLWithPath: "/external"))', True, PROVEN),
     ("f.swift", 'import Foundation\nFileManager.default.createFile(atPath: "/external/f", contents: nil)', True, PROVEN),
     ("f.swift", 'FileManager.default.removeItem(atPath: "/external")', False, UNRESOLVED),                 # Foundation not imported
+    ("f.swift", 'FileManager.default.removeItem(atPath: "/external")\nimport Foundation', True, PROVEN),   # imports are order-free: one as the very last token still counts
+    ("f.swift", 'FileManager.default.removeItem(atPath: "/external")\nimport', False, UNRESOLVED),        # a bare trailing `import` names nothing (and must not read past the tokens)
+    ("f.swift", 'let s = "import"\nFoundation\nFileManager.default.removeItem(atPath: "/external")', False, UNRESOLVED),   # a string saying "import" is not an import
     ("f.lua", 'local f = io.open("/external/f", "a")', True, PROVEN), ("f.pl", 'open(FH, ">>", "/external/f");', True, PROVEN),
     ("f.pl", 'rmdir("/external"); CORE::unlink("/external/g");', True, PROVEN),
     ("f.dart", 'void main(){ File("/external/f").deleteSync(); }', False, UNRESOLVED),                    # dart:io never imported

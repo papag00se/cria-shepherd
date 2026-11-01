@@ -26,13 +26,30 @@ ROWS = [
     ("f.js", JS + "fs.rmSync('/ex\\'ternal');", False, "UNKNOWN"),                                              # an escaped single-quoted body is not a certain literal
     ("f.php", '<?php\n$f=tempnam("/tmp","x");\nunlink($f);', False, "WITHIN_SCOPE"),
     ("f.php", '<?php\nunlink("/external/$x");', False, "UNKNOWN"),                                              # an interpolated string is not a literal
+    ("f.rb", 'File.delete("/external/#{name}")', False, "UNKNOWN"), ("f.ex", 'File.rm("/external/#{name}")', False, "UNKNOWN"),
+    # import binding: which name a module import gives the module decides whether `x.rmSync(...)` is the real fs call
+    ("f.js", 'import fs from "fs";\nfs.rmSync("/external");', True, "PROVEN"),
+    ("f.js", 'import * as fs from "node:fs";\nfs.rmSync("/external");', True, "PROVEN"),
+    ("f.js", 'import {rmSync} from "fs";\nrmSync("/external");', False, None),                                    # a named import binds no module name
+    ("f.js", 'const fs = load("fs");\nfs.rmSync("/external");', False, None),                                    # only require() / import-from bind one
+    ("f.js", 'const fs=require(`fs`);\nfs.rmSync("/external");', False, None),                                   # a template literal is not a certain module name
+    ("f.js", "const cfg = { fs: 'fs' };\nfs.rmSync('/external');", False, None),                                     # a property value is not an import, however it is spelled
+    ("f.js", "const fs=require('fs');\nfs.rmSync('/external');", True, "PROVEN"),                                # single quotes: the body without its quotes, whole
+    ("f.go", 'package main\nimport o "os"\nfunc main(){ o.RemoveAll("/external") }', False, "POSSIBLE"),         # the alias is the bound name ...
+    ("f.go", 'package main\nimport o "os"\nfunc main(){ os.RemoveAll("/external") }', False, "UNKNOWN"),         # ... and `os` no longer is
+    ("f.go", 'package main\nimport "os"\nfunc main(){ o.RemoveAll("/external") }', False, "UNKNOWN"),
+    ("f.go", 'package main\nimport (\n\t"fmt"\n\to "os"\n)\nfunc main(){ o.RemoveAll("/external") }', False, "POSSIBLE"),
+    ("f.go", 'package main\nimport (\n\t"os"\n)\nfunc main(){ os.RemoveAll("/external") }', False, "POSSIBLE"),
+    ("f.rs", 'use std::fs;use std::fs::remove_dir_all;fn main(){ remove_dir_all("/external"); }', False, "POSSIBLE"),   # two uses with no break between
+    ("f.rs", 'use other::fs;\nfn main(){ fs::remove_dir_all("/external"); }', False, "UNKNOWN"),               # only std paths bind
+    ("f.rs", 'use std::fs as f;\nfn main(){ f::remove_dir_all("/external"); }', False, "UNKNOWN"),
 ]
 
 
 @pytest.mark.parametrize("path,source,blocked,confidence", ROWS)
 def test_analysis_blocks_only_what_it_can_prove_and_labels_the_rest(path, source, blocked, confidence):
     result = analyze(path, source, "/project")
-    assert (result.blocked, [f.confidence for f in result.findings]) == (blocked, [confidence])
+    assert (result.blocked, [f.confidence for f in result.findings]) == (blocked, [confidence] if confidence else [])
 
 
 def test_an_analysis_over_the_token_budget_declares_the_limit_instead_of_guessing():
