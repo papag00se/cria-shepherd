@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -321,12 +322,17 @@ class InputOverflow(UpstreamError):
         return prompts.render("input_overflow", **fields)
 
 
-def _frame_of(out, rep):
+def _frame_of(out, factor):
     """(tool-menu tokens, message tokens) of a request that overflows on a TOOL-RESULT turn, else None: a user message
-    that overflows is the person's to shorten; a tool-result turn has nobody to ask, so the notice names the frame."""
+    that overflows is the person's to shorten; a tool-result turn has nobody to ask, so the notice names the frame.
+    Both are in the unit of the SIZE the notice states beside them: the chars/4 estimate of the body actually sent, times
+    ``factor`` (the measured tokens per estimated token when the server measured it, else the density the floor fitted at).
+    Left as estimates they read as half the request they were part of (3,274 stated, a 1,637 frame)."""
     msgs = out.get('messages') if isinstance(out, dict) else None
     if isinstance(msgs, list) and msgs and isinstance(msgs[-1], dict) and msgs[-1].get('role') == 'tool':
-        return rep.tool_tokens, rep.msg_tokens_after
+        tools = out.get('tools')
+        return (math.ceil(contextfloor.est_tokens(json.dumps(tools)) * factor) if tools else 0,
+                math.ceil(contextfloor.est_total(msgs, None) * factor))
     return None
 
 
@@ -1181,7 +1187,7 @@ class Upstream:
                         raise ReadFitOverflow(MeasuredReadOverflow(window, real, rep.reserve, read_bindings, data))
                     if data == _previous_fit:
                         raise InputOverflow("Measured input cannot fit the context window without losing protected input",
-                                            real, window, rep.reserve, True, self._other_tokens(out, safety, rlog), frame=_frame_of(out, rep),
+                                            real, window, rep.reserve, True, self._other_tokens(out, safety, rlog), frame=_frame_of(out, real / max(sent_estimate, 1)),
                                             requested=rep.reserve_requested)
                     tighter = max(safety, real / max(sent_estimate, 1))
                     return self._prep(body, stream, rlog, safety_override=tighter,
@@ -1194,7 +1200,7 @@ class Upstream:
             # POST or capture a request the one floor still knows cannot fit.
             if rep.over_budget or data == _previous_fit:
                 raise InputOverflow("Input cannot fit the context window without losing protected input",
-                                    sent_estimate * safety, window, rep.reserve, False, self._other_tokens(out, safety, rlog), frame=_frame_of(out, rep),
+                                    sent_estimate * safety, window, rep.reserve, False, self._other_tokens(out, safety, rlog), frame=_frame_of(out, safety),
                                             requested=rep.reserve_requested)
             # Structural wire growth is measured in the same estimate space,
             # separately from model density and the role's generation reserve.

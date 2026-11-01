@@ -90,6 +90,21 @@ def test_the_overflow_notice_names_the_size_to_stay_under_and_that_size_is_deliv
     assert "chat" in ok.paths
 
 
+@pytest.mark.parametrize("tokenizer", [False, True])
+def test_the_frame_a_tool_result_overflow_names_is_in_the_unit_of_the_size_it_sits_beside(tokenizer):
+    """audit AUD3: the frame figures of the tool-result overflow notice were chars/4 estimates printed beside a size already multiplied by the density (or measured by the server),
+    so a request stated as 3,274 tokens named a frame of 1,637. The tool menu and the messages are the request being refused, in the same unit as its size: they add up to it."""
+    menu = [{"type": "function", "function": {"name": "read_file", "description": "d" * 400, "parameters": {"type": "object", "properties": {}}}}]
+    history = [{"role": "system", "content": "s" * 4000}, {"role": "user", "content": "task " + "t" * 2000},
+               {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+               {"role": "tool", "tool_call_id": "c1", "content": "ok"}]
+    with pytest.raises(InputOverflow) as err:
+        chat(Recording(tokenizer=tokenizer), history, 2000, tools=menu, max_tokens=300)
+    e = err.value
+    assert e.measured is tokenizer and e.frame is not None and abs(sum(e.frame) - e.tokens) <= 2 and e.frame[0] > 0
+    assert f"about {e.frame[0]:,} tokens of tool menu and about {e.frame[1]:,} tokens of instructions and task" in e.notice()
+
+
 def test_a_guessed_window_never_trims_and_the_unreadable_props_are_retried_on_a_budget():
     """/props unreadable -> the 8,192 fallback is a GUESS: a 12,000-token conversation ships whole (the server settles it), the skip is logged, and the probe stops after 3 misses
     except every 50th call; when the server finally answers, the real window (and the floor) applies."""
