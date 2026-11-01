@@ -13,7 +13,7 @@ from dataclasses import asdict
 from contextlib import contextmanager
 import fcntl
 from . import bodykeys, filecommands, prompts, readshape, resultnotes, resultpacket
-from .multipart import MultipartRead, InvalidPage, BridgeError, UnverifiedCarrier, _pairs
+from .multipart import MultipartRead, InvalidPage, CutPage, BridgeError, UnverifiedCarrier, _pairs
 from .multipart_reconstruct import BinaryBody, verify_original
 
 
@@ -304,7 +304,7 @@ class Bridge:
                         or (entry.calls and entry.pending not in entry.calls)):
                     raise ValueError('invalid call sequence')
                 for cid, call in entry.calls.items():
-                    command=filecommands.build_multipart_page(spec,assembly.offset,live=assembly.live_pages)
+                    command=filecommands.build_multipart_page(spec,assembly.offset,live=assembly.live_pages,limit=assembly.limit)
                     if cid == spec.call_id:
                         command=writeproxy._sentinel(fn['name'],fn['arguments'],spec.receipt,False)+'\n'+command
                     if call != writeproxy._shell_call(cid,entry.shell,command,0):
@@ -328,9 +328,9 @@ class Bridge:
                             raise ValueError('unknown status not declared')
                         continue
                     if env is not None:
-                        if env.running or env.cut_warning or env.exit_code != 0: raise ValueError('failed page')
+                        if env.running or env.exit_code != 0: raise ValueError('failed page')
                         content=content[env.record_start:]
-                    assembly.accept(content.encode('utf-8'))
+                    assembly.take(content, bool(env and env.cut_warning))
                 if assembly._complete:
                     try:
                         entry.result=verify_original(assembly,spec.receipt).stdout
@@ -542,15 +542,20 @@ class Bridge:
                 e.received[e.pending] = content
                 env = resultnotes.exec_envelope(content)
                 kind = None
+                cut = False
                 if env is not None:
                     if env.running: kind = 'running'
-                    elif env.cut_warning: kind = 'cut'
                     elif env.exit_code is None: kind = 'unknown'
                     elif env.exit_code != 0: kind = 'nonzero'
-                    else: content = content[env.record_start:]
+                    else:
+                        # A cut result may still hold the whole record (shell output around it is what was cut): the
+                        # assembly looks for it, measures the noise and asks for the page again when it did not survive.
+                        content, cut = content[env.record_start:], bool(env.cut_warning)
                 if kind is None:
                     try:
-                        complete = e.assembly.accept(content.encode('utf-8'))
+                        complete = e.assembly.take(content, cut)
+                    except CutPage:
+                        kind = 'cut'
                     except (InvalidPage, UnicodeError):
                         kind = 'invalid'
                 if kind is not None:
@@ -570,7 +575,7 @@ class Bridge:
                         e.failure_code = None
                 else:
                     next_id = 'ctxread_' + uuid.uuid4().hex
-                    cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset, live=e.assembly.live_pages)
+                    cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset, live=e.assembly.live_pages, limit=e.assembly.limit)
                     call = writeproxy._shell_call(next_id, e.shell, cmd, 0)
                     e.pending = next_id
                     e.private.add(next_id)

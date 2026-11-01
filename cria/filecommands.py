@@ -433,6 +433,7 @@ import base64, hashlib, json, os, stat, sys
 s = json.loads(base64.b64decode('%%CONFIG%%'))
 offset = %%OFFSET%%
 mode = '%%MODE%%'
+limit = %%LIMIT%%
 sha = lambda x: hashlib.sha256(x).hexdigest()
 identity = lambda x: [x.st_dev, x.st_ino, x.st_size, x.st_mtime_ns]
 semantics = 'range' if s['start'] else 'whole'
@@ -562,10 +563,10 @@ def encoded(n, snapshot):
 def fit(snapshot):
     # Base64 and the decimal length are monotone; digest widths are fixed. The
     # JSON line is ASCII and only its final LF can expand under a normal PTY.
-    low, high, best = 0, min(len(stream)-offset, 10000), -1
+    low, high, best = 0, min(len(stream)-offset, limit), -1
     while low <= high:
         mid = (low + high) // 2
-        if len(encoded(mid, snapshot)) + 1 <= 10000:
+        if len(encoded(mid, snapshot)) + 1 <= limit:
             best, low = mid, mid + 1
         else:
             high = mid - 1
@@ -636,7 +637,8 @@ class MultipartCommandTooLarge(ValueError):
     """A known harness command limit cannot carry this request unchanged."""
 
 
-def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_bytes: int | None = None, live: bool = False) -> str:
+def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_bytes: int | None = None, live: bool = False,
+                         limit: int = READ_TRANSPORT_STDOUT_BYTES) -> str:
     """One page command. Offset 0 takes the snapshot; later pages serve from it, or read the path live when the first page said
     (typed, in its record) that no snapshot was taken (`live`)."""
     if not isinstance(spec, MultipartReadSpec) or not spec.call_id or not spec.token or not spec.receipt:
@@ -667,8 +669,10 @@ def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_by
          'past':f'(no lines in that range — {display} has %N% lines; line {start} is past the end of the file)\n',
          'snapshot_cap':MULTIPART_SNAPSHOT_MAX_BYTES, 'snapshot_prefix':MULTIPART_SNAPSHOT_DIR}
     cfg = base64.b64encode(json.dumps(s, ensure_ascii=True).encode()).decode()
+    if type(limit) is not int or limit <= 0 or limit > READ_TRANSPORT_STDOUT_BYTES:
+        raise ValueError('invalid record limit')
     page_mode = 'take' if offset == 0 else 'live' if live else 'serve'
-    script = _MULTIPART_PAGE_PY.replace('%%CONFIG%%', cfg).replace('%%OFFSET%%', str(offset)).replace('%%MODE%%', page_mode)
+    script = _MULTIPART_PAGE_PY.replace('%%CONFIG%%', cfg).replace('%%OFFSET%%', str(offset)).replace('%%MODE%%', page_mode).replace('%%LIMIT%%', str(limit))
     command = "python3 - <<'__CRIA_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + ownedfiles.DIRECTORY_PROGRAM + script + '\n__CRIA_MULTIPART_PAGE__\n'
     if command_max_bytes is not None:
         if type(command_max_bytes) is not int or command_max_bytes < 0:

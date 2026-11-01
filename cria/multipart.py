@@ -8,13 +8,25 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 
 STDOUT_LIMIT = 10_000
+# Record limits of the re-fetches that follow a cut result whose record did not survive (one per consecutive miss). A shell
+# that prints before/after the program makes the harness cut the page in the middle; a smaller page is asked for again until
+# one arrives whole, and its surroundings are then MEASURED (see MultipartRead.take). Smaller than the page itself, so the
+# first of them also fits beside a few KB of noise untruncated.
+REFETCH_LIMITS = (2000, 1000, 500)
+MAX_REFETCH = 8
+_CUT_MARK = re.compile('…(\\d+) chars truncated…')
 
 
 class InvalidPage(ValueError):
     pass
+
+
+class CutPage(InvalidPage):
+    """The harness cut the output and no page record survived, and the re-fetches are used up."""
 
 
 class BridgeError(ValueError):
@@ -81,6 +93,10 @@ class MultipartRead:
     write_outcome: str | None = None
     snapshot: tuple | None = None       # (mode, reason, taken) as the FIRST page declared; later pages must repeat mode and taken
     snapshot_now: tuple | None = None   # the path's identity as of the LAST page; compared with `taken` at delivery
+    noise: int = 0                      # the most bytes seen around a page record (shell output before/after the program)
+    intact: int = 0                     # the largest record that survived a harness cut whole (a floor for the page size)
+    misses: int = 0                     # consecutive cut results whose record did not survive
+    refetches: int = 0
     _parts: list[bytes] = field(default_factory=list, repr=False)
     _failed: bool = False
     _complete: bool = False
@@ -99,6 +115,53 @@ class MultipartRead:
             self._failed = True
             self._parts.clear()
             raise InvalidPage(str(exc)) from exc
+
+    @property
+    def limit(self) -> int:
+        """The record byte limit of the NEXT page command: the harness limit less the noise measured around the last
+        records (a re-fetch uses its smaller probe limit), never below a record already seen to arrive whole."""
+        if self.misses:
+            return REFETCH_LIMITS[self.misses - 1]
+        return max(STDOUT_LIMIT - self.noise, self.intact)
+
+    def take(self, text: str, cut: bool = False) -> bool:
+        """Consume one harness result that may carry shell output around the producer's record.
+
+        The record is the one line that starts with this read's private token (`{"v":1,"token":"<hex>"`: not guessable by
+        a shell, never in the file's bytes, which ride base64); everything else is noise, whose size is measured: its
+        bytes, plus the harness's own `…N chars truncated…` count when it cut the result around a record that survived.
+        A cut result whose record did not survive asks for the same page again (False, offset unchanged) with a smaller
+        limit; when those are used up, CutPage. The record itself is verified exactly as before (digests, offsets).
+        Returns true only on verified completion."""
+        if self._failed or self._complete:
+            raise InvalidPage('assembly is closed')
+        payload = text.encode('utf-8')
+        prefix = b'{"v":1,"token":"' + self.token.encode() + b'"'
+        start = payload.find(prefix) if self.token else -1
+        end = payload.find(b'\n', start) + 1 if start >= 0 else 0
+        if start >= 0 and payload.find(prefix, start + 1) >= 0:
+            end = 0                                   # two candidate records: ambiguous, never pick one
+            start = -1
+        mark = _CUT_MARK.search(text) if cut else None
+        at = payload.find(mark.group(0).encode()) if mark else -1
+        if start >= 0 and end and start <= at < end:
+            end = 0                                   # the harness cut INSIDE the record: its two halves are not a page
+        if start < 0 or not end:
+            if cut and self.misses < len(REFETCH_LIMITS) and self.refetches < MAX_REFETCH:
+                self.misses += 1
+                self.refetches += 1
+                return False
+            self._failed = True
+            self._parts.clear()
+            raise (CutPage if cut else InvalidPage)('no page record in the output')
+        record = payload[start:end]
+        noise = len(payload) - len(record) + (int(mark.group(1)) - len(mark.group(0).encode()) if mark else 0)
+        complete = self.accept(record)
+        self.misses = 0
+        self.noise = max(self.noise, noise)
+        if cut:
+            self.intact = max(self.intact, len(record))
+        return complete
 
     def _accept(self, wire):
         if not isinstance(wire, bytes) or len(wire) > STDOUT_LIMIT or not wire.endswith(b'\n') or b'\n' in wire[:-1]:
