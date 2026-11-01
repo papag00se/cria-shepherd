@@ -37,6 +37,38 @@ def test_a_rehunt_is_judged_once_and_a_new_direction_runs_exactly_once(reply, fr
     finally:
         webfetch.reset_session(session)
 
+def test_a_deferred_clearance_stays_requested_for_a_cached_positive_verdict_and_a_disabled_policy_asks_nothing():
+    """MUT2 (semanticquery survivors): with the grant deferred to delivery a cached 'new direction' still asks for it on the next turn
+    (nothing was spent); a historical record of that verdict mints nothing; a disabled policy never reaches the reasoner."""
+    session = "semantic-" + uuid.uuid4().hex
+    try:
+        webfetch.set_visible(session, [], [PRIOR])
+        req, ask, _ = request(session, '{"new_direction":true}')
+        req = policy.RehuntInput(req.coder, req.session, req.facts, req.judge, defer_clearance=True)
+        state = policy.RehuntState()
+        assert policy.rehunt(req, state).clearance_requested and webfetch.gate_search(session, QUERY) is not None
+        assert policy.rehunt(req, state) == policy.RehuntResult(QUERY, PRIOR.lower(), True, True) and ask.call_count == 1
+        assert not policy.rehunt(req, policy.RehuntState({QUERY: True})).clearance_requested and ask.call_count == 1
+        assert policy.rehunt(req, policy.RehuntState(), enabled=False) == policy.RehuntResult() and ask.call_count == 1
+    finally:
+        webfetch.reset_session(session)
+
+@pytest.mark.parametrize("change,spent", [({}, True), ({"clearance_requested": False}, False), ({"new_direction": None}, False), ({"new_direction": False}, False),
+                                          ({"prior": None}, False), ({"query": "something the coder did not ask"}, False)])
+def test_a_clearance_is_spent_only_by_the_exact_search_call_that_was_judged(change, spent):
+    """MUT2 (semanticquery survivors in settle_rehunt): every missing condition of a deferred clearance leaves the repeat gate shut."""
+    session = "semantic-" + uuid.uuid4().hex
+    try:
+        webfetch.set_visible(session, [], [PRIOR])
+        req, _, _ = request(session, '{"new_direction":true}')
+        result = policy.RehuntResult(QUERY, PRIOR.lower(), True, True)
+        result = policy.RehuntResult(**{**result.__dict__, **change})
+        log = Mock()
+        assert policy.settle_rehunt(result, req.coder, session, log) is spent
+        assert (webfetch.gate_search(session, QUERY) is None) is spent and log.emit.called is spent
+    finally:
+        webfetch.reset_session(session)
+
 def test_reading_back_what_the_coder_wrote_is_not_research_but_a_preexisting_file_is():
     """nemotron-elastic/rust 0033: the research step closed on a test file the coder had written four calls earlier."""
     call = lambda name, path, tid: {"role": "assistant", "content": None, "tool_calls": [{"id": tid, "type": "function", "function": {"name": name, "arguments": json.dumps({"path": path})}}]}

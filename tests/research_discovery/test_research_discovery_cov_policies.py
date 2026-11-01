@@ -40,6 +40,9 @@ def fetch(visible=True, cached=None, observed=None, spilled=False, find=None, ur
     ({'cached': (200, 'text/plain', 'ok', None, False)}, rs.Effect.REFUSED, 'fetch_repeat:url=https://api.x/spec'),
     ({'observed': rs.VisibleFetch(('u', '', '', False), rs.FetchReceipt.NO_RESPONSE)}, rs.Effect.REFUSED, 'fetch_repeat_no_response:url=https://api.x/spec'),
     ({'observed': rs.VisibleFetch(('u', '', '', False), rs.FetchReceipt.RESPONSE, '503', True)}, rs.Effect.REFUSED, 'fetch_repeat_response:status=503,url=https://api.x/spec'),
+    ({'cached': (200, 'text/plain', 'x' * 101, None, False), 'spilled': True, 'find': 'x'}, rs.Effect.REFUSED, 'SPILL NOTE'),   # MUT2: a repeated find on a body too big to inline is read through its file
+    ({'cached': (200, 'text/plain', 'x' * 101, None, False), 'find': 'x'}, rs.Effect.REFUSED, 'fetch_repeat:url=https://api.x/spec'),   # big but never spilled: the plain repeat
+    ({'cached': (200, 'text/plain', 'x' * 100, None, False), 'spilled': True, 'find': 'x'}, rs.Effect.REFUSED, 'fetch_repeat:url=https://api.x/spec'),   # exactly the inline size is not "too big"
     ({'spilled': True, 'visible': False}, rs.Effect.REFUSED, 'SPILL NOTE'),                                  # too big to inline: refetch only through the file
     ({'spilled': True, 'visible': False, 'find': 'x'}, rs.Effect.NO_OP, None),                              # a targeted find is a new navigation
     ({'url': 'http://localhost:8080/x'}, rs.Effect.NO_OP, None),                                             # internal hosts are never gated
