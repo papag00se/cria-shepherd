@@ -39,7 +39,7 @@ from dataclasses import dataclass, replace
 from http.client import InvalidURL
 from typing import Any, Optional
 
-from . import apidiscovery, brave, denial, fetchfacts, prompts, ratelimit
+from . import apidiscovery, brave, denial, fetchfacts, httpread, prompts, ratelimit
 from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
                              SPILL_CONTENT_MAX, clip, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
@@ -117,20 +117,19 @@ def fetch(url: str, user_agent: Optional[str] = None) -> FetchResult:
         status = int(getattr(resp, "status", 0) or getattr(resp, "code", 0) or 0)
         final_url = resp.geturl()
         content_type = resp.headers.get("Content-Type")
-        raw = resp.read(MAX_BODY_BYTES + 1)
+        raw = httpread.read_bounded(resp, MAX_BODY_BYTES + 1)    # bounded in total time too: a slow drip never trips the per-read timeout
     truncated = len(raw) > MAX_BODY_BYTES
     slice_ = raw[:MAX_BODY_BYTES] if truncated else raw
     if _is_text_content_type(content_type):
-        body = slice_.decode("utf-8", "replace")
+        body = httpread.decode(slice_, content_type)
     else:
         # NAME A ROUTE, OR DO NOT CLAIM IT IS UNREADABLE. This replaced the whole document with a
         # byte count on a closed content-type allowlist — so a spec served as
         # `application/octet-stream`, `application/x-ndjson`, or under a mistyped header was
         # destroyed before anything parsed it, with no alternative offered. The header is the thing
         # that was wrong, so sniff the BYTES: text that decodes and reads as text is text (#5b).
-        text = slice_.decode("utf-8", "replace")
-        if not content_reduce.looks_binary(text):
-            body = text
+        if not content_reduce.looks_binary(slice_.decode("utf-8", "replace")):
+            body = httpread.decode(slice_, content_type)
         else:
             body = (f"[non-text response: {len(raw)} bytes, content-type={content_type or '(none)'} "
                     f"— the bytes are not text. Ask for a specific part with find=, or fetch a "

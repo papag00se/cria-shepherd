@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from . import brave   # the browser UA only; importing webfetch here would be a cycle
-from . import content_reduce, prompts, ratelimit
+from . import content_reduce, httpread, prompts, ratelimit
 
 # The MCP revision cria speaks. A server that does not support it answers with an error and cria
 # surfaces nothing rather than guessing at a shape it did not receive.
@@ -103,7 +103,7 @@ def _post_json(url: str, payload: dict, headers: dict) -> tuple[int, str, dict]:
     resp = ratelimit.open_response(req, PROBE_TIMEOUT_S)  # noqa: S310 (scheme guarded by caller)
     with resp:
         status = int(getattr(resp, "status", 0) or getattr(resp, "code", 0) or 0)
-        raw = resp.read(MAX_PROBE_BYTES + 1)  # +1 so a body AT the cap is distinguishable from one over it
+        raw = httpread.read_bounded(resp, MAX_PROBE_BYTES + 1)  # +1 so a body AT the cap is distinguishable from one over it
         if len(raw) > MAX_PROBE_BYTES:
             raise ProbeTooLarge(url)
         hdrs = {k.lower(): v for k, v in dict(resp.headers).items()}
