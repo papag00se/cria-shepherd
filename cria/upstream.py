@@ -1527,7 +1527,7 @@ class Upstream:
         resp, sent_estimate, capture_path = self._open_with_refit(
             body, True, rlog, _transport=_transport)
         t0 = time.monotonic()
-        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
+        open_ms = round((t0 - t_open) * 1000, 1)   # everything before the first byte: the floor, the /apply-template + /tokenize measurement, any refit, and the server's queue + prefill head (invisible in total_ms)
         t_first: float | None = None
         content_chunks = 0
         usage: dict | None = None
@@ -1684,7 +1684,7 @@ class Upstream:
         t_open = time.monotonic()
         resp, sent_estimate, capture_path = self._open_with_refit(body, True, rlog)
         t0 = time.monotonic()
-        open_ms = round((t0 - t_open) * 1000, 1)   # the server's queue + prefill head: invisible in total_ms
+        open_ms = round((t0 - t_open) * 1000, 1)   # everything before the first byte: the floor, the /apply-template + /tokenize measurement, any refit, and the server's queue + prefill head (invisible in total_ms)
         t_first: float | None = None
 
         content: list[str] = []

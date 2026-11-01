@@ -704,7 +704,7 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
             break
         text = _msg_text(out[i])
         note = _not_delivered_note(text, _call_of(out, out[i].get("tool_call_id")), tools,
-                                   window=window, reserve=reserve, safety=safety)
+                                   window=window, reserve=reserve, safety=safety, frame=(frame + overhead) * safety)
         if est_tokens(note) >= size:
             break                      # sorted largest first: no later one can save more
         out[i] = {k: v for k, v in out[i].items() if k not in _READ_CLAIMS} | {"content": note}
@@ -761,14 +761,19 @@ def _range_route(call, tools) -> tuple[str, str, str] | None:
     return None
 
 
-def _not_delivered_note(text: str, call, tools, *, window: int, reserve: int, safety: float) -> str:
-    """The note that stands for a withheld tool result: measured size, window, and the one-step way on."""
+def _not_delivered_note(text: str, call, tools, *, window: int, reserve: int, safety: float, frame: float = 0) -> str:
+    """The note that stands for a withheld tool result: measured size, window, and the one-step way on. ``frame`` is what
+    the request must carry beside any result, in real tokens: the suggested piece is sized to the room LEFT beside it, so the
+    piece the coder is told to read is a piece that is delivered (a frame past three quarters of the room made the old
+    quarter-of-the-window piece unfittable again, and the same note, the same piece, came back every turn)."""
     raw = text.encode("utf-8", "surrogatepass")
     shape = readshape.measure(raw)
     routes = prompts.load_map("result_not_delivered_next")
-    # One piece costs about a quarter of the room the window leaves, at the density in force (est x safety).
+    # One piece costs about a quarter of the room the window leaves, at the density in force (est x safety), and never
+    # more than half of what is left once the frame is carried.
+    room = max(window - reserve, 0)
     per_line = max(est_tokens(text), 1) * safety / max(shape.lines, 1)
-    piece = max(1, int(max(window - reserve, 0) / 4 / per_line))
+    piece = max(1, int(min(room / 4, max(room - frame, 0) / 2) / per_line))
     if readshape.line_bound(shape):
         nxt = prompts.fill(routes["long_line"], longest_line=shape.longest_line, longest=f"{shape.longest:,}")
     elif (route := _range_route(call, tools)) is not None:

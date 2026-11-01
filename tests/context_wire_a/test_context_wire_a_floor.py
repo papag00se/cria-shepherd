@@ -294,6 +294,20 @@ def test_a_note_this_fit_wrote_is_never_withheld_again_and_the_event_counts_what
     assert rep.results_withheld == 1 and f"it is {len(quoted.encode()):,} bytes in 2 line(s)" in note
 
 
+def test_the_piece_a_withheld_result_suggests_is_sized_beside_the_frame_so_it_is_delivered():
+    """audit AUD3: the suggested piece was a quarter of the window's room whatever the frame (system text, the request) already took;
+    with a frame past three quarters of the room the piece the note told the coder to read overran the room (the reply reserve was then squeezed from 1,000 to ~500
+    tokens to admit it). The invariant: the piece the note names, delivered as the result of the same call, is not withheld and leaves the reply room whole."""
+    window, reserve, safety = 6000, 1000, 1.5
+    for frame_chars in (400, 11333):                           # a small frame, and one that takes 85% of the room
+        msgs = [{"role": "system", "content": "s" * frame_chars}, u("task"), a("", "c1", "exec_command", '{"cmd": "cat app.log"}'), tool("c1", LOG)]
+        out, _, rep = cf.fit(msgs, None, window=window, reserve=reserve, safety=safety)
+        piece = int(out[-1]["content"].split("about ")[1].split(" lines")[0].replace(",", ""))
+        assert rep.results_withheld == 1 and piece >= 1
+        again, _, rep2 = cf.fit(msgs[:3] + [tool("c1", "\n".join(LOG.split("\n")[-piece:]))], None, window=window, reserve=reserve, safety=safety)
+        assert rep2.results_withheld == 0 and not rep2.over_budget and rep2.reserve == reserve and again[-1]["content"].endswith("batch 2999"), frame_chars
+
+
 def test_lever_seven_keeps_every_result_of_the_newest_parallel_call_with_its_call():
     """audit AUD3 (lever 7): the live tail was the newest two MESSAGES, so for one assistant turn that issued three parallel calls
     the tail was two of the three results; the call itself was droppable, and the orphan strip then deleted the results the tail was
