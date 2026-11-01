@@ -85,3 +85,33 @@ def test_no_internal_body_key_reaches_the_wire():
         body = {"model": "m", "messages": [message], **dict.fromkeys([*bodykeys.ALL, *bodykeys.LEGACY_MESSAGE_KEYS], "x"), bodykeys.PROTECTED_READS: ()}
         out = json.loads(up._prep(body, False, type("L", (), {"emit": lambda *a, **k: None})())[0])
         assert not set(out) & {*bodykeys.ALL, *bodykeys.LEGACY_MESSAGE_KEYS} and out["messages"] == [{"role": role, "content": text}], role
+
+
+PRIVATE_IDENTIFIER = re.compile(r"___CRIA_[A-Za-z_0-9-]*___|__CRIA_[A-Z_]+__|__cria_\w+|\bCRIA_RM\b")
+
+
+def test_lowered_commands_carry_no_prose_naming_the_product():
+    """A command cria lowers is executed by the harness and comes back in the history the model reads: ornith1.5_9b, 2026-10: the
+    java cells read the product's name out of paths and helper comments and called a Maven repo 'the CRIA one'. The embedded programs'
+    own comments said 'cria elides a rejected payload' / 'cria's decoding' / 'cria's own wreckage' / 'tool output cria itself ran'
+    in every write and edit. Private marker identifiers (heredoc delimiters, ___CRIA_*___ frame markers, __cria_* shell variables)
+    are parsed by their consumers and stripped from the model's history by session state; PROSE in a composed program never is."""
+    from cria import filecommands, wsview, writeproxy
+    commands = {
+        "write": writeproxy._write_command("a/b.py", "x = 1\n"),
+        "edit": writeproxy._edit_command("a/b.py", "x = 1", "x = 2", pack=True, echo=True),
+        "edit-plain": writeproxy._edit_command("a/b.py", "x = 1", "x = 2"),
+        "read": filecommands._read_command({"path": "a/b.py"}),
+        "read-range": filecommands._read_command({"path": "a/b.py", "start_line": 3, "end_line": 9}),
+        "list": writeproxy._list_command({"path": "."}),
+        "search": writeproxy._search_command({"query": "x"}, "key"),
+        "spill": writeproxy._spill_command("./tmp/read-only/x.txt", "hello", "msg"),
+        "survey": wsview.survey_command("s", cd="/w"),
+        "survey-pack": wsview.survey_command("s", cd="/w", pack=True),
+        "survey-helper": wsview.survey_command("s", cd="/w", helper="sh /x/helper"),
+        "multipart-page": filecommands.build_multipart_page(filecommands.MultipartReadSpec("c", "tok", "rec", "a.py"), 0),
+    }
+    assert all(len(c) > 100 for c in commands.values())
+    leaks = {name: [m.group(0) for m in re.finditer(r".{0,50}cria.{0,30}", PRIVATE_IDENTIFIER.sub("·", c), re.I)]
+             for name, c in commands.items()}
+    assert {n: v for n, v in leaks.items() if v} == {}

@@ -428,7 +428,7 @@ def _v(path, raw):
                     # coordinate and the text — and the checker's own caret line, which is two
                     # thirds of what makes a syntax error actionable and which `splitlines()[0]`
                     # threw away before the cap even ran (#5: per-line caps and character budgets
-                    # are truncation; this is tool output cria itself ran).
+                    # are truncation; this is tool output the checker itself produced).
                     _base = _os.path.basename(path)
                     _msg = _msg.replace(_tmp + ':', _base + ':').replace(_tmp, _base)
                     _msg = _msg.replace(_base + ': ' + _base + ':', _base + ':')
@@ -448,7 +448,7 @@ def _v(path, raw):
 def _at(raw, msg):
     # SHOW THE LINE THE COORDINATE POINTS AT. The refusal used to carry only the parser's message —
     # "not well-formed (invalid token): line 34, column 1" — into content the coder cannot re-read
-    # (cria elides a rejected payload). A line number into an invisible document points at nothing.
+    # (a rejected payload is elided from the history). A line number into an invisible document points at nothing.
     #
     # Walked on cycle 4 cell 22 (`feed-pipeline-java x nemotron-elastic`, 5% useful): eight refusals
     # of pom.xml, every one at line 34, and line 34 of the content the model sent was `</function>`
@@ -635,7 +635,7 @@ if toks:
         # CARRIES its own leading indent, new_string carries the same indent — and splicing after the
         # file's indent doubles it. Walked on mellum2 1786196176 call 0190: a correct side_effect fix
         # (12-space old, 12-space new, off-disk only by a blank line the flexible match forgives)
-        # became a 24-space line, the syntax guard caught cria's own wreckage, and the report told
+        # became a 24-space line, the syntax guard caught the flexible match's own wreckage, and the report told
         # the coder to "Fix new_string" — for an edit that was right. The same fix, resubmitted with
         # a one-line old_string, applied verbatim at 0215, 120 calls later. So: old_string indented →
         # consume the file's indent back to line start and let new_string supply its own.
@@ -764,7 +764,7 @@ _ECHO_DEF = r'''def _echo(res):
 
 # Spliced into `_fail` only for a coder at the gate's rung (`translate_outbound(pack=)`); below it the edit
 # command is byte-for-byte what it always was.
-_EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts; the coder reads cria's decoding of it. Packed
+_EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts; the coder reads the decoding of it. Packed
     # only when that is smaller; the drop-`current` decision above is made on the UNPACKED size, so what
     # the coder is shown never depends on whether zlib was there.
     try:
