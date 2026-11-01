@@ -69,10 +69,21 @@ KILLS = [
     ("if pkill -f x; then echo up; fi", 1), ("while pkill x; do :; done", 1), ("x=$(pkill -f y)", 1), ("echo `pkill x`", 1),
     ("eval 'pkill x'", 1), ("find . -name x -exec pkill y \\;", 1), ("echo ok; true && pkill x", 1),
     ("sh -c 'bash -c \"pkill x\"'", 1),
+    # DIRG3: a pid STREAM selected by port or pattern (kill has no pid operand once xargs is removed), `fuser --kill`, and the
+    # wrappers that carry the command as arguments or behind `-c` (watch, script, su USER, flock, env -S, shell options that take a value)
+    ("lsof -t -i :8081 | xargs kill", 1), ("lsof -ti :8080 | xargs kill -9 >/dev/null 2>&1 || true", 1), ("pgrep -f x | xargs -r kill -9", 1),
+    ("ss -ltnp | awk '{print $7}' | xargs -I{} kill -9 {}", 1), ("fuser --kill 8081/tcp", 1),
+    ("watch -n1 pkill x", 1), ("watch 'pkill x'", 1), ("script -qc 'pkill x' /dev/null", 1), ("su nobody -c 'pkill x'", 1),
+    ("flock /var/tmp/l -c 'pkill x'", 1), ("flock -w 5 /var/tmp/l pkill x", 1), ("env -S 'pkill -f x'", 1), ("bash -o pipefail -c 'pkill x'", 1),
+    ("bash -O extglob -c 'pkill x'", 1), ("chrt -i 0 pkill x", 1), ("busybox pkill x", 1), ("systemd-run --user --scope pkill x", 1),
+    ("strace -f -o /var/tmp/t pkill x", 1), ("echo x | parallel pkill {}", 1), ("runuser -u nobody -- pkill x", 1),
     # a kill word that is only an argument is prose
     ("echo pkill -f x", 0), ("grep pkill file", 0), ("man kill", 0), ("rg -n 'pkill|killall' cria", 0), ("command -v pkill", 0),
     ("which pkill", 0), ("for t in ss pkill fuser; do command -v $t; done", 0), ("echo $(date) pkill", 0), ("pgrep -f x", 0),
     ("ssh host 'pkill -f x'", 0),                    # a REMOTE kill: unseen (and not this machine's processes)
+    ("watch -n1 ls", 0), ("watch 'pgrep -f x'", 0), ("script -qc 'ls' /dev/null", 0), ("su nobody -c 'ls'", 0), ("flock /var/tmp/l -c 'make'", 0),
+    ("flock -w 5 /var/tmp/l make test", 0), ("env -S 'ls -l'", 0), ("bash -o pipefail -c 'make test'", 0), ("kill -l", 0), ("kill -0 $PID", 0),
+    ("pkill --help", 0), ("pkill -V", 0), ("killall --version", 0), ("pkill --help x", 1), ("xargs echo", 0), ("fuser 8081/tcp", 0), ("fuser -v 8081/tcp", 0), ("lsof -t -i :8081 | xargs echo", 0),
     # bounded kills: a literal pid, a variable the coder holds, a heredoc/saved text that merely mentions one
     ("kill -9 4242", 0), ("kill -TERM $PID", 0), ("kill 4242 && echo $(date)", 0), ("kill -0 4242 || echo $(seq 1 3)", 0),
     ("kill -TERM 4242\nfor i in $(seq 1 3); do kill -0 4242 || break; done", 0),   # an old pattern spanned the newline into the `$(`
@@ -94,6 +105,30 @@ RESOLVED = [
     ("nohup rm -rf /", "root:filesystem root"), ("sudo -u root rm -rf /", "root:filesystem root"), ("timeout 5 rm -rf /", "root:filesystem root"),
     ("command -v rm", None), ("echo rm -rf /", None), ("rm -rf /a/..", "root:resolves to `/`"), ("rm -rf /usr/../*", "root:resolves to `/`"),
     ("rm -rf /tmp/../..", "root:filesystem root"),
+    # DIRG3: the program by its system path, the wrappers that carry a command or a shell text, find's own delete verbs, rsync's
+    # delete into the root, an unambiguous `--recursive` abbreviation, and an interpreter one-liner that deletes or execs
+    ("/bin/rm -rf /", "root:filesystem root"), ("/usr/bin/rm -rf /", "root:filesystem root"), ("busybox rm -rf /", "root:filesystem root"),
+    ("env -S 'rm -rf /'", "root:filesystem root"), ("watch -n1 rm -rf /", "root:filesystem root"), ("chroot / rm -rf /", "root:filesystem root"),
+    ("script -qc 'rm -rf /' /dev/null", "root:filesystem root"), ("flock /var/tmp/l -c 'rm -rf /'", "root:filesystem root"),
+    ("bash -c 'rm -rf /'", "root:filesystem root"), ("sh -lc 'cd x && rm -rf /'", "root:filesystem root"), ("sudo bash -c \"rm -rf /\"", "root:filesystem root"),
+    ("bash -o pipefail -c 'rm -rf /'", "root:filesystem root"), ("su -c 'rm -rf /'", "root:filesystem root"), ("eval 'rm -rf /'", "root:filesystem root"),
+    ("sh -c \"sh -c 'rm -rf /'\"", "root:filesystem root"), ("rm --recurs -f /", "root:filesystem root"), ("rm --rec /", "root:filesystem root"),
+    ("find / -exec rm -rf {} +", "root:filesystem root"), ("find / -type f -exec shred -u {} \\;", "root:filesystem root"),
+    ("find / -execdir sudo rm -f {} +", "root:filesystem root"), ("find -L / -delete", "root:filesystem root"), ("find /* -delete", "root:filesystem root"),
+    ("find -P / /var -name x -delete", "root:filesystem root"), ("R=/; find \"$R\" -exec rm -rf {} +", "root:`R` was set to `/`"),
+    ("rsync -a --delete empty/ /", "root:filesystem root"), ("rsync -a --delete-after empty/ //", "root:filesystem root"),
+    ("rsync -r --del --force empty/ /", "root:filesystem root"),
+    ("python3 -c \"import shutil; shutil.rmtree('/')\"", "root:filesystem root"), ("ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"/\")'", "root:filesystem root"),
+    ("python3 -c \"import os; os.system('rm -rf /')\"", "root:filesystem root"), ("python3 -c \"import subprocess; subprocess.run(['rm','-rf','/'])\"", "root:filesystem root"),
+    ("node -e \"require('fs').rmSync('/',{recursive:true,force:true})\"", "root:filesystem root"),
+    ("perl -e 'system \"rm -rf /\"'", "root:filesystem root"), ("ruby -e '`rm -rf /`'", "root:filesystem root"),
+    ("node -e \"require('child_process').execSync('rm -rf /')\"", "root:filesystem root"),
+    ("rsync -a --delete build/ dist/", None), ("rsync -a --delete empty/ host:/", None), ("rsync -a --delete src/ /var/tmp/out/", None), ("rsync -a src/ /", None),
+    ("find . -name '*.pyc' -exec rm {} +", None), ("find /tmp/x -exec rm -rf {} +", None), ("find / -name x -exec ls -l {} +", None), ("find / -exec grep -l x {} +", None),
+    ("find / -name x", None), ("bash -c 'rm -rf build'", None), ("bash -c 'echo rm -rf /'", None), ("eval 'echo rm -rf /'", None), ("rm --rec build", None),
+    ("rm --reverse /", None), ("script -qc 'ls /' /dev/null", None), ("watch -n1 'ls /'", None), ("chroot / ls", None), ("busybox ls /", None), ("rm -- -rf /", None),
+    ("python3 -c \"import shutil; shutil.rmtree('build')\"", None), ("python3 -c \"import os; os.system('rm -rf build')\"", None),
+    ("python3 -c \"print('rm -rf /')\"", None), ("ruby -e 'puts \"rm -rf /\"'", None), ("python3 -m pytest -p no:cacheprovider tests", None),
     ('R=/; rm -rf "$R"', "root:`R` was set to `/`"), ("R=/\nrm -rf $R/*", "root:`R` was set to `/`"), ("export R=/ && rm -rf ${R}", "root:`R` was set to `/`"),
     ("B=/; R=$B; rm -rf \"$R\"", "root:`R` was set to `/`"), ("R=/; find \"$R\" -delete", "root:`R` was set to `/`"), ("sudo rm -rf $R; R=/", None),
     ("R=/; R=build; rm -rf $R", None),               # the later assignment wins
@@ -101,6 +136,9 @@ RESOLVED = [
     ("rm -rf $TARGET", None), ("T=$(pwd); rm -rf $T", None), ("R=/; rm -rf '$R'", None), ("for d in /; do rm -rf $d; done", None),
     ("R=/; rm -f $R", None), ("rm -rf /zz/../zz", None), ("R=/; echo $R", None),
     ('H=~; rm -rf "$H"', "home:`H` was set to it"), ("rm -rf $HOME", "home:$HOME is your home directory"), ("rm -rf $HOME/build", None),
+    ("find $HOME -delete", "home:$HOME is your home directory"), ("find $HOME -exec rm -rf {} \\;", "home:$HOME is your home directory"),
+    ("rsync -a --delete empty/ $HOME/", "home:$HOME/ is your home directory"), ("sh -c 'rm -rf $HOME'", "home:$HOME is your home directory"),
+    ("find $HOME/build -delete", None), ("find $HOME -name x", None), ("rsync -a --delete empty/ $HOME/build/", None),
     ("H=~; rm -rf $H/build", None), ("rm -rf ~", None),     # a literal `~` is the path scan's: an external path
 ]
 

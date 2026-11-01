@@ -850,8 +850,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/misc_runtime/test_misc_runtime_spill_read.py:test_a_missing_spilled_file_is_reported_missing_and_reference_material_is_never_editable`](../../tests/misc_runtime/test_misc_runtime_spill_read.py#L34).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:path_refusal`](../../cria/dirguard.py#L2409)
-- [`cria/dirguard.py:command_refusal`](../../cria/dirguard.py#L2855)
+- [`cria/dirguard.py:path_refusal`](../../cria/dirguard.py#L2510)
+- [`cria/dirguard.py:command_refusal`](../../cria/dirguard.py#L3013)
 - [`cria/outboundpolicies.py:_external_refusal`](../../cria/outboundpolicies.py#L172)
 - [`cria/filecommands.py:_targets_cria_home`](../../cria/filecommands.py#L85)
 - [`cria/privatepaths.py:CRIA_HOME`](../../cria/privatepaths.py#L6)
@@ -878,7 +878,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:root_recursive_delete_refusal`](../../cria/dirguard.py#L2757)
+- [`cria/dirguard.py:root_recursive_delete_refusal`](../../cria/dirguard.py#L2913)
 - [`cria/cleanupsafety.py:analyze`](../../cria/cleanupsafety.py#L12)
 
 **Historical families:** F23.
@@ -902,7 +902,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:install_refusal`](../../cria/dirguard.py#L666)
+- [`cria/dirguard.py:install_refusal`](../../cria/dirguard.py#L767)
 - [`cria/outboundpolicies.py:_external_refusal`](../../cria/outboundpolicies.py#L172)
 
 **Historical families:** F24.
@@ -926,7 +926,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/dirguard.py:kill_refusal`](../../cria/dirguard.py#L333)
+- [`cria/dirguard.py:kill_refusal`](../../cria/dirguard.py#L403)
 
 **Historical families:** F25.
 

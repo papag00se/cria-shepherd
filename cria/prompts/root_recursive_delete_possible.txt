@@ -1,0 +1,1 @@
+Not run: this command names the filesystem root (`/`) and a wildcard in it could expand to the recursive option (`-r` / `--recursive`), so it may delete from the root. Do not retry it or broaden the target. Write the options out literally and operate only on explicit paths inside the current project directory.

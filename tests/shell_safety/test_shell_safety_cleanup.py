@@ -1,5 +1,6 @@
 """cleanupsafety.analyze: inert review of candidate source, never executing it. Evidence quality, not a parser —
 PROVEN only for a represented target violating a supported rule; control flow and unknown languages stay POSSIBLE/UNKNOWN."""
+from cria import prompts
 from cria.cleanupsafety import analyze, review
 
 WS = "/workspace"
@@ -45,7 +46,8 @@ def test_project_paths_text_dynamic_targets_and_unknown_languages_never_block():
 def test_review_refuses_with_evidence_only_when_proven_and_stays_silent_for_unchanged_or_clean_source():
     proven = review("f.sh", "rm -rf /", None, WS, permission="write")
     assert proven and "rm -rf /" in proven and "cria" not in proven.lower()
-    assert review("f.sh", "rm -?f --no-preserve-root /", None, WS, permission="write")       # POSSIBLE still refuses, without evidence
+    possible = review("f.sh", "rm -?f --no-preserve-root /", None, WS, permission="write")       # POSSIBLE still refuses, without evidence
+    assert possible and possible != prompts.load("work_log_denied")          # ...and says why: the bare work-log label is no reason and no next step
     assert review("f.sh", "rm -rf /", "rm -rf /", WS) is None and review("f.sh", "ls", None, WS) is None
 
 

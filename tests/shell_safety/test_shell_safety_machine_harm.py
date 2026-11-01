@@ -18,6 +18,14 @@ HARM = [
     ("killall -u jesse", S), ("pkill Hyprland", S), ("killall -9 Xwayland", S), ("pkill -f paseo", S), ("sudo kill -9 1", S),
     ("python3 -c 'import os,signal; os.kill(-1, signal.SIGKILL)'", S), ("perl -e 'kill 9, -1'", S), ("node -e 'process.kill(-1)'", S),
     ("python3 -c \"import subprocess; subprocess.run(['kill', '-9', '-1'])\"", S), ("python3 -c \"import os; os.system('kill -9 -1')\"", S),
+    # DIRG3: the same signal through a wrapper that carries the command (watch, script, su USER, env -S, flock, systemd-run, busybox, runuser),
+    # a shell option that takes a value, an all-zero pid, an interpreter's bare/backtick exec spellings
+    ("kill 00", S), ("watch -n1 kill -9 -1", S), ("watch 'kill -9 -1'", S), ("script -qc 'kill -9 -1' /dev/null", S), ("su jesse -c 'kill -9 -1'", S),
+    ("env -S 'kill -9 -1'", S), ("flock /var/tmp/l kill -9 -1", S), ("busybox kill -9 -1", S), ("runuser -u jesse -- kill -9 -1", S),
+    ("systemd-run --user --scope kill -9 -1", S), ("bash -o pipefail -c 'kill -9 -1'", S), ("parallel kill -9 ::: -1", S), ("nsenter -t 1 -m kill -9 -1", S),
+    ("perl -e '`kill -9 -1`'", S), ("ruby -e '%x(kill -9 -1)'", S), ("ruby -e 'exec \"kill -9 -1\"'", S), ("perl -e 'system \"reboot\"'", P),
+    ("node -pe 'process.kill(-1, 9)'", S), ("python3 -Ic 'import os; os.kill(-1, 9)'", S), ("systemd-run --user --scope reboot", P),
+    ("systemctl stop user-1000.slice", SE), ("systemctl kill user-1000.slice", SE), ("systemctl kill session-1.scope", SE), ("systemctl --user stop app.slice", SE),
     # power
     ("reboot", P), ("sudo reboot", P), ("poweroff", P), ("halt", P), ("shutdown -h now", P), ("systemctl reboot", P),
     ("systemctl --no-block poweroff", P), ("systemctl suspend", P), ("loginctl reboot", P), ("sudo telinit 6", P),
@@ -69,6 +77,8 @@ ADMITTED = [
     "gh repo view", "aws s3 ls", "aws s3 cp out.txt s3://bucket/out.txt", "terraform plan", "kubectl get pods", "helm list",
     "docker rm mycontainer", "docker ps -a", "docker compose down", "psql -c 'select 1'", "sqlite3 app.db 'drop table t'",
     "f(){ echo hi; }; f", "cat /proc/sysrq-trigger", "echo 'DROP DATABASE x' > notes.sql",
+    "systemctl --user stop app-foo.scope", "systemctl --user restart myapp.service", "systemctl status user-1000.slice", "watch -n1 ls", "su jesse -c 'ls'",
+    "bash -o pipefail -c 'make test'", "flock /var/tmp/l make", "kill 0123", "kill -0 4242", "perl -e 'print `date`'", "ruby -e 'puts %x(date)'",
 ]
 
 

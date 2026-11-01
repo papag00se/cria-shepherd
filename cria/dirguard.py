@@ -194,6 +194,16 @@ _KILL_WRAPPERS = {
     "stdbuf": (frozenset({"-i", "-o", "-e"}), 0), "ionice": (frozenset({"-c", "-n", "-p", "-P", "-u"}), 0),
     "xargs": (frozenset({"-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a", "--max-args", "--max-procs", "--delimiter"}), 0),
     "pkexec": (frozenset({"--user"}), 0),
+    # the same fact for the privilege/namespace/scheduling/tracing wrappers a coder (or a sloppy habit) puts in front of a command
+    "busybox": (frozenset(), 0), "unbuffer": (frozenset({"-p"}), 0), "parallel": (frozenset({"-j", "-n", "-N", "-S", "-a", "--jobs", "--max-args", "--sshlogin", "--arg-file"}), 0),
+    "chrt": (frozenset(), 1), "taskset": (frozenset({"-c"}), 0), "chroot": (frozenset({"--userspec", "--groups"}), 1),
+    "unshare": (frozenset({"-S", "-G", "--setuid", "--setgid", "--wd", "--root", "--propagation"}), 0),
+    "nsenter": (frozenset({"-t", "-S", "-G", "--target", "--setuid", "--setgid", "--wd", "--root"}), 0),
+    "strace": (frozenset({"-o", "-e", "-p", "-s", "-u", "-E"}), 0),
+    "setpriv": (frozenset({"--reuid", "--regid", "--ruid", "--euid", "--rgid", "--egid", "--groups", "--inh-caps", "--bounding-set"}), 0),
+    "runuser": (frozenset({"-u", "-g", "-G", "-l", "-s", "--user", "--group", "--supp-group"}), 0),
+    "systemd-run": (frozenset({"-u", "-p", "-E", "-d", "-M", "-H", "-G", "--unit", "--property", "--setenv", "--slice", "--description", "--uid",
+                               "--gid", "--machine", "--host", "--working-directory", "--nice", "--service-type"}), 0),
     "run0": (frozenset({"-u", "-g", "-D", "--user", "--group", "--chdir", "--unit", "--property", "--slice", "--nice", "--setenv",
                          "--description", "--background", "--machine"}), 0),
 }
@@ -222,6 +232,8 @@ def _wrapped_command(words: list[str]) -> list[str]:
                 if name in ("command", "builtin") and words[0] in ("-v", "-V"):
                     return []
                 flag = words[0]
+                if name == "env" and flag in ("-S", "--split-string") and len(words) > 1:
+                    return _wrapped_command(_split_words(words[1]) + words[2:])      # `env -S 'pkill -f x'`: ONE word is the command line
                 words = words[(2 if flag in takes else 1):]
                 if flag == "--":
                     break
@@ -231,16 +243,73 @@ def _wrapped_command(words: list[str]) -> list[str]:
     return words
 
 
+def _split_words(text: str) -> list[str]:
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return []
+
+
+_SHELL_VALUE_OPTS = frozenset({"-O", "+O", "-o", "+o", "--rcfile", "--init-file"})
+
+
 def _shell_body(args: list[str]) -> str | None:
     """The script a `bash -c '…'` / `sh -lc '…'` call carries (the first operand after the option cluster
-    that holds `c`)."""
-    for i, arg in enumerate(args):
+    that holds `c`). `-O extglob` / `-o pipefail` take a value before it."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in _SHELL_VALUE_OPTS:
+            i += 2
+            continue
         if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
             rest = [a for a in args[i + 1:] if not a.startswith("-")]
             return rest[0] if rest else None
-        if not arg.startswith("-"):
+        if not arg.startswith("-") and not arg.startswith("+"):
             return None
+        i += 1
     return None
+
+
+_C_BODY_PROGRAMS = frozenset({"su", "runuser", "sg", "script", "flock"})
+_FLOCK_VALUE_OPTS = frozenset({"-w", "-E", "--timeout", "--conflict-exit-code"})
+
+
+def _c_body(args: list[str]) -> str | None:
+    """The command line behind `-c` / `--command` of `su USER -c '…'`, `script -qc '…' /dev/null`, `flock FILE -c '…'`,
+    `runuser USER -c '…'`: unlike a shell, the option may follow positional operands."""
+    for i, arg in enumerate(args):
+        if arg == "--command" or (arg.startswith("-") and not arg.startswith("--") and arg.endswith("c") and len(arg) > 1):
+            return args[i + 1] if i + 1 < len(args) else None
+        if arg.startswith("--command="):
+            return arg.partition("=")[2]
+    return None
+
+
+def _inline_scripts(name: str, args: list[str]) -> list[str]:
+    """The shell texts a command carries as ARGUMENTS and runs itself: `bash -c`, `eval`, `su/script/flock/runuser -c`,
+    `flock FILE cmd args`, `watch cmd args` (watch runs its joined arguments with `sh -c`)."""
+    if name == "eval":
+        return [" ".join(args)]
+    body = None
+    if name in _SHELLS:
+        body = _shell_body(args)
+    elif name in _C_BODY_PROGRAMS:
+        body = _c_body(args)
+        if body is None and name == "flock":
+            lock = next((i for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] not in _FLOCK_VALUE_OPTS)), None)
+            command = args[lock + 1:] if lock is not None else []           # `flock FILE cmd args`
+            body = " ".join(map(shlex.quote, command)) or None
+    elif name == "watch" and "-x" not in args and "--exec" not in args:
+        operands, i = [], 0
+        while i < len(args):
+            if args[i] in ("-n", "--interval"):
+                i += 1
+            elif not args[i].startswith("-") or operands:
+                operands.append(args[i])
+            i += 1
+        body = " ".join(operands) or None
+    return [_unescaped(body)] if body else []
 
 
 def _unescaped(body: str) -> str:
@@ -255,11 +324,15 @@ def _kills_by_selector(words: list[str], marks: str) -> bool:
         return False
     name, args = _program_name(words[0]), words[1:]
     if name in _NAME_KILLERS:
-        return True
+        return not (args and all(a in ("-h", "--help", "-V", "--version") for a in args))      # `pkill --help` selects nothing
     if name == "fuser":
-        return any(a == "-k" or (a.startswith("-") and not a.startswith("--") and "k" in a) for a in args)
+        return any(a == "--kill" or (a.startswith("-") and not a.startswith("--") and "k" in a) for a in args)
     if name == "kill":
-        return any(m in a for a in args for m in marks)        # kill $(lsof …) / kill `pgrep …`: the substitution IS the selector
+        if any(m in a for a in args for m in marks):        # kill $(lsof …) / kill `pgrep …`: the substitution IS the selector
+            return True
+        # `… | xargs kill -9` reaches the judge as `kill -9`: a kill with NO pid operand takes its pids from a stream
+        # (`lsof -t -i :8080 | xargs kill`, the same port-wide selector as the substitution form). A literal pid is never absent.
+        return args[:1] not in (["-l"], ["-L"]) and all(t in ("{}", "$0") for t in _kill_targets(args))
     return False
 
 
@@ -308,11 +381,8 @@ def _judge_commands(script: str, judge, depth: int = 0, inherited: str = ""):
         if not words:
             continue
         name, args = _program_name(words[0]), words[1:]
-        bodies = []
-        if name in _SHELLS or name in ("su", "eval"):
-            body = " ".join(args) if name == "eval" else _shell_body(args)
-            bodies.append(body)
-        elif name == "find":
+        bodies = _inline_scripts(name, args)
+        if name == "find":
             for i, arg in enumerate(args):
                 if arg in ("-exec", "-execdir", "-ok", "-okdir"):
                     run = []
@@ -324,7 +394,7 @@ def _judge_commands(script: str, judge, depth: int = 0, inherited: str = ""):
                     if found:
                         return found
         for body in bodies:
-            found = body and _judge_commands(_unescaped(body), judge, depth + 1, marks)
+            found = _judge_commands(body, judge, depth + 1, marks)
             if found:
                 return found
     return None
@@ -340,9 +410,11 @@ def kill_refusal(command: str, level: str) -> str | None:
 
     Judged per COMMAND WORD, not by a pattern over the text. Seen: `pkill`/`killall`/`skill`, `fuser -k`,
     and a `kill` whose operand is a command substitution, reached through the wrappers in `_KILL_WRAPPERS`,
-    `bash -c`/`sh -c`/`su -c`/`eval` bodies, `if … then`, `find -exec` and substitutions. NOT seen: a kill
-    behind a function, a sourced or saved script, `ssh host pkill`, `docker exec c pkill`, `watch pkill`,
-    `parallel`, a wrapper that is not in the table, or a pid list built in a variable (`kill $PIDS`)."""
+    `bash -c`/`sh -c`/`su -c`/`eval` bodies, `watch`/`script -c`/`flock` command lines, `if … then`, `find -exec` and
+    substitutions; a `kill` with no pid operand (`… | xargs kill`: the pids come from a stream selected by port or
+    pattern) is the same selector. NOT seen: a kill behind a function, a sourced or saved script, `ssh host pkill`,
+    `docker exec c pkill`, a wrapper that is not in the table, or a pid list built in a variable (`kill $PIDS`); the
+    whole list is in docs/cleanup-safety.md ("Accepted limits")."""
     if level == "write" or not command:
         return None
     if not _kill_in_script(command):
@@ -363,7 +435,8 @@ def kill_refusal(command: str, level: str) -> str | None:
 # Judged per COMMAND WORD through `_judge_commands` (wrappers, `bash -c`, `eval`, `find -exec`, substitutions)
 # plus the exec calls of interpreter one-liners. Read-only forms of the same tools (`fdisk -l`, `parted … print`,
 # `systemctl status`, `ip link show`, `iptables -L`, `crontab -l`, `kill <pid>`) are admitted. Not seen, as for
-# the kill reader: a function body, a saved or sourced script, `ssh host …`, a wrapper outside `_KILL_WRAPPERS`.
+# the kill reader: a function body, a saved or sourced script, `ssh host …`, a wrapper outside `_KILL_WRAPPERS`
+# (docs/cleanup-safety.md, "Accepted limits").
 _BLOCK_DEVICE = re.compile(r"^/dev/(?:sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+(?:n\d+)?|mmcblk\d+|dm-\d+|md\d+|loop\d+"
                            r"|zram\d+|root|mapper/.+|disk/.+)(?:p?\d+)?$")
 _SYSTEM_TREES = frozenset({"/", "/usr", "/etc", "/bin", "/sbin", "/lib", "/lib64", "/var", "/boot", "/opt", "/home", "/root"})
@@ -372,7 +445,8 @@ _ACCOUNT_FILES = ("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow", "/
 _SESSION_PROCESSES = frozenset({"hyprland", "sway", "niri", "gnome-shell", "kwin_wayland", "kwin_x11", "plasmashell", "xorg",
                                 "xwayland", "sddm", "gdm", "lightdm", "greetd", "systemd", "init", "uwsm", "dbus-daemon",
                                 "dbus-broker", "systemd-logind", "paseo", "paseo.bin", "sshd", "networkmanager", "tailscaled"})
-_CRITICAL_UNITS = ("*.target", "*.mount", "*.swap", "display-manager*", "sddm*", "gdm*", "lightdm*", "greetd*", "systemd-logind*",
+_CRITICAL_UNITS = ("*.target", "*.mount", "*.swap", "user-*.slice", "user.slice", "system.slice", "machine.slice", "-.slice", "app.slice",
+                   "session-*.scope", "display-manager*", "sddm*", "gdm*", "lightdm*", "greetd*", "systemd-logind*",
                    "dbus*", "networkmanager*", "systemd-networkd*", "systemd-resolved*", "wpa_supplicant*", "iwd*", "sshd*",
                    "ssh.*", "tailscaled*", "nordvpnd*", "user@*", "user-runtime-dir@*", "paseo*", "cria*", "systemd-journald*")
 _CRITICAL_PACKAGES = re.compile(r"^(?:linux(?:-[\w.-]+)?|glibc|libc6|systemd|base|sudo|pacman|apt|dpkg|bash|coreutils|filesystem|"
@@ -385,7 +459,10 @@ _SYSTEMCTL_VALUE_OPTS = frozenset({"-t", "--type", "-p", "--property", "-H", "--
                                    "--when", "--message", "--job-mode", "--what", "--timestamp"})
 _ALL_MATCHING_PATTERNS = frozenset({"", ".", ".*", ".+", "^", "$", "^.*", "^.*$", "*"})
 _EXEC_CALL = re.compile(r"(?:os\.system|os\.popen|subprocess\.\w+|Popen|check_output|check_call|execSync|execFileSync|execFile|exec|"
-                        r"spawnSync|spawn|system|qx)\s*\(\s*(\[[^\]]*\]|(['\"]).*?(?<!\\)\2)", re.DOTALL)
+                        r"spawnSync|spawn|system|qx)\s*\(?\s*(\[[^\]]*\]|(['\"]).*?(?<!\\)\2)", re.DOTALL)   # Perl and Ruby call `system "…"` bare
+_BACKTICK_EXEC = re.compile(r"`([^`]+)`|\bqx\s*[({\[<]([^)}\]>]+)[)}\]>]|%x\s*[({\[]([^)}\]]+)[)}\]]")      # perl/ruby: `cmd`, qx(cmd), %x(cmd)
+_INTERPRETER_ROOT_DELETE = re.compile(r"""\b(?:rmtree|remove_tree|rm_rf|rmSync|rmdirSync|removeSync|rimraf(?:Sync)?|RemoveAll|remove_all)\s*\(\s*(['"])/+\1""")
+_INTERPRETER_BODY_FLAGS = frozenset({"-c", "-e", "-E", "--eval", "-r", "-p"})
 _STRING_LITERAL = re.compile(r"(['\"])(.*?)(?<!\\)\1", re.DOTALL)
 _INTERPRETER_SIGNAL_ALL = re.compile(r"\bos\.kill\(\s*(?:-\d+|0)\s*,|\bos\.killpg\(|\bkill\s*\(?\s*['\"\w-]+\s*,\s*(?:-\d+|0)\b"
                                      r"|process\.kill\(\s*(?:-\d+|0)\b|Process\.kill\([^)]*,\s*(?:-\d+|0)\s*\)")
@@ -413,7 +490,8 @@ def _signal_all(name: str, args: list[str]) -> bool:
         return True
     if name == "kill":
         # `-1` is every process the caller may signal; `0` / `-N` a whole process group; `1` init; `$PPID` the caller's own host.
-        return any(t in ("0", "-0", "1") or (t.startswith("-") and len(t) > 1) or "PPID" in t for t in _kill_targets(args))
+        return any(t in ("1", "-0") or re.fullmatch(r"0+", t) or (t.startswith("-") and len(t) > 1) or "PPID" in t
+                   for t in _kill_targets(args))
     if name in ("pkill", "killall", "skill", "slay"):
         flags = ("-u", "-U", "-G", "-g", "-s", "-P", "--uid", "--euid", "--user", "--group", "--pgroup", "--session", "--parent")
         if any(a == f or (a.startswith(f) and len(f) == 2 and not a.startswith("--")) or a.startswith(f + "=")
@@ -595,18 +673,41 @@ def _remote_harm(name: str, args: list[str], marks: str) -> bool:
     return False
 
 
+def _interpreter_bodies(args: list[str]) -> list[str]:
+    """The program text of an interpreter one-liner: the operand after each `-c`/`-e`/`-E`/`--eval`/`-r`/`-p` or a short cluster
+    ending in one (`-pe`, `-Ic`, `-lane`)."""
+    return [args[j + 1] for j, a in enumerate(args[:-1]) if a in _INTERPRETER_BODY_FLAGS or (
+        re.fullmatch(r"-[A-Za-z]{2,}", a) and a[-1] in "ceEp")]
+
+
+def _interpreter_scripts(name: str, args: list[str]) -> list[str]:
+    """The shell commands an interpreter one-liner hands to a shell: the literal argument of its exec calls
+    (`os.system('reboot')`, `subprocess.run(['kill', '-9', '-1'])`, perl `system "…"`, a backtick or `qx`/`%x` string)."""
+    if not _INTERPRETERS.match(name):
+        return []
+    found = []
+    for body in _interpreter_bodies(args):
+        for call in _EXEC_CALL.finditer(body):
+            arg = call.group(1)
+            found.append(shlex.join(m.group(2) for m in _STRING_LITERAL.finditer(arg)) if arg.startswith("[") else arg[1:-1])
+        found.extend(next(g for g in m.groups() if g) for m in _BACKTICK_EXEC.finditer(body))
+    return [c for c in found if c]
+
+
+def _interpreter_deletes_root(args: list[str]) -> bool:
+    """Does a one-liner call a recursive-delete API on the literal root (`shutil.rmtree('/')`, `FileUtils.rm_rf("/")`,
+    `fs.rmSync('/', …)`, `remove_tree("/")`, `os.RemoveAll("/")`)? Only the literal `/`: a computed path is the cleanup reviewer's
+    business for a file the coder writes (`cleanupsafety`, which this module cannot import: it imports this one)."""
+    return any(_INTERPRETER_ROOT_DELETE.search(body) for body in _interpreter_bodies(args))
+
+
 def _interpreter_harm(name: str, args: list[str], depth: int) -> str | None:
     """An interpreter one-liner (`python3 -c`, `perl -e`, `node -e`): its own signal-everything call, and the shell
-    commands its exec calls carry (`os.system('reboot')`, `subprocess.run(['kill', '-9', '-1'])`)."""
-    body = next((args[j + 1] for j, a in enumerate(args[:-1]) if a in ("-c", "-e", "-E", "--eval", "-r")), None)
-    if body is None:
-        return None
-    if _INTERPRETER_SIGNAL_ALL.search(body):
+    commands its exec calls carry."""
+    if _INTERPRETER_SIGNAL_ALL.search(" ".join(_interpreter_bodies(args))):
         return "signal_all"
-    for call in _EXEC_CALL.finditer(body):
-        arg = call.group(1)
-        command = shlex.join(m.group(2) for m in _STRING_LITERAL.finditer(arg)) if arg.startswith("[") else arg[1:-1]
-        found = _judge_commands(command, _machine_harm_judge, depth + 1) if command else None
+    for command in _interpreter_scripts(name, args):
+        found = _judge_commands(command, _machine_harm_judge, depth + 1)
         if found:
             return found
     return None
@@ -2609,15 +2710,84 @@ def _note_assignment(segment, env: dict[str, str]) -> None:
             env[name] = typed[0]
 
 
-def _root_delete_in_flat(text: str, mark: str = "") -> tuple[str | None, _RootFact | None]:
+def _find_start_paths(segment) -> list:
+    """The starting points of a `find` segment: the operands after its leading `-H`/`-L`/`-P`/`-O3` options, up to the first
+    word that opens its expression."""
+    i = 1
+    while i < len(segment) and (segment[i][0] in ("-H", "-L", "-P") or segment[i][0].startswith(("-O", "-D"))):
+        i += 1
+    j = i
+    while j < len(segment) and not segment[j][0].startswith(("-", "(", "!")):
+        j += 1
+    return segment[i:j]
+
+
+def _find_deletes(args: list[str]) -> bool:
+    """Does this `find` expression delete what it visits: `-delete`, or `-exec[dir]`/`-ok[dir]` running `rm`, `unlink` or `shred`
+    (a file-by-file delete needs no `-r`)?"""
+    if "-delete" in args:
+        return True
+    for i, arg in enumerate(args):
+        if arg in ("-exec", "-execdir", "-ok", "-okdir"):
+            run = []
+            for word in args[i + 1:]:
+                if word in (";", "+"):
+                    break
+                run.append(word)
+            words = _wrapped_command(run)
+            if words and _program_name(words[0]) in ("rm", "unlink", "shred"):
+                return True
+    return False
+
+
+def _root_delete_in_segment(segment, env, mark, children):
+    """One command (wrappers already removed) -> (proven `_RootFact` | None, home `_RootFact` | None, a glob may supply the
+    recursive option). A shell text the command carries as an argument (`bash -c`, `eval`, `su -c`, an interpreter's exec call)
+    is appended to ``children``: it is read as a script of its own."""
+    name = _program_name(segment[0][0])
+    args = [w for w, _ in segment[1:]]
+    children.extend(_inline_scripts(name, args))
+    children.extend(_interpreter_scripts(name, args))
+    if _INTERPRETERS.match(name) and _interpreter_deletes_root(args):
+        return _RootFact("shape", "/"), None, False
+    if name == "rm":
+        recursive, glob_recursive = False, False
+        for option, spelling in segment[1:]:
+            if option == '--':
+                break
+            active = any(c in '*?[' for _, c in _unquoted_chars(spelling))
+            if active:
+                glob_recursive |= _root_glob_may_recurse(spelling.replace(mark, '') if mark else spelling)
+            elif (len(option) > 2 and '--recursive'.startswith(option)) or (
+                    option.startswith('-') and not option.startswith('--') and 'r' in option.lower()):
+                recursive = True                      # `--recursive` or any unambiguous abbreviation GNU rm accepts
+        facts = [f for f in (_root_fact(w, src, env) for w, src in segment[1:]) if f]
+        roots = [f for f in facts if f.kind != 'home']
+        if roots:
+            return (roots[0] if recursive else None), None, glob_recursive
+        return None, (facts[0] if facts and recursive else None), False
+    if name == "find" and _find_deletes(args[1:]):
+        facts = [f for f in (_root_fact(w, src, env) for w, src in _find_start_paths(segment)) if f]
+        roots = [f for f in facts if f.kind != 'home']
+        return (roots[0] if roots else None), (facts[0] if facts and not roots else None), False
+    if name == "rsync" and any(a.startswith("--del") or a == "--remove-source-files" for a in args):
+        operands = [(w, src) for w, src in segment[1:] if not w.startswith("-")]
+        fact = _root_fact(*operands[-1], env) if len(operands) > 1 else None      # the destination is the last operand
+        if fact:
+            return (fact if fact.kind != 'home' else None), (fact if fact.kind == 'home' else None), False
+    return None, None, False
+
+
+def _root_delete_in_flat(text: str, mark: str = "", children: list | None = None) -> tuple[str | None, _RootFact | None]:
     """Keep source quote ownership and distinguish possible glob options. -> (verdict, fact): PROVEN /
     POSSIBLE / None, and the first `_RootFact` behind it (a PROVEN root operand, else a home-directory one)."""
     tokens = _shell_tokens(text)
     if tokens is None:
         return None, None
+    children = [] if children is None else children
     segment, possible, redirect = [], False, False
     env: dict[str, str] = {}
-    fact = home = None
+    home = None
     for word, start, end in [*tokens, (';', len(text), len(text))]:
         source = text[start:end]
         if redirect:
@@ -2634,30 +2804,14 @@ def _root_delete_in_flat(text: str, mark: str = "") -> tuple[str | None, _RootFa
             continue
         _note_assignment(segment, env)
         if segment:           # the command a wrapper (`sudo -u x`, `env A=1`, `nohup`, `timeout 5`, `A=1 rm …`) runs
-            segment = segment[len(segment) - len(_wrapped_command([w for w, _ in segment])):]
-        if segment[:1] and segment[0][0] == 'rm':
-            recursive, glob_recursive = False, False
-            for option, spelling in segment[1:]:
-                if option == '--':
-                    break
-                active = any(c in '*?[' for _, c in _unquoted_chars(spelling))
-                if active:
-                    glob_recursive |= _root_glob_may_recurse(spelling.replace(mark, '') if mark else spelling)
-                elif option == '--recursive' or (option.startswith('-') and not option.startswith('--')
-                                                and 'r' in option.lower()):
-                    recursive = True
-            facts = [f for f in (_root_fact(w, src, env) for w, src in segment[1:]) if f]
-            roots = [f for f in facts if f.kind != 'home']
-            if roots:
-                if recursive:
-                    return 'PROVEN', roots[0]
-                possible |= glob_recursive
-            elif facts and recursive:
-                home = home or facts[0]
-        elif (len(segment) > 1 and segment[0][0] == 'find' and any(w == '-delete' for w, _ in segment[2:])):
-            found = _root_fact(*segment[1], env)
-            if found and found.kind != 'home' and not segment[1][0].endswith('*'):
-                return 'PROVEN', found
+            words = _wrapped_command([w for w, _ in segment])
+            segment = segment[len(segment) - len(words):] if [w for w, _ in segment][-len(words):] == words else [(w, w) for w in words]
+        if segment:
+            proven, home_fact, glob = _root_delete_in_segment(segment, env, mark, children)
+            if proven:
+                return 'PROVEN', proven
+            possible |= glob
+            home = home or home_fact
         segment = []
     return ('POSSIBLE' if possible else None), home
 
@@ -2727,7 +2881,9 @@ def _root_delete_scan(command: str) -> tuple[str | None, _RootFact | None, _Root
         # Decode against the unmasked source while retaining substitution placeholders.
         decoded = shellinput.decode_ansi_c("".join(original_outer), outer_text)
         text = _join_continuations(decoded, drop_comments=True)[0]
-        verdict, found = _root_delete_in_flat(text, mark)
+        children: list = []
+        verdict, found = _root_delete_in_flat(text, mark, children)
+        pending.extend(children)
         if verdict == 'PROVEN':
             return verdict, found, home
         home = home or found
@@ -2759,11 +2915,13 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     wildcard that may supply the recursive option); None otherwise. A bounded backstop, not a parser or a
     sandbox. It resolves what the command TYPES: the spellings of `/`, a literal path whose `.`/`..` steps
     lead back to `/` (resolved on this host, symlinks followed), and `$R` where `R=/` is assigned earlier in the
-    same script text. Unseen, and so admitted: a value from the environment (`$TARGET` never assigned here), a
-    symlink that IS the operand's final component, an assignment inside a child script (a substitution body,
-    `bash -c`, a saved file) for a delete outside it, a variable built from a substitution, loop variables
-    (`for d in /; do rm -rf $d`), and a conditional assignment is read as if it ran. The text says which fact
-    it rests on, never more."""
+    same script text. A shell text a command carries as an argument (`bash -c`, `eval`, `su -c`, `watch`, an interpreter's
+    exec call) is read as a script of its own; `find -delete` / `-exec rm`, `rsync --delete` into the root and a
+    one-liner's own recursive-delete call on the literal `/` (`shutil.rmtree('/')`) count. Unseen, and so admitted: a value from the
+    environment (`$TARGET` never assigned here), a symlink that IS the operand's final component, an assignment inside a
+    child script for a delete outside it, a variable built from a substitution, loop variables (`for d in /; do rm -rf
+    $d`), a path stream (`echo / | xargs rm -rf`), and a conditional assignment is read as if it ran
+    (docs/cleanup-safety.md, "Accepted limits"). The text says which fact it rests on, never more."""
     verdict, fact, _home = _root_delete_scan(command)
     if verdict == 'PROVEN':
         if fact and fact.kind == 'dotdot':
@@ -2773,7 +2931,7 @@ def root_recursive_delete_refusal(command: str) -> str | None:
                                 operand=fact.operand, name=fact.name, value=fact.value)
         return prompts.load('root_recursive_delete_refusal')
     if verdict == 'POSSIBLE':
-        return prompts.load('work_log_denied')
+        return prompts.load('root_recursive_delete_possible')
     return None
 
 

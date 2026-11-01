@@ -1,6 +1,6 @@
 """The root-delete backstop and shell-text readers: BOUNDED BACKSTOPS, not a parser or sandbox. Rows are analysed, never
 run; where bash is the oracle it runs a `touch ran.flag` stand-in in a tmp dir."""
-from cria import cleanupsafety, dirguard, shellinput
+from cria import cleanupsafety, dirguard, prompts, shellinput
 from shell_safety_helpers import BS, WS, bash_reaches, bash_runs, outbound
 
 LEVELS = ("none", "read", "write")
@@ -59,6 +59,7 @@ def test_a_glob_option_that_bash_expands_to_recursion_is_refused_at_every_consum
         command = "rm " + pattern + " --no-preserve-root /"
         refusal = dirguard.root_recursive_delete_refusal(command)
         assert refusal and "would recursively delete" not in refusal, pattern
+        assert refusal != prompts.load("work_log_denied"), pattern         # a reason and a next step, not the bare work-log label
         assert outbound(command, "write") and cleanupsafety.analyze("x.sh", command, WS, "write").blocked, pattern
         (tmp_path / name).unlink()
     for command in ["rm '-?f' /", r"rm -\?f /", "rm --force* /", "rm --recursiv[x] /", "rm -f[ab] /", "rm -- -?f /", "rm file* /", "rm literal? /"]:

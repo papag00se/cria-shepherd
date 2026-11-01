@@ -144,6 +144,34 @@ Incident 2026-10-31: an evasion probe run by a development agent executed `kill 
 
 Not covered by design: anything inside the workspace (`rm -rf .`, local git resets), resource exhaustion other than the classic fork bomb, a function body, a saved or sourced script, and `ssh host …`. The guard is part of the `workspace-boundary` outbound policy, so it applies wherever that policy is selected.
 
+## Accepted limits (DIRG3 evasion audit, 2026-11-01)
+
+The kill, machine-harm and root/home-delete backstops read COMMAND WORDS, not shell semantics. A table of 1,013 distinct
+spellings (955 hostile, 58 legitimate controls: quoting, wrappers, `sh -c` bodies, here-strings, substitutions,
+`find`/`rsync`/interpreter deletes, `$IFS`, brace and variable words, aliases, process-group and session signals) was fed to them
+as STRINGS (never run): the three backstops refused 440 hostile rows before and 602 after, and 4 controls before and 2 after
+(`kill $(cat server.pid)` and its backtick form, see below); the cheap misses (wrapper table, `-c` carriers, `find -exec rm`, `rsync --delete`, `/bin/rm`,
+`rm --recurs`, `fuser --kill`, `kill 00`, `user-N.slice`/`session-N.scope`, an `xargs kill` pid stream, interpreter exec spellings) were
+fixed with rows in `test_shell_safety_scenario2_sw2_command_edges.py` and `test_shell_safety_machine_harm.py`. What is still
+ADMITTED, by design, because seeing it takes a parser (or a different owner) and the harness sandbox is the real boundary:
+
+- **Words the shell builds:** a variable-assembled command word (`P=pkill; $P x`, `${K}ill`), `$IFS` as the separator
+  (`rm${IFS}-rf${IFS}/`), brace-expanded words (`{rm,-rf,/}`), a command word from a substitution (`$(echo rm) -rf /`), aliases,
+  function bodies, `trap` handlers and `coproc` (a definition is not a run), `kill -9 {-1,}`.
+- **Shell text handed over as data:** a here-string, heredoc, pipe or process substitution into `sh`/`bash -s`/`source`,
+  `eval $VAR`, `sh -c "$VAR"`, `curl … | sh`, base64, and anything deferred (`at`, cron, `tmux`, `screen`).
+- **Streams:** `echo / | xargs rm -rf`, `find / | xargs rm`, `ls / | xargs -I{} rm -rf /{}`, `xargs -a FILE`, `for d in /*; do rm -rf $d`.
+  A kill with a pid stream is refused only because `kill` has no pid operand.
+- **Code that is not on the command line:** `ssh`/`docker`/`kubectl exec`, a script file, a `make` target, `python3 evil.py`, `-m`
+  modules, an interpreter's stdin program (heredoc), computed code (`getattr`, concatenation, base64), `os.execv`/`spawn` argument
+  lists, JavaScript `require('fs').rmSync('/')` without a bound import, and a wrapper whose operand layout the table does not
+  hold (`taskset 0x1 cmd`).
+- **Scope by design:** at `write` only `/` is refused for deletes (`rm -rf /usr`, `/etc`, `/home/jesse` and the globs equivalent to `/*`
+  such as `/?*`, `/[a-z]*`, `/{bin,etc,usr}` are the operator's choice; the system-tree `chmod`/`chown` and account-file rules above
+  still hold), `kill -9 $$` and `kill %1` (the caller's own shell and jobs), `systemctl --user stop app-NAME.scope`.
+- **A new false refusal:** `echo $pid | xargs kill` (a pid stream from a literal) is refused with the pattern-kill text; `kill $pid`
+  is not. `kill "$(cat server.pid)"` stays refused (it cannot be told from `$(lsof …)` without reading the substitution).
+
 **Development rule:** never execute a guard candidate to prove an evasion. Feed the text to the guard. Run an executing oracle only inside a sandbox that cannot signal or write outside its own directory. A PATH stub cannot intercept shell builtins (`kill`, `exec`, redirections).
 
 Regressions: `tests/shell_safety/test_shell_safety_machine_harm.py`. Its candidate commands are STRINGS handed to `dirguard.machine_harm_refusal`; they are never executed (see [testing](testing.md#hostile-command-tables-never-execute)).

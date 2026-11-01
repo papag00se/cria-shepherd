@@ -48,7 +48,7 @@ def review(path: str, candidate: str, previous: str | None, workspace: str | Non
                   coverage=result.coverage, findings=[asdict(f) for f in result.findings])
     proven = [f for f in result.findings if f.confidence == 'PROVEN']
     if not proven:
-        return prompts.load('work_log_denied') if result.blocked else None
+        return prompts.load('cleanup_root_possible') if result.blocked else None
     descriptions = prompts.load_map('cleanup_findings')
     return prompts.render('cleanup_refusal', evidence='\n\n'.join(f.evidence for f in proven),
                           reason='\n'.join(descriptions[f.rule] for f in proven))

@@ -1,0 +1,1 @@
+This proposed change was withheld for revision: a shell command in it names the filesystem root (`/`) with a wildcard that could expand to the recursive option (`-r` / `--recursive`), so it may delete from the root. Write the options out literally and operate only on explicit paths inside the permitted boundary. No replacement code has been chosen for you.
