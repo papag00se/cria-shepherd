@@ -304,7 +304,7 @@ class Bridge:
                         or (entry.calls and entry.pending not in entry.calls)):
                     raise ValueError('invalid call sequence')
                 for cid, call in entry.calls.items():
-                    command=filecommands.build_multipart_page(spec,assembly.offset,live=assembly.live_pages,limit=assembly.limit)
+                    command=filecommands.build_multipart_page(spec,assembly.offset,live=assembly.live_pages,limit=assembly.limit,refetch=bool(assembly.refetches))
                     if cid == spec.call_id:
                         command=writeproxy._sentinel(fn['name'],fn['arguments'],spec.receipt,False)+'\n'+command
                     if call != writeproxy._shell_call(cid,entry.shell,command,0):
@@ -584,7 +584,7 @@ class Bridge:
                         e.failure_code = None
                 else:
                     next_id = 'ctxread_' + uuid.uuid4().hex
-                    cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset, live=e.assembly.live_pages, limit=e.assembly.limit)
+                    cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset, live=e.assembly.live_pages, limit=e.assembly.limit, refetch=bool(e.assembly.refetches))
                     call = writeproxy._shell_call(next_id, e.shell, cmd, 0)
                     e.pending = next_id
                     e.private.add(next_id)

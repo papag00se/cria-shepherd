@@ -72,3 +72,50 @@ def test_find_record_takes_only_the_programs_first_record_before_any_cut_marker(
     assert resultpacket.find_record('noise …7890 chars truncated…' + mine, 0, RCPT) is None
     assert resultpacket.find_record('noise ' + mine.replace('"k":"ran"', '"k":"surprise"'), 0, RCPT) is None
     assert resultpacket.find_record(mine, 0, '') is None
+
+
+# ---- 17(e): the page that carries the last extent retires the snapshot; when the harness cut THAT page's record it is asked for again ----
+import read_multipart_helpers as rig
+from cria import filecommands
+from read_multipart_helpers import HEX, page_through, start
+
+CHANGED = ''.join('%08x\n' % (i * 40503 % 2**32) for i in range(5000))      # same size as HEX, different bytes
+
+
+@pytest.fixture
+def last_page_cut(tmp_path, monkeypatch):
+    """Real bash plays the harness. The page that retires the snapshot (the last extent) answers with a result the harness cut
+    in the middle (12 KB of shell noise before it: the record sits in the cut), once; `after_cut` runs between that cut and the re-ask."""
+    (tmp_path / 'tmp').mkdir()
+    monkeypatch.setenv('TMPDIR', str(tmp_path / 'tmp'))
+    state = {'cut': 0, 'after_cut': lambda: None, 'commands': []}
+    snapshots = lambda: [p for p in (tmp_path / 'tmp').iterdir() if p.name.startswith(filecommands.MULTIPART_SNAPSHOT_DIR)]
+
+    def run(call):
+        command = json.loads(call['function']['arguments'])['cmd']
+        state['commands'].append(command)
+        held = bool(snapshots())
+        raw, code = chatty_pty(command, str(tmp_path))
+        if held and not snapshots() and not state['cut']:          # this page carried the last extent and retired the snapshot
+            state['cut'] += 1
+            state['after_cut']()
+            return codex_result(noise(12000).encode() + raw, code)
+        return codex_result(raw, code)
+    monkeypatch.setattr(rig, 'run_call', run)
+    return state
+
+
+def test_a_re_asked_last_page_whose_snapshot_was_retired_is_served_from_the_unchanged_file_and_verified(tmp_path, last_page_cut):
+    bridge, messages, _ = start(tmp_path, HEX)
+    projected, facts = page_through(bridge, messages)
+    assert last_page_cut['cut'] == 1
+    assert [f.exact_body for f in facts] == [HEX.encode()] and bodykeys.MULTIPART_UNVERIFIED not in [m for m in projected if m.get('role') == 'tool'][0]
+
+
+def test_a_re_asked_last_page_after_the_file_changed_ends_unverified_never_with_the_new_bytes(tmp_path, last_page_cut):
+    bridge, messages, path = start(tmp_path, HEX)
+    last_page_cut['after_cut'] = lambda: path.write_text(CHANGED)
+    projected, facts = page_through(bridge, messages)
+    tool = [m for m in projected if m.get('role') == 'tool'][0]
+    assert last_page_cut['cut'] == 1 and bodykeys.MULTIPART_UNVERIFIED in tool
+    assert all(f.exact_body not in (HEX.encode(), CHANGED.encode()) for f in facts) and CHANGED[:200] not in tool['content']

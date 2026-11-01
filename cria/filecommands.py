@@ -443,7 +443,7 @@ class MultipartReadSpec:
 # compares that with the first page's). The page record says so in a typed `snapshot` object (mode, reason, the source
 # identity taken at snapshot time, and the path's CURRENT identity as of this page) and the consumer compares the last
 # page's current identity with the one taken: a source that changed is labelled to the coder, never delivered as current.
-# The snapshot is removed by the page that carries the last extent. A source larger than MULTIPART_SNAPSHOT_MAX_BYTES (or a
+# The snapshot is removed by the page that carries the last extent (a RE-ASKED page whose snapshot is gone reads the path and is accepted only on identical digests and identity). A source larger than MULTIPART_SNAPSHOT_MAX_BYTES (or a
 # snapshot that cannot be made) is read live on every page, with the typed reason in the record: the old detect-and-fail-
 # closed behaviour (hash and metadata checked per page), which cannot distinguish a change-and-revert.
 _MULTIPART_PAGE_PY = r'''
@@ -520,35 +520,47 @@ def now_identity():
     except OSError:
         return None
 
-if s['inverted']:
-    stream = failure('inverted')
-elif mode == 'serve':
-    try:
-        source, taken = snapshot_serve()
-    except (OSError, ValueError, KeyError, TypeError):
-        source = None
-        stream = failure('unreadable')
-else:
+def read_live():
+    """One read of the path through one descriptor, `fstat` before and after: (source, identity taken, failure stream)."""
     try:
         fd = os.open(s['path'], os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0))
         with os.fdopen(fd, 'rb') as f:
             before = os.fstat(f.fileno())
             if not stat.S_ISREG(before.st_mode):
                 raise IsADirectoryError() if stat.S_ISDIR(before.st_mode) else OSError('not a regular file')
-            source = f.read()
+            data = f.read()
             after = os.fstat(f.fileno())
         signature = lambda x: (x.st_dev, x.st_ino, x.st_size, x.st_mtime_ns, x.st_ctime_ns)
-        if signature(before) != signature(after) or len(source) != after.st_size:
+        if signature(before) != signature(after) or len(data) != after.st_size:
+            return None, None, failure('unreadable')
+        return data, identity(before), None
+    except FileNotFoundError:
+        return None, None, failure('missing')
+    except IsADirectoryError:
+        return None, None, failure('is_directory')
+    except OSError:
+        return None, None, failure('unreadable')
+
+if s['inverted']:
+    stream = failure('inverted')
+elif mode == 'serve':
+    try:
+        source, taken = snapshot_serve()
+    except FileNotFoundError:
+        if not s['refetch']:
             source = None
             stream = failure('unreadable')
         else:
-            taken = identity(before)
-    except FileNotFoundError:
-        stream = failure('missing')
-    except IsADirectoryError:
-        stream = failure('is_directory')
-    except OSError:
+            # A page of this read was asked for AGAIN (the harness cut its record: a noisy login shell) and the snapshot is gone: the
+            # first attempt carried the last extent and retired it (the re-fetch is smaller, so pages remain). Read the path itself: the consumer takes the page only when its
+            # source and stream digests AND the identity taken equal the first page's, so what arrives is the snapshot's own bytes
+            # or the read ends unverified (a changed file can no longer be served from a copy that no longer exists).
+            source, taken, stream = read_live()
+    except (OSError, ValueError, KeyError, TypeError):
+        source = None
         stream = failure('unreadable')
+else:
+    source, taken, stream = read_live()
 
 if stream is None:
     if semantics == 'range':
@@ -656,7 +668,7 @@ class MultipartCommandTooLarge(ValueError):
 
 
 def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_bytes: int | None = None, live: bool = False,
-                         limit: int = READ_TRANSPORT_STDOUT_BYTES) -> str:
+                         limit: int = READ_TRANSPORT_STDOUT_BYTES, refetch: bool = False) -> str:
     """One page command. Offset 0 takes the snapshot; later pages serve from it, or read the path live when the first page said
     (typed, in its record) that no snapshot was taken (`live`)."""
     if not isinstance(spec, MultipartReadSpec) or not spec.call_id or not spec.token or not spec.receipt:
@@ -685,7 +697,7 @@ def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_by
     s = {'path':spec.path, 'token':spec.token, 'receipt':spec.receipt, 'start':start, 'end':spec.end_line,
          'pre':spec.pre, 'read_instead':spec.read_instead, 'inverted':inverted, 'failures':failures, 'failure_lead':lead,
          'past':f'(no lines in that range — {display} has %N% lines; line {start} is past the end of the file)\n',
-         'snapshot_cap':MULTIPART_SNAPSHOT_MAX_BYTES, 'snapshot_prefix':MULTIPART_SNAPSHOT_DIR}
+         'snapshot_cap':MULTIPART_SNAPSHOT_MAX_BYTES, 'snapshot_prefix':MULTIPART_SNAPSHOT_DIR, 'refetch':bool(refetch)}
     cfg = base64.b64encode(json.dumps(s, ensure_ascii=True).encode()).decode()
     if type(limit) is not int or limit <= 0 or limit > READ_TRANSPORT_STDOUT_BYTES:
         raise ValueError('invalid record limit')
