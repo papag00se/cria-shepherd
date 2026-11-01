@@ -510,7 +510,7 @@ def completion_block_nudge(report: ProbeReport, floor: LinterReport | None = Non
     # (#11b — a mechanism that cannot observe the thing it is asked about must not answer as if it
     # had). The sibling caller in writeproxy passed the root all along; this one was missed, and
     # the test for the branch called `dependency_line` directly, so it stepped over the gap.
-    return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report, report_root(report))
+    return BLOCK_NUDGE_PREAMBLE + body + dependency_note(report, report_root(report)) + identical_values_note(report)
 
 
 def report_root(report: "ProbeReport") -> str:
@@ -607,6 +607,33 @@ def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
                                             name=name, path=own)
             return ""
         return "\n" + prompts.fill(dependency_line(eco, workspace_root), name=name)
+    return ""
+
+
+# A Go test that compares two struct values with `!=` reports `Subtotal() = 15, want 15` — the
+# true message of the checker, and self-contradictory to a reader who does not know `==` on a
+# struct compares its fields. Measured on ornith1.5_9b (decimal.Decimal, one real gate body, n=8
+# per arm): without a note 0 of 8 first turns named the comparison as the bug, with it 8 of 8. The
+# checker's line is untouched; this is a separate labelled sentence, and it fires only where the
+# printed got and want are the SAME text (string equality of the checker's own two operands — no
+# keyword list, no judgment), in a failed Go test.
+_IDENTICAL_GOT_WANT = (
+    re.compile(r"=\s*(?P<v>\S.*?),\s*want\s+(?P=v)\s*$"),        # Total() = 9.72, want 9.72
+    re.compile(r"\bgot:?\s+(?P<v>\S.*?),?\s+want:?\s+(?P=v)\s*$"),  # got 9.72, want 9.72
+)
+
+
+def identical_values_note(report: "ProbeReport") -> str:
+    """One labelled sentence when a failed Go test's own message prints got and want identically."""
+    ecosystems = {display_command(c.command): (c.ecosystem, c.kind) for c in report.selected}
+    for res in report.results or []:
+        eco, kind = ecosystems.get(res.command, (None, None))
+        if (eco is not probediscovery.Ecosystem.Go or kind is not probediscovery.ProbeKind.Test
+                or res.exit_code in (None, 0)):
+            continue
+        for f in getattr(res, "findings", None) or []:
+            if any(rx.search(f.message) for rx in _IDENTICAL_GOT_WANT):
+                return "\n" + prompts.load("go_identical_values_note").strip()
     return ""
 
 

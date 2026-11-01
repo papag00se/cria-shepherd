@@ -195,3 +195,30 @@ def test_a_require_that_resolves_to_the_projects_own_file_is_named_not_called_a_
     assert probeparse.resolves_to_workspace_file("minitest", str(tmp_path)) == os.path.join("lib", "minitest.rb")
     write(tmp_path, "shipping/__init__.py", "")
     assert proberun.dependency_note(rep(str(tmp_path), "exited 1: ModuleNotFoundError: No module named 'shipping'", False), str(tmp_path)) == ""
+
+
+GO_EQUAL_PRINTING = ("--- FAIL: TestSubtotal (0.00s)\n    cart_test.go:14: Subtotal() = 15, want 15\n"
+                     "--- FAIL: TestTotalWithDiscount (0.00s)\n    cart_test.go:26: Total() = 9.72, want 9.72\nFAIL\nFAIL\tcartsvc\t0.001s\nFAIL\n")
+
+
+def go_report(raw, exit_code=1, ecosystem=None, command="go test -count=1 ./..."):
+    disc = proberun.probediscovery
+    c = disc.ProbeCandidate(kind=disc.ProbeKind.Test, command=command.split(), working_dir="", confidence=1, expected_value=1,
+                            cost=disc.ProbeCost.Cheap, mutates_code=False, may_hang=False, may_need_services=False, reason="t",
+                            ecosystem=disc.Ecosystem.Go if ecosystem is None else ecosystem)
+    return proberun.ProbeReport(project_type=["go"], selected=[c], results=[probeparse.parse_output(command, "go", exit_code, raw, "")])
+
+
+def test_a_go_test_whose_got_and_want_print_the_same_gets_a_note_beside_the_checkers_own_lines():
+    """Walked on cart-billing-go x ornith1.5_9b: `decimal.Decimal` compared with `!=` reads 'Subtotal() = 15, want 15'; the checker's lines stay byte-identical."""
+    nudge = proberun.completion_block_nudge(go_report(GO_EQUAL_PRINTING))
+    assert "Subtotal() = 15, want 15" in nudge and "Total() = 9.72, want 9.72" in nudge          # the tool's voice is untouched
+    assert nudge.count("compares their internal fields") == 1 and "Equal, Cmp, Compare" in nudge and "cria" not in nudge.lower()
+    for raw, kwargs in [(GO_EQUAL_PRINTING.replace("want 15", "want 16").replace("want 9.72", "want 9.73"), {}),   # different values: a real mismatch
+                        ("    cart_test.go:14: Total() = 64.77, want 48.58\nFAIL\n", {}),
+                        ("    cart_test.go:14: got 3, want 30\nFAIL\n", {}),                     # a prefix of the wanted text is not equal
+                        (GO_EQUAL_PRINTING, {"exit_code": 0}),                                  # the run passed
+                        (GO_EQUAL_PRINTING, {"ecosystem": proberun.probediscovery.Ecosystem.Python}),
+                        ("./cart.go:37: too many arguments in call to filepath.Dir\nFAIL\tcartsvc [build failed]\n", {})]:
+        assert proberun.identical_values_note(go_report(raw, **kwargs)) == "", (raw, kwargs)
+    assert "compares their internal fields" in proberun.identical_values_note(go_report("    cart_test.go:9: got: 7 want: 7\nFAIL\n"))

@@ -1,0 +1,1 @@
+⟦ctx:note⟧ In a failed test message above, the value the test got and the value it wanted print identically. If both are struct values (decimal.Decimal, big.Int, time.Time, ...), `==` / `!=` compares their internal fields, not their value, so equal-looking values can still differ; compare them with the type's own method (Equal, Cmp, Compare) instead.
