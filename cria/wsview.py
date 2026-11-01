@@ -121,6 +121,34 @@ OUTSIDE_MAX = 24
 # inventory — and a survey that pre-applied any of them would answer a question it was not asked.
 PRUNE_DIRS = (".git",)
 
+# DIRECTORIES A TOOLCHAIN WRITES, per ecosystem: folded at the survey (named, interior unknown) instead of walked.
+# After the first `cargo build` the survey spent its whole tree budget inside `target/` (86-107 records on a
+# six-file crate), so every Rust survey said "NOT complete" and no judge could settle an absence. A directory is a
+# build output only on PROOF that is not its name alone: a manifest of its ecosystem beside it (the very files
+# `probediscovery.detect_ecosystems` decides an ecosystem from; a test keeps the two in step). `build`, `dist`,
+# `bin`, `obj`, `vendor` stay walked unless their ecosystem's own manifest proves them (see `ignore.py`: a
+# directory an author wrote into is not output). `{ecosystem: ((manifests, directory names), ...)}`.
+BUILD_ARTIFACT_DIRS = {
+    "rust": ((("Cargo.toml",), ("target",)),),
+    "jvm": ((("pom.xml",), ("target",)), (("build.gradle", "build.gradle.kts"), ("build", ".gradle"))),
+    "elixir": ((("mix.exs",), ("_build",)),),
+}
+
+
+def build_output_names() -> frozenset[str]:
+    """Every directory name any ecosystem's rule can fold."""
+    return frozenset(n for rules in BUILD_ARTIFACT_DIRS.values() for _m, names in rules for n in names)
+
+
+def _build_output_proofs() -> dict[str, tuple[str, ...]]:
+    """``{directory name: manifests that prove it}``, the shape the survey program reads."""
+    out: dict[str, list[str]] = {}
+    for rules in BUILD_ARTIFACT_DIRS.values():
+        for manifests, names in rules:
+            for name in names:
+                out.setdefault(name, []).extend(m for m in manifests if m not in out[name])
+    return {name: tuple(ms) for name, ms in sorted(out.items())}
+
 
 # --------------------------------------------------------------------------- the view
 
@@ -198,7 +226,7 @@ class View:
     """The coder's workspace as cria currently knows it. Every answer is a fact somebody
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
-    __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_body_generation", "_stale",
+    __slots__ = ("root", "_files", "_dirs", "_folded", "_outputs", "_bodies", "_body_generation", "_stale",
                  "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
                  "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed",
                  "_body_freshness", "_body_revisions", "_observed_bodies", "_cache_revision",
@@ -209,6 +237,7 @@ class View:
         self._files: dict[str, tuple[int, float]] = {}   # rel -> (size, mtime)
         self._dirs: set[str] = set()                     # rel dirs, "" for the root
         self._folded: set[str] = set()                   # rel dirs listed only as a count
+        self._outputs: dict[str, str] = {}               # rel dir folded as a build output -> the manifest that proved it
         self._body_freshness = _BodyFreshness()
         self._body_revisions: dict[str, int] = {}
         self._observed_bodies: dict[str, bytes] = {}
@@ -692,6 +721,13 @@ class View:
         """Directories listed only as a count — questions inside them answer ``None``."""
         return sorted(self._folded)
 
+    def build_output(self, path) -> str | None:
+        """The proof (``"Cargo.toml beside it"``) that the survey folded this directory as a toolchain's build output, or None
+        for any other directory. Folded or not, its interior is unknown; this says WHY nobody looked."""
+        rel = self.rel(path)
+        manifest = self._outputs.get(rel) if rel is not None else None
+        return f"{manifest} beside it" if manifest else None
+
     def reroot(self, want: str) -> "View":
         """This view seen from ``want`` instead of its own root — an EMPTY view when ``want`` is not
         inside it, because answering a question about a directory nobody looked at from a survey of
@@ -749,6 +785,7 @@ class View:
         self._files.clear()
         self._dirs.clear()
         self._folded.clear()
+        self._outputs.clear()
         self._complete = complete
         for line in body.splitlines():
             if not line:
@@ -757,6 +794,14 @@ class View:
             if kind == "D":
                 if rest:
                     self._dirs.add(rest)
+            elif kind == "B":
+                # A BUILD OUTPUT, folded by the survey on its manifest's proof: named, interior unknown (a fold like `X`), and
+                # the survey stays COMPLETE: nothing the project's author wrote is hidden.
+                manifest, _, d = rest.partition("\t")
+                if d:
+                    self._dirs.add(d)
+                    self._folded.add(d)
+                    self._outputs[d] = manifest
             elif kind == "X":
                 _count, _, d = rest.partition("\t")
                 if d:
@@ -1331,6 +1376,7 @@ def _subview(v: View, sub: str) -> View:
     n = len(pre)
     out._files = {p[n:]: t for p, t in v._files.items() if p.startswith(pre)}
     out._dirs = {d[n:] for d in v._dirs if d.startswith(pre)}
+    out._outputs = {d[n:]: m for d, m in v._outputs.items() if d.startswith(pre)}
     out._folded = {d[n:] for d in v._folded if d.startswith(pre)}
     # A root that is ITSELF folded in the parent was surveyed as a count, not a listing: mark the
     # new root folded ("" — see `_folded_under`) so `listdir`/`scandir`/`walk`/`listed_everything`
@@ -1507,6 +1553,7 @@ import base64, os, sys
 W = sys.stdout.write
 TREE_MAX, TREE_BYTES, FOLD_AT, PRUNE = {tree_max}, {tree_bytes}, {fold_at}, {prune!r}
 BLOB_FILES, BLOB_BYTES, BLOB_FILE = {blob_files}, {blob_bytes}, {blob_file}
+OUTPUTS = {outputs!r}
 WANT = {want!r}
 PROGS = {progs!r}
 OUTSIDE = {outside!r}
@@ -1565,10 +1612,16 @@ while stack and n < TREE_MAX and spent < TREE_BYTES:
     if len(files) > FOLD_AT:
         EMIT("X\t%d\t%s\n" % (len(files), cur))
         continue
+    here = set(f.name for f in files)
     for e in subs:
         if e.name in PRUNE:
             continue
         rel = (cur + "/" + e.name) if cur else e.name
+        # A TOOLCHAIN'S OUTPUT IS NAMED, NOT WALKED (`B`): its name AND a manifest of its ecosystem beside it (a table, `BUILD_ARTIFACT_DIRS`).
+        proof = [m for m in OUTPUTS.get(e.name, ()) if m in here]
+        if proof:
+            EMIT("B\t%s\t%s\n" % (proof[0], rel))
+            continue
         EMIT("D\t%s\n" % rel)
         stack.append(rel)
         n += 1
@@ -1747,7 +1800,7 @@ def survey_helper_program() -> str:
     p = lambda key: _Param(f"PARAMS[{key!r}]")  # noqa: E731
     body = _SURVEY_PY.format(
         tree_max=TREE_MAX_ENTRIES, tree_bytes=p("tree_bytes"), fold_at=FOLD_AT,
-        drain_max=FOLD_DRAIN_MAX, prune=_Param(f"set({sorted(PRUNE_DIRS)!r})"),
+        drain_max=FOLD_DRAIN_MAX, prune=_Param(f"set({sorted(PRUNE_DIRS)!r})"), outputs=_build_output_proofs(),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
         want=p("want"), progs=p("progs"), outside=p("outside"),
         open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
@@ -1802,7 +1855,7 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
     body = (_SURVEY_RECORD_PY if receipt else _SURVEY_PACKED_PY if pack else _SURVEY_PY).format(
         receipt=receipt, tree_max=TREE_MAX_ENTRIES, tree_bytes=tree_bytes,
         fold_at=FOLD_AT,
-        drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
+        drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS), outputs=_build_output_proofs(),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
         want=list(bodies), progs=list(progs), outside=list(outside), 
         open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
@@ -1925,7 +1978,7 @@ def survey_root(survey_text: str) -> str:
 def tree_entries(body: str) -> int:
     """How many records a tree section carries — the count :func:`apply_survey` checks against what
     the survey said it wrote."""
-    return sum(1 for ln in (body or "").splitlines() if ln[:2] in ("D\t", "F\t", "X\t"))
+    return sum(1 for ln in (body or "").splitlines() if ln[:2] in ("D\t", "F\t", "X\t", "B\t"))
 
 
 # WHY THE LAST SURVEY WAS REFUSED, for the caller that logs it. `apply_survey` answered True/False

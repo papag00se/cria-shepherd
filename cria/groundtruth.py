@@ -214,7 +214,7 @@ BUILD_ARTIFACT_DIRS = frozenset({
     ".git", ".cria", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     "node_modules", "venv", ".venv", "site-packages", ".tox", ".eggs",
     "target", "dist", "build", ".gradle", ".next", ".nuxt", ".svelte-kit", "coverage",
-})
+}) | wsview.build_output_names()       # the survey folds these (`wsview.BUILD_ARTIFACT_DIRS`), so the scope line must name them
 
 _INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 
@@ -425,7 +425,11 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
     # `gem install` whose own `ls` sat 200 lines earlier in the SAME prompt. The flag has existed
     # since 2026-08-22 and had one reader out of the five seats that make claims about this disk.
     _v = wsview.current(root)
-    bounded = not (_v.complete and not _v.folded)
+    # …EXCEPT A DIRECTORY THIS RENDERER OMITS BY NAME. The scope line names `target`, `node_modules`, ...; the clause below
+    # claims absence only OUTSIDE them, so a survey that folded one of those (a build output, `wsview.BUILD_ARTIFACT_DIRS`)
+    # lost nothing the clause speaks about. Every other fold still bounds it. (After the first `cargo build` the survey walked
+    # `target/`, ran out of bytes there, and every Rust survey read "NOT complete".)
+    bounded = not (_v.complete and not [d for d in _v.folded if not set(d.split("/")) & _INVENTORY_EXCLUDE])
     complete = not bounded and not _v.may_have_changed
     # Coverage and age are independent. A bounded survey can ALSO have been overtaken.
     # Neutral headers never contradict these scope lines or silently upgrade the survey.

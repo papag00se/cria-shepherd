@@ -155,7 +155,10 @@ def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: lis
         is_file = e.is_file()
         full = os.path.join(dirpath, name)
         if is_dir:
-            proof = ignore.generated(name, lambda: _child_names(full))
+            # A directory the survey folded as a toolchain's build output is skipped on THAT proof (`View.build_output`); its
+            # interior was never listed, so it would otherwise read as one this walk "could not list".
+            proof = wsview.current().build_output(full)
+            proof = f"{name} ({proof})" if proof else ignore.generated(name, lambda: _child_names(full))
             if proof is not None:
                 rel = os.path.relpath(full, root)
                 skipped.append(proof.replace(name, rel, 1) if rel != name else proof)
