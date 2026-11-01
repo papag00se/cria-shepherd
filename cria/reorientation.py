@@ -220,7 +220,6 @@ DEFINITION = Definition(Policy(
     state="optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache",
     services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider", "shared-closed-question"),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
-           Reference("cria/loop.py", "Loop._reasoned_reanchor"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
     regressions=(Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py", "test_the_current_task_and_any_later_amendment_decide_whether_the_coder_is_told_to_inspect"),
                  Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py",

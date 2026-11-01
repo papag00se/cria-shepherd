@@ -3327,17 +3327,6 @@ class Loop:
             return None
         return pending
 
-    def _pasted_file_unsaved(self, sess: PlanSession, reply: str, body: dict) -> bool:
-        # Compatibility query only; production admission and budget live in redrive.
-        if self._pasted_selection(sess) is None:
-            return False
-        other, sess.pasted_block_other = sess.pasted_block_other, False
-        return not other and pastedfile.unsaved_text(reply, _injected_fence_texts(sess, body.get('messages', [])))
-
-    def _unexecuted_nudge_text(self, sess: PlanSession, reply: str = '') -> str:
-        pending = sess.pasted_pending_nudge
-        return pending.text if pending is not None else ''
-
     # -------------------------------------------------- a file typed into chat → the write it should have been
 
     def _recover_text_write(self, sess: PlanSession, comp: dict, framed: dict, body: dict, rlog) -> dict:
@@ -5279,24 +5268,6 @@ class Loop:
             _diagnosis_lifecycle_services(definition, sess.workspace_root or "",
                 self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)))
 
-    def _reasoned_reanchor(self, body: dict, rlog, workspace_root: str = "") -> str:
-        """Compatibility author: F49 owns name grounding, not F44 action vetting."""
-        definition = next(iter(assistruntime.current().bindings(reorientation.DEFINITION.policy.stage)), None)
-        if definition is None:
-            return ""
-        result = definition.execute(reorientation.ReorientationInput(True,
-            lambda: reorientation.ReorientationFacts(tuple(_content_text(m.get("content"))
-                for m in body.get("messages", []) if m.get("role") == "user"),
-                self._ctx.reasoner_role is not None, _history_root(body.get("messages", []))[0]),
-            lambda: workspace_inventory(workspace_root or "", flavor="briefing"),
-            reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
-            None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
-                self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding")))
-        if result.message is None:
-            return ""
-        prefix, _slot, suffix = prompts.load("nudge").partition("{{REASON}}")
-        return result.message["content"].removeprefix(prefix).removesuffix(suffix)
-
     def _prepare_coder_context(self, sess, body, rlog, *, synthetic, index=None, total=None,
                                item="", notes=(), rewritten=False, session_key=""):
         """One preparation order; driver scheduling never chooses pipeline placement."""
@@ -5503,16 +5474,6 @@ class Loop:
             "max_tokens": getattr(self._ctx.coder_role, "max_tokens", None),
         }, window)
         loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
-
-    def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
-        """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
-        copy of the whole compaction and its own summarizer; both are gone. ``root_task`` is pinned
-        verbatim so it cannot erode across rounds."""
-        if not self._ctx.self_compact:
-            return framed
-        msgs = framed.get("messages") or []
-        out = self._self_compact(msgs, sess, None, rlog, pinned_task=root_task)
-        return framed if out is msgs else {**framed, "messages": out}
         density = tokenratio.observed(loaded or "")
         return window, contextfloor.clamp_reserve(reserve, window, math.ceil(frame_tokens * max(density, 1.0))), density
 
@@ -11007,7 +10968,9 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
     cannot shrink (no turns to drop), and the reasoner died silently four calls in a row (run
     0729-gemma4 C1 0062-0065). The line count is load-bearing: '57,588 bytes, 1 line' tells the
     author it is looking at a minified blob to grep, not code to read whole. Deduped on the
-    CANONICAL path — `api.json` and `./api.json` are one file."""
+    CANONICAL path — `api.json` and `./api.json` are one file. EVERY touched file is listed: the "newest N and
+    'and K more'" bound this once ended with went with 71a6ac52 (name the files, do not count them), and its
+    dead tail and `disk_facts` prompt were deleted with the last caller of that bound."""
     if not root or root == ".":   # "." is cria's OWN dir, never the coder's workspace — never read it
         return ""
     paths: list[str] = []
@@ -11019,13 +10982,9 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
             paths.append(p)   # keep the coder's own spelling for display
     if not paths:
         return ""
-    # NEWEST FIRST OUT OF THE BOUND, and the bound is counted below. Bounding on the number of lines
-    # PRODUCED would count wrong: a file the view knows nothing about contributes no line, so the
-    # remainder must come from the paths, not from what could be read about them.
-    shown, rest = paths, 0
     lines: list[str] = []
     view = wsview.current(root)
-    for p in shown:
+    for p in paths:
         full = groundtruth.resolve(root, p)
         body = view.read(full)
         if body is not None:
@@ -11037,13 +10996,6 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
         elif (size := view.size(full)) is not None:
             lines.append(f"FILE {p} — {size:,} bytes")
         # else: cria has not been told about it, and says nothing rather than guessing either way
-    if lines and rest > 0:
-        # Only ever as the TAIL of a real list. With no lines above it there is nothing for "and N
-        # more" to be more THAN, and the caller's own no-files-touched branch is the true answer.
-        # THE COUNT IS THE POINT. Reading every file the coder ever touched is what the cap is for,
-        # but a list that stops without saying so reads as the whole truth, and the author then
-        # reasons about a workspace with the older files deleted from it.
-        lines.append(prompts.fill(prompts.load_map("disk_facts")["more"], count=rest))
     return "\n".join(lines)
 
 

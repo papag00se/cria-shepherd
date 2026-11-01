@@ -424,8 +424,6 @@ DEFINITION = Definition(Policy(
            Reference("cria/loop.py", "Loop._work_item"),
            Reference("cria/loop.py", "Loop._drive_single_item"),
            Reference("cria/loop.py", "Loop._recover_text_write"),
-           Reference("cria/loop.py", "Loop._pasted_file_unsaved"),
-           Reference("cria/loop.py", "Loop._unexecuted_nudge_text"),
            Reference("cria/loop.py", "Loop.drive"),
            Reference("cria/loop.py", "Loop._pasted_redrive"),
            Reference("cria/loop.py", "Loop._retain_pasted_reply"),

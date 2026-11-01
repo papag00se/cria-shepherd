@@ -626,7 +626,6 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/server.py', '_harden_compaction_reply'),
             SourceOwner('cria/reorientation.py', 'reorient'),
             SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
-            SourceOwner('cria/loop.py', 'Loop._reasoned_reanchor'),
             SourceOwner('cria/selfcompact.py', 'work_ledger'),
             SourceOwner('cria/memoryhandoff.py', ''),
         ),
