@@ -28,6 +28,11 @@ def has_observation():
     try:return context.session.observed(context.prepared)
     except ImageUnavailable:return False
 
+def has_image_occurrence():
+    """Typed provenance: the current request holds an image occurrence, observed or not (the store's bindings, never message text)."""
+    context=current.get()
+    return bool(context is not None and context.prepared.bindings)
+
 def attachment_observations():
     """The labelled observations of images the user attached to this request, for a reader whose evidence is the
     action log (which holds tool results, not the task message the image arrived in). [] when none is observed."""

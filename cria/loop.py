@@ -52,9 +52,10 @@ from pathlib import Path
 from .upstream import UpstreamProtocolError
 from .imageworkflow import (current as _image_current, review_view as _image_review_view,
                             has_observation as _image_has_observation,
+                            has_image_occurrence as _image_has_occurrence,
                             attachment_observations as _image_attachment_observations)
 
-from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
+from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive, writerecord
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
@@ -1354,6 +1355,40 @@ def _task_confirm_applies(task: str, chat, role, rlog) -> bool:
     return _confirm_applies(task, ask=ask, rlog=rlog, phase="satisfaction-confirm")
 
 
+def _statement_deliverable(task: str, messages, chat, role, rlog, sess) -> bool:
+    """Is the closing reply itself this task's deliverable (no image involved)?
+
+    The action log never holds the reply (it is the completion being judged), so for a task whose whole
+    deliverable is a statement ("tell me whether X can happen") the judge was handed reads and no answer:
+    measured on ornith1.5_9b, the careful pass reasoned "the answer itself hasn't been given" in a loop to
+    its 8,192-token cap and the verdict failed closed; the reasoning-off retry approved an answer it had
+    never been shown. Deterministic code gathers the fact that bounds the question: the whole transcript is
+    present (no compaction) and nothing in it wrote, or could have written, anything
+    (:class:`writerecord.WriteRecord`, which counts every uncertainty as a possible write). Only then ONE
+    focused reasoning-on question (the deliverable-type question the confirmations share) asks whether the
+    task requires a file or directory to be written or changed; NO makes the reply the deliverable. YES,
+    no reasoner, or an unreadable answer keeps today's evidence (the reply stays out). Asked once per task
+    per session. A request that holds an image occurrence, observed or not, is owned by the image rule (``_image_has_observation``: no observation, no reply shown) and never comes here."""
+    if role is None or _image_has_occurrence() or not writerecord.whole_span(messages):
+        return False
+    record = writerecord.WriteRecord(messages)
+    if record.names or record.commands or record.anywhere:
+        return False
+    memo = getattr(sess, "_statement_deliverable", None) if sess is not None else None
+    if memo is not None and memo[0] == task:
+        return memo[1]
+    ask = lambda question: summarize(chat, role, question, _ASK_USER_TURN, rlog,
+                                     phase="satisfaction-deliverable-type", max_tokens=JUDGE_MAX_TOKENS,
+                                     temperature=0.0, retry_off=False) or ""
+    answer = not _confirm_applies(task, ask=ask, rlog=rlog, phase="satisfaction-deliverable-type")
+    if sess is not None:
+        try:
+            sess._statement_deliverable = (task, answer)
+        except AttributeError:
+            pass
+    return answer
+
+
 # A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
 # checkable against the text the directive was written FROM, which is what makes them worth checking:
 # cria cannot judge whether a paraphrase is faithful, and can always tell whether a name was there.
@@ -1848,9 +1883,14 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if _image_has_observation() and (attached := _image_attachment_observations()):
         evidence = "\n\n".join(part for part in (evidence, prompts.render(
             "satisfaction_image_observation", observations="\n\n".join(attached))) if part)
+    statement_only = False
     if (closing_claim or "").strip() and _image_has_observation():
         evidence = "\n\n".join(part for part in (evidence, prompts.render(
             "satisfaction_closing_claim", claim=closing_claim.strip())) if part)
+    elif statement_only := ((closing_claim or "").strip() and _statement_deliverable(
+            task, messages, reasoner_chat, reasoner_role, rlog, sess)):
+        evidence = "\n\n".join(part for part in (evidence, prompts.render(
+            "satisfaction_closing_claim_statement", claim=closing_claim.strip())) if part)
     system = prompts.load("satisfaction")
     user = prompts.render("satisfaction_user", task=task,
                           evidence=evidence or "(no actions recorded yet)")
@@ -1895,7 +1935,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                     raise ValueError("Completion approval replacement must return ApprovalResult")
                 if result.blocks:
                     return False, result.text or prompts.load(withheld), ""
-        if satisfied and workspace_root and _task_confirm_applies(task, reasoner_chat, reasoner_role, rlog):
+        if satisfied and workspace_root and not statement_only and _task_confirm_applies(task, reasoner_chat, reasoner_role, rlog):
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
             # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README
             # while the listing in the judge's prompt proved its absence).

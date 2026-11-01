@@ -1,0 +1,4 @@
+THE CODER'S CLOSING REPLY — a claim made by the coder, not evidence:
+{{CLAIM}}
+
+The task asks for a statement, not for a file or a change, so the closing reply is where that statement is made; the actions above are not a reply and cannot contain one. The tool results and file contents above are the only evidence for what the reply says. Check the reply against them: a statement the evidence supports is delivered; a statement the evidence contradicts, or one that asserts something the evidence does not show, is not. The reply is evidence of nothing else.
