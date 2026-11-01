@@ -20,6 +20,7 @@ import json
 import os
 import threading
 import time
+import traceback
 import uuid
 from dataclasses import dataclass, replace
 from collections.abc import Callable
@@ -1048,10 +1049,76 @@ class CriaServer(ThreadingHTTPServer):
         return len(streams)
 
 
+#: The largest request body cria will read. The biggest real harness request measured in ~/.cria/calls is
+#: under 4 MiB; image turns are the only way to grow past that. Above this a Content-Length is refused
+#: with 413 BEFORE any of it is read (``BufferedReader.read(n)`` allocates n bytes up front).
+MAX_BODY_BYTES = 64 * 1024 * 1024
+#: Total time a client has to deliver a body it has declared (local loopback: seconds; a stalled sender
+#: must not pin a handler thread forever).
+BODY_DEADLINE_SECONDS = 120.0
+
+
+class BodyRejected(ValueError):
+    """A request body cria will not read: the HTTP status to answer with, and whether the body may be left
+    unread on the socket (``close``: then the connection must end so the leftover bytes are never parsed as
+    the next request)."""
+
+    def __init__(self, status: int, message: str, *, close: bool = True) -> None:
+        super().__init__(message)
+        self.status, self.close = status, close
+
+
+def _chat_shape_error(body: dict) -> str | None:
+    """Why a chat body cannot be processed at all (wrong JSON types where the pipeline iterates or slices),
+    or None. Valid JSON of the wrong shape used to die deep in the pipeline and drop the connection."""
+    messages = body.get("messages")
+    if messages is not None and (not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages)):
+        return "messages must be an array of objects"
+    if any(m.get("content") is not None and not isinstance(m["content"], (str, list)) for m in messages or ()):
+        return "message content must be a string, an array of parts, or null"
+    if body.get("tools") is not None and not isinstance(body["tools"], list):
+        return "tools must be an array"
+    return None
+
+
 class CriaHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "cria"
     sys_version = ""
+
+    #: Longest a connection may go without delivering a byte of its request line/headers (an idle keep-alive
+    #: or half-open connect holds a thread per connection). Ends when the head is read: a model turn can
+    #: be silent for minutes after that, so the response side is never under a deadline.
+    REQUEST_HEAD_TIMEOUT_SECONDS = 300.0
+
+    def handle_one_request(self) -> None:
+        self._answered = False
+        self.connection.settimeout(self.REQUEST_HEAD_TIMEOUT_SECONDS)
+        super().handle_one_request()
+
+    def parse_request(self) -> bool:
+        ok = super().parse_request()
+        self.connection.settimeout(None)
+        return ok
+
+    def send_response(self, code, message=None) -> None:
+        self._answered = True
+        super().send_response(code, message)
+
+    def _guarded(self, handle) -> None:
+        """Run one request; an exception nothing below handled is LOGGED and answered (500) while the
+        status line is still unsent, never swallowed into a bare connection drop."""
+        try:
+            handle()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+            self.server.log.emit("request.client_gone", level="warn")
+        except Exception as e:  # noqa: BLE001 — the HTTP edge's last line: log the cause, answer the client
+            self.close_connection = True
+            msg = f"{type(e).__name__}: {e}"
+            self.server.log.emit("request.error", level="error", error=msg, traceback=traceback.format_exc())
+            if not self._answered:
+                self._send_json(500, {"error": f"internal error: {msg}"})
 
     # Route the base handler's own access noise through our event log (debug), so
     # there is exactly one logging path.
@@ -1059,6 +1126,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         self.server.log.emit("http.access", level="debug", line=(fmt % args))
 
     def do_GET(self) -> None:
+        self._guarded(self._get)
+
+    def _get(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")
         if path == "/health":
             self._send_json(200, {"status": "ok"})
@@ -1102,6 +1172,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
+        self._guarded(self._post)
+
+    def _post(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")   # strip any query string (parity with do_GET)
         from . import multipartcontext
         with assistruntime.bound(self.server.pilot_runtime), multipartcontext.bound():
@@ -1110,6 +1183,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             elif path == "/v1/responses":
                 self._handle_responses()
             else:
+                self.close_connection = True   # the body was not read: it must not be parsed as a request
                 self._send_json(404, {"error": "not found"})
 
     # ------------------------------------------------------------------ chat
@@ -1122,9 +1196,11 @@ class CriaHandler(BaseHTTPRequestHandler):
 
         try:
             body = self._read_json_body()
+            if (shape := _chat_shape_error(body)) is not None:
+                raise ValueError(shape)
         except ValueError as e:
             rlog.emit("request.bad", level="warn", error=str(e))
-            self._send_json(400, {"error": f"invalid JSON body: {e}"})
+            self._refuse_body(e)
             return
 
         carry_chat_system(body)
@@ -2110,7 +2186,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         try:
             rbody, raw = self._read_json_body(retain_raw=True)
         except ValueError as e:
-            self._send_json(400, {"error": f"invalid JSON body: {e}"})
+            self._refuse_body(e)
             return
         sess = responses.session_key_of(rbody)
         rlog = log.bind(session=sess, turn=turn)
@@ -2345,21 +2421,65 @@ class CriaHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ util
 
+    def _read_body(self) -> bytes:
+        """The request body, exactly Content-Length bytes: refused up front when it is chunked (cria does
+        not decode it), malformed, or larger than ``MAX_BODY_BYTES``; read under a total deadline."""
+        if self.headers.get("Transfer-Encoding"):
+            raise BodyRejected(411, "Transfer-Encoding is not supported: send the body with a Content-Length")
+        declared = (self.headers.get("Content-Length") or "0").strip()
+        if not (declared.isascii() and declared.isdigit()):
+            raise BodyRejected(400, f"invalid Content-Length: {declared!r}")
+        length = int(declared)
+        if length > MAX_BODY_BYTES:
+            raise BodyRejected(413, f"request body too large: {length} bytes declared, the limit is {MAX_BODY_BYTES}")
+        deadline = time.monotonic() + BODY_DEADLINE_SECONDS
+        chunks: list[bytes] = []
+        remaining = length
+        try:
+            while remaining:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(left)
+                chunk = self.rfile.read1(min(remaining, 1 << 20))
+                if not chunk:
+                    raise BodyRejected(400, f"request body ended after {length - remaining} of {length} declared bytes")
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        except TimeoutError:
+            raise BodyRejected(408, f"request body not received within {BODY_DEADLINE_SECONDS:g}s") from None
+        finally:
+            self.connection.settimeout(None)
+        return b"".join(chunks)
+
     def _read_json_body(self, *, retain_raw: bool = False) -> dict | tuple[dict, bytes]:
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b""
+        raw = self._read_body()
         if not raw:
             raise ValueError("empty body")
-        obj = json.loads(raw)
+        try:
+            obj = json.loads(raw)
+        except RecursionError:
+            raise ValueError("JSON nested too deeply") from None
         if not isinstance(obj, dict):
             raise ValueError("body must be a JSON object")
         return (obj, raw) if retain_raw else obj
+
+    def _refuse_body(self, e: ValueError) -> None:
+        """Answer a body that could not be used: a BodyRejected carries its own status (and ends the
+        connection when bytes were left unread); any other ValueError is a 400 invalid-JSON-body."""
+        if isinstance(e, BodyRejected):
+            self.close_connection = e.close
+            self._send_json(e.status, {"error": str(e)})
+        else:
+            self._send_json(400, {"error": f"invalid JSON body: {e}"})
 
     def _send_json(self, code: int, obj: dict) -> None:
         raw = json.dumps(obj).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self._write(raw)
 

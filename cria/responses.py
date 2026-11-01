@@ -43,7 +43,12 @@ def to_chat_body(r: dict) -> dict:
         sys_parts.append(persona)
 
     rest: list[dict] = []
-    for item in r.get("input") or []:
+    items = r.get("input")
+    if isinstance(items, str):  # the Responses shorthand for ONE user message; iterating it dropped the whole input
+        items = [{"type": "message", "role": "user", "content": items}]
+    elif items is not None and not isinstance(items, list):
+        raise ValueError("input must be a string or an array of items")
+    for item in items or []:
         if not isinstance(item, dict):
             continue
         t = item.get("type", "message")
