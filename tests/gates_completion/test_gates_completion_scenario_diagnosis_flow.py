@@ -174,3 +174,39 @@ def test_every_diagnosis_kind_is_grounded_in_its_own_source_or_withheld_with_a_r
     ('write "REPORT.md" now', "REPORT.md", False), ("Add REPORT.md.", "REPORT.md", False)])
 def test_the_required_output_span_must_name_the_subject_as_the_task_wrote_it(quote, subject, ok):
     assert cd.required_output_span_names_subject(TASK, quote, subject) is ok
+
+
+@pytest.mark.parametrize("task,quote,ok", [
+    ("`notes.txt`", "`notes.txt`", True),                                        # the quote IS the literal, at the very start of the task
+    ("Create notes.txt", "Create notes.txt", True), ("notes.txt", "notes.txt", True),   # a bare name ending (or being) the task
+    ("Create notes.txt. Then", "Create notes.txt.", True),                       # a sentence period is not part of the name
+    ("Create notes.txt, then", "Create notes.txt,", False),                      # a comma only closes a quoted literal
+    ("Create `notes.txt`, then", "Create `notes.txt`,", True),
+    ("Create notes.txt.", "Create notes.txt.", True),                             # a period closing the whole task
+    ("Create `notes.txt` now, ok", "Create `notes.txt` now", False),             # a comma after plain words is not the literal's own close
+    ("see notes.txt.bak ok", "see notes.txt.bak ok", False),                     # another file whose name starts with the subject
+    ("Create xnotes.txt", "Create xnotes.txt", False), ("Create notes.txtx now", "Create notes.txtx now", False),
+    ("Create `notes.txt` today", "Create `notes.txt", False),                    # the quote cuts the literal short
+    ("Use `notes.txt.bak` now", "`notes.txt.bak`", False),                       # the literal names another file
+    ("Create 'notes.txt later", "Create 'notes.txt", False), ("Create notes.txt' later", "Create notes.txt'", False),   # an unpaired quote mark
+    ("a`notes.txt` and then `notes.txt` ok", "`notes.txt`", True),               # the first occurrence is glued to a word; the second one counts
+])
+def test_required_output_span_boundaries_follow_how_the_task_delimited_the_name(task, quote, ok):
+    assert cd.required_output_span_names_subject(task, quote, "notes.txt") is ok
+    assert cd.required_output_span_names_subject(task, "", "notes.txt") is cd.required_output_span_names_subject("", quote, "notes.txt") is False
+
+
+@pytest.mark.parametrize("subject,quote,ok", [
+    ("a.py", "edit a.py now", True), ("a.py", "edit a.py.", True), ("a.py", "edit ba.py", False), ("a.py", "edit ./a.py", False),
+    ("a.py", "edit a.pyc", False), ("a.py", "a.py/x", False), ("", "edit a.py", False), ("a.py", "", False)])
+def test_a_subject_must_stand_alone_in_the_quote_that_names_it(subject, quote, ok):
+    assert cd.subject_is_exact_in_quote(subject, quote) is ok
+
+
+@pytest.mark.parametrize("name,arguments,ok", [
+    ("read_file", None, True), ("exec_command", '{"cmd": "cat a.txt; ls"}', True), ("exec_command", '{"cmd": "cat a.txt > b.txt"}', False),
+    ("exec_command", '{"cmd": "cat a.txt; rm b"}', False), ("exec_command", '{"cmd": "echo hi"}', False), ("exec_command", "", False), ("write_file", None, False)])
+def test_only_a_read_only_inspection_counts_as_looking_at_the_missing_file(name, arguments, ok):
+    import json
+    services = cd.RemediationServices(lambda f: None, lambda a, b: a == b, lambda a: json.loads(a)["cmd"] if a else "")
+    assert cd.supported_inspection({"name": name, "arguments": arguments}, services) is ok

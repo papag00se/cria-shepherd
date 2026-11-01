@@ -281,8 +281,9 @@ def test_selected_guards_refuse_a_miswired_definition_and_build_a_detector_only_
     assert g.SelectedGuards(None, g.TRUNCATION).detector(nothing) is None
 
 
-def test_both_generation_guards_are_selected_from_rung_4_and_neither_below():
-    ids = {g.RUNAWAY.policy.id, g.TRUNCATION.policy.id}
+def test_the_generation_guards_and_the_negative_diagnosis_are_selected_from_rung_4_and_none_below():
+    from cria import completiondiagnosis
+    ids = {g.RUNAWAY.policy.id, g.TRUNCATION.policy.id, completiondiagnosis.DEFINITION.policy.id}
     assert ids <= set(assistruntime.AssistRuntime.select(level=4).selected)
     assert not ids & set(assistruntime.AssistRuntime.select(level=3).selected)
 
