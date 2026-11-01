@@ -66,34 +66,42 @@ def test_measured_non_participation_is_contradicted_not_merely_unknown():
 SCRIPT_TASK = "Create test_calc.py that prints OK, and run `python3 test_calc.py` to confirm it prints OK."
 NO_TESTS = pt.report([pt.observe(cand(pd.Ecosystem.Python, "python3 -m pytest -q"), "no tests ran in 0.00s", 5)])
 
+ASKED = ["test-participation-requirement", "coder-run-executes-required-test"]
+RUN = ca.ShellRun("python3 test_calc.py", 0, "OK\n")
+
 @pytest.mark.parametrize("support,answers,runs,status,asked", [
     # The gate's runner collected nothing (support absent) but the coder's own run is the one the task named.
-    ("absent", ["REQUIRED", "YES"], 1, S.PERMITTED, ["test-participation-requirement", "coder-run-executes-required-test"]),
-    ("absent", ["REQUIRED", "NO"], 1, S.CONTRADICTED, ["test-participation-requirement", "coder-run-executes-required-test"]),
-    ("absent", ["REQUIRED", ""], 1, S.CONTRADICTED, ["test-participation-requirement", "coder-run-executes-required-test"]),  # unreadable: the block stands
-    ("absent", ["REQUIRED", "MAYBE"], 1, S.CONTRADICTED, ["test-participation-requirement", "coder-run-executes-required-test"]),
-    ("absent", ["REQUIRED"], 0, S.CONTRADICTED, ["test-participation-requirement"]),   # nothing was run: no second question
-    ("absent", ["NOT_REQUIRED"], 1, S.NO_CONSTRAINT, ["test-participation-requirement"]),
-    ("failed", ["REQUIRED", "YES"], 1, S.CONTRADICTED, ["test-participation-requirement"]),   # a runner that reported failures is never released by a claim
-    ("unknown", ["REQUIRED", "YES"], 1, S.WITHHELD, ["test-participation-requirement"]),
+    ("absent", ["REQUIRED", "1"], [RUN], S.PERMITTED, ASKED),
+    ("absent", ["REQUIRED", "`2`"], [ca.ShellRun("ls", 0, ""), RUN], S.PERMITTED, ASKED),           # the number is what is read
+    ("absent", ["REQUIRED", "1"], [ca.ShellRun("python3 test_calc.py", None, "OK\n")], S.PERMITTED, ASKED),   # a harness that reports no status: the judge saw the output
+    ("absent", ["REQUIRED", "NONE"], [RUN], S.CONTRADICTED, ASKED),
+    ("absent", ["REQUIRED", "1"], [ca.ShellRun("python3 test_calc.py", 1, "AssertionError\n")], S.CONTRADICTED, ASKED),   # the named run exited non-zero: measured, not judged
+    ("absent", ["REQUIRED", "2"], [RUN], S.CONTRADICTED, ASKED),                                   # a number that is no run
+    ("absent", ["REQUIRED", "0"], [RUN], S.CONTRADICTED, ASKED),
+    ("absent", ["REQUIRED", ""], [RUN], S.CONTRADICTED, ASKED),                                    # unreadable: the block stands
+    ("absent", ["REQUIRED", "YES"], [RUN], S.CONTRADICTED, ASKED),
+    ("absent", ["REQUIRED"], [], S.CONTRADICTED, ASKED[:1]),                                       # nothing was run: no second question
+    ("absent", ["NOT_REQUIRED"], [RUN], S.NO_CONSTRAINT, ASKED[:1]),
+    ("failed", ["REQUIRED", "1"], [RUN], S.CONTRADICTED, ASKED[:1]),                               # a runner that reported failures is never released by a claim
+    ("unknown", ["REQUIRED", "1"], [RUN], S.WITHHELD, ASKED[:1]),
 ])
-def test_a_run_the_coder_made_releases_an_empty_runner_only_when_the_judge_says_it_is_the_required_test(support, answers, runs, status, asked):
+def test_a_run_the_coder_made_releases_an_empty_runner_only_when_the_judge_names_it_and_it_did_not_fail(support, answers, runs, status, asked):
     """Item 29: the gate's own `pytest -q` collected nothing (exit 5) although the task named `python3 test_calc.py` and the
-    coder ran exactly that. Only the empty-runner case (ABSENT) asks about the coder's runs; YES releases; NO, nothing readable
-    or nothing run keeps the block; FAILED/UNKNOWN support never consults the runs."""
+    coder ran exactly that. Only the empty-runner case (ABSENT) asks WHICH coder run is the required test; a named run that did
+    not exit non-zero releases; any other answer, a failed run or no run keeps the block; FAILED/UNKNOWN support never consults the runs."""
     report = NO_TESTS if support == "absent" else pt.ParticipationReport((pt.ProbeParticipation(
         None, ("pytest",), 1, True, test=pt.PhaseParticipation(passed=False) if support == "failed" else pt.PhaseParticipation()),))
     assert report.support("test").value == support
     log, questions = Log(), Questions(*answers)
     seen = []
     questions.closed = lambda prompt, *, phase, _inner=questions.closed: (seen.append((phase, prompt)), _inner(prompt, phase=phase))[1]
-    shell = tuple(ca.ShellRun("python3 test_calc.py", 0, "OK\n") for _ in range(runs))
-    result = ca.test_participation(ca.ParticipationInput(SCRIPT_TASK, lambda: report, questions, log, lambda: shell))
+    result = ca.test_participation(ca.ParticipationInput(SCRIPT_TASK, lambda: report, questions, log, lambda: tuple(runs)))
     assert result.status is status and [p for p, _ in seen] == asked
-    if "coder-run-executes-required-test" in asked:
+    if len(asked) == 2:
         prompt = seen[-1][1]
-        assert SCRIPT_TASK in prompt and "[1] command: python3 test_calc.py" in prompt and "exit status: 0" in prompt
-        assert log.events[-1] == ("loop.coder_run_executes_required_test", dict(runs=1, executed=answers[1] == "YES" if answers[1] else "unknown"))
+        assert SCRIPT_TASK in prompt and "[1] command:" in prompt and f"[{len(runs)}] command:" in prompt
+        kind, fields = log.events[-1]
+        assert kind == "loop.coder_run_executes_required_test" and fields["released"] is (status is S.PERMITTED) and fields["runs"] == len(runs)
 
 def test_the_runs_put_to_the_question_are_bounded_and_every_cut_is_labelled():
     runs = tuple(ca.ShellRun(f"cmd{i}", None if i == 0 else i, "y" * 1000 if i == 19 else "") for i in range(20))

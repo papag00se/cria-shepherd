@@ -143,18 +143,25 @@ def exact_form(source: ExactFormInput) -> ApprovalResult:
 
 def _coder_ran_required_test(source: ParticipationInput) -> bool:
     """The gate's own runner collected nothing, so the only evidence of the task's named run is the coder's
-    own: ask ONE question of its recorded runs. An unreadable answer, or no recorded run, is a NO (the block
-    stands, bounded by the caller's completion-check limit)."""
+    own: ask ONE question of its recorded runs, WHICH of them executes the test the task requires (the
+    reasoner judges what the task requires; code reads the exit status the harness measured). Released only
+    when the named run exists and did not exit non-zero. An unreadable answer, a number that is no run, a
+    failed run or no recorded run all keep the block (bounded by the caller's completion-check limit)."""
     runs = source.runs()
     if not runs:
         return False
+    shown_from = max(0, len(runs) - RUNS_SHOWN)
     answer = source.questions.closed(
         prompts.render("coder_run_executes_required_test", task=source.task, runs=render_runs(runs)),
-        phase="coder-run-executes-required-test").strip().upper()
+        phase="coder-run-executes-required-test").strip().strip("`[]. ").upper()
+    named = int(answer) if answer.isdigit() and shown_from < int(answer) <= len(runs) else None
+    run = runs[named - 1] if named is not None else None
+    released = run is not None and run.exit_code in (0, None)
     if source.log is not None:
         source.log.emit("loop.coder_run_executes_required_test", runs=len(runs),
-                        executed=(answer == "YES") if answer else "unknown")
-    return answer == "YES"
+                        named=named if named is not None else (answer or "unknown"),
+                        exit_code=run.exit_code if run is not None else None, released=released)
+    return released
 
 
 def test_participation(source: ParticipationInput) -> ApprovalResult:
@@ -218,7 +225,9 @@ PARTICIPATION = ParticipationDefinition(
            regressions=(
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_a_required_test_is_released_only_by_proven_participation_and_a_readable_answer"),
                Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_an_end_to_end_requirement_is_judged_on_the_executed_test_source"),
-               Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_measured_non_participation_is_contradicted_not_merely_unknown")),
+               Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_measured_non_participation_is_contradicted_not_merely_unknown"),
+               Reference("tests/loop_orientation/test_loop_orientation_completion_approval.py", "test_a_run_the_coder_made_releases_an_empty_runner_only_when_the_judge_names_it_and_it_did_not_fail"),
+               Reference("tests/loop_orientation/test_loop_orientation_participation.py", "test_a_completion_the_empty_gate_runner_cannot_prove_is_released_by_the_coders_own_named_run")),
            migrated=False), test_participation)
 EXACT_FORM = ExactFormDefinition(
     Policy("exact-file-form-approval", "completion-approval", 4, family_id="F35",

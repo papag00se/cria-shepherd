@@ -123,10 +123,10 @@ def _run(cid, cmd, output, code):
 CALC_TASK = "Create test_calc.py that prints OK, and run `python3 test_calc.py` to confirm it prints OK."
 
 @pytest.mark.parametrize("command,output,code,answers,approved", [
-    ("python3 test_calc.py", "OK\n", 0, ["REQUIRED", "YES"], True),                          # item 29: the named run, exit 0, the runner found no tests
-    ("python3 test_calc.py", "OK\n", 0, ["REQUIRED", "NO"], False),                          # the judge says it is not the required test
-    ("python3 test_calc.py", "Traceback\nAssertionError\n", 1, ["REQUIRED", "NO"], False),   # a failing run is shown with its exit status
-    ("python3 calc.py", "", 0, ["REQUIRED", "NO"], False),                                    # a different command
+    ("python3 test_calc.py", "OK\n", 0, ["REQUIRED", "1"], True),                            # item 29: the named run, exit 0, the runner found no tests
+    ("python3 test_calc.py", "OK\n", 0, ["REQUIRED", "NONE"], False),                        # the judge says it is not the required test
+    ("python3 test_calc.py", "Traceback\nAssertionError\n", 1, ["REQUIRED", "1"], False),    # the judge names a failing run: its measured exit status keeps the block
+    ("python3 calc.py", "", 0, ["REQUIRED", "NONE"], False),                                  # a different command
 ])
 def test_a_completion_the_empty_gate_runner_cannot_prove_is_released_by_the_coders_own_named_run(command, output, code, answers, approved):
     """Real shape from the e2e Calc cells: the gate's `pytest -q` exits 5 ('no tests ran'), the coder ran the task's own command.
