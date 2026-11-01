@@ -147,7 +147,10 @@ LANDED_TEST = [call("t", "edit_file", path="src/test/Importer.java", old_string=
     (REFUSED_MAIN + [call("a", "write_file", path="/ws/src/test/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/test/Importer.java", True),   # relative claim, absolute write
     (REFUSED_MAIN + [call("a", "write_file", path="/ws/src/test/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/Importer.java", False),
     ([call("a", "write_file", path="Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/Importer.java", True),    # a cwd-relative write: the directory is unknown, so abstain
-    ([call("a", "write_file", path="./src/main/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/importer.java", True)])
+    ([call("a", "write_file", path="./src/main/Importer.java", content="x"), result("a", outcome=denial.LANDED)], "src/main/importer.java", True),
+    # a claim spelled with the sentence punctuation around it passes the shared file gate, so the record reads through it too (aud5)
+    (HISTORY, "Importer.java.", True), (HISTORY, "src/Importer.java,", True), (HISTORY + shell("s", "echo x > notes.md"), "notes.md)", True),
+    (HISTORY, "pom.xml.", False)])
 def test_the_write_record_says_a_path_changed_unless_the_record_proves_nothing_could_have(messages, path, changed):
     """The write record says a path may have changed unless typed evidence proves nothing could have (uncertainty counts for the path)."""
     assert writerecord.WriteRecord(messages).may_have_changed(path) is changed

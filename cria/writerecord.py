@@ -84,13 +84,19 @@ def _command(arguments) -> str:
     return text or (arguments if isinstance(arguments, str) else _flat(arguments))
 
 
+def _spelled(path: str) -> str:
+    """A path as a reader gathered it, without the markup and sentence punctuation around it: the shape
+    `groundtruth.names_a_workspace_file` (the shared gate every file-claim lens passes first) already reads through."""
+    return path.strip().strip("`'\"").rstrip(".,;:)")
+
+
 def _norm(path: str) -> str:
-    return os.path.basename(os.path.normpath(path.strip().strip("`'\""))).lower()
+    return os.path.basename(os.path.normpath(_spelled(path))).lower()
 
 
 def _parts(path: str) -> tuple[bool, tuple[str, ...]]:
     """``(absolute, components)`` of a spelled path, lower-cased, ``.`` and doubled separators gone."""
-    rel = os.path.normpath(path.strip().strip("`'\"").rstrip(".,;:)")).replace(os.sep, "/").lower()
+    rel = os.path.normpath(_spelled(path)).replace(os.sep, "/").lower()
     return rel.startswith("/"), tuple(p for p in rel.split("/") if p)
 
 
