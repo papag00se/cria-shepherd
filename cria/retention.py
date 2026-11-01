@@ -1,6 +1,6 @@
 """Explicit, operator-run cleanup of cria's private retained state.
 
-    python -m cria.retention list  [--home DIR] [--kind multipart|image|snapshot|all] [--tmp DIR] [--json]
+    python -m cria.retention list  [--home DIR] [--kind multipart|image|snapshot|transient|all] [--tmp DIR] [--json]
     python -m cria.retention prune [--home DIR] [--kind ...] [--tmp DIR] [--older-than 14d]
                                    [--session ID] [--apply]
 
@@ -34,6 +34,14 @@ and prunes the private source snapshots a multipart read leaves behind when it i
 (`.ctx-mpsnap-<token>`, or `.cria-mpsnap-<token>` as earlier releases named it; a completed read removes its own). Only a directory of exactly that name shape, owned by this user,
 mode 0700, holding nothing but `.owner`, `snap` and `meta` (regular files) is ever touched. There is no signal whether such a
 read is still running, so prune needs `--older-than` (or `--session` = the token) and the operator's age is the judgment.
+
+`--kind transient` (also never part of `all`, same temp directory) lists and prunes the credentialed scratch directories the
+lowered write/edit/gate programs leave under the harness temp directory when they were killed or never finished: completion
+marks (`.ctx-done-<credential>`, earlier `.cria-done-`), edit-sequence markers (`.ctx-edits-`, earlier `.cria-edits-`) and gate
+scratch (`.ctx-private-<token>`, earlier `.gate-private-`). Never a prefix sweep: a directory is listed as removable only if it is
+owned by this user, mode 0700, holds a regular `.owner` certificate whose JSON names exactly this directory's prefix, credential and
+inode, and nothing but regular files (the gate's `aux/` may also hold regular files and plain subdirectories). Anything else with the
+prefix is listed refused and never touched. The age is the operator's judgment, as for snapshots.
 """
 import argparse
 import hashlib
@@ -235,7 +243,9 @@ def _delete_multipart(dirfd, entry):
 
 # -------------------------------------------------------------------- images
 
-def _scan_images(dirfd, root):
+def _scan_images(dirfd, root, *, spare_newer_than=None, now=None):
+    """``spare_newer_than`` (seconds): a live-free, unsealed session touched more recently is NOT opened and re-hashed - it cannot
+    be selected by that age anyway (`select`), so validating it would only cost time linear in its retained bytes every pass."""
     entries, ignored = {}, []
     store = ImageStore(root, close_authority=object())
     for name in sorted(os.listdir(dirfd)):
@@ -312,6 +322,9 @@ def _scan_images(dirfd, root):
                 e.label = imagepersist.read_state(os.path.join(root, name)).get('key') or ''
             except ImageUnavailable:
                 pass
+            continue
+        if spare_newer_than is not None and now - e.mtime < spare_newer_than:
+            e.state, e.detail = 'unknown', 'newer than the requested age; not validated'
             continue
         try:   # the store's own validator; the throwaway store retains nothing
             session = store.restore_session(handle, recovered_leases=())
@@ -423,19 +436,178 @@ def _delete_snapshot(tmp, entry):
     os.rmdir(name, dir_fd=tmp)
 
 
+# ------------------------------------------------------------------ transient scratch
+
+_TRANSIENT_SHAPES = (   # (prefix, what it is, may hold an `aux` directory); earlier release first
+    ('.cria-done-', 'completion marks', False), ('.ctx-done-', 'completion marks', False),
+    ('.cria-edits-', 'edit-sequence markers', False), ('.ctx-edits-', 'edit-sequence markers', False),
+    ('.gate-private-', 'gate scratch', True), ('.ctx-private-', 'gate scratch', True))
+_TRANSIENT_CREDENTIAL = r'[A-Za-z0-9_-]{1,128}'
+_TRANSIENT_DIR = re.compile('(' + '|'.join(re.escape(p) for p, _, _ in _TRANSIENT_SHAPES) + ')(' + _TRANSIENT_CREDENTIAL + ')')
+_TRANSIENT_WHAT = {p: (what, aux) for p, what, aux in _TRANSIENT_SHAPES}
+_TRANSIENT_DEPTH = 8
+
+
+def _walk_aux(dirfd, depth=0):
+    """(bytes, newest mtime, count) of a gate `aux` tree; ValueError on anything but plain owned files and directories."""
+    if depth > _TRANSIENT_DEPTH:
+        raise ValueError('aux is nested too deeply')
+    total, newest, count = 0, 0.0, 0
+    for name in os.listdir(dirfd):
+        st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+        if st.st_uid != os.getuid() or not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+            raise ValueError(f'aux/{name} is not a plain file or directory of this user')
+        total, newest, count = total + st.st_size, max(newest, st.st_mtime), count + 1
+        if stat.S_ISDIR(st.st_mode):
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
+            try:
+                size, mtime, n = _walk_aux(child, depth + 1)
+            finally:
+                os.close(child)
+            total, newest, count = total + size, max(newest, mtime), count + n
+    return total, newest, count
+
+
+def _certified(child, name, prefix, credential, st):
+    """The directory's own `.owner` certificate (what `ownedfiles._owned_open` writes) names exactly this prefix, credential and inode."""
+    cert, marker = _read_regular(child, '.owner')
+    identity = [st.st_dev, st.st_ino]
+    if not isinstance(cert, dict) or cert.get('namespace') != prefix or cert.get('credential') != credential \
+            or cert.get('root') != identity or cert.get('owner') != [marker.st_dev, marker.st_ino]:
+        raise ValueError('the .owner certificate does not name this directory')
+    return marker
+
+
+def _scan_transient(tmp):
+    """Credentialed scratch directories of the lowered programs under the harness temp directory (an fd). Exact shape only."""
+    entries, ignored = [], []
+    for name in sorted(os.listdir(tmp)):
+        if not name.startswith(tuple(p for p, _, _ in _TRANSIENT_SHAPES)):
+            continue
+        match = _TRANSIENT_DIR.fullmatch(name)
+        if match is None:
+            ignored.append(name)
+            continue
+        prefix, credential = match.groups()
+        what, has_aux = _TRANSIENT_WHAT[prefix]
+        entry = Entry('transient', name, label=what, state='unknown',
+                      detail='credentialed scratch of a lowered program (finished work leaves none; a running one is not distinguishable)')
+        entries.append(entry)
+        try:
+            st = os.stat(name, dir_fd=tmp, follow_symlinks=False)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+                raise ValueError('not a 0700 directory owned by this user')
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
+            try:
+                marker = _certified(child, name, prefix, credential, st)
+                entry.mtime, entry.size = max(st.st_mtime, marker.st_mtime), marker.st_size
+                entry.names.append(name + '/.owner')
+                for f in sorted(set(os.listdir(child)) - {'.owner'}):
+                    fst = os.stat(f, dir_fd=child, follow_symlinks=False)
+                    if fst.st_uid != os.getuid():
+                        raise ValueError(f'{f} belongs to another user')
+                    if stat.S_ISREG(fst.st_mode):
+                        entry.size += fst.st_size
+                    elif has_aux and f == 'aux' and stat.S_ISDIR(fst.st_mode):
+                        sub = os.open('aux', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=child)
+                        try:
+                            size, mtime, _n = _walk_aux(sub)
+                        finally:
+                            os.close(sub)
+                        entry.size, entry.mtime = entry.size + size, max(entry.mtime, mtime)
+                    else:
+                        raise ValueError(f'unexpected entry {f}')
+                    entry.mtime = max(entry.mtime, fst.st_mtime)
+                    entry.names.append(name + '/' + f)
+            finally:
+                os.close(child)
+            entry.raw = {'identity': (st.st_dev, st.st_ino), 'aux': has_aux}
+        except (OSError, ValueError) as exc:
+            entry.refused, entry.detail, entry.names = True, str(exc), []
+    return entries, ignored
+
+
+def _remove_tree(dirfd, depth=0):
+    for name in os.listdir(dirfd):
+        st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+        if stat.S_ISDIR(st.st_mode):
+            if depth >= _TRANSIENT_DEPTH:
+                raise OSError(f'{name}: nested too deeply; left in place')
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
+            try:
+                _remove_tree(child, depth + 1)
+            finally:
+                os.close(child)
+            os.rmdir(name, dir_fd=dirfd)
+        elif stat.S_ISREG(st.st_mode):
+            os.unlink(name, dir_fd=dirfd)
+        else:
+            raise OSError(f'{name}: not a plain file or directory; left in place')
+
+
+def _delete_transient(tmp, entry):
+    """Re-prove the shape at the moment of removal (same inode as the listing, certificate intact), then files, `aux`, directory."""
+    match = _TRANSIENT_DIR.fullmatch(entry.id)
+    if match is None or not entry.raw:
+        raise OSError('not a certified scratch directory; left in place')
+    prefix, credential = match.groups()
+    child = os.open(entry.id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
+    try:
+        st = os.fstat(child)
+        if (st.st_dev, st.st_ino) != tuple(entry.raw['identity']) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+            raise OSError('the directory is no longer the one that was listed; left in place')
+        try:
+            _certified(child, entry.id, prefix, credential, st)
+        except (OSError, ValueError) as exc:
+            raise OSError(f'certificate check failed ({exc}); left in place') from exc
+        for f in os.listdir(child):
+            fst = os.stat(f, dir_fd=child, follow_symlinks=False)
+            if stat.S_ISDIR(fst.st_mode) and f == 'aux' and entry.raw['aux']:
+                sub = os.open('aux', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=child)
+                try:
+                    _remove_tree(sub)
+                finally:
+                    os.close(sub)
+                os.rmdir('aux', dir_fd=child)
+            elif stat.S_ISREG(fst.st_mode) and fst.st_uid == os.getuid():
+                os.unlink(f, dir_fd=child)
+            else:
+                raise OSError(f'{f}: unexpected entry; left in place')
+    finally:
+        os.close(child)
+    os.rmdir(entry.id, dir_fd=tmp)
+
+
 # ------------------------------------------------------------------ selection
 
-def _matches_session(entry, wanted):
+class AmbiguousSession(Exception):
+    """A session prefix that names more than one retained entry and no entry exactly."""
+    def __init__(self, wanted, entries):
+        super().__init__(f'session prefix {wanted!r} is ambiguous: it matches {len(entries)} entries; give the full id')
+        self.wanted, self.entries = wanted, entries
+
+
+def _exact_session(entry, wanted):
+    return _matches_session(entry, wanted, prefix=False)
+
+
+def _matches_session(entry, wanted, prefix=True):
     digest = hashlib.sha256(wanted.encode()).hexdigest()
+    if entry.kind == 'transient':
+        return entry.id == wanted
     if entry.kind == 'snapshot':
-        return entry.id == wanted or (len(wanted) >= 8 and entry.id.startswith(wanted))
+        return entry.id == wanted or (prefix and len(wanted) >= 8 and entry.id.startswith(wanted))
     if entry.kind == 'multipart':
-        return entry.id == digest or (len(wanted) >= 8 and entry.id.startswith(wanted)) or entry.label == wanted
+        return entry.id == digest or (prefix and len(wanted) >= 8 and entry.id.startswith(wanted)) or entry.label == wanted
     return entry.id == wanted or entry.label == wanted
 
 
 def select(entries, *, older_than, session, now):
     chosen = []
+    if session is not None and not any(_exact_session(e, session) for e in entries):
+        prefixed = [e for e in entries if _matches_session(e, session)]
+        if len({e.id for e in prefixed}) > 1:      # a prefix is a convenience for ONE entry, never a pattern
+            raise AmbiguousSession(session, prefixed)
     for e in entries:
         if session is not None and not _matches_session(e, session):
             continue
@@ -458,23 +630,24 @@ def _tmp_root(tmp):
     return os.path.realpath(tmp or os.environ.get('TMPDIR') or '/tmp')
 
 
-def collect(home, kinds, *, lock_multipart=False, tmp=None):
-    """Return (entries, ignored, held_lock_fd_or_None, notes). Caller closes the fds."""
+def collect(home, kinds, *, lock_multipart=False, tmp=None, older_than=None, now=None):
+    """Return (entries, ignored, held_lock_fd_or_None, notes). Caller closes the fds. ``older_than``/``now``: the age the caller will
+    select by, so an image session younger than it is not validated (see `_scan_images`)."""
     entries, ignored, notes, fds = [], [], [], {}
     roots = _roots(home)
     for kind in kinds:
-        if kind == 'snapshot':
+        if kind in ('snapshot', 'transient'):
             try:
                 dirfd = os.open(_tmp_root(tmp), os.O_RDONLY | os.O_DIRECTORY)
                 try:
-                    found, ign = _scan_snapshots(dirfd)
+                    found, ign = (_scan_snapshots if kind == 'snapshot' else _scan_transient)(dirfd)
                     entries.extend(found)
-                    ignored.extend(f'snapshot/{n}' for n in ign)
-                    fds['snapshot'] = os.dup(dirfd)
+                    ignored.extend(f'{kind}/{n}' for n in ign)
+                    fds[kind] = os.dup(dirfd)
                 finally:
                     os.close(dirfd)
             except OSError as exc:
-                notes.append(f'snapshot: scan failed: {exc}')
+                notes.append(f'{kind}: scan failed: {exc}')
             continue
         root = roots[kind]
         if not os.path.lexists(root):
@@ -507,7 +680,7 @@ def collect(home, kinds, *, lock_multipart=False, tmp=None):
                         e.state = 'active' if e.state != 'corrupt' else e.state
                         e.detail = (e.detail + '; ' if e.detail else '') + 'state lock held by a live cria process'
             else:
-                found, ign = _scan_images(dirfd, str(root))
+                found, ign = _scan_images(dirfd, str(root), spare_newer_than=older_than, now=now)
             entries.extend(found)
             ignored.extend(f'{kind}/{n}' for n in ign)
             fds[kind] = os.dup(dirfd)
@@ -541,8 +714,8 @@ def _parser():
     for name in ('list', 'prune'):
         p = sub.add_parser(name)
         p.add_argument('--home', default=str(privatepaths.CRIA_HOME), help='cria home (default ~/.cria)')
-        p.add_argument('--kind', choices=('multipart', 'image', 'snapshot', 'all'), default='all')
-        p.add_argument('--tmp', help='harness temp directory scanned for --kind snapshot (default $TMPDIR, else /tmp)')
+        p.add_argument('--kind', choices=('multipart', 'image', 'snapshot', 'transient', 'all'), default='all')
+        p.add_argument('--tmp', help='harness temp directory scanned for --kind snapshot/transient (default $TMPDIR, else /tmp)')
         if name == 'list':
             p.add_argument('--json', action='store_true')
         else:
@@ -580,12 +753,18 @@ def main(argv=None, out=None, now=None):
     except ValueError as exc:
         out.write(f'refusing: {exc}\n')
         return 2
-    entries, ignored, fds, notes = collect(args.home, kinds, lock_multipart=args.apply, tmp=args.tmp)
+    entries, ignored, fds, notes = collect(args.home, kinds, lock_multipart=args.apply, tmp=args.tmp, older_than=older, now=now)
     code = 0
     try:
         for n in notes:
             out.write(f'note: {n}\n')
-        plan, skipped = plan_prune(entries, older_than=older, session=args.session, now=now)
+        try:
+            plan, skipped = plan_prune(entries, older_than=older, session=args.session, now=now)
+        except AmbiguousSession as exc:
+            out.write(f'refusing: {exc}\n')
+            for e in exc.entries:
+                out.write(f'  {e.kind} {e.id}  {e.label}\n')
+            return 2
         out.write(('APPLY: will remove' if args.apply else 'DRY RUN: would remove') + f' {len(plan)} entr{"y" if len(plan)==1 else "ies"}\n')
         for e in plan:
             out.write(f'  remove {e.kind} {e.id} [{e.state}] {_size_text(e.size)} age {_fmt_age(now - e.mtime)}: '
@@ -651,6 +830,8 @@ def apply_plan(home, plan, fds, *, force, report):
                         release_lock()
             elif e.kind == 'snapshot':
                 _delete_snapshot(fds['snapshot'], e)
+            elif e.kind == 'transient':
+                _delete_transient(fds['transient'], e)
             else:
                 _delete_image(str(_roots(home)['image']), e, authority, force=force)
         except (OSError, ImageUnavailable, BridgeError, KeyError, TypeError) as exc:
@@ -685,7 +866,7 @@ class AutoPruner:
         removed = skipped = failed = 0
         seen = set()
         try:
-            entries, _ignored, fds, notes = collect(self.home, self.kinds, lock_multipart=True)
+            entries, _ignored, fds, notes = collect(self.home, self.kinds, lock_multipart=True, older_than=self.older, now=self.clock())
             try:
                 for n in notes:
                     seen.add(('note', n))
