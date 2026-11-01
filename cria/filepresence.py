@@ -24,6 +24,8 @@ from . import groundtruth, prompts, windowcaps, writerecord
 
 # A claim list is a line per file name; a few hundred tokens covers any real briefing.
 MAX_TOKENS = 2048
+# A one-word verdict (STATED / NOT STATED) needs a handful.
+VERDICT_TOKENS = 16
 # The per-file confirmation thinks first (7 to 10 s on the real briefing, up to 1,300 tokens of reasoning), so it gets
 # the judge's reply room, a share of the answering model's window; an answer cut short is empty and leaves the claim standing.
 CONFIRM_MAX_TOKENS = windowcaps.JUDGE_REPLY
@@ -169,6 +171,23 @@ def unsupported_builds(summarize, chat_fn, role, briefing: str, messages, rlog,
     reason = writerecord.CheckRecord(messages).unsupported()
     if not reason:
         return ""
+    if reason == "no check ran" and _states_a_success(summarize, chat_fn, role, briefing, rlog, phase):
+        return f"the briefing states a success ({reason})"
     answer = _ask_lines(summarize, chat_fn, role, briefing, rlog, phase, "build")
     claimed = _claimed(answer, briefing, "GREEN", plain=True)
     return f"{claimed[0]} ({reason})" if claimed else ""
+
+
+def _states_a_success(summarize, chat_fn, role, briefing: str, rlog, phase: str) -> bool:
+    """With the typed record already saying NO check ran, does any sentence of the briefing state a success as fact?
+
+    The listing question ("which sentences report a result, and was it a success?") is a cold, closed question over every
+    sentence at once: beside an honest "has NOT been compiled" a vague "the code compiles cleanly and all tests pass" was
+    listed GREEN in only 12 of 64 replays (8 real briefings with the sentence appended, 2 at temperature 0 + 6 at 0.7). Told
+    the fact the record already settled, the model has only to read for the contradiction: 62 of 64. Only the exact word
+    STATED refuses; an empty, cut or unreadable answer says nothing (the listing still runs after it)."""
+    answer = summarize(chat_fn, replace(role, reasoning="off"), prompts.load("compaction_validate_nocheck"),
+                       prompts.load("compaction_validate_nocheck_ask"), rlog, phase=f"{phase}-nocheck",
+                       max_tokens=VERDICT_TOKENS, retry_off=False, temperature=0.0,
+                       evidence_blocks=[prompts.render("compaction_candidate", briefing=briefing.strip())])
+    return answer.strip().strip("`*. ").upper() == "STATED"

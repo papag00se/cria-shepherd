@@ -34,7 +34,7 @@ def chat_reply(content):
     return json.dumps({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}]})
 
 LENSES = {"retrospective": "RETROSPECTIVE", "scope": "PRESERVES", "files": "NONE", "changes": "NONE",
-          "sizes": "NONE", "build": "NONE", "changes_file": "CHANGED", "files_file": "EXISTS"}
+          "sizes": "NONE", "build": "NONE", "nocheck": "NOT STATED", "changes_file": "CHANGED", "files_file": "EXISTS"}
 
 def lens_of(system):
     """Which lens a system prompt belongs to; a per-file question is matched through the path it was rendered for."""

@@ -50,6 +50,19 @@ def test_a_claim_the_typed_record_contradicts_refuses_the_briefing_before_the_fi
     lens_request = " ".join(str(m["content"]) for m in next(b for b in seen if lens_of(b["messages"][0]["content"]) == lens)["messages"])
     assert briefing in lens_request and "write_file Importer.java" not in lens_request      # the lens reads the claim alone, not the transcript
 
+VAGUE = "The code compiles cleanly and all tests pass."
+
+@pytest.mark.parametrize("messages,nocheck,build,refused,asked", [
+    (HISTORY, "STATED", "NONE", True, True),             # the record says no check ran, the cold listing misses the vague sentence (8 of 8 real briefings: 52 of 64 replays)
+    (HISTORY, "NOT STATED", "NONE", False, True),        # an honest briefing: the grounded question says nothing and the listing finds nothing
+    (HISTORY, "Unclear.", "NONE", False, True),          # an unreadable answer adds no rejection
+    (HISTORY + RED_RUN, "STATED", "NONE", False, False)]) # the record names a check that ran: the fact is not "no check ran", so the question is not asked
+def test_a_success_stated_while_the_record_says_no_check_ran_is_refused_by_the_grounded_question(messages, nocheck, build, refused, asked):
+    """8 real briefings with an honest 'not compiled' sentence plus the vague success sentence: the listing lens refused 12 of 64, this question 62 of 64."""
+    ok, seen, answers, _ = validate(f"{HONEST} {VAGUE}", SURVEY, messages, nocheck=nocheck, build=build)
+    assert ok is (not refused) and ("nocheck" in seen) is asked
+    assert (answers.get("build", "").startswith("UNRUN the briefing states a success (no check ran)")) is (refused and build == "NONE")
+
 @pytest.mark.parametrize("lens,briefing,kw", [
     ("files", REVIEW, dict(survey=PARTIAL)), ("files", REVIEW, dict(survey=STALE)),                   # a survey that is partial or overtaken settles nothing
     ("sizes", "`pom.xml` (235 B) was written.", dict(survey=STALE)),
@@ -88,7 +101,8 @@ def test_an_honest_negative_an_earlier_state_a_plan_or_an_ungrounded_claim_is_ne
     ("files", lambda ask, role: filepresence.contradicted_files(ask, object(), role, REVIEW, SURVEY, None)),
     ("changes", lambda ask, role: filepresence.unsupported_changes(ask, object(), role, CHANGED, HISTORY, None)),
     ("sizes", lambda ask, role: filepresence.contradicted_sizes(ask, object(), role, "`pom.xml` (235 B) was written.", SURVEY, None)),
-    ("build", lambda ask, role: filepresence.unsupported_builds(ask, object(), role, GREEN, HISTORY, None))])
+    ("build", lambda ask, role: filepresence.unsupported_builds(ask, object(), role, GREEN, HISTORY + RED_RUN, None)),
+    ("nocheck", lambda ask, role: filepresence.unsupported_builds(ask, object(), role, GREEN, HISTORY, None))])
 def test_every_lens_puts_one_closed_cold_question_with_reasoning_off_and_no_retry(lens, call_lens):
     """A lens is ONE focused closed question: temperature 0, reasoning off, and no second attempt on an empty reply (mutant: retry_off=True survived 4 of 4 lenses)."""
     asked = []
@@ -97,9 +111,10 @@ def test_every_lens_puts_one_closed_cold_question_with_reasoning_off_and_no_retr
         asked.append((role, system, kw))
         return ""
     call_lens(summarize, Role(name="reasoner", backend="fixture", reasoning="on"))
-    (role, system, kw), = asked
+    (role, system, kw), *rest = asked          # the grounded question comes first and, answered empty, the listing follows
     assert role.reasoning == "off" and kw["retry_off"] is False and kw["temperature"] == 0.0
-    assert kw["phase"] == f"compaction-validate-{lens}" and kw["max_tokens"] == filepresence.MAX_TOKENS
+    assert kw["phase"] == f"compaction-validate-{lens}" and kw["max_tokens"] == (filepresence.VERDICT_TOKENS if lens == "nocheck" else filepresence.MAX_TOKENS)
+    assert len(rest) == (1 if lens == "nocheck" else 0)
     assert lens_of(system) == lens
 
 # ornith1.5_9b / orders-api-py through real Codex (wave 10 E2EB, cell c1, 20,480 window, compaction 0013/0015): the briefing restates
