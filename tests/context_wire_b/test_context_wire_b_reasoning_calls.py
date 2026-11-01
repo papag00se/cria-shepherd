@@ -119,3 +119,31 @@ def test_model_shaped_json_is_extracted_tolerantly_and_the_first_real_duplicate_
 def test_an_object_missing_only_its_closing_braces_is_closed_and_nothing_else_is_ever_supplied(raw, expected):
     """close_unclosed_object supplies closers and nothing else: no half-written string is closed, no value or comma is invented."""
     assert jsontext.close_unclosed_object(raw) == expected
+
+
+def test_a_cut_write_with_thousands_of_unclosed_braces_is_read_in_linear_time_and_left_as_written():
+    """A real cut write_file (157,000 chars, 705 braces, 28 unclosed) stalled the repair for 6.5 s: every `{` was its own scan to the end of the text, so
+    a 60,000-character cut file took ~25 s and a larger one minutes, in the response path. Now one pass answers every brace; the cut text stays as written."""
+    import time
+    raw = '{"content":"' + '{\\n    foo(\\"a\\");\\n' * 3000      # a code file written as escaped text, never closed
+    started = time.perf_counter()
+    out = massage.repair_tool_args({"choices": [{"message": {"tool_calls": [{"id": "c", "type": "function", "function": {"name": "write_file", "arguments": raw}}]}}]}, Rlog())
+    assert out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == raw
+    assert time.perf_counter() - started < 3
+    assert jsontext.extract_json_object("{" * 20000 + '"') is None
+    assert jsontext.close_unclosed_object('{ "a": ' + "{ " * 20000) == {}      # only the innermost brace is repairable by closers alone
+
+
+def test_the_memoized_brace_scan_answers_exactly_what_one_scan_per_brace_answers():
+    """_Scan shares one pass between every `{` that reads the text the same way; for every `{` of random brace/quote/escape/fence soup (and a cut of each)
+    it must equal the one-scan definitions."""
+    import random
+    rng = random.Random(11)
+    tokens = ['{', '}', '[', ']', '"', '\\', '\\"', ':', ',', ' ', '\n', 'a', '```', '```json', '{"a":1}', '{"a":[1,{"b":2}]}', '"x"', '\\\\', '{}', '[]']
+    for _ in range(4000):
+        text = "".join(rng.choice(tokens) for _ in range(rng.randint(0, 40)))
+        for s in (text, text[:rng.randint(0, len(text))]):
+            for i, c in enumerate(s):
+                if c == "{":
+                    assert jsontext._balanced_object(s, i) == jsontext._balanced_object_from(s, i), (s, i)
+                    assert jsontext._unclosed_tail(s, i) == jsontext._unclosed_tail_from(s, i), (s, i)

@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import json
 import re
+from bisect import bisect_left, bisect_right
+from functools import lru_cache
 
 _CLOSE_THINK = re.compile(r"</think(?:ing)?\s*>", re.IGNORECASE)
 _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
+_QUOTE = re.compile(r'(\\*)"')
+_BRACE_OR_QUOTE = re.compile(r'["{}]')
+_STRUCTURAL = re.compile(r'["{}\[\]]')
 
 
 def _mask_json_objects(text: str) -> str:
@@ -175,10 +180,7 @@ def _repairable_tail_span(s: str, start: int):
     obj = _repair_unclosed_object(s, start)
     if obj is not None:
         return obj, len(s)
-    for fence in _FENCE.finditer(s, start):
-        end = fence.start()
-        if _FENCE.sub("", s[end:]).strip():
-            continue  # not just an outer fence tail; do not invent away trailing text
+    for end in _scan(s).trailing_fence_starts(start):
         obj = _repair_unclosed_object(s[:end], start)
         if obj is not None:
             return obj, end
@@ -190,6 +192,13 @@ def _unclosed_tail(s: str, start: int) -> str:
 
     ``""`` means there is nothing to repair here — the span already closes (that is
     :func:`extract_json_object`'s job), or it ends inside a string, or ``start`` opens nothing."""
+    if s[start:start + 1] != "{":
+        return _unclosed_tail_from(s, start)
+    return _scan(s).unclosed(start)
+
+
+def _unclosed_tail_from(s: str, start: int) -> str:
+    """The definition of :func:`_unclosed_tail`, one scan from ``start`` (what :class:`_Scan` memoizes)."""
     stack: list[str] = []
     in_str = escaped = False
     for c in s[start:]:
@@ -297,6 +306,13 @@ def _scan_object(s: str) -> dict | None:
 
 
 def _balanced_object(s: str, start: int) -> str | None:
+    if s[start:start + 1] != "{":
+        return _balanced_object_from(s, start)
+    return _scan(s).balanced(start)
+
+
+def _balanced_object_from(s: str, start: int) -> str | None:
+    """The definition of :func:`_balanced_object`, one scan from ``start`` (what :class:`_Scan` memoizes)."""
     depth = 0
     in_str = False
     escaped = False
@@ -319,3 +335,108 @@ def _balanced_object(s: str, start: int) -> str | None:
             if depth == 0:
                 return s[start : i + 1]
     return None
+
+
+@lru_cache(maxsize=4)
+def _scan(s: str) -> "_Scan":
+    return _Scan(s)
+
+
+class _Scan:
+    """What every ``{`` of ONE string answers, without rescanning the string for each ``{``.
+
+    :func:`_json_objects` asks, for each ``{`` in turn, where its object closes and what closers its
+    tail lacks. Each answer used to be its own scan to the end of the text, so a cut write_file with
+    N unclosed braces cost N full scans: a 40,000-character cut argument took 11 seconds, a real
+    157,000-character one 6.5 (wave 12 corpus walk), in the response path of every cut call. Both
+    questions are decided by a string/escape machine that depends only on WHERE the scan starts, so
+    one left-to-right run answers every ``{`` it sees outside a string — nesting is just a stack —
+    and a ``{`` that run saw INSIDE a string (a different reading of the text) starts a run of its
+    own. Each answer is exactly what the one-scan definitions (:func:`_balanced_object_from`,
+    :func:`_unclosed_tail_from`) return; a randomized comparison in the tests holds them equal."""
+
+    def __init__(self, s: str):
+        self.s = s
+        self._end: dict[int, int | None] = {}
+        self._closers: dict[int, str] = {}
+        self._closing: list[int] | None = None
+        self._fences: list | None = None
+        self._blank_tail_from: int | None = None
+
+    def balanced(self, start: int) -> str | None:
+        if start not in self._end:
+            self._run_braces(start)
+        end = self._end[start]
+        return None if end is None else self.s[start:end + 1]
+
+    def unclosed(self, start: int) -> str:
+        if start not in self._closers:
+            self._run_closers(start)
+        return self._closers[start]
+
+    def _string_end(self, quote: int) -> int:
+        """Index of the quote that closes the string opened at ``quote``, or -1 when it never closes.
+
+        Inside a string a backslash escapes the next character, so a quote closes the string exactly
+        when an EVEN run of backslashes precedes it — a fact about the text, not about where the
+        string opened. One pass finds them all; a lookup then jumps a whole string (a code file
+        written as `\\"`-escaped text is one string to the end, however many braces it holds)."""
+        if self._closing is None:
+            self._closing = [m.end() - 1 for m in _QUOTE.finditer(self.s) if len(m.group(1)) % 2 == 0]
+        k = bisect_right(self._closing, quote)
+        return self._closing[k] if k < len(self._closing) else -1
+
+    def _run_braces(self, start: int) -> None:
+        s, ends, stack = self.s, self._end, []
+        i = start
+        while (m := _BRACE_OR_QUOTE.search(s, i)) is not None:
+            j = m.start()
+            c = s[j]
+            if c == '"':
+                j = self._string_end(j)
+                if j < 0:
+                    break
+            elif c == "{":
+                stack.append(j)
+            elif stack:
+                ends[stack.pop()] = j
+            i = j + 1
+        for pos in stack:
+            ends[pos] = None
+
+    def _run_closers(self, start: int) -> None:
+        s, out, stack = self.s, self._closers, []
+        i, in_str = start, False
+        while (m := _STRUCTURAL.search(s, i)) is not None:
+            j = m.start()
+            c = s[j]
+            if c == '"':
+                j = self._string_end(j)
+                if j < 0:
+                    in_str = True
+                    break
+            elif c in "{[":
+                stack.append((j, "}" if c == "{" else "]"))
+            elif stack:
+                if stack[-1][1] != c:      # mismatched nesting: every open object above is refused
+                    for pos, _ in stack:
+                        out[pos] = ""
+                    stack = []
+                else:
+                    out[stack.pop()[0]] = ""   # it closed on its own
+            i = j + 1
+        closers = ""
+        for pos, closer in reversed(stack):
+            closers += closer
+            out[pos] = "" if in_str else closers
+
+    def trailing_fence_starts(self, start: int) -> list[int]:
+        """Starts of the fences at/after ``start`` after which nothing but fences and whitespace remains."""
+        if self._fences is None:
+            self._fences = [m.start() for m in _FENCE.finditer(self.s)]
+            k = len(self._fences)
+            while k and not _FENCE.sub("", self.s[self._fences[k - 1]:]).strip():
+                k -= 1
+            self._blank_tail_from = k
+        lo = max(bisect_left(self._fences, start), self._blank_tail_from)
+        return self._fences[lo:]

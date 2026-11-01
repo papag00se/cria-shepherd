@@ -307,8 +307,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/context_wire_b/test_context_wire_b_massage.py:test_replayed_history_args_are_always_valid_json_and_never_lose_text`](../../tests/context_wire_b/test_context_wire_b_massage.py#L94), [`tests/context_wire_a/test_context_wire_a_arca_history_args.py:test_replayed_arguments_are_valid_json_at_every_level_and_recovered_only_where_the_assist_is_selected`](../../tests/context_wire_a/test_context_wire_a_arca_history_args.py#L36), [`tests/write_edit/test_write_edit_cov_lifecycles.py:test_replayed_malformed_arguments_are_recovered_or_enveloped_losslessly_and_valid_ones_stay_byte_for_byte`](../../tests/write_edit/test_write_edit_cov_lifecycles.py#L108).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/jsontext.py:extract_json_object`](../../cria/jsontext.py#L73)
-- [`cria/jsontext.py:loads`](../../cria/jsontext.py#L259)
+- [`cria/jsontext.py:extract_json_object`](../../cria/jsontext.py#L78)
+- [`cria/jsontext.py:loads`](../../cria/jsontext.py#L268)
 - [`cria/outputpolicies.py:repair_tool_args`](../../cria/outputpolicies.py#L606)
 - [`cria/historyarguments.py:recover_arguments`](../../cria/historyarguments.py#L39)
 
@@ -1104,8 +1104,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:verdict_from_unclosed`](../../cria/loop.py#L1618)
 - [`cria/loop.py:verdict_from_reasoning`](../../cria/loop.py#L1711)
 - [`cria/loop.py:_fill_missing_verdict_flag`](../../cria/loop.py#L1760)
-- [`cria/jsontext.py:close_unclosed_object`](../../cria/jsontext.py#L113)
-- [`cria/jsontext.py:strip_reasoning_prefix`](../../cria/jsontext.py#L43)
+- [`cria/jsontext.py:close_unclosed_object`](../../cria/jsontext.py#L118)
+- [`cria/jsontext.py:strip_reasoning_prefix`](../../cria/jsontext.py#L48)
 - [`cria/config.py:Role.clean_content`](../../cria/config.py#L386)
 
 **Historical families:** F33, F37.
