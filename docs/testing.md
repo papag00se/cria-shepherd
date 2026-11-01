@@ -46,6 +46,7 @@ Assist declarations in `cria/*.py` list regression tests in `regressions=` and `
 - first rewrite (about 10%): 80.2% / 68.1%;
 - after the scenario pass: 87.0% / 77.3%;
 - after the wave-9/10 coverage passes (2026-11-01, about 3,720 tests at the time): **93.4% lines / 86.9% branches**.
+- On 2026-11-01 the ~3,000 tests added by waves 9-16 (coverage, mutation and audit tests and per-fix tables, 43,347 test lines) were deleted again: the suite is back to about 3,480 tests / 26,800 lines. The coverage figures above were measured on the larger suite; the suite is meant to stay small, so do not add tests unless asked.
 
 How to re-measure: install `coverage` in a throwaway venv, copy the working tree to a scratch directory under `/var/tmp` (some tests need a git repo and a writable tmp, and two retention tests only pass in the real checkout), run `coverage run --branch --source=cria -m pytest tests`, then `coverage json`, then delete the copy. It runs the whole suite: do it rarely.
 
