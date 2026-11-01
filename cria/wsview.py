@@ -1529,12 +1529,28 @@ while stack and n < TREE_MAX and spent < TREE_BYTES:
     except OSError:
         continue
     subs, files = [], []
+    odd = 0
     for e in entries:
+        # A NAME THE TREE CANNOT CARRY IS UNKNOWN, NOT ABSENT AND NOT INVENTED. The tree is one record per line, so a name holding a line break
+        # (a CR, LF, U+2028, ...) splits into forged records (`x\nF\t1\t5\tforged.txt` listed a file that is not there and failed the count, so the
+        # whole survey was refused), and a name that is not valid UTF-8 made the write below raise in a UTF-8 locale, ending the survey with
+        # no tree at all. Such an entry is left out and its directory is declared not fully listed, which is what every other bound already says.
+        try:
+            e.name.encode("utf-8")
+            listable = e.name.splitlines() == [e.name]
+        except UnicodeEncodeError:
+            listable = False
+        if not listable:
+            odd = 1
+            continue
         try:
             isd = e.is_dir(follow_symlinks=False)
         except OSError:
             continue
         (subs if isd else files).append(e)
+    if odd:
+        complete = 0
+        EMIT("X\t0\t%s\n" % cur)
     if len(files) > FOLD_AT:
         EMIT("X\t%d\t%s\n" % (len(files), cur))
         continue

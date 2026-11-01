@@ -121,8 +121,6 @@ def test_an_edit_applies_only_on_one_match_and_reports_facts_otherwise(tmp_path,
     assert denial.unlanded(msgs[1]) and not denial.landed(msgs[1])
 
 
-@pytest.mark.xfail(strict=True, reason="SOURCE DEFECT (test audit W10): the edit program reads the file with read_text() (universal newlines) and writes the "
-                   "LF-folded text back, so editing one line of a CRLF file rewrites every other line ending. Remove this mark when the program reads and writes bytes.")
 def test_an_edit_leaves_every_byte_it_did_not_touch_exactly_as_it_was(tmp_path):
     """The exact-bytes contract of an edit: only the matched span changes. A CRLF (or lone-CR) file keeps its line endings on the untouched lines."""
     (tmp_path / "f.txt").write_bytes(b"keep\r\nold\r\nlone\rcr\r\n")

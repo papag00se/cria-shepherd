@@ -210,6 +210,10 @@ def _file_mutation_refusal(name: str, mutation: _FileMutation, injected: set, rl
             if whole else "")
         if rlog is not None:
             rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=mutation.path)
+    elif error == "text":
+        message = prompts.load("mutation_unwritable_text")
+        if rlog is not None:
+            rlog.emit("writeproxy.mutation_unwritable_text", tool=name)
     else:
         write = name in _WRITE_NAMES
         prompt = (("write_missing_path" if error == "path" else "write_missing_content") if write
@@ -486,10 +490,14 @@ def _at(raw, msg):
 # their `p`, `_late` and `_rec`). A refusal before anything was touched is a plain "did not run" result; a failure
 # after the target may have changed is an `uncertain` record plus the mutation-unknown statement. Never a traceback.
 _UNLANDED_PY = r'''
+def _fill(_tpl,**_kv):
+    # ONE PASS: a value is never itself searched for a placeholder. Two chained replaces rewrote a file NAME that spells the second placeholder (`x%%ERR%%y`) with the error text.
+    import re
+    return re.sub('%%('+'|'.join(_kv)+')%%',lambda _m:_kv[_m.group(1)],_tpl)
 def _unlanded(_e):
     _t='%%UNCERTAIN%%' if isinstance(_e,_TargetMutationUncertain) else '%%UNWRITABLE%%'
     if _t=='%%UNCERTAIN%%': sys.stdout.write(_rec('uncertain', **({'late':True} if _late else {}))); sys.stdout.flush()
-    sys.exit(base64.b64decode(_t).decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
+    sys.exit(_fill(base64.b64decode(_t).decode(),NAME=p.name,ERR=_e.strerror or str(_e)))
 '''
 
 # Byte-exact atomic write (python heredoc — content rides in the source on stdin, no arg-size limit /
@@ -504,12 +512,12 @@ _late=False
 #%%XSEQ%%
 _after=_v(str(p),raw)
 if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
-    sys.exit(base64.b64decode('{refused}').decode().replace('%%NAME%%',p.name).replace('%%AFTER%%',_after)+_at(raw,_after))
+    sys.exit(_fill(base64.b64decode('{refused}').decode(),NAME=p.name,AFTER=_after)+_at(raw,_after))
 if p.is_dir():
-    sys.exit(base64.b64decode('{isdir}').decode().replace('%%NAME%%',str(p)))
+    sys.exit(_fill(base64.b64decode('{isdir}').decode(),NAME=str(p)))
 _bp=next((a for a in p.parents if a.exists()), None)
 if _bp is not None and not _bp.is_dir():
-    sys.exit(base64.b64decode('{parentfile}').decode().replace('%%NAME%%',str(p)).replace('%%BLOCK%%',str(_bp)))
+    sys.exit(_fill(base64.b64decode('{parentfile}').decode(),NAME=str(p),BLOCK=str(_bp)))
 rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is written THROUGH, never replaced
 try:
     rp.parent.mkdir(parents=True,exist_ok=True)
@@ -595,9 +603,17 @@ _late=False
 #%%SEQ%%
 #%%XSEQ%%
 _lk=_lock_directory(rp)
-s=rp.read_text()
+# THE FILE IS READ AS BYTES, NOT AS TEXT. `read_text()` is universal-newline mode: it turned every CRLF and lone CR into LF, and the write below saved
+# that, so an edit of ONE line rewrote every line ending of a Windows-style file (and a file with one stray non-UTF-8 byte died here in a traceback).
+# The bytes the edit does not name now come back exactly as they were; an undecodable byte rides through as a surrogate escape and is written back as itself.
+s=rp.read_bytes().decode('utf-8','surrogateescape')
+_shown=lambda t: t.encode('utf-8','surrogateescape').decode('utf-8','replace')    # what the coder is TOLD about the file: never a lone surrogate
+if '\r\n' in s and s.count(chr(10))==s.count('\r\n') and '\r' not in old+new:
+    # a file that is CRLF throughout: the LF text the coder sends spells that file's line ending (before this, the matching was done on a normalised copy)
+    old=old.replace(chr(10),'\r\n'); new=new.replace(chr(10),'\r\n')
 def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
+    kw=dict((k,_shown(v) if isinstance(v,str) else v) for k,v in kw.items())   # (no braces: this template is .format()ed)
     _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
     _r=_b(kw)
     if len('{editfail}')+len(_r)>{cap}:
@@ -614,7 +630,7 @@ _before=_v(str(p),s)
         if _e is not None:
             _fail('would_break',err=_e)
     try:
-        _write_through(rp,res.encode(),preserve=True)
+        _write_through(rp,res.encode('utf-8','surrogateescape'),preserve=True)
     except OSError as _e:
         _unlanded(_e)
     _ev={echocall}
@@ -866,7 +882,7 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
                                      zprefix=editrecovery.PACKED_PREFIX) if echo else ""),
-        echocall="_echo(res)" if echo else "None",
+        echocall="_echo(_shown(res))" if echo else "None",
         posx="_pos=(s.find(old),s.find(old)+len(new),False)\n    " if echo else "",
         posf="_pos=(a,a+len(new),True)\n        " if echo else "",path=_b64(path), old=_b64(old), new=_b64(new),
                                           editfail=editrecovery.EDITFAIL,
@@ -947,7 +963,8 @@ def _list_command(args: dict) -> str:
     q = _qbash(path)
     # Gather once; the complete listing and its record share the exact transport
     # limit. Large listings are saved intact rather than refused at a raw 9 KB.
-    command = (f'__o=$(ls -la {q} 2>&1); __ec=$?; '
+    # `ls -la -- <path>`: a directory named `-R` or `-l` is a NAME, not an option (it listed the current directory, or recursed).
+    command = (f'__o=$(ls -la -- {q} 2>&1); __ec=$?; '
                f'if [ "$__ec" -eq 0 ]; then {denial.ran_command()}:; '
                f'else printf %s {_qbash(denial.frame(denial.REFUSED))}; fi; '
                'printf \'%s\\n\' "$__o"; exit "$__ec"')

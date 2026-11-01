@@ -39,6 +39,17 @@ class _FileMutation:
     error: str = ""
 
 
+def _unwritable(*texts: str) -> bool:
+    """True when a value cannot ride a lowered program as bytes: UTF-8 has no encoding for an unpaired surrogate escape, and a path cannot hold a NUL.
+    Either one used to die inside cria's own composer (a traceback out of the lowering) or inside the harness program (a raw ValueError)."""
+    try:
+        for text in texts:
+            text.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
 def _prepare_file_mutation(name: str, args: dict) -> _FileMutation:
     """F13: validate required values before lowering; empty is an explicit value.
 
@@ -51,12 +62,17 @@ def _prepare_file_mutation(name: str, args: dict) -> _FileMutation:
     path = _tool_path(args) or ""
     if not path:
         return _FileMutation(path, error="path")
+    if "\x00" in str(path):
+        return _FileMutation(path, error="text")
     if name in _WRITE_NAMES:
         body = args.get("content")
         if body is None:
             body = args.get("contents")
         return (_FileMutation(path, error="content") if body is None
+                else _FileMutation(path, error="text") if _unwritable(str(path), str(body))
                 else _FileMutation(path, content=str(body)))
+    if _unwritable(str(path), str(args.get("old_string") or ""), str(args.get("new_string") or "")):
+        return _FileMutation(path, error="text")
     if args.get("old_string") is None:
         return _FileMutation(path, error="old_string")
     if args.get("new_string") is None:
