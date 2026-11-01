@@ -12,6 +12,8 @@ PAGES = {
     "running": "Wall time: 0.1 seconds\nProcess running with session ID 7\nOutput:\n",
     "nonzero": "Chunk ID: a\nWall time: 0.1 seconds\nProcess exited with code 3\nOutput:\nboom",
     "unknown": "Chunk ID: a\nWall time: 0.1 seconds\nOutput:\nxx",
+    "nonzero1": "Chunk ID: a\nWall time: 0.1 seconds\nProcess exited with code 1\nOutput:\nboom",         # exit 1 is the most common failure there is
+    "cut": "Wall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nWarning: truncated output\nno record survived\n",   # asked again until the re-fetches run out
 }
 CLEAN_EXIT = "Chunk ID: a\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nnot a page"
 
@@ -19,9 +21,14 @@ CLEAN_EXIT = "Chunk ID: a\nWall time: 0.1 seconds\nProcess exited with code 0\nO
 def failed_state(tmp_path, kind):
     storage = str(tmp_path / "state")
     bridge, messages, _ = start(tmp_path, HEX, storage=storage)
-    _, calls, _ = bridge.incoming("s", messages)
-    history = messages + [{"role": "assistant", "tool_calls": calls}, {"role": "tool", "tool_call_id": calls[0]["id"], "content": PAGES[kind]}]
-    return storage, history, next((tmp_path / "state").glob("*.json")), bridge.incoming("s", history)
+    history = list(messages)
+    _, calls, _ = bridge.incoming("s", history)
+    while True:       # every kind fails on the first answer except a cut one, which the bridge asks for again until its re-fetches are used up
+        history += [{"role": "assistant", "tool_calls": calls}, {"role": "tool", "tool_call_id": calls[0]["id"], "content": PAGES[kind]}]
+        out = bridge.incoming("s", history)
+        if not out[1]:
+            return storage, history, next((tmp_path / "state").glob("*.json")), out
+        calls = out[1]
 
 
 @pytest.mark.parametrize("kind, edit", [
@@ -31,7 +38,13 @@ def failed_state(tmp_path, kind):
     ("unknown", lambda e, cid: e["received"].update({cid: PAGES["nonzero"]})),                  # ... now has an exit code, so "no status" is false
     ("unknown", lambda e, cid: e["received"].update({cid: PAGES["running"]})),
     ("running", lambda e, cid: e.update(failure_kind="binary")),                                # a binary verdict needs a completed, verified body
-], ids=["running-bytes-edited", "nonzero-bytes-edited", "nonzero-code-edited", "unknown-gains-exit-code", "unknown-becomes-running", "kind-claims-binary"])
+    ("nonzero", lambda e, cid: e["received"].update({cid: PAGES["running"]})),                  # ... is now still running
+    ("nonzero", lambda e, cid: (e["received"].update({cid: CLEAN_EXIT}), e.update(failure_code=0))),   # a clean exit is never a non-zero failure, even when the state agrees with it
+    ("cut", lambda e, cid: e["received"].update({cid: CLEAN_EXIT})),                            # the page no longer says the harness cut it
+    ("cut", lambda e, cid: e["received"].update({cid: PAGES["running"]})),
+    ("running", lambda e, cid: e.update(pending="original")),                                   # the failed page must be the pending, last one
+], ids=["running-bytes-edited", "nonzero-bytes-edited", "nonzero-code-edited", "unknown-gains-exit-code", "unknown-becomes-running", "kind-claims-binary",
+        "nonzero-becomes-running", "nonzero-clean-exit-code-zero", "cut-bytes-edited", "cut-becomes-running", "failed-page-not-pending"])
 def test_a_saved_failed_page_must_still_declare_its_failure_or_the_session_is_refused(tmp_path, kind, edit):
     storage, history, state, first = failed_state(tmp_path, kind)
     good = state.read_text()
@@ -43,3 +56,10 @@ def test_a_saved_failed_page_must_still_declare_its_failure_or_the_session_is_re
         Bridge(storage).incoming("s", history)
     state.write_text(good)
     assert Bridge(storage).incoming("s", history) == first                                      # control: the same state, unedited, restores to the identical projection
+
+
+@pytest.mark.parametrize("kind", sorted(PAGES))
+def test_every_failed_page_kind_restores_to_the_same_continuation(tmp_path, kind):
+    """Exit code 1 and a cut result are failures too: the saved state must reload (a validator that only accepted code 3 would strand the session)."""
+    storage, history, _, first = failed_state(tmp_path, kind)
+    assert Bridge(storage).incoming("s", history) == first
