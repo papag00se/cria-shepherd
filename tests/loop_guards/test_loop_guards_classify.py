@@ -49,6 +49,28 @@ def test_the_task_is_the_users_not_the_scaffolding_cria_injected_after_a_compact
     assert latest_user_text(history + [{"role": "user", "content": "now also add a CLI flag"}]) == "now also add a CLI flag"
 
 
+def test_a_harness_environment_update_is_not_a_request_and_does_not_turn_a_task_into_a_question():
+    """Wave 13 E2ERB (real Codex, shipping-rates-rb): at midnight Codex appended a user message that was only
+    `<environment_context><current_date>…`; the classifier answered "no actual request was provided" -> question, and every
+    later call of the five-change task ran as a question. A request that merely quotes an environment block still counts."""
+    task = "Make these five changes to the shipping module: 1. fix the failing tests ..."
+    update = ("<environment_context>\n  <current_date>2026-11-01</current_date>\n  <timezone>America/Los_Angeles</timezone>\n"
+              "</environment_context>")
+    history = [{"role": "user", "content": "<environment_context><cwd>/w</cwd></environment_context>"},
+               {"role": "user", "content": task}, {"role": "assistant", "content": "working"}]
+    assert latest_user_text(history + [{"role": "user", "content": update}]) == task
+    assert latest_user_text(history + [{"role": "user", "content": [{"type": "text", "text": update}]}]) == task
+    quoted = f"why does this say the date is wrong?\n{update}"
+    assert latest_user_text(history + [{"role": "user", "content": quoted}]) == quoted
+    two = update + update
+    assert latest_user_text(history + [{"role": "user", "content": two}]) == two
+    provider = Provider(VERDICT)
+    clf, log = Classifier(provider, bias="task"), Rlog()
+    assert clf.classify(history, log).engagement == "task"
+    assert clf.classify(history + [{"role": "user", "content": update}], log).engagement == "task"
+    assert len(provider.bodies) == 1                    # the update was served from the task's cached verdict, not asked about
+
+
 def test_an_unparseable_classifier_defaults_to_the_bias_is_never_cached_and_escalates_when_persistent():
     """A failed classification is a record of failure, not a classification: it must not stick to the task."""
     bad = Provider("I think this is a coding task, definitely.")

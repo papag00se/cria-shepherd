@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -333,12 +334,21 @@ def is_title_request(task: str) -> bool:
 _CRIA_INJECTION_MARKERS = ("⟦ctx:", "[removed")
 
 
+# A user-role message that is NOTHING BUT one environment block is the harness reporting a change to its own
+# surroundings (Codex appends `<environment_context><current_date>…` when the date rolls over at midnight, or the
+# timezone / permission profile changes), not a request: it states no task. Classifying it ("no actual request was
+# provided") made the whole session a QUESTION from the next call on - wave 13 E2ERB, shipping-rates-rb, 00:00. Only a
+# message that is wholly one block is skipped: user markup proves no origin, so a request that quotes an environment
+# block among its own words is still the request (see `_drop_harness_frame`).
+_ENV_ONLY = re.compile(r"\A\s*<environment_context>(?:(?!<environment_context>).)*</environment_context>\s*\Z", re.S)
+
+
 def latest_user_text(messages: list[dict]) -> str:
     for msg in reversed(messages or []):
         if msg.get("role") == "user":
             text = _content_text(msg.get("content"))
-            if any(mk in text for mk in _CRIA_INJECTION_MARKERS):
-                continue   # cria's own scaffolding — keep looking for the genuine user task
+            if any(mk in text for mk in _CRIA_INJECTION_MARKERS) or _ENV_ONLY.match(text):
+                continue   # cria's own scaffolding / the harness's environment report — keep looking for the task
             return text
     return ""
 
