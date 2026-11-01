@@ -15,7 +15,7 @@ from functools import lru_cache
 
 _CLOSE_THINK = re.compile(r"</think(?:ing)?\s*>", re.IGNORECASE)
 _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
-_QUOTE = re.compile(r'(\\*)"')
+_QUOTE = re.compile('"')
 _BRACE_OR_QUOTE = re.compile(r'["{}]')
 _STRUCTURAL = re.compile(r'["{}\[\]]')
 
@@ -382,7 +382,14 @@ class _Scan:
         string opened. One pass finds them all; a lookup then jumps a whole string (a code file
         written as `\\"`-escaped text is one string to the end, however many braces it holds)."""
         if self._closing is None:
-            self._closing = [m.end() - 1 for m in _QUOTE.finditer(self.s) if len(m.group(1)) % 2 == 0]
+            s, closing = self.s, []
+            for m in _QUOTE.finditer(s):
+                j = k = m.start()
+                while k and s[k - 1] == "\\":
+                    k -= 1                      # each quote walks back over its OWN run of backslashes
+                if (j - k) % 2 == 0:
+                    closing.append(j)
+            self._closing = closing
         k = bisect_right(self._closing, quote)
         return self._closing[k] if k < len(self._closing) else -1
 
