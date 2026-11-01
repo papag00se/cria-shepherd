@@ -4,6 +4,7 @@ import json
 import pytest
 
 from cria import assistruntime, probegate, proberun
+from cria.resultnotes import _strip_exec_envelope
 from cria.loop import _dedup_evidence, _fresh_disk_facts, _grounded_steer_or_none, _judge_completion, _work_log
 
 from loop_main_helpers import Rlog, completion, loop_main_local_view  # noqa: F401
@@ -90,3 +91,22 @@ def test_an_authored_steer_that_is_a_transcript_in_any_tag_dialect_is_dropped_bu
     reads a steer as fact and copied its invented content."""
     with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
         assert (_grounded_steer_or_none(steer, "", Rlog()) is not None) is delivered
+
+
+_EXEC_HEAD = "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n"
+_CUT = "Warning: truncated output (original token count: 99999)\n"
+
+
+@pytest.mark.parametrize("content,shown", [
+    (_EXEC_HEAD + "hello\nworld\n", "hello\nworld\n"),                     # a framed result is shown as its payload alone
+    ("plain output\nOutput:\nnot a frame\n", "plain output\nOutput:\nnot a frame\n"),   # unframed text is never touched
+    (_EXEC_HEAD + "Warning: something else\nrest\n", "Warning: something else\nrest\n"),   # a bare advisory is literal output
+    (_EXEC_HEAD + _CUT + "rest\n", _CUT + "rest\n"),                            # only a real cut disclosure is kept, with the payload
+    (_EXEC_HEAD + "Total output lines: 40\n" + _CUT + "rest\n", _CUT + "rest\n"),   # the line-count advisory is framing only beside a cut
+    (_EXEC_HEAD + "Total output lines: 40\nrest\n", "Total output lines: 40\nrest\n"),   # ...and literal output when nothing was cut
+])
+def test_a_re_presented_exec_result_loses_its_frame_and_never_a_byte_of_its_output(content, shown):
+    """The display strips the harness's exec header and nothing else (`editrecovery` records the day it was taught to keep
+    the harness's own `Warning: truncated output` line). Mutation survivor: treating every framed result as unframed (and so
+    showing the header as if it were output) failed no test in the loop domains."""
+    assert _strip_exec_envelope(content) == shown

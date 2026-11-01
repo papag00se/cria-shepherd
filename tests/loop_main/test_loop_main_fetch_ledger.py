@@ -2,7 +2,7 @@
 import pytest
 
 from cria import selfcompact, webfetch
-from cria.fetchfacts import Shape
+from cria.fetchfacts import Shape, valid_report
 from cria.loop import (GuardState, LoopStore, PlanSession, _extract_fetches, _fetch_facts, _fetch_ground_truth,
                        _fetched_facts_anchor, _format_fetches, _track_fetched_pages)
 from cria.plan import Plan, PlanItem
@@ -149,3 +149,26 @@ def test_a_page_with_no_spec_makes_exactly_one_claim_about_where_its_body_is(vis
     segment = out[out.index(page):]
     assert all(segment.count(s) == 1 for s in says) and "transcript above" not in segment
     assert ("NOT in this conversation" in segment) is ("NOT in this conversation" in says) and "answered with content" in segment
+
+
+_FACT = {"url": SPEC, "status": "HTTP 200", "observed": "t", "routes": list(ROUTES), "catalog": ["GET /x"],
+         "shapes": [{"head": "GET /x", "route": "/x", "params": [], "body": "", "fields": ["a"]}]}
+
+
+@pytest.mark.parametrize("change,valid", [
+    ({}, True),
+    ({"routes": [], "catalog": [], "shapes": []}, True),                          # a fetch that parsed nothing is still a fact
+    ({"extra": "x"}, False), ({"observed": None}, False), ({"status": 200}, False),          # exactly the declared keys, typed
+    ({"routes": "/a"}, False), ({"catalog": ["ok", 3]}, False), ({"shapes": "GET /x"}, False),
+    ({"shapes": [{"head": "h", "route": "r", "params": [], "body": "", "fields": [], "x": 1}]}, False),   # a shape with an extra key
+    ({"shapes": [{"head": "h", "route": "r", "params": "p", "body": "", "fields": []}]}, False),
+    ({"shapes": [{"head": "h", "route": "r", "params": [], "body": 5, "fields": []}]}, False),
+    ({"shapes": ["GET /x"]}, False),
+    ({"shapes": [{"head": "h", "route": "r", "params": [], "body": ""}]}, False),          # a shape missing a key
+])
+def test_a_fetch_fact_is_valid_only_when_exactly_the_declared_shape_and_types(change, valid):
+    """The result packet carries a fetch fact as data cria reads back; a fact of any other shape is refused whole rather than
+    half-read. Mutation survivors: dropping the exact-key check of the fact or of its shapes failed no ledger test."""
+    assert valid_report({**_FACT, **change}) is valid
+    assert valid_report({k: v for k, v in _FACT.items() if k != "catalog"}) is False        # and every declared key is required
+    assert valid_report(None) is False and valid_report([]) is False

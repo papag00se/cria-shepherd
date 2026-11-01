@@ -3,6 +3,7 @@
 Only the coder provider is faked. Notices must say what actually happened, appear once, never
 repeat a byte-identical retry, and never release a call that was cut off.
 """
+import copy
 import json
 from types import SimpleNamespace
 
@@ -188,3 +189,39 @@ def test_a_protocol_error_from_the_retry_is_not_recovered_or_downgraded():
     with pytest.raises(upstream.UpstreamProtocolError):
         loop.guard_rumination(aborted(dead_stream=True), BODY(), failing, Log())
     assert len(calls) == 1
+
+
+def _turn(finish, **extra):
+    call = {"id": "c1", "type": "function", "function": {"name": "write_file", "arguments": '{"path": "a.py", "content": "x'}}
+    return {"choices": [{"finish_reason": finish, "message": {"role": "assistant", "content": "", "tool_calls": [call]}}], **extra}
+
+
+@pytest.mark.parametrize("extra,finish,reason", [
+    ({}, "length", "generation_limit"),                                              # the server hit its length cap mid-call
+    ({bodykeys.RUMINATION: {"why": "loop"}}, "stop", "generation_aborted"),            # cria cut a ruminating generation itself
+])
+def test_an_incomplete_turn_ships_no_call_and_keeps_every_withheld_call_as_evidence(extra, finish, reason):
+    """A cut-off write call must never reach the harness as an executable call; its complete prefix is evidence, not an action.
+    Mutation survivors: dropping `withheld_choices`, or keeping the first record when a turn is hardened twice, failed no test."""
+    turn = _turn(finish, **extra)
+    original = copy.deepcopy(turn["choices"])
+    shipped = generation.safe_completion(turn)
+    message = shipped["choices"][0]["message"]
+    assert "tool_calls" not in message and shipped["choices"][0]["finish_reason"] == ("rumination" if extra else "length")
+    evidence = shipped[generation.EVIDENCE]
+    assert evidence["incomplete"] is True and evidence["withheld_choices"] == original
+    assert evidence["call_prefixes"] == [{"name": "write_file", "arguments": '{"path": "a.py", "content": "x', "id": "c1"}]
+    assert evidence["wire_finish_reason"] == ("rumination" if extra else "length")
+    assert ("local_abort" in evidence) is bool(extra) and generation.incomplete_reason(shipped) == reason
+    assert not generation.may_recover(shipped)
+    again = generation.safe_completion(shipped)                  # hardened twice (retry paths): the first record stands
+    assert again[generation.EVIDENCE]["withheld_choices"] == original
+
+
+def test_a_complete_turn_is_shipped_untouched_and_only_the_two_generation_errors_are_generation_errors():
+    turn = _turn("tool_calls")
+    assert generation.safe_completion(turn) is turn and "tool_calls" in turn["choices"][0]["message"] and generation.may_recover(turn)
+    kinds = {generation.PROTOCOL_ERROR: True, generation.INCOMPLETE_STREAM_ERROR: True, "rate_limit_error": False}
+    assert {k: generation.is_generation_error({"type": k}) for k in kinds} == kinds
+    assert not generation.is_generation_error(None) and not generation.is_generation_error("incomplete_stream_error")
+    assert not generation.is_protocol_error({"type": generation.INCOMPLETE_STREAM_ERROR})
