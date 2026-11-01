@@ -947,15 +947,17 @@ class View:
 
     def _ingest_outside(self, body: str) -> None:
         for line in body.splitlines():
-            path, _, kind = line.partition("\t")
-            if path:
-                self._outside[path] = kind
+            path, ok = _unb64(line.partition("\t")[0])
+            if ok and path:
+                self._outside[path] = line.partition("\t")[2]
 
     def _ingest_progs(self, body: str) -> None:
         for line in body.splitlines():
-            name, _, resolved = line.partition("\t")
-            if name:
-                self._progs[name] = resolved
+            enc, _, resolved = line.partition("\t")
+            name, ok = _unb64(enc)
+            hit, hit_ok = _unb64(resolved, "replace") if resolved else ("", True)
+            if ok and name and hit_ok:
+                self._progs[name] = hit
 
     def note_written(self, path, content: str, *, current: bool = True) -> None:
         """cria lowered a whole-content write for this path and the harness reported it landed:
@@ -1135,6 +1137,15 @@ class View:
         # itself on-disk ground truth. `read()` correctly answers None for the same file; the size
         # has to as well (#23c).
         self._files.setdefault(rel, (None, time.time()))
+
+
+def _unb64(field: str, errors: str = "strict") -> tuple[str, bool]:
+    """A survey record field that travels base64 (a name the model typed), as ``(text, ok)``; a field that
+    is not valid base64 or not UTF-8 is no record (UNKNOWN), never a different name."""
+    try:
+        return base64.b64decode(field.encode("ascii"), validate=True).decode("utf-8", errors), True
+    except (ValueError, UnicodeError):
+        return "", False
 
 
 def _parents(rel: str) -> list[str]:
@@ -1587,11 +1598,24 @@ for rel in stack[:{drain_max}]:
     EMIT("X\t0\t%s\n" % rel)
 if len(stack) > {drain_max}:
     complete = 0
+# A NAME THE MODEL TYPED CAN BE ANYTHING, INCLUDING TEXT NO FILE SYSTEM CAN SPELL. A lone surrogate (`\ud800`) cannot be encoded, so
+# `rel.encode()` below and `os.path.getsize` raised (neither is an OSError) and the survey ended with no answer at all. Such a name is
+# UNKNOWN here, never absent: it gets no record, so the view keeps asking nothing and answers nothing about it.
+def spellable(s):
+    try:
+        s.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
+def B(s):
+    return base64.b64encode(s.encode("utf-8", "surrogateescape")).decode()
 W("{sec}blob{suf}\n")
 bspent, taken = 0, 0
 for rel in WANT:
     if taken >= BLOB_FILES or bspent >= BLOB_BYTES:
         break
+    if not spellable(rel):
+        continue
     p = os.path.join(root, rel)
     try:
         sz = os.path.getsize(p)
@@ -1612,13 +1636,19 @@ for rel in WANT:
     bspent += len(raw)
     taken += 1
 W("{sec}outside{suf}\n")
+# THE OUTSIDE AND PROGS SECTIONS ARE ONE RECORD PER LINE LIKE EVERY OTHER, and the name in each was the model's own text, printed raw:
+# a path holding a line break forged a second record the coder never asked about. Both fields travel base64, like the blob section.
 for q in OUTSIDE:
+    if not spellable(q):
+        continue
     t = os.path.expanduser(q)
     k = "d" if os.path.isdir(t) else ("f" if os.path.isfile(t) else "")
-    W("%s\t%s\n" % (q, k))
+    W("%s\t%s\n" % (B(q), k))
 W("{sec}progs{suf}\n")
 path = os.environ.get("PATH", "")
 for name in PROGS:
+    if not spellable(name):
+        continue
     hit = ""
     for d in path.split(os.pathsep):
         c = os.path.join(d, name)
@@ -1639,7 +1669,7 @@ for name in PROGS:
                     break
             if hit:
                 break
-    W("%s\t%s\n" % (name, hit))
+    W("%s\t%s\n" % (B(name), B(hit)))
 W("{sec}done{suf}\n")
 W("entries\t%d\n" % nrec)
 W("complete\t%d\n" % complete)

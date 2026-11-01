@@ -156,6 +156,34 @@ def test_one_file_name_the_survey_cannot_list_never_blinds_it_or_invents_a_file_
     assert view.isfile(str(ws / "forged.txt")) is not True and view.isfile(str(ws / "missing.txt")) is None
 
 
+def _survey_asking(ws, sess, *, bodies=(), outside=(), programs=(), pack=False):
+    for b in bodies:
+        wsview.want_body(sess, b)
+    for o in outside:
+        wsview.want_outside(sess, o)
+    for n in programs:
+        wsview.want_program(sess, n)
+    out = subprocess.run(["bash", "-c", wsview.survey_command(sess, cd=str(ws), pack=pack)], cwd=ws, capture_output=True, env=harness_env(ws)).stdout
+    view = wsview.View(str(ws), sess)
+    return view, wsview.apply_survey(view, wsview.strip_survey(out.decode("utf-8", "surrogateescape"))[1])
+
+
+@pytest.mark.parametrize("pack", [False, True])
+@pytest.mark.parametrize("outside,program", [
+    ("/nonexistent/x\n/etc", "nope\nsh"),                      # a line break inside a name would start a second record
+    ("/nonexistent/x\t\n/etc\t", "nope\t\nsh\t"),
+    ("/nonexistent/\ud800", "nope\udc80x\ud800")])            # text no file system can spell would end the survey
+def test_a_path_or_program_the_model_named_cannot_forge_a_record_or_end_the_survey(tmp_path, outside, program, pack):
+    """The real survey program, run by a real shell. Only what the coder asked about is answered: `/etc` and `sh` were not asked about, so the view
+    still does not know them (None), and the ordinary questions asked beside the hostile ones are answered from the disk."""
+    (tmp_path / "real.txt").write_text("hi\n")
+    view, ok = _survey_asking(tmp_path, f"aud7-{tmp_path.name}", bodies=["real.txt", *(["x\ud800y"] * ("\ud800" in outside))], outside=["/nonexistent", outside], programs=["git", program], pack=pack)
+    assert ok and view.surveyed and view.read("real.txt") == "hi\n" and view.outside_kind("/nonexistent") == "" and view.program("git") is not None
+    assert view.outside_kind("/etc") is None and view.program("sh") is None
+    if "\ud800" not in outside:
+        assert view.outside_kind(outside) == "" and view.program(program) == ""
+
+
 # --- the gate's shell words carry a hostile workspace, token, path and body as data ---------------------------------------------------------
 
 NASTY_WORDS = ["w s", f"w'{CANARY}'", f"$({CANARY})`{CANARY}`", f"x;{CANARY}", "a\nb", "-rf", "*", "\u202e"]
