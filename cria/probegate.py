@@ -41,7 +41,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from . import completionmarks, denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
-from . import participation, probediscovery, probeparse, prompts, proberun
+from . import groundtruth, participation, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
@@ -963,6 +963,11 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # The survey rides inside the same lossless spool. It keeps its own structural tree bound (a
     # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
     # harness result and therefore needs no per-gate byte arithmetic.
+    # …AND IT CARRIES THE BODIES THE JUDGE OF THIS GATE WILL READ. The completion judge is seeded from
+    # the view at the moment it is composed; a body the view cannot vouch for is only QUEUED by that
+    # read, for a survey that comes too late (see `groundtruth.want_judge_bodies`).
+    if workspace:
+        groundtruth.want_judge_bodies(workspace)
     survey_command = wsview.survey_command(session, cd=workspace, helper=helper_runner())
     # THE SESSION'S UNRESOLVED WRITES RIDE THE SAME ROUND TRIP: the worker reads their completion marks before the checks start and
     # after they end, so a write whose reply was lost is a KNOWN state before completion is judged (`completionmarks`).

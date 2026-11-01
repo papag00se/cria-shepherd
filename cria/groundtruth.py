@@ -306,6 +306,50 @@ def _walk_entries(view, root: str) -> list[tuple[float, str, int | None]] | None
     return out
 
 
+def _judge_entries(view, root: str):
+    """``(mtime, relpath, size)`` of every file a judge is handed whole, or None when nobody has
+    surveyed the workspace. ONE selection for the two things that must agree on it: the files a
+    judge READS (`files_for_a_judge`) and the bodies the gate's survey is asked to FETCH for it
+    (`want_judge_bodies`) — a judge cannot be shown a file nobody asked the harness for."""
+    entries = _walk_entries(view, root)
+    if entries is None:
+        return None
+    entries, _folded = _fold_install_prefixes(entries)
+    # NOT CRIA'S OWN SCRATCH. The spill directory is where cria writes documents the coder fetched;
+    # it is inside the workspace but it is not the coder's work. Seeding it back to a judge does two
+    # bad things, both measured on `shipping-rates-rb x ternary-bonsai` 1787111689: a 10,251-char
+    # rubydoc page ate half the budget that should have carried the model's source, and — far worse —
+    # `def in_eu?` reached the JUDGE in 13 prompts while the CODER was refused the same file by the
+    # oversize read guard. cria withheld a page from the party that had to write the code and handed
+    # it to the party that only had to grade it. The listing still names these files; only their
+    # CONTENTS are cria's to leave out here.
+    entries = [e for e in entries if not e[1].replace(os.sep, "/").startswith(_SPILL_REL)]
+    return entries
+
+
+def want_judge_bodies(root: str | None) -> None:
+    """Queue, newest first, every file a judge will be handed whole whose CURRENT bytes cria does not
+    hold, so the survey that rides the next gate carries them.
+
+    A judge is seeded from `files_for_a_judge` at the moment it is composed, and that read of a body
+    the view cannot vouch for only QUEUES it for a LATER survey — too late for this judge. Measured
+    on `rust-toml-cli x ornith1.5_9b` (E2ERS cell 1): the coder wrote README.md and ran shell
+    commands that move the disk (cargo, a heredoc), so the view held the README's bytes but could
+    not call them current; the completion gate's survey asked only for the manifests, the judge was
+    told "README.md, config.toml: NAMED, NOT SHOWN" and refused completion of finished work, naming
+    the README as "unverifiable" — a round and 3.5 minutes spent on a question the gate's own
+    round trip could have answered. Gathering facts is deterministic code's job (#8): the gate asks
+    for what the judge will read, before the judge exists."""
+    if not root:
+        return
+    view = wsview.current(root)
+    entries = _judge_entries(view, root)
+    if not entries:
+        return
+    for _mtime, rel, _size in sorted(entries, key=lambda e: (-e[0], e[1])):
+        view.read_bytes(os.path.join(root, rel))      # a miss is REMEMBERED for the next survey
+
+
 def files_for_a_judge(root: str | None) -> str:
     """Every readable text file in the workspace, whole — ``""`` when none are available.
 
@@ -317,19 +361,9 @@ def files_for_a_judge(root: str | None) -> str:
         return ""
     view = wsview.current(root)
     labels = prompts.load_map("judge_files")
-    entries = _walk_entries(view, root)
+    entries = _judge_entries(view, root)
     if entries is None:
         return ""
-    entries, _folded = _fold_install_prefixes(entries)
-    # NOT CRIA'S OWN SCRATCH. The spill directory is where cria writes documents the coder fetched;
-    # it is inside the workspace but it is not the coder's work. Seeding it back to a judge does two
-    # bad things, both measured on `shipping-rates-rb x ternary-bonsai` 1787111689: a 10,251-char
-    # rubydoc page ate half the budget that should have carried the model's source, and — far worse —
-    # `def in_eu?` reached the JUDGE in 13 prompts while the CODER was refused the same file by the
-    # oversize read guard. cria withheld a page from the party that had to write the code and handed
-    # it to the party that only had to grade it. The listing still names these files; only their
-    # CONTENTS are cria's to leave out here.
-    entries = [e for e in entries if not e[1].replace(os.sep, "/").startswith(_SPILL_REL)]
     entries.sort(key=lambda e: e[1])
 
     shown: list[str] = []
