@@ -2016,6 +2016,18 @@ def _short_flags(args) -> str:
     return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
 
 
+# `sed -n '100,180p' FILE`: the idiomatic way to read a line range. With `-n` and ONE script that is nothing but a line
+# address and `p`, sed can only print — no `w`, `e`, `r`, `-i`, `-f`, `;` chains or long options (walked on cart-billing-go
+# x ornith1.5_9b: `sed -n '100,180p' <modcache>/encoding.go` and `cat -n f | sed -n '100,180p'` were refused as "sed is not a
+# read-only inspector", three calls in a row, which fired the refusals steer).
+_SED_PRINT_RANGE = re.compile(r"\d+(,(\d+|\$))?p|\$p")
+
+
+def _sed_prints_only(args: list[str]) -> bool:
+    return (len(args) >= 2 and args[0] == "-n" and _SED_PRINT_RANGE.fullmatch(args[1]) is not None
+            and not any(a.startswith("-") and a != "-" for a in args[2:]))
+
+
 def _segment_failure(words: list[str], workspace: str | None = None, no_writes: bool = False):
     """``None`` when this one segment is a proven reader, else ``(reason, index)``: why it is not and which
     word of the segment carries the reason (0 = the command word). The ONE place those decisions are made;
@@ -2031,6 +2043,8 @@ def _segment_failure(words: list[str], workspace: str | None = None, no_writes: 
         for k, a in enumerate(args, 1):
             if a.startswith("-") or not _plain_project_path(a, workspace, allow_devnull=True):
                 return "tee_target", k
+        return None
+    if cmd == "sed" and _sed_prints_only(args):
         return None
     if cmd not in _READERS:
         return "not_a_reader", 0

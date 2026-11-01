@@ -51,6 +51,11 @@ ROOT_CASES = [   # harness-declared writable roots: READ-ONLY commands may read 
     ("R", f"find {INSTALL}/m2 \\( -name a \\) -exec rm {{}} \\;"), ("R", f"cd {INSTALL}/m2 && ls"), ("R", f"ls {INSTALL} ;>x rm {INSTALL}/b"),
     ("R", f"cat {INSTALL}/a $(rm -rf {INSTALL}/m2)"), ("R", f"diff <(rm -rf {INSTALL}/m2) x"), ("R", "diff <(cd /etc && echo x > y) b"),
     ("R", f"cat {INSTALL}/../secret"),
+    # `sed -n 'A,Bp'` can only print: the idiomatic line-range read (cart-billing-go x ornith1.5_9b: refused 3 calls running).
+    (".", f"sed -n '100,180p' {INSTALL}/m2/x/encoding.go"), (".", f"cat -n {INSTALL}/m2/a | sed -n '1,5p'"), (".", f"sed -n '$p' {INSTALL}/m2/a"),
+    ("R", f"sed -n '1,5w {INSTALL}/m2/a' {INSTALL}/m2/b"), ("R", f"sed -n '1e' {INSTALL}/m2/a"), ("R", f"sed -i -n '1,5p' {INSTALL}/m2/a"),
+    ("R", f"sed -n -f x {INSTALL}/m2/a"), ("R", f"sed -n '1,5p;w o' {INSTALL}/m2/a"), ("R", f"sed -n '1,5p' --in-place {INSTALL}/m2/a"),
+    ("R", f"sed '1,5p' {INSTALL}/m2/a"),
     ("R", "cat tmp/in > \"$D/x\""), ("R", "for i in 1 2; do cat a > tmp/det_$i.txt; done"),   # a variable write target is unproven
 ]
 
