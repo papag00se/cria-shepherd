@@ -23,9 +23,10 @@ import re
 import shlex
 from collections.abc import Sequence
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import NamedTuple
 
-from . import bodykeys, prompts, shellinput, toolpath
+from . import bodykeys, probediscovery, prompts, shellinput, toolpath
 
 LEVELS = ("none", "read", "write")
 
@@ -2350,6 +2351,8 @@ def _refusal(verb: str, path: str, workspace: str | None = None, roots=(), level
                 if subtree else "")
     return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root,
                         casenote=note,
+                        scratch=(probediscovery.scratch_clause(Path(workspace)) if workspace
+                                 else prompts.load_map("external_path_scratch")["default"]),
                         reads=("" if level == "read" else prompts.fill(
                             prompts.load("external_path_reads_allowed"),
                             caches=", ".join(sub for _m, sub in _DEP_CACHE_ROOTS))))

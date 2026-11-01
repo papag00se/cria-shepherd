@@ -1,6 +1,11 @@
 """dirguard.command_refusal, the workspace-boundary backstop for a raw shell command. BEST-EFFORT AND LEXICAL, not
 containment or a sandbox. Rows are analysed, never run. Expectation reads none/read/write: `R` refused, `.` admitted."""
-from cria import dirguard
+import shutil
+import subprocess
+
+import pytest
+
+from cria import dirguard, probediscovery, prompts, wsview
 from shell_safety_helpers import WS
 
 M2 = "/home/jesse/.m2/repository/com/opencsv/opencsv/5.9/opencsv-5.9.jar"
@@ -111,3 +116,53 @@ def test_the_reads_allowed_sentence_names_only_folders_a_read_really_clears():
     assert len(named) >= 4 and "~/.gem/ruby" in named
     assert not [loc for loc in named if loc not in sentence or dirguard.path_refusal(loc + "/x", False, "none", WS)]
     assert "(~/.m2, ~/.gradle" not in sentence
+
+
+MANIFEST = {"javascript": "package.json", "python": "pyproject.toml", "rust": "Cargo.toml", "go": "go.mod", "jvm": "pom.xml",
+            "dotnet": "app.csproj", "php": "composer.json", "ruby": "Gemfile", "elixir": "mix.exs"}
+
+
+def _refusal_in(ws):
+    """The write refusal as the server renders it: with the workspace's own view bound (cria reads manifests through it)."""
+    token = wsview.bind(wsview.DirectView(str(ws)))
+    try:
+        return dirguard.path_refusal("/etc/hosts", True, "none", str(ws))
+    finally:
+        wsview.unbind(token)
+
+
+def test_the_scratch_directory_the_refusal_names_is_chosen_per_ecosystem_the_discovery_table_knows(tmp_path):
+    """Go cell g1: the refusal sent scratch to `./tmp/` ("not part of the code"); two scratch `package main` files there broke
+    `go build ./...` and cost ~10 minutes. Every ecosystem discovery knows gets a workspace and a refusal; the table may only name real ones."""
+    names = {probediscovery.eco_name(e) for e in probediscovery.Ecosystem}
+    assert set(MANIFEST) == names and set(prompts.load_map("external_path_scratch")) - {"default"} <= names
+    advice = {}
+    for name, manifest in MANIFEST.items():
+        ws = tmp_path / name
+        ws.mkdir()
+        (ws / manifest).write_text("module m\n" if name == "go" else "{}\n")
+        advice[name] = _refusal_in(ws)
+    assert [n for n, text in advice.items() if ("./_tmp/" in text) != (n == "go")] == []
+    assert [n for n, text in advice.items() if n != "go" and "put it under ./tmp/ instead" not in text] == []
+    assert "NOT ./tmp/" in advice["go"] and "put it under ./tmp/ instead" not in advice["go"]
+    nested = tmp_path / "poly"
+    (nested / "svc").mkdir(parents=True)
+    (nested / "pyproject.toml").write_text("")
+    (nested / "svc" / "go.mod").write_text("module m\n")
+    assert "./_tmp/" in _refusal_in(nested)     # a sub-project's ecosystem counts
+    assert "put it under ./tmp/ instead" in _refusal_in(tmp_path / "missing")   # nothing to read
+
+
+@pytest.mark.skipif(not shutil.which("go"), reason="needs the go toolchain")
+def test_the_go_scratch_claim_is_true_of_the_real_toolchain(tmp_path):
+    """The Go hint says `./_tmp/` is never compiled by `./...` and `./tmp/` is; check that against `go build`, not against the sentence."""
+    (tmp_path / "go.mod").write_text("module m\n\ngo 1.21\n")
+    (tmp_path / "m.go").write_text("package m\n")
+    for scratch in ("tmp", "_tmp"):
+        for prog in ("a", "b"):
+            (tmp_path / scratch / prog).mkdir(parents=True)
+            (tmp_path / scratch / prog / "main.go").write_text("package main\nfunc main() { undefined() }\n")
+    build = lambda: subprocess.run(["go", "build", "-mod=readonly", "./..."], cwd=tmp_path, capture_output=True, text=True)   # noqa: E731
+    assert "tmp/a" in build().stderr and "_tmp" not in build().stderr
+    shutil.rmtree(tmp_path / "tmp")
+    assert build().returncode == 0

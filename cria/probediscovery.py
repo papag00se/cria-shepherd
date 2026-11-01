@@ -399,6 +399,21 @@ def detect_ecosystems(p: ProjectDir) -> list[Ecosystem]:
     return v
 
 
+def scratch_clause(root: Path) -> str:
+    """The sentence naming where THIS workspace's scratch may go, from the ecosystems its manifests
+    declare (prompts/external_path_scratch.txt keys an entry per :func:`eco_name`; ``default`` is
+    ``./tmp/``). Walked: Go cell g1 was sent to ``./tmp/`` ("not part of the code") by the external-path
+    refusal and two scratch ``package main`` files there made ``go build ./...`` fail, because Go builds
+    every directory that does not start with ``_`` or ``.``. The first ecosystem with its own entry
+    wins, so a polyglot tree gets the directory its strictest build ignores."""
+    entries = prompts.load_map("external_path_scratch")
+    for p in inventory(Path(root)):
+        for eco in detect_ecosystems(p):
+            if eco_name(eco) in entries:
+                return entries[eco_name(eco)]
+    return entries["default"]
+
+
 # ---------------------------------------------------------------------------
 # Public entry points.
 

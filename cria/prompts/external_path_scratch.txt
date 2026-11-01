@@ -1,0 +1,5 @@
+# Where scratch goes, by ecosystem (keys are probediscovery.eco_name values; `default` is every other project).
+# A scratch directory is only safe where the project's own build does not walk it: every entry here was checked
+# against the real toolchain, not assumed.
+default = put it under ./tmp/ instead, which is inside the project and is not part of the code.
+go = put it under ./_tmp/ instead, ONE DIRECTORY PER SCRATCH PROGRAM (./_tmp/probe/main.go, run with `go run ./_tmp/probe`). It is inside the project, and Go skips directories whose name starts with an underscore, so `go build ./...`, `go vet ./...` and `go test ./...` never compile it. NOT ./tmp/: Go treats ./tmp/ as a package of this module, and a scratch `package main` there breaks the project's own build.
