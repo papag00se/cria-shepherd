@@ -47,6 +47,9 @@ def test_age_text_table(seconds, text): assert retention._fmt_age(seconds) == te
 @pytest.mark.parametrize('n, text', [(0, '0B'), (1023, '1023B'), (1024, '1.0K'), (3 * 1024 ** 2, '3.0M'), (5 * 1024 ** 3, '5.0G'), (7 * 1024 ** 4, '7168.0G')])
 def test_size_text_table(n, text): assert retention._size_text(n) == text
 
+@pytest.mark.parametrize('text, seconds', [('90s', 90), ('30m', 1800), ('12h', 43200), ('14d', 14 * DAY), ('1w', 604800), ('2w', 2 * 604800), (' 3d ', 3 * DAY)])
+def test_parse_age_counts_each_unit_in_seconds(text, seconds): assert retention.parse_age(text) == seconds
+
 @pytest.mark.parametrize('text', ['', '7', 'd', '1y', '-1d', '1.5h', '1d2h'])
 def test_parse_age_rejects_everything_but_count_and_unit(text):
     with pytest.raises(ValueError): retention.parse_age(text)

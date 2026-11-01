@@ -55,6 +55,14 @@ def test_images_text_custom_tools_and_controls_translate_in_order():
     assert (body["stream"], body["parallel_tool_calls"], body["top_k"], body["seed"], body["stop"], body["max_tokens"], body["reasoning_effort"]) == (True, False, 7, 3, ["x"], 50, "low")
 
 
+def test_a_message_whose_content_is_not_text_translates_to_an_empty_message_in_its_role():
+    """A harness item with `content: null` (or a bare number) is an empty turn, not a crash and not the text "None"; a developer item like it adds no system text."""
+    body = responses.to_chat_body({"input": [{"type": "message", "role": "developer", "content": None},
+                                             {"type": "message", "role": "user", "content": None},
+                                             {"type": "message", "role": "assistant", "content": 7}]})
+    assert body["messages"] == [{"role": "user", "content": ""}, {"role": "assistant", "content": ""}]
+
+
 def completion(message, finish="stop", **extra):
     return {"choices": [{"message": message, "finish_reason": finish}], **extra}
 
