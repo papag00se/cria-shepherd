@@ -2063,6 +2063,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 content = str(m.get('content') or '')
             else:
                 content = _debinarized(str(m.get("content") or ""))
+            if tid in own_cmds and (envelope := exec_envelope(content)) is not None and envelope.exit_code == 0:
+                # A SUCCESSFUL RUN OF THE CODER'S OWN COMMAND is ground truth that its programs exist (`dirguard.programs_that_ran`).
+                for program in dirguard.programs_that_ran(own_cmds[tid]):
+                    view.note_program_ran(program)
             # THE SURVEY IS WHAT A DECLARED SECOND RECORD CARRIED, NOTHING ELSE: the sentinel said one follows the first
             # record, it was read on the very next line and removed there. A file, a native command or a read-instead
             # answer that quotes a perfectly valid-looking survey block keeps it — and teaches the view nothing.

@@ -725,6 +725,33 @@ _INSTALL_REMEDY = (
 )
 
 
+def programs_that_ran(command: str) -> list[str]:
+    """The bare program names a SUCCESSFUL exit of ``command`` proves were launched: the command word of every segment, when the
+    segments form an unconditional chain (one command, or commands joined by `&&`; an exit 0 then means each ran).
+
+    A pipeline's status is its last command's, `;` keeps only the last, and `||` may never reach its right side, so those prove
+    nothing about the others and answer [] (a lookup, `command -v X`, runs nothing and is skipped by the wrapper reader). A name
+    spelled as a path is some other program. Read by the workspace view: the coder's own successful `gem list` is ground truth
+    that `gem` exists, which the survey that answers for programs does not supply until a write rides one."""
+    if not command:
+        return []
+    layout = shellinput.layout(command)
+    if layout.error or layout.shell != command:
+        return []                                    # a heredoc or a continuation: not the plain chain this reads
+    spans = [(a, b) for a, b in _segment_spans(command) if command[a:b].strip()]
+    if not spans or any(command[spans[i][1]:spans[i + 1][0]].strip() != "&&" for i in range(len(spans) - 1)):
+        return []
+    found = _input_commands(command, unwrap=False)
+    if found is None:
+        return []
+    names = []
+    for _s, _e, words, _targets, _inputs in found:
+        words = _wrapped_command(words)
+        if words and "/" not in _program_name(words[0]):
+            names.append(_program_name(words[0]))
+    return names
+
+
 def installs_outside_workspace(command: str) -> bool:
     """This command installs a package somewhere that is NOT the project directory.
 
@@ -2029,10 +2056,29 @@ def _sed_prints_only(args: list[str]) -> bool:
             and not any(a.startswith("-") and a != "-" for a in args[2:]))
 
 
+def _without_timeout(words: list[str]) -> list[str]:
+    """``timeout [-s SIG] [-k D] DURATION cmd ...`` runs ``cmd`` under a clock and does nothing else, so the read proof judges ``cmd``
+    (the grammar is the ``timeout`` row of `_KILL_WRAPPERS`). Refusing it as "timeout is not one of the read-only inspectors" was a
+    false statement about ``timeout 15 grep -n X <declared path>`` (Go cell g1); only this wrapper is transparent to the proof (sudo, env and
+    xargs change who or what runs, `time -o` writes a file). A bare ``timeout`` with nothing after the duration stays unproven."""
+    if not words or _program_name(words[0]) != "timeout":
+        return words
+    takes, positional = _KILL_WRAPPERS["timeout"]
+    rest = words[1:]
+    while rest and rest[0].startswith("-") and rest[0] != "-":
+        flag = rest[0]
+        rest = rest[(2 if flag in takes else 1):]
+        if flag == "--":
+            break
+    rest = rest[positional:]
+    return rest or words
+
+
 def _segment_failure(words: list[str], workspace: str | None = None, no_writes: bool = False):
     """``None`` when this one segment is a proven reader, else ``(reason, index)``: why it is not and which
     word of the segment carries the reason (0 = the command word). The ONE place those decisions are made;
     ``_segment_reads`` is its boolean."""
+    words = _without_timeout(words)
     cmd, args = words[0], words[1:]
     if no_writes and cmd == "tee":
         return "tee_writes", 0

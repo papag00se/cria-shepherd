@@ -1748,6 +1748,33 @@ def install_flavour(eco: str, workspace_root: str) -> str:
     return ""
 
 
+def installed_gem_libs(workspace_root: str, limit: int = 8) -> list[str]:
+    """The `lib` directories of the gems a RubyGems install tree inside the workspace holds, relative to it, sorted.
+
+    `gem install --install-dir DIR` builds `DIR/gems/<name>-<version>/` beside `DIR/specifications/`, so a gem is loadable only
+    from `DIR/gems/<name>-<version>/lib`, never from `DIR` or `DIR/gems`. A coder that vendored into `.bundle/vendor` spent ~10
+    calls on `ruby -I.bundle/vendor/gems -e 'require ...'` (shipping-rates-rb c1). The tree was surveyed and holds the answer:
+    a `gems` directory with a `specifications` sibling is a RubyGems tree, and a child of it that has a `lib` is a load directory.
+    Bounded by ``limit`` (the caller says how many more there are)."""
+    if not workspace_root:
+        return []
+    from . import wsview
+    view = wsview.current(workspace_root)
+    tree = view.walk(workspace_root)
+    if tree is None:
+        return []
+    root = os.path.join(workspace_root, "")
+    found: list[str] = []
+    for dirpath, dirnames, _files in tree:
+        if os.path.basename(dirpath) != "gems" or view.exists(os.path.join(os.path.dirname(dirpath), "specifications")) is not True:
+            continue
+        for gem in sorted(dirnames):
+            lib = os.path.join(dirpath, gem, "lib")
+            if view.exists(lib) is True:
+                found.append(lib[len(root):].replace(os.sep, "/"))
+    return sorted(found)
+
+
 def install_landed(eco: str, workspace_root: str) -> bool | None:
     """Has an install into this project actually landed? ``None`` when cria cannot tell.
 

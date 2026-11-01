@@ -1004,6 +1004,12 @@ class View:
             if ok and name and hit_ok:
                 self._progs[name] = hit
 
+    def note_program_ran(self, name: str) -> None:
+        """The coder's own command launched ``name`` and exited 0: its shell resolves that name, which no survey can contradict.
+        Answers `program` at once, without the survey a write has to carry (a coder looping on raw shell commands rides none)."""
+        if name:
+            self._progs[name] = name
+
     def note_written(self, path, content: str, *, current: bool = True) -> None:
         """cria lowered a whole-content write for this path and the harness reported it landed:
         the bytes ARE the file until something else changes it."""

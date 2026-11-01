@@ -26,6 +26,10 @@ ruby_install_dir = Note: `{{NAME}}` did not load. This project's gems were insta
 
 ruby_bundler = Note: `{{NAME}}` did not load. This project's gems are installed with bundler, and a bundler install is only on the load path under bundler — `require "bundler/setup"` at the top of the file that needs it, or run the command under `bundle exec`. If `{{NAME}}` is not in the `Gemfile`, that is the reason: a gem outside the bundle is invisible to it even when it is installed on this machine.
 
+# WHERE A VENDORED GEM IS LOADED FROM, named from the surveyed tree (`probeparse.installed_gem_libs`): `gem install --install-dir DIR`
+# puts each gem at `DIR/gems/<name>-<version>/`, so `-IDIR` and `-IDIR/gems` find nothing (shipping-rates-rb c1 spent ~10 calls there).
+ruby_gem_libs = A gem in that install is loaded from its own `lib` directory, one level inside the install directory, and these are the ones this project holds: {{LIBS}}.
+
 python = Note: `{{NAME}}` cannot be imported. If it is a third-party package it is not installed for the interpreter that ran this — check you are running the same one you installed into (a venv's ./.venv/bin/python is not the system python3). If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
 node = Note: `{{NAME}}` cannot be resolved. Node loads from this project's own node_modules — being present in package.json is not the same as being installed. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.

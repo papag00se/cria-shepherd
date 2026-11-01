@@ -1,9 +1,11 @@
 """An install refusal remedies in the ecosystem's own terms, naming only binaries this box can type (shipping-rates-rb /
 ternary-bonsai: the ruby route said `bundle` when only `bundle3.2` existed; a refusal both said 'You do not need to
 install it' and 'Install it into the project instead')."""
+import json
+
 import pytest
 
-from cria import dirguard
+from cria import dirguard, wsview, writeproxy
 
 BOX = {"bundle": "bundle3.2", "gem": "gem", "ruby": "ruby", "npm": "npm", "python3": "python3", "cargo": "cargo",
        "go": "go", "composer": "composer", "mvn": "mvn"}
@@ -53,3 +55,37 @@ def test_a_maven_goal_that_publishes_into_the_shared_repository_is_refused_but_a
     box(BOX)
     assert dirguard.install_refusal(command, "none", "/w")
     assert dirguard.install_refusal("mvn -q test", "none", "/w") is None
+
+
+# THE CODER'S OWN SUCCESSFUL RUN IS GROUND TRUTH THAT THE TOOL EXISTS (shipping-rates-rb: `gem list` succeeded, then the first `gem install X`
+# was refused as "not established yet" because the survey that answers for programs rides only on a write; c1 calls 9-10, c4 14-16).
+def _ran(command, code):
+    envelope = f"Chunk ID: a1\nWall time: 0.1 seconds\nProcess exited with code {code}\nOriginal token count: 0\nOutput:\n"
+    return [{"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "exec_command", "arguments": json.dumps({"cmd": command})}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": envelope + "countries (8.1.0)\n"}]
+
+
+@pytest.mark.parametrize("command,programs", [
+    ("gem list", ["gem"]),
+    ("cd app && FOO=1 bundle exec rake test", ["cd", "bundle"]),
+    ("gem list | grep countries", []),                   # the exit status is grep's
+    ("gem list; echo done", []),                         # ... and echo's
+    ("false || gem list", []),                           # it may not have been reached
+    ("command -v gem && echo yes", ["echo"]),            # a lookup runs nothing
+    ("echo gem", ["echo"]),                              # a name in an argument is prose
+    ("./bin/gem list", []),                              # some other program, by path
+])
+def test_a_programs_a_successful_run_proves_are_the_command_words_of_an_unconditional_chain(command, programs):
+    assert dirguard.programs_that_ran(command) == programs
+
+
+def test_a_gem_the_coder_ran_names_the_direct_route_at_the_first_install_refusal():
+    refused = lambda: dirguard.install_refusal("gem install countries", "none", "/w")
+    for history, named in ((_ran("gem list", 0), True), (_ran("gem list", 127), False), (_ran("gem list | head", 0), False), ([], False)):
+        token = wsview.bind(wsview.View("/w", "install-proof"))
+        try:
+            writeproxy.represent_inbound(history, workspace_root="/w")
+            said = refused()
+        finally:
+            wsview.unbind(token)
+        assert ("install --install-dir vendor/bundle" in said) is named and ("not established yet" in said) is not named, history

@@ -536,6 +536,9 @@ def report_root(report: "ProbeReport") -> str:
     return ""
 
 
+_GEM_LIBS_SHOWN = 8
+
+
 def dependency_line(eco: str, workspace_root: str) -> str:
     """The load-path line, or the not-installed-at-all line when cria can see that is the truth.
 
@@ -550,8 +553,18 @@ def dependency_line(eco: str, workspace_root: str) -> str:
     # GEM_HOME and broke its Rakefile — see probeparse.install_flavour.
     flavour = probeparse.install_flavour(eco, workspace_root)
     if flavour and f"{eco}_{flavour}" in words:
-        return words[f"{eco}_{flavour}"]
-    return words[eco]
+        line = words[f"{eco}_{flavour}"]
+    else:
+        line = words[eco]
+    # A RubyGems `--install-dir` tree loads a gem from `<dir>/gems/<name>-<version>/lib`, one level below where a coder looks first;
+    # the directories are in the surveyed tree, so they are named rather than described (bundler's own line is unchanged).
+    if eco == "ruby" and flavour != "bundler":
+        libs = probeparse.installed_gem_libs(workspace_root)
+        if libs:
+            shown = libs[:_GEM_LIBS_SHOWN]
+            more = f" (and {len(libs) - len(shown)} more)" if len(libs) > len(shown) else ""
+            line += " " + prompts.fill(words["ruby_gem_libs"], libs=", ".join(f"`{d}`" for d in shown) + more)
+    return line
 
 
 def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
