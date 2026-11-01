@@ -838,7 +838,9 @@ def _declared_marks(field: "str | None") -> "dict[str, tuple] | None":
 def unsettled_writes(plan: "GatePlan") -> list:
     """The watched write calls this gate could not establish: no mark, or one that appeared only AFTER the checks had started (the
     program was still running while they read the tree). A witnessed ``did_not_run`` is proof the write did not land, and a mark
-    that was final before the checks began leaves the tree they read established. Nothing declared at all leaves every one open."""
+    that was final before the checks began leaves the tree they read established. A ``dead`` writer (its process is gone and it left
+    no final mark) stays open too: it may have died after landing its bytes, so nothing is approved on it - but the notice can say it
+    is gone. Nothing declared at all leaves every one open."""
     if not plan.marks_paths:
         return []
     declared = plan.transport_marks or {}
@@ -846,7 +848,7 @@ def unsettled_writes(plan: "GatePlan") -> list:
     for receipt, path in plan.marks_paths.items():
         item = declared.get(receipt)
         state = item[0] if item else "incomplete"
-        if item is None or state == "incomplete" or (state in ("landed", "uncertain") and not item[2]):
+        if item is None or state in completionmarks.OPEN_STATES or (state in ("landed", "uncertain") and not item[2]):
             out.append((receipt, path, state))
     return out
 
@@ -2643,9 +2645,10 @@ def unsettled_text(outcome) -> str:
     paths = list(dict.fromkeys(path for _receipt, path, _state in items if path))
     named = ", ".join(f"`{p}`" for p in paths) if paths else "an earlier file write"
     lead = prompts.fill(fills["lead"], paths=named)
-    running = any(state == "incomplete" for _r, _p, state in items)
-    overlapped = any(state != "incomplete" for _r, _p, state in items)
-    return " ".join(part for part in (lead, fills["running"] if running else "", fills["overlapped"] if overlapped else "", fills["tail"]) if part)
+    states = {state for _r, _p, state in items}
+    parts = (lead, fills["unknown"] if "incomplete" in states else "", fills["running"] if "running" in states else "",
+             fills["dead"] if "dead" in states else "", fills["overlapped"] if states & set(completionmarks.STATES) else "", fills["tail"])
+    return " ".join(part for part in parts if part)
 
 
 def transport_unknown_text(reported: str = "") -> str:
@@ -2685,7 +2688,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     result_text = transported_result(plan)
     unsettled = unsettled_writes(plan)
     witnessed = {r: (state, digest) for r, (state, digest, _final) in (plan.transport_marks or {}).items()
-                 if state != "incomplete" and r in plan.marks_paths}
+                 if state in completionmarks.STATES and r in plan.marks_paths}
     if unsettled and rlog is not None:
         rlog.emit("gate.writes_unsettled", level="warn", count=len(unsettled),
                   states=sorted({state for _r, _p, state in unsettled}))

@@ -1743,7 +1743,7 @@ def _learn_completions(token: str, rep: "dict | None", landed: bool = False) -> 
     record's program read back as final (`completionmarks`); their marks on the harness are released by the next program."""
     completionmarks.settle(token, landed=landed)
     for receipt, (state, _digest) in ((rep or {}).get("pm") or {}).items():
-        if state != "incomplete":
+        if state in completionmarks.STATES:       # a final mark only: a dead writer's effect is still unestablished, the gate keeps it
             completionmarks.settle(receipt)
 
 
@@ -2209,7 +2209,7 @@ def _adopt_marks(messages: list[dict], out: list[dict], session: str, root: str 
     paired, witnessed = denial.paired_results(out), denial.witnessed_completions(out)
     closed = (denial.REFUSED, denial.UNAPPLIED, denial.LANDED, denial.UNCERTAIN)
     unresolved = {receipt for receipt, _n, _p, cid in declared
-                  if denial.proof(paired.get(cid)) not in closed and witnessed.get(cid, ("incomplete",))[0] == "incomplete"}
+                  if denial.proof(paired.get(cid)) not in closed and witnessed.get(cid, ("incomplete",))[0] not in completionmarks.STATES}
     landed = {cid for cid in paired if denial.proof(paired[cid]) == denial.LANDED}
     superseded = frozenset(receipt for i, (receipt, _n, path, _c) in enumerate(declared) if receipt in unresolved
                            and any(later in landed and completionmarks.same_file(path, later_path, root)

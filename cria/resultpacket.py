@@ -33,7 +33,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import fetchfacts
+from . import completionmarks, fetchfacts
 
 VERSION = 1
 RAN, REFUSED, UNAPPLIED, LANDED, UNCERTAIN, SURVEY = "ran", "refused", "unapplied", "landed", "uncertain", "survey"
@@ -86,7 +86,8 @@ def _rec(kind, **rep):
 #   ef    the edit-fail fact report (token) of an unapplied edit
 #   st    the stored-fact of a spill / search: {operation, target, byte_count, sha256}
 #   pm    the completion marks the program READ BACK (`completionmarks`): {receipt: [state, sha256]} for every earlier call of the
-#         session whose outcome cria had not learned; state is landed / did_not_run / uncertain / incomplete (no authentic mark)
+#         session whose outcome cria had not learned; state is landed / did_not_run / uncertain (a final mark), running / dead (the
+#         writer's own start record and /proc: still the process that wrote it / gone with no final mark) or incomplete (nothing can be said)
 #   fx    the fetch fact of a web_fetch (`fetchfacts.valid_report`): {url, status, observed: str; routes, catalog: [str]; shapes: [{head, route,
 #         params, body, fields}]}; `status` is what the GET answered, `observed` the protocol a successful discovery probe read ("mcp"/"graphql"), empty otherwise — two facts, never one), from the producer's own parse
 REPORT_STR = ("ev", "rm", "ef")
@@ -272,7 +273,7 @@ def _valid_marks(value) -> bool:
     for receipt, item in value.items():
         if not (isinstance(receipt, str) and len(receipt) == 16 and set(receipt) <= hexdigits):
             return False
-        if not (isinstance(item, list) and len(item) == 2 and item[0] in ("landed", "did_not_run", "uncertain", "incomplete")
+        if not (isinstance(item, list) and len(item) == 2 and item[0] in completionmarks.OBSERVED
                 and isinstance(item[1], str)):
             return False
         digest = item[1]

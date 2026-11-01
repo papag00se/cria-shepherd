@@ -59,7 +59,7 @@ import hashlib
 import json
 from collections import Counter
 
-from . import bodykeys, payloadboundary, resultpacket
+from . import bodykeys, completionmarks, payloadboundary, resultpacket
 
 # ⟦ctx:…⟧ namespace, never the proper noun (#17). It rides in the refusal text the coder reads —
 # the same channel and the same shape as every other context marker in that stream.
@@ -328,12 +328,16 @@ def landed_call_ids(messages) -> set:
     return _unambiguous(messages, landed)
 
 
+FINAL_MARKS = completionmarks.STATES      # the states an executor mark itself may say; every other witnessed state is NOT a final mark
+
+
 def witnessed_completions(messages, extra=None) -> dict:
     """``call id -> (state, sha256)`` for calls that have NO terminal record of their own (the reply was lost, cut, "still
     running") but whose EXECUTOR-SIDE completion mark a later lowered program read back (`completionmarks`; typed ``pm`` report of
     that program's own paired record). ``state`` is ``landed`` / ``did_not_run`` / ``uncertain`` (the program finished - a known
-    state) or ``incomplete`` (no authentic mark when the witness looked: still running, killed or never started - known to be
-    not complete, never claimed to be any of those). Only an unambiguously paired witness counts, the witnessed call must appear
+    state), ``running`` / ``dead`` (no final mark, and the writer's own start record says its process is still the one that wrote it /
+    is gone: ``dead`` is a witnessed end WITHOUT a final mark - NOT proof the file is untouched) or ``incomplete`` (nothing can be
+    said: never started or not yet, killed with no start record, no /proc - known to be not complete, never claimed to be any of those). Only an unambiguously paired witness counts, the witnessed call must appear
     exactly once and BEFORE its witness, and two witnesses that disagree about a final state witness nothing. A call's own
     terminal record always outranks a witness, so this never overrides what a reply proved.
 
@@ -371,11 +375,12 @@ def witnessed_completions(messages, extra=None) -> dict:
                 seen.setdefault(cid, []).append((state, digest))
     out: dict = {}
     for cid, observed in seen.items():
-        final = {item for item in observed if item[0] != "incomplete"}
+        final = {item for item in observed if item[0] in FINAL_MARKS}
         if len(final) == 1:
             out[cid] = next(iter(final))
         elif not final:
-            out[cid] = ("incomplete", "")
+            # No final mark anywhere: the most specific non-final fact any witness saw (dead outranks running outranks nothing).
+            out[cid] = (next(s for s in ("dead", "running", "incomplete") if any(item[0] == s for item in observed)), "")
     return out
 
 
@@ -387,7 +392,7 @@ def witnessed_unlanded_ids(messages, extra=None) -> set:
 def witnessed_completed_ids(messages, extra=None) -> set:
     """Calls whose program is known to have FINISHED (landed, did not run, or ended uncertain) though no reply proves it. The
     write may no longer be running; nothing about WHAT it left is claimed beyond its own state."""
-    return {cid for cid, (state, _digest) in witnessed_completions(messages, extra).items() if state != "incomplete"}
+    return {cid for cid, (state, _digest) in witnessed_completions(messages, extra).items() if state in FINAL_MARKS}
 
 
 def unlanded_call_ids(messages, extra=None) -> set:

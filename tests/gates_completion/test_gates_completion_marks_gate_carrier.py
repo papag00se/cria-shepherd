@@ -193,9 +193,9 @@ def test_the_gate_never_retires_the_marks_directory_under_a_writer_that_is_still
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     time.sleep(0.5)
     directory = os.path.join(harness_dir(tmp_path), completionmarks.DIR_PREFIX + completionmarks.credential(SESSION))
-    assert os.listdir(directory) == [".owner"]                                            # x opened it and is still running
+    assert sorted(os.listdir(directory))[0] == ".owner" and [n[:2] for n in sorted(os.listdir(directory))[1:]] == ["s-"]   # x opened it and is still running: certificate and its start record, no mark
     plan, raw, out = gate(tmp_path, monkeypatch)
-    assert [s for _r, _p, s in out.unsettled_writes] == ["incomplete"] and os.path.isdir(directory)
+    assert [s for _r, _p, s in out.unsettled_writes] == ["running"] and os.path.isdir(directory)       # its own start record says it is alive
     proc.communicate()
     plan2, raw2, out2 = gate(tmp_path, monkeypatch)
     assert out2.unsettled_writes == [] and [s for s, _d in out2.witnessed.values()] == ["landed"]

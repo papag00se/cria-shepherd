@@ -48,7 +48,14 @@ MAX_OUTSTANDING = 32            # per session; the oldest is forgotten (its outc
 MAX_RELEASE = 64
 OPEN_WAIT_SECONDS = 5
 STATES = ("landed", "did_not_run", "uncertain")      # what an executor mark may say
-OBSERVED = STATES + ("incomplete",)                  # what a read-back may report
+# What a read-back may report beyond a final mark, decided by the writer's own start record and /proc (never a signal):
+#   running     an authentic start record whose process is still the one that wrote it
+#   dead        the process is gone (or its pid now belongs to another process) and it left NO final mark: it ended without finishing.
+#               NOT proof the file is untouched (it may have died after landing its bytes): the write is still unestablished
+#   incomplete  nothing can be said: no start record (never started, or not yet), a record from another boot or pid namespace, or
+#               /proc cannot answer
+OBSERVED = STATES + ("incomplete", "running", "dead")
+OPEN_STATES = ("incomplete", "running", "dead")      # a read-back that is NOT a final mark: the write's effect is not established
 
 _LOCK = threading.Lock()
 
@@ -228,19 +235,24 @@ def settle(receipt: str, *, landed: bool = False) -> None:
 
 # Functions appended to a directory program (`ownedfiles.DIRECTORY_PROGRAM` is already present when the per-turn queue is).
 FUNCTIONS = r'''
+_CM_FINAL=%%STATES%%
+
 def _cm_name(receipt,nonce):
     return 'm-'+receipt+'-'+nonce
+
+def _cm_start_name(receipt,nonce):
+    return 's-'+receipt+'-'+nonce
 
 def _cm_open(credential,deadline):
     return _owned_open(credential,'%%PREFIX%%',[],deadline)
 
-def _cm_read(context,receipt,nonce):
-    # The authenticated state of ONE invocation: (state, sha256) or None. Only a regular single-link file of this user in the
-    # certified directory, naming this credential, receipt AND nonce, is a mark; anything else (a symlink, a foreign owner, a
-    # loose mode, another attempt's nonce, a malformed body) is not, and is left exactly as found.
+def _cm_file(context,name,receipt,nonce):
+    # The parsed body of ONE authenticated file of this invocation, or None. Only a regular single-link file of this user in the
+    # certified directory, naming this credential, receipt AND nonce, is one; anything else (a symlink, a foreign owner, a loose
+    # mode, another attempt's nonce, a malformed body) is not, and is left exactly as found.
     if context is None or not _owned_valid(context): return None
     try:
-        descriptor=os.open(_cm_name(receipt,nonce),os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=context['fd'])
+        descriptor=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=context['fd'])
         with os.fdopen(descriptor,'rb') as stream:
             actual=os.fstat(stream.fileno())
             if not stat.S_ISREG(actual.st_mode) or actual.st_uid!=os.geteuid() or actual.st_mode&0o077 or actual.st_nlink!=1: return None
@@ -248,18 +260,23 @@ def _cm_read(context,receipt,nonce):
         if len(data)>4096: return None
         value=json.loads(data)
         if not isinstance(value,dict) or value.get('c')!=context['credential'] or value.get('r')!=receipt or value.get('n')!=nonce: return None
-        state,digest=value.get('k'),value.get('h')
-        if state not in %%STATES%% or not isinstance(digest,str): return None
-        if state=='landed' and (len(digest)!=64 or any(ch not in '0123456789abcdef' for ch in digest)): return None
-        if state!='landed' and digest!='': return None
-        return state,digest
+        return value
     except (OSError,ValueError):
         return None
 
-def _cm_write(context,receipt,nonce,state,digest):
-    # Exclusive: the name is linked from a private temporary, so a reader never sees a partial mark and a second writer never replaces one.
+def _cm_read(context,receipt,nonce):
+    # The authenticated FINAL state of ONE invocation: (state, sha256) or None.
+    value=_cm_file(context,_cm_name(receipt,nonce),receipt,nonce)
+    if value is None: return None
+    state,digest=value.get('k'),value.get('h')
+    if state not in _CM_FINAL or not isinstance(digest,str): return None
+    if state=='landed' and (len(digest)!=64 or any(ch not in '0123456789abcdef' for ch in digest)): return None
+    if state!='landed' and digest!='': return None
+    return state,digest
+
+def _cm_put(context,name,payload):
+    # Exclusive: the name is linked from a private temporary, so a reader never sees a partial file and a second writer never replaces one.
     if context is None or not _owned_valid(context): return
-    name=_cm_name(receipt,nonce)
     temporary='.t-'+name
     try:
         descriptor=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=context['fd'])
@@ -267,21 +284,75 @@ def _cm_write(context,receipt,nonce,state,digest):
         return
     try:
         with os.fdopen(descriptor,'wb') as stream:
-            stream.write(json.dumps(dict(c=context['credential'],r=receipt,n=nonce,k=state,h=digest),sort_keys=True).encode())
+            stream.write(json.dumps(dict(payload,c=context['credential']),sort_keys=True).encode())
         try: os.link(temporary,name,src_dir_fd=context['fd'],dst_dir_fd=context['fd'],follow_symlinks=False)
         except FileExistsError: pass
     finally:
         try: os.unlink(temporary,dir_fd=context['fd'])
         except OSError: pass
 
-def _cm_observe(context,pairs):
-    # What each named invocation's authenticated mark says RIGHT NOW: {receipt: [state, sha256]}; a call with no authentic mark
-    # (running, killed, never started, or no certified directory at all) is 'incomplete' - never claimed to be anything else.
-    seen={}
-    for receipt,nonce in pairs:
+def _cm_write(context,receipt,nonce,state,digest):
+    _cm_put(context,_cm_name(receipt,nonce),dict(r=receipt,n=nonce,k=state,h=digest))
+
+def _cm_started(pid):
+    # (start time in clock ticks since boot, state letter) of a process from /proc, or None when there is no such process.
+    # Raises OSError where /proc cannot answer at all (not mounted, hidden): that is never read as 'no such process'.
+    try:
+        with open('/proc/{}/stat'.format(pid),'rb') as stream: data=stream.read(4096).decode('ascii','replace')
+    except (FileNotFoundError,ProcessLookupError):
+        return None
+    fields=data.rpartition(')')[2].split()
+    return int(fields[19]),fields[0]
+
+def _cm_identity():
+    # What tells THIS process from a later process that reuses its pid: (boot id, pid namespace, start ticks), or None where the
+    # system does not say (then no start record is left and the state stays 'incomplete').
+    try:
+        with open('/proc/sys/kernel/random/boot_id') as stream: boot=stream.read().strip()
+        space=os.readlink('/proc/self/ns/pid')
+        started=_cm_started(os.getpid())
+    except (OSError,ValueError,IndexError):
+        return None
+    return (boot,space,started[0]) if boot and started is not None else None
+
+def _cm_begin(context,receipt,nonce):
+    # The writer's first act under a mark directory: who it is, so a reader can tell a running writer from a dead one with no signal.
+    identity=_cm_identity()
+    if identity is not None:
+        _cm_put(context,_cm_start_name(receipt,nonce),dict(r=receipt,n=nonce,p=os.getpid(),t=identity[2],b=identity[0],s=identity[1]))
+
+def _cm_liveness(context,receipt,nonce):
+    # 'running' / 'dead' / None. None is "cannot say": no authentic start record, a record from another boot or pid namespace (its
+    # pid means nothing here), or a /proc that does not answer for this very process. A pid whose start time differs from the
+    # recorded one is a RECYCLED pid: the writer is gone.
+    try:
+        value=_cm_file(context,_cm_start_name(receipt,nonce),receipt,nonce)
+        if value is None: return None
+        pid,ticks,boot,space=value.get('p'),value.get('t'),value.get('b'),value.get('s')
+        if type(pid) is not int or pid<=1 or type(ticks) is not int or ticks<0 or not isinstance(boot,str) or not isinstance(space,str): return None
+        here=_cm_identity()
+        if here is None or here[0]!=boot or here[1]!=space: return None
+        seen=_cm_started(pid)
+        if seen is None or seen[0]!=ticks or seen[1] in ('Z','X','x'): return 'dead'
+        return 'running'
+    except (OSError,ValueError,IndexError):
+        return None
+
+def _cm_state(context,receipt,nonce):
+    # What ONE invocation is RIGHT NOW: [final state, sha256] or [running|dead|incomplete, '']. The final mark is looked at again after a
+    # 'dead' verdict: a writer that finished between the two looks has left its mark, and only a dead writer with none is 'dead'.
+    mark=_cm_read(context,receipt,nonce)
+    if mark: return list(mark)
+    live=_cm_liveness(context,receipt,nonce)
+    if live=='dead':
         mark=_cm_read(context,receipt,nonce)
-        seen[receipt]=list(mark) if mark else ['incomplete','']
-    return seen
+        if mark: return list(mark)
+    return [live or 'incomplete','']
+
+def _cm_observe(context,pairs):
+    # {receipt: [state, sha256]} for each named invocation; a call whose state cannot be established (no certified directory at all,
+    # no start record) is 'incomplete' - never claimed to be anything else.
+    return {receipt:_cm_state(context,receipt,nonce) for receipt,nonce in pairs}
 
 def _cm_open_existing(credential):
     # The certified directory of a session that ALREADY has one; never creates it (a reader must not allocate what it only asks about).
@@ -303,12 +374,13 @@ def _cm_retire_when_empty(context):
         return False
 
 def _cm_release(context,pairs):
-    # Remove ONLY marks that authenticate as the named invocations'.
+    # Remove ONLY the mark and the start record that authenticate as the named invocations'.
     for receipt,nonce in pairs:
-        try:
-            if _cm_read(context,receipt,nonce) is not None: os.unlink(_cm_name(receipt,nonce),dir_fd=context['fd'])
-        except OSError:
-            pass
+        for name in (_cm_name(receipt,nonce),_cm_start_name(receipt,nonce)):
+            try:
+                if _cm_file(context,name,receipt,nonce) is not None: os.unlink(name,dir_fd=context['fd'])
+            except OSError:
+                pass
 '''.replace('%%PREFIX%%', DIR_PREFIX).replace('%%STATES%%', repr(STATES))
 
 # Spliced after the record builder: wraps `_rec` (the one producer of a first record) so the program's end state is known and its
@@ -320,6 +392,7 @@ _cm_context=None
 _cm_watch=%%WATCH%%
 try:
     _cm_context=_cm_open(%%CREDENTIAL%%,time.monotonic()+%%OPEN_WAIT%%)
+    _cm_begin(_cm_context,%%RECEIPT%%,%%NONCE%%)
     _cm_release(_cm_context,%%RELEASE%%)
 except (OSError,ValueError):
     _cm_context=None
@@ -354,7 +427,7 @@ def _cm_finish():
 
 # Spliced after the per-turn queue: the wait for earlier-turn writers, then the mark registration (registered last, so it runs
 # FIRST at exit: the mark exists before the per-turn done-mark releases a successor that may read it).
-WAIT = r'''_cm_missing=lambda: [_x for _x in %%WAIT%% if _cm_read(_cm_context,_x[0],_x[1]) is None]
+WAIT = r'''_cm_missing=lambda: [_x for _x in %%WAIT%% if _cm_state(_cm_context,_x[0],_x[1])[0] in ('incomplete','running')]
 if %%WAIT%%:
     _cm_deadline=time.monotonic()+%%BOUND%%
     while _cm_context is not None and _cm_missing() and time.monotonic()<_cm_deadline: time.sleep(0.05)

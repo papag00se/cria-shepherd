@@ -121,7 +121,7 @@ def _gate_marks_report(context,marks,before):
     after=_cm_observe(context,watch)
     report={}
     for receipt,state in after.items():
-        report[receipt]=[state[0],state[1],1 if before.get(receipt,['incomplete'])[0]!='incomplete' else 0]
+        report[receipt]=[state[0],state[1],1 if before.get(receipt,['incomplete'])[0] in _CM_FINAL else 0]
     if context is not None:
         _cm_release(context,[tuple(item) for item in marks['release']])
         if not watch: _cm_retire_when_empty(context)

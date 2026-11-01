@@ -5,7 +5,6 @@ a slow filesystem step: a sleep spliced in front of the landing of ONE program's
 import hashlib
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -45,6 +44,13 @@ def slow(tc, seconds):
     cmd = args["cmd"]
     assert SLOW in cmd
     return {**tc, "function": {**tc["function"], "arguments": json.dumps({**args, "cmd": cmd.replace(SLOW, f"__import__('time').sleep({seconds});{SLOW}", 1)})}}
+
+
+def die_before(tc, anchor):
+    """The same lowered program that ends WITHOUT its exit handlers (`os._exit`: what a kill leaves, with no signal) just before ``anchor``."""
+    args = json.loads(tc["function"]["arguments"])
+    assert anchor in args["cmd"]
+    return {**tc, "function": {**tc["function"], "arguments": json.dumps({**args, "cmd": args["cmd"].replace(anchor, f"__import__('os')._exit(3);{anchor}", 1)})}}
 
 
 def start(tc, cwd):
@@ -275,20 +281,20 @@ def test_a_mark_in_an_uncertified_directory_or_of_another_session_is_not_read(tm
     assert completionmarks.credential(SESSION) != completionmarks.credential("another-session")
 
 
-def test_a_program_that_is_killed_leaves_no_mark_and_the_composed_command_without_a_session_has_none(tmp_path):
-    """Killed mid-step (SIGKILL: no exit handler can run) the writer's state is `incomplete`, never `did_not_run`. And with no
-    session the lowered command carries nothing of this."""
+def test_a_program_that_ends_without_its_exit_handler_leaves_no_mark_and_is_a_witnessed_dead_writer(tmp_path):
+    """The writer ends by itself WITHOUT running its exit handlers (`os._exit`, the same state a SIGKILL leaves): no mark. Its own start
+    record and /proc say its process is gone, so a later program reports `dead` - a witnessed end with no final mark, never
+    `did_not_run` (it is not proof the file is untouched). And with no session the lowered command carries nothing of this."""
     (tmp_path / "f.txt").write_text("init\n")
     (x,) = turn([W("f.txt", "A\n", "x")])
-    proc = start(slow(x, 5), tmp_path)
-    time.sleep(0.5)
-    os.killpg(proc.pid, signal.SIGKILL)                                    # the shell and the program under it
-    proc.communicate()
+    dying = start(die_before(x, SLOW), tmp_path)
+    dying.communicate()
     assert marks(tmp_path) == [] and (tmp_path / "f.txt").read_text() == "init\n"
     (y,) = turn([W("g.txt", "G\n", "y")])
     yo = start(y, tmp_path).communicate()[0]
     msgs = history(tmp_path, ("call", [x]), ("call", [y]), ("reply", y, yo))
-    assert denial.witnessed_completions(msgs) == {"x": ("incomplete", "")} and denial.unlanded_call_ids(msgs) == set()
+    assert denial.witnessed_completions(msgs) == {"x": ("dead", "")} and denial.unlanded_call_ids(msgs) == set()
+    assert denial.witnessed_completed_ids(msgs) == set()
     assert completionmarks.DIR_PREFIX not in command_of(lower([W("f.txt", "A\n", "z")])[0])
 
 
@@ -313,7 +319,7 @@ def test_a_second_mark_for_one_invocation_never_replaces_the_first(tmp_path):
 
 BAD_PM = {
     "a receipt that is not 16 hex": {"XYZ": ["landed", "a" * 64]},
-    "an unknown state": {"a" * 16: ["running", ""]},
+    "an unknown state": {"a" * 16: ["stopped", ""]},
     "landed without a digest": {"a" * 16: ["landed", ""]},
     "did_not_run with a digest": {"a" * 16: ["did_not_run", "a" * 64]},
     "a non-list entry": {"a" * 16: "landed"},
@@ -328,5 +334,5 @@ def test_a_malformed_completion_report_is_not_a_record(label):
     from cria import resultpacket
     good = '{"v":1,"r":"%s","k":"landed","rep":{"pm":%s}}\n'
     receipt = "0123456789abcdef"
-    assert resultpacket.read_record(good % (receipt, json.dumps({"a" * 16: ["landed", "a" * 64], "b" * 16: ["incomplete", ""]})), 0, receipt) is not None
+    assert resultpacket.read_record(good % (receipt, json.dumps({"a" * 16: ["landed", "a" * 64], "b" * 16: ["incomplete", ""], "c" * 16: ["running", ""], "d" * 16: ["dead", ""]})), 0, receipt) is not None
     assert resultpacket.read_record(good % (receipt, json.dumps(BAD_PM[label])), 0, receipt) is None
