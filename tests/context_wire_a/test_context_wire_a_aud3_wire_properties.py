@@ -82,13 +82,15 @@ def violations(sent, original):
             and not (m["role"] == "tool" and m["tool_call_id"] in sent_ids)]                   # a tool result still there but altered is judged below
     if gone and not any("⟦ctx:" in str(m.get("content")) for m in sent):
         bad.append(f"{len(gone)} messages left the wire and nothing says so")
+    if sum("⟦ctx:compacted⟧" in str(m.get("content")) for m in sent) > 1:
+        bad.append("two compaction notes: one note must stand for everything the floor dropped")
     for m in sent:
         if m["role"] == "tool" and m["content"] != given.get(m["tool_call_id"]) and not m["content"].startswith(("⟦ctx:", "(duplicate of")) and "⟦ctx:" not in m["content"]:
             bad.append(f"{m['tool_call_id']}: a result was altered without a label")
     return bad
 
 
-@pytest.mark.parametrize("seed", range(20))
+@pytest.mark.parametrize("seed", [*range(20), 385])    # 385: levers 5 and 7 both drop (used to write two notes)
 def test_the_wire_body_is_valid_labelled_and_identical_the_second_time(seed):
     msgs, window, reserve, measurable = generated(seed)
     llama = Llama(window=window, tokenizer=measurable)

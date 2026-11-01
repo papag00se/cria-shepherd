@@ -156,6 +156,19 @@ def test_an_orphan_tool_result_and_a_bare_assistant_turn_never_reach_the_wire():
     assert "here is the answer" in text(sent)
 
 
+def test_an_oversize_orphan_result_is_withheld_with_a_label_never_deleted_to_an_empty_body():
+    """AUD3: a result whose call was folded away used to be deleted by the floor's orphan strip when the request was over
+    budget (kept as user text when it fit), so a body whose only message was an over-size orphan result shipped EMPTY, with no word.
+    It now rides as user-side evidence, and as the labelled not-delivered note when it cannot fit alone."""
+    big = "make: output line\n" * 20000
+    for msgs in ([{"role": "tool", "tool_call_id": "gone", "content": big}],
+                 [{"role": "system", "content": "s"}, {"role": "user", "content": "go"},
+                  {"role": "tool", "tool_call_id": "gone", "content": big}]):
+        sent = prep(msgs, window=4096)["messages"]
+        assert sent and "tool" not in [m["role"] for m in sent]
+        assert any("result-not-delivered" in str(m["content"]) and f"{len(big.encode()):,} bytes" in str(m["content"]) for m in sent)
+
+
 def test_the_alternation_merge_is_the_last_transform_so_a_late_appended_turn_cannot_undo_it():
     """nemotron-nano 1786243834: a user-side note appended AFTER role application broke alternation in six 400s
     (calls 0075-0081); the merge lives at the wire. Opt-in: without the hint bodies ship byte-identical."""
@@ -170,6 +183,21 @@ def test_the_alternation_merge_is_the_last_transform_so_a_late_appended_turn_can
     # the merge never folds a turn that carries tool calls
     two = [{"role": "assistant", "content": "a", "tool_calls": [{"id": "1"}]}, {"role": "assistant", "content": "b"}]
     assert len(massage.merge_for_alternation(two)) == 2
+
+
+def test_a_parallel_turns_results_merge_into_one_message_that_still_carries_every_result_in_call_order():
+    """The alternation merge cannot keep two `tool` messages (a strict template wants user-side and assistant turns to alternate), and an
+    empty assistant turn between them would be a turn nobody took. The merged message keeps the FIRST call's id (the template reads none) and
+    EVERY result's bytes in call order, so no result is lost; a merge is only ever a wire shape, applied to opted-in roles."""
+    calls = [{"id": f"c{i}", "type": "function", "function": {"name": "f", "arguments": "{}"}} for i in (1, 2)]
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "", "tool_calls": calls},
+            {"role": "tool", "tool_call_id": "c1", "content": "FIRST RESULT"},
+            {"role": "tool", "tool_call_id": "c2", "content": "SECOND RESULT"}]
+    sent = prep(msgs, **{bodykeys.MERGE_TURNS: True})["messages"]
+    assert alternates(sent) and [m["role"] for m in sent] == ["system", "user", "assistant", "tool"]
+    assert sent[-1]["tool_call_id"] == "c1" and sent[-1]["content"].index("FIRST RESULT") < sent[-1]["content"].index("SECOND RESULT")
+    assert prep(msgs)["messages"] == msgs
 
 
 def test_no_cria_internal_key_is_ever_serialized():

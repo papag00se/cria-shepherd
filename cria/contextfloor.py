@@ -599,6 +599,11 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     fits_at_start = est_total(messages, tools) <= target_est and not rep.tools_compressed
     work = list(messages)
     if est_total(messages, tools) > target_est:
+        # --- Orphan results the request ARRIVED with stay evidence, exactly as on the fitting path: a result whose
+        # call is gone (self-compaction folded it) is user text on the wire, never silently deleted by the strip below;
+        # one that cannot fit alone is withheld by the same labelled note as any other result.
+        work = _stand_in_arriving_orphans(work, tools, window=window, reserve=reserve, safety=safety,
+                                          overhead=rep.wire_overhead, notes=notes)
         # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
         work, rep.caller_reduced = _reduce_caller_spans(work)
         # --- Lever 2c: cria's own restored file text, derived and re-derivable, before any evidence.
@@ -627,6 +632,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
     rep.msg_tokens_after = _msgs_tokens(work)
     over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
+    protected_drops = _ProtectedDrops()     # levers 5 and 7 share it: one note for the protected span
     if over:
         # --- Lever 5 (LAST RESORT, ported from codex-local §27 drop_to_fit): the PROTECTED span
         # itself is over budget. That happens on long agentic conversations whose last USER
@@ -638,7 +644,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # recent tail — then re-strip orphans.
         hard_budget = max(target_est - tool_budget, MIN_MSG_BUDGET)
         work, rep.protected_dropped = _drop_protected_overflow(
-            work, msg_budget, sacrifice_budget=hard_budget, **protected)
+            work, msg_budget, sacrifice_budget=hard_budget, ledger=protected_drops, **protected)
         work, more_orphans = _strip_orphan_tools(work)
         rep.orphans_removed += more_orphans
         rep.msg_tokens_after = _msgs_tokens(work)
@@ -673,7 +679,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # read is protected: that overflow is answered by the read's own route (ReadFitOverflow, loop compaction).
         hard_budget = max(target_est - tool_budget, MIN_MSG_BUDGET)
         work, more = _drop_protected_overflow(
-            work, msg_budget, sacrifice_budget=hard_budget, tail_keep=RESULT_TURN_TAIL, **protected)
+            work, msg_budget, sacrifice_budget=hard_budget, tail_keep=RESULT_TURN_TAIL,
+            ledger=protected_drops, **protected)
         rep.protected_dropped += more
         work, more_orphans = _strip_orphan_tools(work)
         rep.orphans_removed += more_orphans
@@ -927,6 +934,44 @@ def _cap_descriptions(obj, cap: int):
     return obj
 
 
+def _orphan_result_as_user(message: dict, content=None) -> dict:
+    """A ``tool`` result whose call is gone, as the user-side evidence a strict template accepts: the content survives,
+    the invalid pairing does not. The one conversion, shared by the wire's integrity repair and the floor."""
+    if content is None:
+        content = message.get("content") if message.get("content") is not None else ""
+    return {"role": "user", "content": content,
+            bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE}
+
+
+def _stand_in_arriving_orphans(messages: list[dict], tools, *, window: int, reserve: int, safety: float,
+                               overhead: int, notes: list) -> list[dict]:
+    """Orphan results present when the floor starts, as user evidence (see :func:`ensure_tool_integrity`), those that
+    cannot fit even alone beside the frame (system text and the request) replaced by the labelled not-delivered note
+    instead. Before this, the strip that follows the drop levers deleted them with no word: a body whose only message
+    was an over-size orphan result shipped EMPTY."""
+    live_calls = {tc.get("id") for m in messages if m.get("role") == "assistant" for tc in m.get("tool_calls") or []}
+    if not any(m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls
+               for m in messages):
+        return messages
+    last_user = _last_user(messages)
+    frame = est_total([m for i, m in enumerate(messages)
+                       if m.get("role") in ("system", "developer") or i == last_user], tools)
+    out = []
+    for m in messages:
+        if not (m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls):
+            out.append(m)
+            continue
+        text = _msg_text(m)
+        if (est_tokens(text) + frame + overhead) * safety <= window - reserve or _marker_protected([m]):
+            out.append(_orphan_result_as_user(m))
+            continue
+        note = _orphan_result_as_user(m, _not_delivered_note(
+            text, None, tools, window=window, reserve=reserve, safety=safety, frame=(frame + overhead) * safety))
+        notes.append(note)
+        out.append(note)
+    return out
+
+
 def ensure_tool_integrity(messages: list[dict]) -> tuple[list[dict], int]:
     """UNCONDITIONAL last-mile guarantee that the message list is valid for a STRICT chat template — run
     on EVERY request, not only when the floor REDUCES. A ``tool`` result whose issuing ``assistant``
@@ -944,8 +989,7 @@ def ensure_tool_integrity(messages: list[dict]) -> tuple[list[dict], int]:
     out, n = [], 0
     for m in messages:
         if m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls:
-            out.append({"role": "user", "content": m.get("content") if m.get("content") is not None else "",
-                        bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE})
+            out.append(_orphan_result_as_user(m))
             n += 1
             continue
         out.append(m)
@@ -1017,17 +1061,11 @@ def _last_user(messages: list[dict]) -> int:
     return max((i for i, message in enumerate(messages) if _request_user(message)), default=-1)
 
 
-def _historical_annotation(message: dict) -> bool:
-    """Relocated historical wording is not live work, regardless of its position."""
-    return any(message.get(bodykeys.ANNOTATION_SOURCE) is source for source in (
-        bodykeys.AnnotationSource.INVENTORY, bodykeys.AnnotationSource.GUIDANCE_HISTORY))
-
-
 def _live_tail(messages: list[dict], keep: int = OVERFLOW_KEEP_TAIL) -> set[int]:
     """The newest ``keep`` live messages, closed over call/result pairs in BOTH directions. A cut through one parallel turn kept a
     result without its call (the orphan strip then deleted the very results the tail was there to keep) or a call without its
     other results; the unit the coder is answering is the call and all its results, whatever ``keep`` says."""
-    tail = set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-keep:])
+    tail = set([i for i, message in enumerate(messages) if not selfcompact.is_historical_annotation(message)][-keep:])
     while True:
         ids = {m.get("tool_call_id") for i, m in enumerate(messages) if i in tail and m.get("role") == "tool"}
         ids |= {tc.get("id") for i, m in enumerate(messages) if i in tail and m.get("role") == "assistant"
@@ -1056,7 +1094,7 @@ def _input_core(messages: list[dict], pinned_task: str, *, protected_call_ids=()
     # Reducible evidence is not the irreducible live input the reply room must yield to: counting the
     # restored file text here shrank the reply reserve by the block's size (reviewed on phi4 post-compaction
     # bodies: 1.7-2.3K tokens of room fell to 167-759).
-    keep -= {i for i, m in enumerate(messages) if _is_restored_text(m) or _historical_annotation(m)}
+    keep -= {i for i, m in enumerate(messages) if _is_restored_text(m) or selfcompact.is_historical_annotation(m)}
     keep |= _preserved_indices(messages, protected_call_ids)
     ids = {messages[i].get("tool_call_id") for i in keep if messages[i].get("role") == "tool"}
     keep.update(i for i, m in enumerate(messages)
@@ -1139,7 +1177,7 @@ def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_ca
     prot = [i in roots or i in preserved for i in range(n)]
     marked = _marker_protected(messages)
     for i, m in enumerate(messages):
-        if _historical_annotation(m):
+        if selfcompact.is_historical_annotation(m):
             continue  # relocation cannot promote historical wording into an active request/anchor
         if m.get("role") in ("system", "developer"):
             prot[i] = True
@@ -1174,9 +1212,17 @@ def _protected_mask(messages: list[dict], pinned_task: str = "", *, protected_ca
     return prot
 
 
+@dataclass
+class _ProtectedDrops:
+    """What :func:`_drop_protected_overflow` took out of the protected span, and the one note that stands for it. Lever 7 runs
+    on lever 5's output; carrying this between them keeps ONE note counting every turn gone, not a note per lever."""
+    removed: list = field(default_factory=list)
+    note: dict | None = None
+
+
 def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
                              sacrifice_budget: int | None = None, tail_keep: int = OVERFLOW_KEEP_TAIL,
-                             protected_call_ids=()) -> tuple[list[dict], int]:
+                             protected_call_ids=(), ledger: _ProtectedDrops | None = None) -> tuple[list[dict], int]:
     """Last resort when the PROTECTED span alone is over budget: drop its oldest turns,
     never touching (a) system/developer messages, (b) the last user message — the request
     being answered, (c) the trailing OVERFLOW_KEEP_TAIL messages — the active work. Drops
@@ -1184,11 +1230,17 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
     Protect-marked messages (the compacted-note summary, the briefing, the gate anchor) are
     dropped LAST — they are the summary standing in for everything already dropped, so losing
     one is the worst kind of loss; only sacrifice one when nothing unmarked remains to drop and
-    the window still doesn't fit (fit must be guaranteed or the model errors on every call)."""
-    work = list(messages)
+    the window still doesn't fit (fit must be guaranteed or the model errors on every call).
+
+    ``ledger`` carries an earlier call's drops: its note, still in ``messages``, is taken out and rewritten over every
+    turn dropped so far, so the model reads one note. The count returned is this call's own."""
+    ledger = _ProtectedDrops() if ledger is None else ledger
+    work = [m for m in messages if m is not ledger.note] if ledger.note is not None else list(messages)
+    if ledger.note is not None and len(work) == len(messages):
+        ledger.removed, ledger.note = [], None         # the earlier note is gone: nothing to merge into
     dropped = 0
-    removed: list[dict] = []
-    note = None
+    removed: list[dict] = ledger.removed
+    note = ledger.note
     # The stand-in note this lever appends counts against the budget too — dropping to exactly the
     # budget and THEN adding a note leaves the request over, which is how a "last resort" ended up
     # firing on nearly every request of a long run.
@@ -1197,7 +1249,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
         tail = _live_tail(work, tail_keep)
         preserved = _preserved_indices(work, protected_call_ids)
         def _droppable(i, m):
-            return (i not in preserved and ((_historical_annotation(m) or (i > last_user and i not in tail))
+            return (i not in preserved and ((selfcompact.is_historical_annotation(m) or (i > last_user and i not in tail))
                     and m.get("role") not in ("system", "developer")))
         # Prefer an unmarked victim; fall back to a protect-marked one only if nothing else is left.
         marked = _marker_protected(work)
@@ -1231,7 +1283,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
             break  # only the irreducible core remains
         removed.append(work.pop(victim))
         dropped += 1
-        note = _compacted_note(removed, dropped, msg_budget)
+        note = _compacted_note(removed, len(removed), msg_budget)
     if removed:
         # DISCLOSE the removal, exactly as _drop_oldest does. This lever silently popped whole turns —
         # including protect-marked anchors when nothing else was droppable — so the model's history had
@@ -1243,6 +1295,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
             if _request_user(m):
                 at = i + 1
         work.insert(at, note)
+        ledger.note = note
     return work, dropped
 
 

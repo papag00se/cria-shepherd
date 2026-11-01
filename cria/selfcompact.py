@@ -259,14 +259,14 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     # (scratch E2E c5, 16,384 window: 14 of 16 coder turns a `list_dir`, 0 edits). The newest message that is
     # actual work is kept, with its exchange.
     if budget_tokens > 0:
-        newest = max((n for n in range(head_end + 1, len(messages)) if not _historical_annotation(messages[n])),
+        newest = max((n for n in range(head_end + 1, len(messages)) if not is_historical_annotation(messages[n])),
                      default=None)
         if newest is not None and i > newest:
             i = newest
     return _whole_exchange_start(messages, i)
 
 
-def _historical_annotation(message: dict) -> bool:
+def is_historical_annotation(message: dict) -> bool:
     """A relocated record of earlier guidance or of the workspace listing: state, never a turn of work."""
     return any(message.get(bodykeys.ANNOTATION_SOURCE) is source for source in (
         bodykeys.AnnotationSource.INVENTORY, bodykeys.AnnotationSource.GUIDANCE_HISTORY))
