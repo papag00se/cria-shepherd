@@ -22,7 +22,8 @@ def reply(lines=BODY, name='app.py', close=True):
 
 class View:
     surveyed = complete = True
-    folded = False
+    authored_folds = ()
+    def folded_under(self, p): return False
     def __init__(self, files=None, dirs=('src',)): self.disk, self.dirs = files or {}, set(dirs)
     def rel(self, p): return None if p.startswith('/') or p.startswith('..') else p
     def abs(self, p): return '/w/' + p

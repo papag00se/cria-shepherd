@@ -5,9 +5,13 @@ import subprocess
 
 import pytest
 
-from cria import loop, wsview
+from cria import loop, pastedfile, wsview
 from cria.loop import PlanSession
 from cria.plan import Plan, PlanItem
+
+
+def resolve(view, name, task):
+    return pastedfile.resolve_named_file(view, name, task, loop._subject_is_exact_in_quote)
 
 
 def survey_view(root):
@@ -36,7 +40,7 @@ def tree(tmp_path, files):
 ])
 def test_a_named_file_resolves_to_exactly_one_path_or_a_reason_never_a_guess(tmp_path, name, task, expected):
     view = tree(tmp_path, ["src/app.py", "a/util.py", "b/util.py"])
-    got = loop._resolve_named_file(view, str(tmp_path / name) if name.startswith("src") else name, task)
+    got = resolve(view, str(tmp_path / name) if name.startswith("src") else name, task)
     assert got == expected
 
 
@@ -47,8 +51,8 @@ def test_a_listing_with_a_folded_directory_cannot_prove_a_bare_name_unique_or_a_
     (tmp_path / "keep.py").write_text("1\n")
     view = survey_view(tmp_path)
     assert view.folded
-    assert loop._resolve_named_file(view, "Importer.java", "make Importer.java") == "listing_incomplete"
-    assert loop._resolve_named_file(view, "big/f1.txt", "") == "listing_incomplete"      # nothing under a fold is proven either way
+    assert resolve(view, "Importer.java", "make Importer.java") == "listing_incomplete"
+    assert resolve(view, "big/f1.txt", "") == "listing_incomplete"      # nothing under a fold is proven either way
 
 
 @pytest.mark.parametrize("command,whole", [

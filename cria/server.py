@@ -645,7 +645,7 @@ def _workspace_listing(ws: str | None) -> str:
         return ""
     # This shallow names-only appendix is not an absence check. It must still carry
     # the survey's independent coverage and freshness limits into the frozen handoff.
-    if not view.complete or view.folded:
+    if not view.complete or view.authored_folds:
         lines.append(labels["partial"])
     if view.may_have_changed:
         lines.append(labels["stale"])

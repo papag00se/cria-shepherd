@@ -6308,43 +6308,6 @@ def _injected_fence_texts(sess, messages: list[dict] | None = None) -> list[str]
     return out
 
 
-def _resolve_named_file(view, name: str, task: str):
-    """``(workspace-relative path, exists)`` for a file name the model WROTE, or the refusal reason.
-
-    ONE file or nothing — the model's words are never turned into a guess: an exact path wins; else a
-    suffix match over the listing, which must be unique and which is only trusted when the listing is
-    complete (a folded directory might hold a second `Importer.java`). A name that matches nothing is
-    a NEW file only when the task itself contains it verbatim — the operator's own words name the
-    deliverable, so cria is not choosing a location — and its parent directory is known to exist."""
-    rel = view.rel(name)
-    if rel is None or not rel:
-        return "outside_workspace"
-    if view.isdir(rel) is True:
-        return "names_a_directory"
-    if "/" in rel and view.isfile(rel) is True:
-        return rel, True                     # a qualified path that exists IS the file
-    # EVERYTHING ELSE needs the whole tree: a bare name is unique only over a COMPLETE, UNFOLDED listing
-    # (a folded directory is listed as a count and might hold a second `Importer.java`), a suffix match
-    # likewise, and "no such file" — the new-file branch — is only a fact when nothing is hidden. A
-    # qualified name on a partial listing is refused for the same reason.
-    if not view.complete or view.folded:
-        return "listing_incomplete"
-    listed = [r for r in (view.rel(e.path) for e in (view.files() or [])) if r]
-    hits = [r for r in listed if r == rel or r.endswith("/" + rel)]
-    if len(hits) > 1:
-        return "ambiguous_path"
-    if len(hits) == 1:
-        return hits[0], True
-    # A NEW file: the task itself must name this very path as a whole token (`REVIEW.md` is not named by
-    # a task that says `docs/REVIEW.md`; the same test F7 uses for a task-named subject).
-    if not _subject_is_exact_in_quote(rel, task or ""):
-        return "unnamed_new_file"
-    parent = posixpath.dirname(rel)
-    if parent and view.isdir(parent) is not True:
-        return "unknown_parent"
-    return rel, False
-
-
 def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
     """Does the coder HOLD this workspace file's whole text — a whole read whose result is still in the
     conversation, or its own whole write (the ledger of those is durable: cria composed the bytes)?
@@ -6529,11 +6492,13 @@ def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
 
 def _note_survey_baseline(sess, root) -> None:
     """Remember the first COMPLETE survey's file sizes and mtimes, once per session. An incomplete or
-    folded listing is no baseline: a later "unchanged" would be measured against a partial picture."""
+    folded listing is no baseline: a later "unchanged" would be measured against a partial picture. A
+    toolchain's build output folded by name (`target/` beside Cargo.toml) hides nothing the author
+    wrote, so it does not make the picture partial (`View.authored_folds`)."""
     if getattr(sess, "survey_baseline", None) is not None or not root:
         return
     view = wsview.current(root)
-    if not view.surveyed or not view.complete or view.folded:
+    if not view.surveyed or not view.complete or view.authored_folds:
         return
     sess.survey_baseline = {r: (e.size, e.mtime) for e in view.files() or []
                             if (r := view.rel(e.path))}

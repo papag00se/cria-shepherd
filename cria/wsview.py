@@ -724,6 +724,19 @@ class View:
         """Directories listed only as a count — questions inside them answer ``None``."""
         return sorted(self._folded)
 
+    @property
+    def authored_folds(self) -> list[str]:
+        """Folded directories that may hold files the project's author wrote: every fold EXCEPT a toolchain's build output
+        (a directory the survey named on its manifest's proof, ``build_output``). A reader that asks "did the listing leave out
+        anything the author wrote?" asks this; ``folded`` also holds ``target/``, whose generated interior is nobody's file.
+        The root folded on its own ("") counts."""
+        return sorted(d for d in self._folded if d not in self._outputs)
+
+    def folded_under(self, path) -> bool:
+        """The path is a folded directory or inside one — whatever is there is unknown, build output included."""
+        rel = self.rel(path)
+        return rel is not None and self._folded_under(rel)
+
     def build_output(self, path) -> str | None:
         """The proof (``"Cargo.toml beside it"``) that the survey folded this directory as a toolchain's build output, or None
         for any other directory. Folded or not, its interior is unknown; this says WHY nobody looked."""

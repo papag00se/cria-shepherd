@@ -26,7 +26,8 @@ class Log(Protocol):
 class Workspace(Protocol):
     surveyed: bool
     complete: bool
-    folded: bool
+    authored_folds: list
+    def folded_under(self, path: str) -> bool: ...
     def rel(self, path: str) -> str | None: ...
     def abs(self, path: str) -> str: ...
     def isdir(self, path: str) -> bool | None: ...
@@ -159,7 +160,9 @@ def resolve_named_file(view: Workspace, name: str, task: str,
         return "names_a_directory"
     if "/" in rel and view.isfile(rel) is True:
         return rel, True
-    if not view.complete or view.folded:
+    # A folded directory might hold a second copy of a bare name; a toolchain's build output folded by name
+    # holds none the author wrote, so only an authored fold, or a name inside any fold, makes this unprovable.
+    if not view.complete or view.authored_folds or view.folded_under(rel):
         return "listing_incomplete"
     listed = [r for r in (view.rel(e.path) for e in (view.files() or [])) if r]
     hits = [r for r in listed if r == rel or r.endswith("/" + rel)]
