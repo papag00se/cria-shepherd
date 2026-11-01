@@ -192,6 +192,9 @@ _KILL_WRAPPERS = {
     "nice": (frozenset({"-n", "--adjustment"}), 0), "setsid": (frozenset(), 0),
     "stdbuf": (frozenset({"-i", "-o", "-e"}), 0), "ionice": (frozenset({"-c", "-n", "-p", "-P", "-u"}), 0),
     "xargs": (frozenset({"-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a", "--max-args", "--max-procs", "--delimiter"}), 0),
+    "pkexec": (frozenset({"--user"}), 0),
+    "run0": (frozenset({"-u", "-g", "-D", "--user", "--group", "--chdir", "--unit", "--property", "--slice", "--nice", "--setenv",
+                         "--description", "--background", "--machine"}), 0),
 }
 _KILL_DEPTH = 6
 
@@ -259,22 +262,32 @@ def _kills_by_selector(words: list[str], marks: str) -> bool:
     return False
 
 
-def _kill_in_script(script: str, depth: int = 0, inherited: str = "") -> bool:
-    """Does any COMMAND in this script (each segment's command word, through wrappers, `bash -c` bodies,
-    `find -exec`, `eval` and command substitutions) kill by an unbounded selector? A bounded backstop: a kill
-    word that is only an argument (`echo pkill -f x`, `grep pkill file`, `man kill`) is prose and is admitted.
-    Text it cannot tokenize is not judged here: `command_refusal` has already refused it as unproven."""
+def _kill_in_script(script: str) -> bool:
+    """Does any COMMAND in this script kill by an unbounded selector? See `_judge_commands` for what is walked."""
+    return bool(_judge_commands(script, lambda words, marks, _targets: _kills_by_selector(words, marks)))
+
+
+def _judge_commands(script: str, judge, depth: int = 0, inherited: str = ""):
+    """The first truthy ``judge(words, marks, targets)`` over every COMMAND in this script (each segment's
+    command word, through wrappers, `bash -c` bodies, `find -exec`, `eval` and command substitutions), else None.
+    ``words`` has its wrappers removed; ``marks`` are the placeholder characters standing for a substitution
+    (`kill $(pgrep x)` reaches the judge as `kill <mark>`); ``targets`` are the segment's write targets and
+    redirect outputs. A bounded backstop: a command word that is only an argument (`echo pkill -f x`,
+    `grep pkill file`, `man kill`) is prose and is admitted. Text it cannot tokenize is not judged here:
+    `command_refusal` refuses it as unproven at the levels that judge paths."""
     if depth > _KILL_DEPTH:
-        return False
+        return None
     layout = shellinput.layout(script)          # a heredoc body is data, in a substitution body as at the top
     if layout.error:
-        return False
+        return None
     script = layout.shell
     subs, unknown = shellinput.expansions(script, shell=True)
     if unknown:
-        return False
-    if any(_kill_in_script(sub.text(script), depth + 1) for sub in subs):
-        return True
+        return None
+    for sub in subs:
+        found = _judge_commands(sub.text(script), judge, depth + 1)
+        if found:
+            return found
     mark = next((chr(c) for c in range(0xE000, 0xF8FF) if chr(c) not in script and chr(c) not in inherited), "\ue000")
     marks = inherited + mark
     flat, last = [], 0
@@ -285,11 +298,12 @@ def _kill_in_script(script: str, depth: int = 0, inherited: str = "") -> bool:
     flat.append(script[last:])
     commands = _input_commands("".join(flat), unwrap=False)
     if commands is None:
-        return False
-    for _s, _e, words, _targets, _inputs in commands:
+        return None
+    for _s, _e, words, targets, _inputs in commands:
         words = _wrapped_command(words)
-        if _kills_by_selector(words, marks):
-            return True
+        found = judge(words, marks, targets)
+        if found:
+            return found
         if not words:
             continue
         name, args = _program_name(words[0]), words[1:]
@@ -305,11 +319,14 @@ def _kill_in_script(script: str, depth: int = 0, inherited: str = "") -> bool:
                         if word in (";", "+"):
                             break
                         run.append(word)
-                    if _kills_by_selector(_wrapped_command(run), marks):
-                        return True
-        if any(body and _kill_in_script(_unescaped(body), depth + 1, marks) for body in bodies):
-            return True
-    return False
+                    found = judge(_wrapped_command(run), marks, [])
+                    if found:
+                        return found
+        for body in bodies:
+            found = body and _judge_commands(_unescaped(body), judge, depth + 1, marks)
+            if found:
+                return found
+    return None
 
 
 def kill_refusal(command: str, level: str) -> str | None:
@@ -330,6 +347,319 @@ def kill_refusal(command: str, level: str) -> str | None:
     if not _kill_in_script(command):
         return None
     return prompts.load("pattern_kill_refusal")
+
+
+# MACHINE-WIDE AND REMOTE HARM: commands whose damage is not to a PATH at all, so no permission level about
+# directories can describe it. Each one takes down something every other process, person or session on this
+# machine depends on, or destroys work outside the machine. Refused at EVERY level, like root deletion: `write`
+# means the operator accepted external file access, not losing the desktop, the disk or a remote repository.
+#
+# MEASURED, 2026-10-31: an evasion probe executed `kill -9 -1` through `bash -c`. The builtin signalled every
+# process the user owned: the compositor, the agent host and every agent on the machine. The desktop stayed
+# black until a hardware reset. An earlier incident deleted every file on the machine. `kill_refusal` admitted
+# `kill -9 -1` at every level: it judges selectors (`pkill`, `kill $(pgrep …)`), and `-1` is a literal operand.
+#
+# Judged per COMMAND WORD through `_judge_commands` (wrappers, `bash -c`, `eval`, `find -exec`, substitutions)
+# plus the exec calls of interpreter one-liners. Read-only forms of the same tools (`fdisk -l`, `parted … print`,
+# `systemctl status`, `ip link show`, `iptables -L`, `crontab -l`, `kill <pid>`) are admitted. Not seen, as for
+# the kill reader: a function body, a saved or sourced script, `ssh host …`, a wrapper outside `_KILL_WRAPPERS`.
+_BLOCK_DEVICE = re.compile(r"^/dev/(?:sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+(?:n\d+)?|mmcblk\d+|dm-\d+|md\d+|loop\d+"
+                           r"|zram\d+|root|mapper/.+|disk/.+)(?:p?\d+)?$")
+_SYSTEM_TREES = frozenset({"/", "/usr", "/etc", "/bin", "/sbin", "/lib", "/lib64", "/var", "/boot", "/opt", "/home", "/root"})
+_ACCOUNT_FILES = ("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow", "/etc/fstab", "/etc/crypttab",
+                  "/etc/sudoers", "/etc/sudoers.d", "/boot", "/efi", "/proc/sysrq-trigger", "/sys/power/state")
+_SESSION_PROCESSES = frozenset({"hyprland", "sway", "niri", "gnome-shell", "kwin_wayland", "kwin_x11", "plasmashell", "xorg",
+                                "xwayland", "sddm", "gdm", "lightdm", "greetd", "systemd", "init", "uwsm", "dbus-daemon",
+                                "dbus-broker", "systemd-logind", "paseo", "paseo.bin", "sshd", "networkmanager", "tailscaled"})
+_CRITICAL_UNITS = ("*.target", "*.mount", "*.swap", "display-manager*", "sddm*", "gdm*", "lightdm*", "greetd*", "systemd-logind*",
+                   "dbus*", "networkmanager*", "systemd-networkd*", "systemd-resolved*", "wpa_supplicant*", "iwd*", "sshd*",
+                   "ssh.*", "tailscaled*", "nordvpnd*", "user@*", "user-runtime-dir@*", "paseo*", "cria*", "systemd-journald*")
+_CRITICAL_PACKAGES = re.compile(r"^(?:linux(?:-[\w.-]+)?|glibc|libc6|systemd|base|sudo|pacman|apt|dpkg|bash|coreutils|filesystem|"
+                                r"util-linux|grub|limine|efibootmgr|mkinitcpio|cryptsetup|btrfs-progs|networkmanager|openssh|"
+                                r"hyprland|uwsm|sddm|nvidia[\w-]*|mesa)$", re.IGNORECASE)
+_POWER_VERBS = frozenset({"reboot", "poweroff", "halt", "kexec", "soft-reboot", "suspend", "hibernate", "hybrid-sleep",
+                          "suspend-then-hibernate", "sleep"})
+_SYSTEMCTL_VALUE_OPTS = frozenset({"-t", "--type", "-p", "--property", "-H", "--host", "-M", "--machine", "-s", "--signal",
+                                   "--kill-whom", "--kill-value", "-n", "--lines", "-o", "--output", "--state", "--root",
+                                   "--when", "--message", "--job-mode", "--what", "--timestamp"})
+_ALL_MATCHING_PATTERNS = frozenset({"", ".", ".*", ".+", "^", "$", "^.*", "^.*$", "*"})
+_EXEC_CALL = re.compile(r"(?:os\.system|os\.popen|subprocess\.\w+|Popen|check_output|check_call|execSync|execFileSync|execFile|exec|"
+                        r"spawnSync|spawn|system|qx)\s*\(\s*(\[[^\]]*\]|(['\"]).*?(?<!\\)\2)", re.DOTALL)
+_STRING_LITERAL = re.compile(r"(['\"])(.*?)(?<!\\)\1", re.DOTALL)
+_INTERPRETER_SIGNAL_ALL = re.compile(r"\bos\.kill\(\s*(?:-\d+|0)\s*,|\bos\.killpg\(|\bkill\s*\(?\s*['\"\w-]+\s*,\s*(?:-\d+|0)\b"
+                                     r"|process\.kill\(\s*(?:-\d+|0)\b|Process\.kill\([^)]*,\s*(?:-\d+|0)\s*\)")
+_INTERPRETERS = re.compile(r"^(?:python[\d.]*|perl|ruby|node|nodejs|deno|bun|php)$")
+_FORK_BOMB = re.compile(r"([\w:.]+)\s*\(\s*\)\s*\{[^}]*\1\s*\|\s*\1\s*&")
+_SQL_DESTROY = re.compile(r"\b(?:drop\s+(?:database|schema|table)|truncate\b|dropDatabase\s*\(|flushall\b|flushdb\b)", re.IGNORECASE)
+
+
+def _operands_of(args: list[str]) -> list[str]:
+    return [a for a in args if not a.startswith("-")]
+
+
+def _kill_targets(args: list[str]) -> list[str]:
+    """The pid operands of `kill`: after one signal option (`-9`, `-KILL`, `-s KILL`, `-n 9`) and an optional `--`."""
+    if args[:1] in (["-l"], ["-L"]):
+        return []
+    i = 2 if args[:1] in (["-s"], ["-n"]) else (1 if args and args[0].startswith("-") and args[0] != "--" else 0)
+    if args[i:i + 1] == ["--"]:
+        i += 1
+    return args[i:]
+
+
+def _signal_all(name: str, args: list[str]) -> bool:
+    if name == "killall5":
+        return True
+    if name == "kill":
+        # `-1` is every process the caller may signal; `0` / `-N` a whole process group; `1` init; `$PPID` the caller's own host.
+        return any(t in ("0", "-0", "1") or (t.startswith("-") and len(t) > 1) or "PPID" in t for t in _kill_targets(args))
+    if name in ("pkill", "killall", "skill", "slay"):
+        flags = ("-u", "-U", "-G", "-g", "-s", "-P", "--uid", "--euid", "--user", "--group", "--pgroup", "--session", "--parent")
+        if any(a == f or (a.startswith(f) and len(f) == 2 and not a.startswith("--")) or a.startswith(f + "=")
+               for a in args for f in flags):
+            return True
+        ops = _operands_of(args)
+        return (not ops and "''" in args) or any(o in _ALL_MATCHING_PATTERNS for o in ops) or \
+            any(os.path.basename(o).lower() in _SESSION_PROCESSES for o in ops)
+    return False
+
+
+def _systemctl_harm(args: list[str]) -> str | None:
+    rest, i = [], 0
+    while i < len(args):
+        a = args[i]
+        if a in _SYSTEMCTL_VALUE_OPTS:
+            i += 2
+            continue
+        if not a.startswith("-"):
+            rest.append(a)
+        i += 1
+    if not rest:
+        return None
+    verb, units = rest[0], rest[1:]
+    if verb in _POWER_VERBS:
+        return "power"
+    if verb in ("isolate", "rescue", "emergency", "exit", "switch-root", "default"):
+        return "session"
+    if verb in ("stop", "kill", "restart", "try-restart", "reload-or-restart", "mask", "freeze", "clean") or (
+            verb == "disable" and "--now" in args):
+        for unit in units:
+            unit = unit.lower()
+            if any(c in unit for c in "*?[") or any(fnmatchcase(unit, p) for p in _CRITICAL_UNITS):
+                return "session"
+    return None
+
+
+def _disk_harm(name: str, args: list[str]) -> bool:
+    devices = [a for a in args if _BLOCK_DEVICE.match(a.split("=", 1)[-1])]
+    if name == "dd":
+        return any(a.startswith("of=") and _BLOCK_DEVICE.match(a[3:]) for a in args)
+    if name == "cryptsetup":
+        return any(v in args for v in ("luksFormat", "luksErase", "erase", "luksKillSlot", "luksRemoveKey", "reencrypt",
+                                       "luksSuspend", "close", "luksClose", "remove"))
+    if name in ("lvremove", "vgremove", "pvremove", "lvreduce", "wipe"):
+        return True
+    if name in ("zpool", "zfs"):
+        return any(v in args for v in ("destroy", "labelclear"))
+    if name == "mdadm":
+        return any(a in args for a in ("--zero-superblock", "--stop", "-S", "--fail", "--remove"))
+    if name == "btrfs":
+        return any(a in ("delete", "remove") for a in args) and any(o.rstrip("/") in _SYSTEM_TREES or o == "/" for o in args)
+    if not devices:
+        return False
+    if name.startswith("mkfs") or name in ("mke2fs", "mkswap", "mkntfs", "mkdosfs", "mkexfatfs", "blkdiscard", "shred",
+                                           "ddrescue", "cp", "tee", "pv"):
+        return True
+    if name == "wipefs":
+        return any(a in ("-a", "--all", "-o", "--offset") or a.startswith("--offset=") for a in args) and \
+            not any(a in ("-n", "--no-act") for a in args)
+    if name in ("fdisk", "gdisk", "cfdisk"):
+        return not any(a in ("-l", "--list") for a in args)
+    if name == "sfdisk":
+        return not any(a in ("-l", "--list", "-d", "--dump", "-J", "--json", "-s", "--show-size", "-V", "--verify") for a in args)
+    if name == "sgdisk":
+        read_only = {"-p", "--print", "-i", "--info", "-v", "--verify", "-O", "--print-mbr", "-L", "--list-types", "-P", "--pretend"}
+        return any(a.startswith("-") and a.split("=", 1)[0] not in read_only and not a[1:2].isdigit() for a in args)
+    if name == "parted":
+        return any(a in ("mklabel", "mktable", "mkpart", "rm", "resizepart", "name", "set", "toggle", "rescue", "disk_set") for a in args)
+    if name == "hdparm":
+        return any(a.startswith(("--security-erase", "--trim-sector-ranges", "--write-sector", "--fwdownload", "--make-bad-sector",
+                                 "--dco-restore", "--security-set-pass", "--yes-i-know-what-i-am-doing")) for a in args)
+    if name == "badblocks":
+        return "-w" in args
+    if name == "nvme":
+        return any(v in args for v in ("format", "sanitize", "delete-ns", "detach-ns", "fw-download", "fw-commit", "write-zeroes",
+                                       "write", "dsm"))
+    return False
+
+
+def _network_harm(name: str, args: list[str]) -> bool:
+    words = [a.lower() for a in args]
+    if name == "nmcli":
+        ops = _operands_of(words)
+        if ops[:2] == ["networking", "off"] or (ops[:1] == ["radio"] and "off" in ops):
+            return True
+        return ops[:1] in (["connection"], ["con"], ["c"], ["device"], ["dev"], ["d"]) and \
+            any(v in ops[1:2] for v in ("down", "delete", "del", "disconnect"))
+    if name == "ip":
+        ops = _operands_of(words)
+        return (ops[:2] == ["link", "set"] and "down" in ops) or (ops[:1] in (["addr"], ["address"], ["a"]) and
+               ops[1:2] in (["flush"], ["del"])) or (ops[:1] in (["route"], ["r"]) and ops[1:2] in (["flush"], ["del"], ["delete"]))
+    if name == "ifconfig":
+        return "down" in words
+    if name in ("ifdown", "rfkill"):
+        return name == "ifdown" or "block" in words
+    if name in ("iptables", "ip6tables", "iptables-nft", "iptables-legacy"):
+        return any(a in ("-F", "--flush", "-X", "--delete-chain", "-P", "--policy") for a in args)
+    if name == "nft":
+        return "flush" in words or "delete" in words
+    if name == "ufw":
+        return any(v in words for v in ("reset", "disable"))
+    if name == "tailscale":
+        return any(v in words for v in ("down", "logout"))
+    if name == "wg-quick":
+        return "down" in words
+    if name == "nordvpn":
+        return any(v in words for v in ("d", "disconnect", "logout")) or ("killswitch" in words and "on" in words)
+    return False
+
+
+def _system_config_harm(name: str, args: list[str], targets: list[str], marks: str) -> bool:
+    for target in targets:
+        path = os.path.normpath(target) if target.startswith("/") else ""
+        if path and any(path == p or path.startswith(p + "/") for p in _ACCOUNT_FILES):
+            return True
+    if name == "passwd":
+        return any(a in ("-l", "--lock", "-d", "--delete", "-e", "--expire") for a in args)
+    if name == "usermod":
+        return any(a in ("-L", "--lock", "-e", "--expiredate", "-s", "--shell", "-l", "--login", "-u", "--uid", "-d", "--home",
+                         "-G", "--groups") for a in args)
+    if name in ("userdel", "deluser", "groupdel", "delgroup", "chsh", "grub-install", "vipw", "visudo"):
+        return name != "visudo" or "-c" not in args
+    if name == "crontab":
+        return any(a in ("-r", "--remove") or (a.startswith("-") and not a.startswith("--") and "r" in a) for a in args)
+    if name == "efibootmgr":
+        return any(a in ("-B", "--delete-bootnum", "-o", "--bootorder", "-O", "--delete-bootorder", "-A", "--inactive",
+                         "-c", "--create") for a in args)
+    if name == "bootctl":
+        return any(v in args for v in ("remove", "install", "update", "set-default", "unlink"))
+    if name in ("chmod", "chown", "chgrp", "setfacl"):
+        recursive = any(a in ("-R", "--recursive") or (a.startswith("-") and not a.startswith("--") and "R" in a) for a in args)
+        return recursive and any(os.path.normpath(o) in _SYSTEM_TREES for o in _operands_of(args) if o.startswith("/"))
+    if name in ("umount", "swapoff"):
+        return "-a" in args or "--all" in args or any(os.path.normpath(o) in _SYSTEM_TREES for o in _operands_of(args) if o.startswith("/"))
+    if name == "mount":
+        ops = [os.path.normpath(o) for o in _operands_of(args) if o.startswith("/")]
+        return any(a in ("--bind", "-B", "--rbind", "--move", "-M", "-o") for a in args) and bool(ops) and ops[-1] in _SYSTEM_TREES
+    if name in ("pacman", "yay", "paru"):
+        removing = any(a.startswith("-R") or a == "--remove" for a in args)
+        return removing and any(_CRITICAL_PACKAGES.match(o) or any(m in o for m in marks) for o in _operands_of(args))
+    if name in ("apt", "apt-get", "dnf", "yum", "zypper"):
+        ops = _operands_of(args)
+        return ops[:1] in (["remove"], ["purge"], ["autoremove"], ["erase"]) and any(_CRITICAL_PACKAGES.match(o) for o in ops[1:])
+    if name in ("sysctl",):
+        return any(a.startswith(("kernel.panic", "kernel.sysrq", "vm.panic_on_oom")) for a in args) and any("=" in a for a in args)
+    return False
+
+
+def _remote_harm(name: str, args: list[str], marks: str) -> bool:
+    if name == "git":
+        i = 0
+        while i < len(args) and args[i].startswith("-"):
+            i += 2 if args[i] in ("-C", "-c") else 1
+        sub, rest = (args[i], args[i + 1:]) if i < len(args) else ("", [])
+        if sub != "push":
+            return False
+        return any(a in ("-f", "--force", "--mirror", "--delete", "-d", "--prune") or a.startswith(("--force-with-lease", "--force-if-includes"))
+                   or (a.startswith("-") and not a.startswith("--") and "f" in a)
+                   or (not a.startswith("-") and (a.startswith("+") or a.startswith(":") or "+refs/" in a)) for a in rest)
+    ops = _operands_of(args)
+    if name == "gh":
+        method = next((args[j + 1] for j, a in enumerate(args[:-1]) if a in ("-X", "--method")), "")
+        return "delete" in ops or "archive" in ops or method.upper() == "DELETE" or any(a.upper() in ("-XDELETE", "--METHOD=DELETE") for a in args)
+    if name in ("aws", "gcloud", "az", "doctl", "flyctl", "fly", "heroku", "vercel", "netlify", "wrangler"):
+        return (ops[:2] == ["s3", "rm"] and ("--recursive" in args or "-r" in args)) or ops[:2] == ["s3", "rb"] or \
+            any(o.startswith(("delete", "terminate", "destroy", "remove")) or o in ("rm", "rb", "purge") for o in ops[1:])
+    if name in ("terraform", "tofu", "pulumi", "cdk"):
+        return "destroy" in ops or "-destroy" in args or "--destroy" in args
+    if name in ("kubectl", "oc", "helm"):
+        return any(v in ops for v in ("delete", "uninstall", "drain")) or ("scale" in ops and any("replicas=0" in a for a in args))
+    if name in ("docker", "podman", "nerdctl"):
+        if "prune" in ops or ops[:2] in (["volume", "rm"], ["volume", "remove"]):
+            return True
+        return ops[:1] in (["rm"], ["stop"], ["kill"], ["rmi"]) and any(m in a for a in args for m in marks) or \
+            (ops[:1] in (["rm"], ["stop"], ["kill"]) and any(a in ("-a", "--all") for a in args))
+    if name in ("psql", "mysql", "mariadb", "mongosh", "mongo", "redis-cli", "sqlcmd", "cqlsh", "clickhouse-client"):
+        return any(_SQL_DESTROY.search(a) for a in args)
+    return False
+
+
+def _interpreter_harm(name: str, args: list[str], depth: int) -> str | None:
+    """An interpreter one-liner (`python3 -c`, `perl -e`, `node -e`): its own signal-everything call, and the shell
+    commands its exec calls carry (`os.system('reboot')`, `subprocess.run(['kill', '-9', '-1'])`)."""
+    body = next((args[j + 1] for j, a in enumerate(args[:-1]) if a in ("-c", "-e", "-E", "--eval", "-r")), None)
+    if body is None:
+        return None
+    if _INTERPRETER_SIGNAL_ALL.search(body):
+        return "signal_all"
+    for call in _EXEC_CALL.finditer(body):
+        arg = call.group(1)
+        command = shlex.join(m.group(2) for m in _STRING_LITERAL.finditer(arg)) if arg.startswith("[") else arg[1:-1]
+        found = _judge_commands(command, _machine_harm_judge, depth + 1) if command else None
+        if found:
+            return found
+    return None
+
+
+def _machine_harm_judge(words: list[str], marks: str, targets: list[str]) -> str | None:
+    """The harm category of ONE command (wrappers already removed), or None."""
+    if not words:
+        return None
+    name, args = _program_name(words[0]), words[1:]
+    if _signal_all(name, args):
+        return "signal_all"
+    if name in ("shutdown", "reboot", "poweroff", "halt") or (name == "kexec" and "-e" in args) or \
+            name in ("omarchy-system-reboot", "omarchy-system-shutdown", "omarchy-toggle-suspend") or \
+            (name in ("telinit", "init") and any(a in ("0", "1", "6", "s", "S", "single", "rescue") for a in args)):
+        return "power"
+    if name == "systemctl":
+        return _systemctl_harm(args)
+    if name == "loginctl":
+        verb = next(iter(_operands_of(args)), "")
+        if verb in _POWER_VERBS:
+            return "power"
+        if verb in ("terminate-user", "kill-user", "terminate-session", "kill-session", "terminate-seat"):
+            return "session"
+        return None
+    if (name == "hyprctl" and re.search(r"\bdispatch\s+exit\b", " ".join(args))) or (name == "uwsm" and "stop" in args) or \
+            (name in ("swaymsg", "i3-msg") and "exit" in args) or (name == "niri" and "quit" in args) or \
+            name in ("gnome-session-quit", "omarchy-system-logout") or \
+            (name == "nvidia-smi" and any(a in ("-r", "--gpu-reset") for a in args)):
+        return "session"
+    if _disk_harm(name, args) or any(_BLOCK_DEVICE.match(t) for t in targets):
+        return "disk"
+    if _network_harm(name, args):
+        return "network"
+    if _system_config_harm(name, args, targets, marks):
+        return "system_config"
+    if _remote_harm(name, args, marks):
+        return "remote"
+    if _INTERPRETERS.match(name):
+        return _interpreter_harm(name, args, 0)
+    return None
+
+
+def machine_harm_refusal(command: str) -> str | None:
+    """The refusal for a command that would take down this machine, its session, its disks or its network, or
+    destroy remote work, at ANY permission level; None otherwise. Same posture as `root_recursive_delete_refusal`:
+    a bounded lexical backstop for an untrusted model, not a sandbox."""
+    if not command:
+        return None
+    if _FORK_BOMB.search(command):
+        found = "fork_bomb"
+    else:
+        found = _judge_commands(command, _machine_harm_judge)
+    return prompts.load_map("machine_harm_refusal")[found] if found else None
 
 
 def install_refusal(command: str, level: str, workspace: str | None) -> str | None:
@@ -2459,9 +2789,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
     if not command:
         return None
-    # Root deletion is independent of external permission. Input execution is
+    # Root deletion and machine-wide harm are independent of external permission. Input execution is
     # judged separately below, never confused with a cat's literal stdin.
-    root_delete = root_recursive_delete_refusal(command)
+    root_delete = root_recursive_delete_refusal(command) or machine_harm_refusal(command)
     if root_delete or level == "write":
         return root_delete
     home_delete = home_recursive_delete_refusal(command, level)

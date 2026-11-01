@@ -176,12 +176,12 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
     marker) are exempt — trusted and always workspace-scoped. See cria/dirguard.py."""
     if is_shell_tool_name(name):
         command = _command_of(fn.get("arguments"))
-        root_delete = dirguard.root_recursive_delete_refusal(command)
-        if root_delete:
-            return root_delete
+        every_level = dirguard.root_recursive_delete_refusal(command) or dirguard.machine_harm_refusal(command)
+        if every_level:
+            return every_level
     if not workspace:
         return None
-    if level == "write":  # unrestricted external-directory permission, except root-wide recursive deletion
+    if level == "write":  # unrestricted external-directory permission, except root deletion and machine-wide harm
         return None
     if name in injected:  # a synthetic file tool cria advertised → explicit path + operation
         target = _guarded_path(name, args)

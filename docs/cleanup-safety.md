@@ -125,3 +125,25 @@ This regression failed with the prior implementation, which emitted the write wh
 its judge was unavailable. The replacement blocks the same source without inference.
 The old fake-judge tests were retargeted to actual analysis and preserved incident,
 stale-edit, repair, missing-source, inert-text and no-inference coverage.
+
+## Machine-wide and remote harm (raw shell)
+
+`dirguard.machine_harm_refusal` refuses, at every external-directory level (like root deletion), raw shell commands whose damage is not to a path:
+
+- **Every process at once:** `kill -1`, `kill 0`, `kill 1`, process groups, `killall5`, user-wide or match-everything `pkill`/`killall`, and killing the compositor, login manager or agent host.
+- **Power and session:** reboot, poweroff, suspend, logout, `loginctl terminate-*`, and `systemctl` stop/mask/isolate of targets, mounts, login, network, remote-access and agent-host units. Also resetting the graphics card.
+- **Disks:** whole-disk writes, formatting, partitioning, wiping and unlocking.
+- **Network:** taking the network down, and firewall/VPN resets.
+- **Accounts and boot:** account and boot changes, critical-package removal, recursive permission changes on system trees, and unmounting or bind-mounting over system trees.
+- **Remote work:** force or delete pushes, deleting hosted repositories or releases, cloud deletes, `terraform destroy`, `kubectl delete`, container mass removal and database drops.
+- **Fork bombs.**
+
+Read-only forms of the same tools pass. Interpreter one-liners are judged for their own signal-everything calls and for the shell commands their exec calls carry.
+
+Incident 2026-10-31: an evasion probe run by a development agent executed `kill -9 -1`. It killed every process the user owned and the machine needed a hardware reset. The guard admitted that command at every level.
+
+Not covered by design: anything inside the workspace (`rm -rf .`, local git resets), resource exhaustion other than the classic fork bomb, a function body, a saved or sourced script, and `ssh host …`. The guard is part of the `workspace-boundary` outbound policy, so it applies wherever that policy is selected.
+
+**Development rule:** never execute a guard candidate to prove an evasion. Feed the text to the guard. Run an executing oracle only inside a sandbox that cannot signal or write outside its own directory. A PATH stub cannot intercept shell builtins (`kill`, `exec`, redirections).
+
+Regressions: `tests/shell_safety/test_shell_safety_machine_harm.py`.
