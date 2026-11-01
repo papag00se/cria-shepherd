@@ -8,7 +8,7 @@ The archive is substantially larger than the earlier ornith1.5_9b / Java replay,
 
 The authoritative compact companion is [`archive-audit-metadata.json`](archive-audit-metadata.json). It contains source/prompt hashes, the sparse 253-row exact-policy × suite-model × programming-language × task × harness matrix, all 15 reviewed seats, native/result metadata axes, separate nonstandard-container schemas, campaign/event references, and known inspection exposures. It contains no prompts, candidate prose, private reasoning, teacher rationales or training rows. Human language is explicitly `UNMEASURED` throughout the archive matrix.
 
-Related work is separated by responsibility: [research/backbones](research.md), [synthetic proposals and limits](synthetic-data.md), [independent integration inspection](main-review.md), and the [workstream boundary](README.md). The synthetic seed remains 72 proposals / 18 related groups / nine families, SHA-256 `88ca1143ed1256ea9c81d35d25d9fa50cf35541ee8322f959685493f2229ff50`; it is quarantined, training-only-if-admitted, and not a substitute for real evaluation.
+Related work is separated by responsibility: [research/backbones](research.md), [synthetic proposals and limits](synthetic-data.md), and the [workstream boundary](README.md). The synthetic seed remains 72 proposals / 18 related groups / nine families, SHA-256 `88ca1143ed1256ea9c81d35d25d9fa50cf35541ee8322f959685493f2229ff50`; it is quarantined, training-only-if-admitted, and not a substitute for real evaluation.
 
 ## 1. Frozen scope, custody and counting units
 
@@ -211,7 +211,7 @@ The audit owner read representative complete request/public-response artifacts a
 | ternary-bonsai / Go | `20260825T124859…/0001-classifier` | Actual user turn is a JSON-only probe; joined task metadata does not annotate candidate content. |
 | phi4 / Ruby | `20261009T121148…/0008-harness-compaction-validate-retrospective` | Candidate absent from actual prepared input; quarantine, not a semantic-error label. |
 
-Main's additional complete cross-language readings and independent proposed annotations are in [main-review.md](main-review.md). The research owner's full inspection of **phi4 / Java**, `20261011T005747-01a129f7-c922-78d0-9b14-802e082ccd99/0008-text-write`, SHA-256 `7789db34119594ca66351eb672d8a8b4cdee0de54f13f4781fdad7ac26848e49`, is also explicitly research-exposed, not holdout. The companion exposure list is not exhaustive: prior 20 reviewed replay documents, ancestor tasks/templates, the supplied controls and historical Main inspection remain exposure constraints. An unlisted path is not thereby fresh.
+Main's additional complete cross-language readings (a Rust intake, a Ruby handoff recognition, a Python briefing and a Go dictation call) and the research owner's reading are exposed inspection records, not holdout. The research owner's full inspection of **phi4 / Java**, `20261011T005747-01a129f7-c922-78d0-9b14-802e082ccd99/0008-text-write`, SHA-256 `7789db34119594ca66351eb672d8a8b4cdee0de54f13f4781fdad7ac26848e49`, is also explicitly research-exposed, not holdout. The companion exposure list is not exhaustive: prior 20 reviewed replay documents, ancestor tasks/templates, the supplied controls and historical Main inspection remain exposure constraints. An unlisted path is not thereby fresh.
 
 **No corpus-wide security/PII or license review was completed.** Hashing is custody, not redaction. Requests can contain user material, repository code, fetched text, tool output, paths and credentials. Private reasoning can be embedded inside response JSON even without a sidecar. Future exports require explicit public-evidence field allowlists, security/rights review and immutable original/transformed identities. Do not export raw responses or serialized conversations wholesale. If removing private material or secrets destroys relevant public evidence, quarantine rather than quietly shortening the input or pretending the original proposal still labels it. Annotator notes, labels, policy rationales and group/exposure metadata stay out of model inputs.
 
@@ -248,7 +248,7 @@ The reusable scanner is offline and metadata-only. Use a new output/database pat
 
 ```bash
 python -m suite.training_archive_audit --help
-python -m pytest tests/test_training_archive_audit.py
+python -m pytest tests/suite_tooling/test_suite_tooling_training_guards.py
 ```
 
 The seven focused tests cover no-follow/cutoff behavior, growth during read, producer shape rather than filename, private-only/incomplete replies, ambiguous joins, exact messages/tools identity, and a complete fake-archive `scan` invocation with snapshot-SHA precedence, long Unicode custody, malformed JSON/shapes, native tool replies, archives and honest no-gold output. Collection failed before implementation and all seven passed afterward. Main subsequently reported the combined **22 focused tests** and final full `python -m pytest`: **10,949 passed, 216 skipped**; that is Main's run, not another audit-owner full-suite execution. See the integration review for the exact final source/testing scope.

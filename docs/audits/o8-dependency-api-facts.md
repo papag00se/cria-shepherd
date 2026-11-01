@@ -1,7 +1,6 @@
 # O8 — unresolved third-party API: what ground truth cria can hand the coder (investigation)
 
-Status: measured, not implemented. Prototype + scripts + raw replays:
-`~/.cria/validation/java-cells/ornith1.5_9b/o8/` (`prototype/pkglisting.py`, `prototype/o8_census*.py`).
+Status: **step 1 (option A) landed** — `depsurface.gather(..., cache_roots)` finds the dependency where the build keeps it (§7). **Option B (failure-driven namespace listing) is NOT built** and is the remaining work. The prototype scripts and raw replays that produced these numbers were scratch and have been removed; the census/replay numbers below are kept as the measurement record.
 
 ## 1. Prevalence (all of ~/.cria/calls, 398 sessions with a coder phase)
 Only three tasks use a third-party library (Java/opencsv, Go/shopspring decimal, Rust/toml); the Ruby,

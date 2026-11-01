@@ -85,9 +85,7 @@ The source revision for this draft is `bc0f12f00239779718dc8a940de125304e12e9d5`
 ## Tests
 
 ```bash
-python -m pytest -q tests/test_readme_media.py tests/test_best_l5_media.py \
-  tests/test_official_model_names.py tests/test_recovered_arg_types.py \
-  tests/test_completion_gate_backstop.py tests/test_planning_is_opt_in.py
+python -m pytest -q tests/suite_tooling/test_suite_tooling_registries_and_media.py
 ```
 
-Tests cover repository-local image paths, report parsing, missing and zero values, averaging, historical selection, identity merging, display labels, deterministic illustrations and rasterization. They also verify that assist-only rendering does not modify battery artifacts.
+The best-L5 selection test covers final judgments versus grades and checkpoints, stale rejudgments, and historical selection. Rendering is not exercised by the suite: re-run `python docs/media/render.py` and look at the images after changing a renderer.
