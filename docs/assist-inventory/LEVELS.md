@@ -74,6 +74,7 @@
 - `approval-inspection-confirmation` — [F34](REPORT.md#f34)
 - `repository-check-lifecycle` — [F40](REPORT.md#f40)
 - `completion-act-first` — [F34](REPORT.md#f34)
+- `harness-plumbing-packing` — [F26](REPORT.md#f26)
 
 ## L5 — Assists
 
@@ -92,3 +93,4 @@
 - `experimental-living-plan` — [F50](REPORT.md#f50)
 - `experimental-step-review` — [F50](REPORT.md#f50)
 - `experimental-completed-work-briefing` — [F76](REPORT.md#f76)
+- `edit-result-echo` — [F17](REPORT.md#f17)

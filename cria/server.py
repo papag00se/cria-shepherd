@@ -34,7 +34,7 @@ from .imageprotocol import ImageUnavailable
 from . import bodykeys, dirguard, handoffdistill, memoryhandoff, privatenames, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
-from . import admission, classify
+from . import admission, classify, loweringoptions
 from .classify import Classifier
 from . import content_reduce
 from .content_reduce import est_tokens
@@ -1715,6 +1715,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             if proposed_write is not None:
                 admitted[lowered.get('id')] = proposed_write
         if self._shell_tool is not None:
+            lowering = loweringoptions.resolve(assistruntime.current() if assistruntime.is_bound()
+                                               else self.server.pilot_runtime)
             multipart_session = getattr(self, '_multipart_session', sess_key)
             multipart_fallbacks = {}
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
@@ -1725,12 +1727,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                                declared_roots=getattr(self, "_declared_roots", ()),
                                unread_target=getattr(self, "_unread_target", None),
                                shrink_services=getattr(self, "_shrink_services", None),
-                               # N2: harness-side plumbing is packed only at the gate's rung (L4+, N1's scope);
-                               # L2/L3 lowered commands are byte-for-byte what they always were.
-                               pack=self.server.cfg.routing.done_refusals,
-                               # Edit echo is context work only an assist-rung coder gets (L5); L2-L4 results
-                               # stay exactly the harness's own confirmation.
-                               edit_echo=self.server.cfg.routing.assists_enabled,
+                               # Both options are registered assists (`loweringoptions`: packing L4, echo L5):
+                               # the bound selection decides, so below their rung (or opted out) the lowered
+                               # command is byte-for-byte what it always was.
+                               pack=lowering.pack, edit_echo=lowering.edit_echo,
                                observe_lowering=observed, externalization_owner=owner,
                                multipart_command=(lambda original, effect, receipt: self.server.multipart_bridge.register(
                                    multipart_session, original, effect, self._shell_tool, receipt)) if not getattr(self, '_multipart_disabled', False) else None,
@@ -1758,16 +1758,19 @@ class CriaHandler(BaseHTTPRequestHandler):
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:
         """Collapse exact-duplicate tool calls in the OUTBOUND coder body so the model stays focused
         on current state — applied to the FRAMED copy, never the history cria's detectors read.
-        Gated by [context] focus_trim, and by LEVEL 3 — CONTEXT_FIXES: below that rung cria performs
-        no surgery on the context at all, and folding duplicate tool calls is surgery however
-        harmless it looks. Returns (body, applied?)."""
-        if not self.server.cfg.routing.context_fixes or not self.server.cfg.context.focus_trim:
+        Gated by [context] focus_trim, and by the selection: the focus stage's definitions are
+        registered at LEVEL 3 — CONTEXT_FIXES (below it cria performs no surgery on the context at
+        all, and folding duplicate tool calls is surgery however harmless it looks), and an empty
+        selection is an exact bypass. Returns (body, applied?)."""
+        if not self.server.cfg.context.focus_trim:
             return framed, False
         msgs = framed.get("messages")
         if not isinstance(msgs, list):
             return framed, False
         selected = assistruntime.current() if assistruntime.is_bound() else self.server.pilot_runtime
         definitions = selected.bindings("coder-focus")
+        if not definitions:
+            return framed, False
         result = focustrim.focus(focustrim.FocusInput(msgs), definitions)
         framed = assistruntime.retain_focus_bindings(framed, result, definitions)
         if not result.report.applied:

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, fields
 
 from .assistcontract import ExecutableDefinition, Reference
 from . import assistprofiles
-from . import assistbinding, completionapproval, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, memoryhandoff, semanticquery, stalledwork, groundedaction, planner, pastedfile, livingplan, stepreview, completedwork, capacitypolicy, transientpolicy, discoverypolicy, documentguidance, externalization, completionredrive
+from . import assistbinding, completionapproval, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, memoryhandoff, semanticquery, stalledwork, groundedaction, planner, pastedfile, livingplan, stepreview, completedwork, capacitypolicy, transientpolicy, discoverypolicy, documentguidance, externalization, completionredrive, loweringoptions
 
 from .argumentconversion import ArgumentDefinition, ArgumentInput, ArgumentResult, DEFINITION as ARGUMENTS
 from .modulestate import ModuleDefinition, ModuleInput, ModuleResult, ModuleState, Judgment, DEFINITION as MODULE
@@ -29,7 +29,7 @@ CONTEXT_DEFINITIONS = ((selfcompact.DEFINITION,) + focustrim.FOCUS_STAGE + model
                        + (contextrestoration.DEFINITION, ledgercopies.DEFINITION,
                           reorientation.DEFINITION)
                        + steppreparation.DEFINITIONS)
-DEFINITIONS = (ARGUMENTS, MODULE, TASK_REVIEW) + TOOL_DEFINITIONS + RESEARCH_DEFINITIONS + HISTORY_DEFINITIONS + ADMISSION_DEFINITIONS + GENERATION_DEFINITIONS + CONTEXT_DEFINITIONS + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION,) + planner.DEFINITIONS + (pastedfile.DEFINITION,) + livingplan.DEFINITIONS + (stepreview.DEFINITION, completedwork.DEFINITION, capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION, documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION)
+DEFINITIONS = (ARGUMENTS, MODULE, TASK_REVIEW) + TOOL_DEFINITIONS + RESEARCH_DEFINITIONS + HISTORY_DEFINITIONS + ADMISSION_DEFINITIONS + GENERATION_DEFINITIONS + CONTEXT_DEFINITIONS + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION,) + planner.DEFINITIONS + (pastedfile.DEFINITION,) + livingplan.DEFINITIONS + (stepreview.DEFINITION, completedwork.DEFINITION, capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION, documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION) + loweringoptions.DEFINITIONS
 
 
 class FocusWireBindings(tuple):
@@ -117,7 +117,7 @@ class AssistRuntime:
     periodic_judgments: tuple[ModuleDefinition, ...] = (MODULE,)
     task_review: ReviewDefinition | None = TASK_REVIEW
     engagement_level: int = 5
-    ordered_stages: tuple[ExecutableDefinition, ...] = TOOL_DEFINITIONS + RESEARCH_DEFINITIONS + HISTORY_DEFINITIONS + ADMISSION_DEFINITIONS + GENERATION_DEFINITIONS + CONTEXT_DEFINITIONS + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION, pastedfile.DEFINITION, capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION, documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION)
+    ordered_stages: tuple[ExecutableDefinition, ...] = TOOL_DEFINITIONS + RESEARCH_DEFINITIONS + HISTORY_DEFINITIONS + ADMISSION_DEFINITIONS + GENERATION_DEFINITIONS + CONTEXT_DEFINITIONS + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION, pastedfile.DEFINITION, capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION, documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION) + loweringoptions.DEFINITIONS
     registrations: tuple[ExecutableDefinition, ...] = DEFINITIONS
     experimental_planning: bool = False
     profile: str = "default"

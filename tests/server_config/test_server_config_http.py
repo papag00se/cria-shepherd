@@ -85,13 +85,15 @@ class FakeUpstream(BaseHTTPRequestHandler):
             return
         if "__500__" in text:
             return self._reply({"error": {"message": "template rejected"}}, code=500)
-        if "__TOOL__" in text:  # the model asks to write a file, as a buffered completion or as streamed argument deltas
-            call = {"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "hello.txt", "content": "hi there\n"})}}
+        if "__TOOL__" in text or "__EDIT__" in text:  # the model asks to write (or edit) a file, as a buffered completion or as streamed argument deltas
+            name, args = (("write_file", {"path": "hello.txt", "content": "hi there\n"}) if "__TOOL__" in text else
+                          ("edit_file", {"path": "hello.txt", "old_string": "hi", "new_string": "bye"}))
+            call = {"id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
             if not body.get("stream"):
                 return self._reply({"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [call]}, "finish_reason": "tool_calls"}]})
             args = call["function"]["arguments"]
             tc = lambda **f: {"choices": [{"delta": {"tool_calls": [{"index": 0, **f}]}}]}
-            frames = [tc(id="call_1", type="function", function={"name": "write_file", "arguments": args[:20]}), tc(function={"arguments": args[20:]}),
+            frames = [tc(id="call_1", type="function", function={"name": name, "arguments": args[:20]}), tc(function={"arguments": args[20:]}),
                       {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}]
             self.close_connection = True
             self.send_response(200)
@@ -109,7 +111,7 @@ class FakeUpstream(BaseHTTPRequestHandler):
 
 
 class Wire:
-    def __init__(self, tmp, routing=None, heartbeat=5.0, capture=False, indicators=False):
+    def __init__(self, tmp, routing=None, heartbeat=5.0, capture=False, indicators=False, assists=None):
         self.fake = ThreadingHTTPServer(("127.0.0.1", 0), FakeUpstream)
         self.fake.chats, self.fake.release = [], threading.Event()
         threading.Thread(target=self.fake.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
@@ -117,7 +119,7 @@ class Wire:
         cfg = Config(server=ServerConfig(host="127.0.0.1", port=0, heartbeat_seconds=heartbeat), upstream=UpstreamConfig(base_url=self.url),
                      logging=LoggingConfig(dir=str(tmp), capture_dir=str(tmp / "calls"), console=False,
                                           capture_calls=True),
-                     indicators=IndicatorsConfig(enabled=indicators),
+                     indicators=IndicatorsConfig(enabled=indicators), **({"assists": assists} if assists else {}),
                      routing=routing(self.url) if routing else RoutingConfig(engagement_level=3))
         self.log = EventLog(dir=str(tmp), console=False)
         # The upstream carries the SAME rung as the server (as __main__ builds it): a level-0 wire test must run the wire's level-0 gates.
