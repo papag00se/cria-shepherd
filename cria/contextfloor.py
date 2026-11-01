@@ -500,6 +500,14 @@ def clamp_reserve(reserve: int, window: int, minimum_input: int) -> int:
     return max(0, min(reserve, window // 2, window - input_room))
 
 
+def reply_room_floor(reserve: int, window: int) -> int:
+    """The least reply room a delivered request may leave: the floor's own default reply room at this window
+    (:data:`DEFAULT_GEN_RESERVE`, 4,096 at 49,152, 2,048 at 16,384), never more than the reserve asked for. Why that
+    number: it is the size already used for "a request that names no reply size", and it covers 91-96% of 16,120
+    captured coder replies to a tool result (completion tokens, reasoning included: p90 1,820, p95 2,975)."""
+    return min(reserve, windowcaps.resolve(DEFAULT_GEN_RESERVE, window), window // 2)
+
+
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
         safety: float = SAFETY_FACTOR, pinned_task: str = "",
         headroom: bool = False, wire_overhead: int = 0,
@@ -535,6 +543,20 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     # not a fixed 512-token allowance (a 16K reserve on a 16K window deleted 8 tools).
     core = _input_core(messages, pinned_task, **protected)
     minimum_input = math.ceil((_msgs_tokens(core) + est_tokens(json.dumps(tools or []))) * safety)
+    notes: list[dict] = []     # the not-delivered notes THIS fit wrote: never withheld again, and what results_withheld counts
+    reply_floor = reply_room_floor(reserve, window)
+    if minimum_input < window and window - minimum_input < reply_floor:
+        # The live input fits, but only by leaving the reply a few hundred tokens (the clamp below would hold exactly
+        # that): measured on real 16K/24K/32K servers as 82 / 363 / 578 tokens, and 34% of 16,120 captured coder
+        # replies to a tool result are longer than 363. A reply cut at n_ctx is the cost of delivering it, so a tool
+        # result that cannot be shortened is withheld FIRST (labelled, with the exact re-read) until the reply has its
+        # floor. When nothing withholdable is left the squeeze stands, as before. The live tail is never dropped for this.
+        messages, withheld = _withhold_oversized_results(
+            messages, tools, window=window, reserve=reply_floor, safety=safety,
+            overhead=rep.wire_overhead, notes=notes, **protected)
+        if withheld:
+            core = _input_core(messages, pinned_task, **protected)
+            minimum_input = math.ceil((_msgs_tokens(core) + est_tokens(json.dumps(tools or []))) * safety)
     # When the live input itself exceeds the window, it needs the ordinary floor
     # reduction. Reserving zero cannot save that input and would suppress compaction.
     reserve = clamp_reserve(reserve, window, minimum_input)
@@ -561,7 +583,6 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
     fits_at_start = est_total(messages, tools) <= target_est and not rep.tools_compressed
     work = list(messages)
-    notes: list[dict] = []     # the not-delivered notes THIS fit wrote: never withheld again, and what results_withheld counts
     if est_total(messages, tools) > target_est:
         # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
         work, rep.caller_reduced = _reduce_caller_spans(work)
@@ -655,7 +676,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
             over = False
     # What the event says is what the body carries: a note lever 7 later dropped with its turn is not "withheld".
     rep.results_withheld = sum(1 for m in work if any(m is note for note in notes))
-    rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested
+    rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested or bool(notes)
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
     rep.over_budget = over

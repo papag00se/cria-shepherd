@@ -6,6 +6,7 @@ lost and an unfittable request is reported as over budget, never declared fit.
 """
 import copy
 import json
+import math
 
 import pytest
 
@@ -306,6 +307,28 @@ def test_the_piece_a_withheld_result_suggests_is_sized_beside_the_frame_so_it_is
         assert rep.results_withheld == 1 and piece >= 1
         again, _, rep2 = cf.fit(msgs[:3] + [tool("c1", "\n".join(LOG.split("\n")[-piece:]))], None, window=window, reserve=reserve, safety=safety)
         assert rep2.results_withheld == 0 and not rep2.over_budget and rep2.reserve == reserve and again[-1]["content"].endswith("batch 2999"), frame_chars
+
+
+@pytest.mark.parametrize("room_left,withheld", [(300, True), (578, True), (1500, True), (2100, False), (2600, False)])
+def test_a_result_that_would_leave_the_reply_a_few_hundred_tokens_is_withheld_not_delivered(room_left, withheld):
+    """wave 12 CLAMP: real 16K/24K/32K servers delivered a read that left 82 / 363 / 578 tokens of the window for the reply (the floor's
+    last resort squeezed the reserve), and 34% of 16,120 captured coder replies to a tool result are longer than 363 tokens. Below the
+    floor's default reply room (2,048 at this window) the result is withheld with its labelled re-read; at or above it the squeeze is
+    accepted as before. Never by dropping the older turns or the live tail, and a protected read keeps its own path."""
+    window, reserve, safety = 20000, 8000, 1.5
+    history = [a("", "c0", "exec_command", '{"cmd":"ls"}'), tool("c0", "a.py\nb.py")]
+    def request(lines):
+        return _cat("\n".join(LOG.split("\n")[:lines]), extra=history)
+    lines = max(n for n in range(1, 3000) if cf.est_total(request(n), None) * safety <= window - room_left)
+    msgs = request(lines)
+    out, _, rep = cf.fit(msgs, None, window=window, reserve=reserve, safety=safety)
+    assert rep.turns_dropped == 0 and rep.protected_dropped == 0 and out[3]["content"] == "a.py\nb.py" and not rep.over_budget
+    if withheld:
+        assert rep.results_withheld == 1 and out[-1]["content"].startswith("⟦ctx:result-not-delivered⟧") and rep.reserve >= 2048
+    else:
+        assert rep.results_withheld == 0 and out == msgs and rep.reserve == window - math.ceil(cf.est_total(msgs, None) * safety)
+    kept, _, rep = cf.fit(msgs, None, window=window, reserve=reserve, safety=safety, protected_call_ids=("c1",))
+    assert rep.results_withheld == 0 and kept[-1]["content"] == msgs[-1]["content"]
 
 
 def test_lever_seven_keeps_every_result_of_the_newest_parallel_call_with_its_call():
