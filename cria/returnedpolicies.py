@@ -467,7 +467,7 @@ def _note_running_session(source: ReturnedHistory) -> None:
         return
     append_note(last, note)
     if source.log is not None:
-        source.log.emit("writeproxy.running_session_note", level="info", session=envelope.session)
+        source.log.emit("writeproxy.running_session_note", level="info", exec_session=envelope.session)   # `session` is the request log's own field
 
 
 RESULTS = (

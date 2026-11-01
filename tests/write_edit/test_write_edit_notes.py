@@ -3,10 +3,11 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
-from cria import denial, depsurface, research, webfetch, writeproxy, wsview
+from cria import denial, depsurface, events, research, webfetch, writeproxy, wsview
 from write_edit_helpers import call, do, harness_env, surveyed_view, write_edit_workspace_view  # noqa: F401
 
 
@@ -162,6 +163,12 @@ def test_a_command_still_running_says_how_to_wait_for_it_on_the_newest_result_on
                                                     {"role": "tool", "tool_call_id": f"c{i}", "content": r})])
     out = ask(running(73913))
     assert out[1]["content"].endswith("call write_stdin with session_id 73913 and no chars.") and out[1]["content"].count("still running") == 1
+    with tempfile.TemporaryDirectory() as logs:                          # the note's event goes through the REAL request log, which owns the `session` field
+        log = events.EventLog(dir=logs, console=False); rlog = events.BoundLog(log, "sid", "turn")
+        writeproxy.represent_inbound([{"role": "assistant", "tool_calls": [call("exec_command", {"command": "pytest"}, cid="c0")]},
+                                      {"role": "tool", "tool_call_id": "c0", "content": running(73913)}], rlog)
+        log.close()
+        assert rlog.events["writeproxy.running_session_note"] == 1
     again = writeproxy.represent_inbound(out)
     assert again[1]["content"].count("still running") == 1                              # idempotent across requests
     older, newest = ask(running(111), running(222))[1::2]
