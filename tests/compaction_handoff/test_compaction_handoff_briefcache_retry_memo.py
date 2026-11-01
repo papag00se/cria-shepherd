@@ -7,7 +7,8 @@ import json
 import threading
 
 from cria import handoffmemo
-from test_compaction_handoff_asum_producer_lifecycle import (Log, Provider, TASK, assistruntime, completion, decorate,
+from cria.events import BoundLog, EventLog
+from test_compaction_handoff_asum_producer_lifecycle import (Provider, TASK, assistruntime, completion, decorate,
                                                               handler, history, session)
 
 
@@ -35,7 +36,7 @@ def compact(h, key, provider, messages=None, arm=True):
         provider.arm()
     body = {"messages": messages if messages is not None else history()}
     with assistruntime.bound(h.server.pilot_runtime):
-        return h._produce_completion(body, Log(), key)[0]
+        return h._produce_completion(body, BoundLog(EventLog(console=False, jsonl=False), key, "turn"), key)[0]
 
 
 def setup(key, provider, finalize=decorate):

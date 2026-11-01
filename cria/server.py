@@ -2074,7 +2074,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         with handoffmemo.of(self.server).claim(sess_key, handoffmemo.digest(body)) as claim:
             kept = claim.recall(lambda: self._handoff_evidence(sess_key, body, rlog))
             if kept is not None:
-                rlog.emit("handoff.memo_reused", session=sess_key)
+                rlog.emit("handoff.memo_reused")
                 return kept
             return self._produce_completion_fresh(body, rlog, sess_key, progressive, claim)
 
