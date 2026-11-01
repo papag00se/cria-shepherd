@@ -68,7 +68,10 @@ def _next_seq(session: str, d: Path) -> int:
 
 
 def _safe(s) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(s)) if s else "nosession"
+    """A session id as ONE directory name. The id comes from a request header or body, so it is hostile input:
+    anything outside ``[A-Za-z0-9._-]`` becomes ``_``, and leading dots do too (a bare ``..`` would otherwise
+    name the capture dir's PARENT, ``.`` the capture dir itself)."""
+    return re.sub(r"^\.+", lambda m: "_" * len(m.group()), re.sub(r"[^A-Za-z0-9._-]+", "_", str(s))) if s else "nosession"
 
 
 _UUID7_RE = re.compile(r"([0-9a-f]{8})-([0-9a-f]{4})-(7[0-9a-f]{3})-", re.I)

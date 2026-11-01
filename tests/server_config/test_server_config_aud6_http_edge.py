@@ -1,6 +1,7 @@
 """Hostile input at cria's HTTP edge: every request is answered or refused with a JSON error, never a silent connection drop,
 a hung handler thread or an unbounded allocation; an unexpected pipeline exception is logged and answered, not swallowed."""
 import json
+from pathlib import Path
 import socket
 import threading
 import time
@@ -212,3 +213,21 @@ def test_capture_and_log_artifacts_are_owner_only_whatever_the_umask(tmp_path, m
     assert {oct(stat.S_IMODE(p.stat().st_mode)) for p in files} == {"0o600"}, [p.name for p in files if stat.S_IMODE(p.stat().st_mode) != 0o600]
     made = [p for p in root.rglob("*") if p.is_dir()]
     assert made and {oct(stat.S_IMODE(p.stat().st_mode)) for p in made} == {"0o700"}
+
+
+@pytest.mark.parametrize("session", ["..", ".", "...", "../../etc", "a/../..", "/abs/path", "x\x00y"])
+def test_a_hostile_session_id_cannot_place_captures_outside_the_capture_dir(tmp_path, session):
+    """The session id comes from a request header / body: whatever it spells, every capture file lands inside the capture dir."""
+    from cria import callcapture
+    class R:
+        def __init__(self, s):
+            self.session, self._turn = s, "t1"
+        def emit(self, *a, **k): pass
+    root = tmp_path / "private" / "calls"
+    rlog = R(session)
+    written = [callcapture.capture({"messages": []}, rlog, calls_dir=root, phase="coder"),
+               callcapture.capture_inbound(b"{}", rlog, calls_dir=root, api="responses"),
+               callcapture.capture_native({"x": 1}, {"y": 2}, rlog, calls_dir=root, namespace="system1", phase="p")]
+    assert all(written)
+    assert all(root.resolve() in Path(p).resolve().parents for p in written), written
+    assert sorted(p.name for p in root.parent.iterdir()) == ["calls"]   # nothing escaped into the parent
