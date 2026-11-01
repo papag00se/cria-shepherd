@@ -1,5 +1,6 @@
 """Shared builders: histories of exact token size, typed exchanges, fake lens replies, a rendered survey."""
 import json
+import re
 
 from cria import bodykeys, denial, groundtruth, prompts, wsview
 
@@ -33,11 +34,13 @@ def chat_reply(content):
     return json.dumps({"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}]})
 
 LENSES = {"retrospective": "RETROSPECTIVE", "scope": "PRESERVES", "files": "NONE", "changes": "NONE",
-          "sizes": "NONE", "build": "NONE", "changes_file": "CHANGED"}
+          "sizes": "NONE", "build": "NONE", "changes_file": "CHANGED", "files_file": "EXISTS"}
 
 def lens_of(system):
+    """Which lens a system prompt belongs to; a per-file question is matched through the path it was rendered for."""
     for name in LENSES:
-        if system.startswith(prompts.load("compaction_validate_" + name).split("{{PATH}}")[0]):
+        template = prompts.load("compaction_validate_" + name)
+        if re.match(re.escape(template[:600]).replace(re.escape("{{PATH}}"), r"\S+"), system):
             return name
     return None
 

@@ -49,16 +49,6 @@ def _claimed(answer: str, briefing: str, word: str, plain: bool = False) -> list
     return found
 
 
-def _claimed_present(answer: str, briefing: str) -> list[str]:
-    """Files the briefing gives the role EXISTS (not REQUIRED, not MISSING).
-
-    ornith1.5_9b / c1 (wave 10 E2EB): "in-place migration of existing `orders.db` files" - data a deployment holds,
-    named only by the task - was listed PRESENT 8 of 8 by a two-way PRESENT / NOT PRESENT question (7 of 8 with a
-    reworded one). A closed three-way ROLE (EXISTS / REQUIRED / MISSING) names that mention's role instead of
-    forcing it into one of two, and the lookup against the survey is unchanged."""
-    return _claimed(answer, briefing, "EXISTS")
-
-
 def _ask_lines(summarize, chat_fn, role, briefing: str, rlog, phase: str, lens: str) -> str:
     """The ONE focused question both lenses put: the briefing alone, closed output, no judgment of truth."""
     return summarize(chat_fn, replace(role, reasoning="off"), prompts.load(f"compaction_validate_{lens}"),
@@ -71,11 +61,20 @@ def contradicted_files(summarize, chat_fn, role, briefing: str, files: str, rlog
                        phase: str = "compaction-validate") -> list[str]:
     """Files the briefing says are present that the complete survey ``files`` shows are not.
 
+    The listing only NAMES the files the briefing mentions, each with the role it gives them (EXISTS / REQUIRED / MISSING,
+    every role is a candidate); the survey settles which names are absent; one reasoned question per absent name then
+    says whether ANY sentence of the briefing states it exists now. A single `path | role` line cannot carry a path that
+    is both required and claimed: with the incident sentence appended beside "the task requires `REVIEW.md`" the listing
+    kept the claim 0 of 8 on one real briefing (7 of 8 on another), the per-file question 8 of 8 on both. An empty, cut or
+    unreadable answer adds no rejection.
+
     ``[]`` when there is nothing to contradict: no settling survey, no model, or no such claim."""
     if chat_fn is None or role is None or not groundtruth.survey_settles_absence(files):
         return []
     answer = _ask_lines(summarize, chat_fn, role, briefing, rlog, phase, "files")
-    return groundtruth.survey_settled_absent(files, _claimed_present(answer, briefing))
+    named = [path for word in ("EXISTS", "REQUIRED", "MISSING") for path in _claimed(answer, briefing, word)]
+    return [path for path in groundtruth.survey_settled_absent(files, named)
+            if _asked_about_file(summarize, chat_fn, role, briefing, "files", path, rlog, phase) == "EXISTS"]
 
 
 def unsupported_changes(summarize, chat_fn, role, briefing: str, messages, rlog,
@@ -106,12 +105,17 @@ def _says_not_changed(summarize, chat_fn, role, briefing: str, path: str, rlog, 
     a file the record cannot support, and only the briefing's own sentences about that file decide it. Anything
     but a final line of exactly NOT CHANGED (an empty, cut or unreadable reply) leaves the claim standing: the
     listing's refusal was the standing behaviour and an undecidable reading never clears it."""
-    system = prompts.render("compaction_validate_changes_file", path=path)
-    answer = summarize(chat_fn, replace(role, reasoning="on"), system, prompts.load("compaction_validate_changes_file_ask"),
-                       rlog, phase=f"{phase}-changes-file", max_tokens=CONFIRM_MAX_TOKENS, retry_off=False, temperature=0.0,
+    return _asked_about_file(summarize, chat_fn, role, briefing, "changes", path, rlog, phase) == "NOT CHANGED"
+
+
+def _asked_about_file(summarize, chat_fn, role, briefing: str, lens: str, path: str, rlog, phase: str) -> str:
+    """The final line (upper-cased) of a reasoning-ON answer to the lens's per-file question about ``path``, or ""."""
+    answer = summarize(chat_fn, replace(role, reasoning="on"), prompts.render(f"compaction_validate_{lens}_file", path=path),
+                       prompts.load(f"compaction_validate_{lens}_file_ask"), rlog, phase=f"{phase}-{lens}-file",
+                       max_tokens=CONFIRM_MAX_TOKENS, retry_off=False, temperature=0.0,
                        evidence_blocks=[prompts.render("compaction_candidate", briefing=briefing.strip())])
     lines = [line.strip("`*. ").upper() for line in answer.splitlines() if line.strip()]
-    return bool(lines) and lines[-1] == "NOT CHANGED"
+    return lines[-1] if lines else ""
 
 
 # A byte count the briefing literally states: digits (thousands separators allowed) then B / byte(s).

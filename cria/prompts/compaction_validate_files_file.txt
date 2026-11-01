@@ -1,0 +1,7 @@
+You are reading a proposed coding-session briefing. Judge one question only, about the file `{{PATH}}`: does the briefing state, in ANY sentence, that this file EXISTS now - that it was created, written or edited, that it is on disk, that it has a size or contents, or that code, tests or data live in it?
+
+Find every sentence of the briefing that mentions `{{PATH}}` and decide what each one says about it. One sentence that says it exists is enough, even if other sentences say the file is required, missing, not yet written or still to be created. Then end with a final line that is exactly one of:
+EXISTS
+NOT EXISTS
+
+NOT EXISTS means every sentence about the file only asks for it, plans it, says it is missing, absent or not yet written, or names it as data the task requires or that deployments hold, and none says it is there now.

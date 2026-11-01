@@ -20,7 +20,7 @@ HONEST = "The rewrite has NOT been compiled or run; no authoritative fact was av
 RED_RUN = shell("c1", "pytest -q", "=== 2 failed, 4 passed in 0.3s ===", 1)
 GREEN_RUN = shell("c1", "pytest -q", "=== 6 passed in 0.01s ===", 0)
 
-def validate(briefing, survey=SURVEY, messages=None, **replies):
+def validate(briefing, survey=SURVEY, messages=None, evidence="", **replies):
     seen, answers = [], {}
 
     def chat(body, rlog):
@@ -31,7 +31,7 @@ def validate(briefing, survey=SURVEY, messages=None, **replies):
         def emit(self, kind, **fields):
             answers.update(fields.get("answers") or {})
     ok = validate_compaction_briefing(chat, Role(name="reasoner", backend="fixture"), briefing, files=survey, checks="",
-                                      transcript_blocks=["assistant: write_file Importer.java (324 lines)"], rlog=Log(),
+                                      transcript_blocks=["assistant: write_file Importer.java (324 lines)", evidence], rlog=Log(),
                                       task="Fix the importer.", messages=messages)
     return ok, [lens_of(b["messages"][0]["content"]) for b in seen], answers, seen
 
@@ -63,8 +63,10 @@ def test_a_lens_abstains_and_asks_nothing_when_its_evidence_is_partial_stale_or_
     assert ok is True and lens not in asked
 
 @pytest.mark.parametrize("lens,briefing,reply,extra", [
-    ("files", REVIEW, "REVIEW.md | REQUIRED\npom.xml | EXISTS", {}),                              # the task requires it
-    ("files", REVIEW, "REVIEW.md | MISSING", {}),                                                 # the briefing itself says it is not there
+    ("files", REVIEW, "REVIEW.md | REQUIRED\npom.xml | EXISTS", dict(files_file="NOT EXISTS")),   # the task requires it
+    ("files", REVIEW, "REVIEW.md | MISSING", dict(files_file="NOT EXISTS")),                      # the briefing itself says it is not there
+    ("files", REVIEW, "REVIEW.md | EXISTS", dict(files_file="NOT EXISTS")),                       # a listed EXISTS alone is not a claim: the reasoned per-file reading decides
+    ("files", REVIEW, "REVIEW.md | EXISTS", dict(files_file="Unclear.")),                         # an unreadable per-file answer adds no rejection
     ("files", REVIEW, "REVIEW.md | EXISTS", dict(survey=survey_text(TREE + "F\t9\t1480\tREVIEW.md\n"))),   # the survey lists it
     ("files", REVIEW, "invented.txt | EXISTS", {}),                                               # a name the briefing does not contain
     ("changes", CHANGED, "pom.xml | NOT CHANGED\ninvented.txt | CHANGED", dict(messages=HISTORY)),
@@ -109,19 +111,37 @@ C1_SURVEY = survey_text("D\t\nD\torders\nD\ttests\nF\t5\t2753\torders/db.py\nF\t
                         "F\t3\t126\tREADME.md\nF\t2\t0\torders/__init__.py\nF\t1\t560\ttests/test_db.py\n")
 C1_LISTED = "orders/app.py | EXISTS\norders/db.py | EXISTS\ntests/test_db.py | EXISTS\n"
 
-@pytest.mark.parametrize("orders_db_line,accepted", [
-    ("orders.db | REQUIRED", True),                        # the role the task gives it: data to migrate, not a file of this workspace
-    ("orders.db | MISSING", True),
-    ("orders.db | EXISTS", False),                         # the same line as a claim: the complete survey lists no such file, so code refuses it
-    ("orders.db | PRESENT", True)])                        # the retired two-way vocabulary is no longer a verdict
-def test_the_real_c1_briefing_is_refused_only_when_the_model_says_orders_db_exists_and_the_complete_survey_lacks_it(orders_db_line, accepted):
+@pytest.mark.parametrize("orders_db_line,reading,accepted", [
+    ("orders.db | REQUIRED", "NOT EXISTS", True),         # the role the task gives it: data to migrate, not a file of this workspace
+    ("orders.db | MISSING", "NOT EXISTS", True),
+    ("orders.db | EXISTS", "NOT EXISTS", True),           # a listing's EXISTS alone is no claim: the reasoned per-file reading decides
+    ("orders.db | EXISTS", "EXISTS", False),              # the reading keeps it, and the complete survey lists no such file: refused
+    ("orders.db | REQUIRED", "Not sure.", True),          # an unreadable reading adds no rejection
+    ("orders.db | PRESENT", "EXISTS", True)])             # the retired two-way vocabulary names nothing, so nothing is asked
+def test_the_real_c1_briefing_is_refused_only_when_the_per_file_reading_says_orders_db_exists_and_the_complete_survey_lacks_it(orders_db_line, reading, accepted):
     """A file the briefing names only as data the task requires to be migrated is never an existence claim; the survey lookup stays typed and complete."""
-    ok, asked, answers, seen = validate(C1_BRIEFING, C1_SURVEY, files=C1_LISTED + orders_db_line)
+    ok, asked, answers, seen = validate(C1_BRIEFING, C1_SURVEY, files=C1_LISTED + orders_db_line, files_file=reading)
     assert ok is accepted and "files" in asked and ("files" not in answers) is accepted
+    assert asked.count("files_file") == (0 if "PRESENT" in orders_db_line else 1)
     if not accepted:
         assert answers["files"] == "ABSENT orders.db"
     system = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "files")["messages"][0]["content"]
-    assert "REQUIRED" in system and "existing deployments hold" in system        # the question names the role that mention has
+    assert "REQUIRED" in system and "existing deployments hold" in system        # the listing names the role that mention has
+
+# ornith1.5_9b / Java overnight run 3 (20261012T095640 0048 self-compact, with the incident sentence appended): "the task requires `REVIEW.md`" and
+# "`REVIEW.md` must exist before the work is finished" beside "a `REVIEW.md` (235 B) describing remaining risks". One `path | role` line cannot carry a
+# path that is both required and claimed: the listing answered REQUIRED / MISSING 8 of 8 replays and caught nothing (0 of 8, on another real briefing 7 of 8);
+# the per-file reasoned question read EXISTS 8 of 8 on both. The briefing is the captured one, the survey the run's complete one (no REVIEW.md).
+REVIEW_BOTH = Path(__file__).with_name("fpres_review_required_and_claimed_briefing.txt").read_text()
+
+@pytest.mark.parametrize("reading,accepted", [("EXISTS", False), ("NOT EXISTS", True)])
+def test_a_path_the_briefing_both_requires_and_claims_is_settled_by_the_per_file_reading_not_by_its_listed_role(reading, accepted):
+    ok, asked, answers, seen = validate(REVIEW_BOTH, evidence=REVIEW_BOTH, files="REVIEW.md | REQUIRED\nImporter.java | EXISTS", files_file=reading)
+    assert ok is accepted and asked.count("files_file") == 1 and answers.get("files") == (None if accepted else "ABSENT REVIEW.md")
+    ask = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "files_file")
+    assert "`REVIEW.md`" in ask["messages"][0]["content"] and "Importer.java" not in ask["messages"][0]["content"]       # one question per ABSENT name
+    assert REVIEW_BOTH.strip() in " ".join(str(m["content"]) for m in ask["messages"])
+    assert ask["chat_template_kwargs"]["enable_thinking"] is True and ask["temperature"] == 0.0
 
 # ornith1.5_9b / cart-billing-go (AUD5, 20260812T205119 0006-self-compact): "The last action taken was identifying the current logic in
 # `cart.go`" with every change under "What remains". The one-line-per-file listing named `cart.go | CHANGED` on 7 of 8 real replays (2 at
