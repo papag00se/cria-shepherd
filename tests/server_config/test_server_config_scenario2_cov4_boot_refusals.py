@@ -6,7 +6,7 @@ import signal
 
 import pytest
 
-from cria import prompts
+from cria import config as cfgmod, prompts
 from cria.__main__ import main
 from cria.server import CriaServer
 
@@ -40,7 +40,9 @@ def test_an_enabled_classifier_that_cannot_load_refuses_the_boot_and_says_why_in
 def test_a_configured_env_file_that_supplies_nothing_is_a_warning_and_the_interrupt_stop_is_logged(tmp_path, monkeypatch):
     """An env file whose variables are all outside cria's allowlist loads 0 and says so at warn level (a daemon silently starting without its key
     was the failure this logs); the interrupt drain is still logged as the stop."""
-    (tmp_path / ".env").write_text("UNRELATED=1\n")
+    monkeypatch.setattr(cfgmod, "CRIA_HOME", tmp_path / ".cria")   # the one place an env file may live
+    (tmp_path / ".cria").mkdir()
+    (tmp_path / ".cria" / ".env").write_text("UNRELATED=1\n")
     old = signal.getsignal(signal.SIGTERM)
 
     def serve(self):
@@ -48,7 +50,7 @@ def test_a_configured_env_file_that_supplies_nothing_is_a_warning_and_the_interr
 
     monkeypatch.setattr(CriaServer, "serve_forever", serve)
     try:
-        assert main(write_cfg(tmp_path, f'env_file = "{tmp_path / ".env"}"') + ["--port", "0"]) == 0
+        assert main(write_cfg(tmp_path, f'env_file = "{tmp_path / ".cria" / ".env"}"') + ["--port", "0"]) == 0
     finally:
         signal.signal(signal.SIGTERM, old)
     logged = events(tmp_path / "logs")

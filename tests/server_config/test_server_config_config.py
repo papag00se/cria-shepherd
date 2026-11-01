@@ -40,7 +40,7 @@ def test_toml_layers_merge_cwd_over_home_and_defaults_normalize(tmp_path):
     assert merged == {"server": {"port": 9000, "host": "0.0.0.0"}, "planner": {"enabled": True, "max_gather_rounds": 5}}
     assert home["server"]["port"] == 18085
     cfg = load(tmp_path, '[defaults]\nbase_url = "http://h:1/"\ntimeout_seconds = 42\ncontext_window = 49152\n'
-                         '[logging]\nlevel = "debug"\n[future]\nx = 1\n')  # an unknown future table is tolerated
+                         '[logging]\nlevel = "debug"\n')
     assert (cfg.upstream.base_url, cfg.upstream.timeout_seconds, cfg.upstream.context_window) == ("http://h:1", 42, 49152)
     assert cfg.routing.defaults_base_url == "http://h:1" and cfg.logging.level == "debug"
     with pytest.raises(FileNotFoundError):
@@ -69,11 +69,70 @@ def test_toml_layers_merge_cwd_over_home_and_defaults_normalize(tmp_path):
     (ROLE + '[failover]\ncoding = ["ghost"]\n', "no \\[roles.ghost\\]"),
     (ROLE + 'vision = "true"\n', "vision"),
     (ROLE + 'vision = true\n', "vision_model"),
+    # a misspelt or unknown key is an error naming it, in every table (it used to be dropped: `capture_call = true` ran with capture off)
+    ('[future]\nx = 1\n', r"\[config\] unknown entry future"),
+    ('[server]\nprot = 1\n', r"\[server\] unknown key prot"),
+    ('[defaults]\ntimeout_secs = 5\n', r"\[defaults\] unknown key timeout_secs"),
+    ('[logging]\ncapture_call = true\n', r"\[logging\] unknown key capture_call"),
+    ('[indicators]\nroute_banner = true\n', r"\[indicators\] unknown key route_banner"),
+    ('[tools]\nfocuss = true\n', r"\[tools\] unknown key focuss"),
+    ('[context]\nfocus_trims = true\n', r"\[context\] unknown key focus_trims"),
+    ('[safety]\nexternal_dir_permisson = "read"\n', r"\[safety\] unknown key"),
+    ('[planner]\nenable = true\n', r"\[planner\] unknown key enable"),
+    ('[engagement]\nlvl = 3\n', r"\[engagement\] unknown key lvl"),
+    (LOCAL + 'reasoning_stile = "x"\n', r"backends.local\] unknown key reasoning_stile"),
+    ('[backends.c]\ntransport = "cli"\nbase_url = "http://x"\n', r"backends.c\] unknown key base_url"),
+    (ROLE + 'temprature = 0.1\n', r"roles.coder\] unknown key temprature"),
+    (ROLE + '[failover]\ncodeing = ["coder"]\n', r"\[failover\] unknown chain codeing"),
+    # a quoted or wrong-typed value is an error, never coerced (bool("false") is True)
+    ('[planner]\nenabled = "false"\n', r"enabled must be true or false"),
+    ('[logging]\nconsole = 0\n', r"console must be true or false"),
+    ('[tools]\nfocus = "no"\n', r"focus must be true or false"),
+    ('[indicators]\nenabled = "off"\n', r"enabled must be true or false"),
+    ('[server]\nport = "18085"\n', r"port must be an integer"),
+    ('[server]\nport = 70000\n', r"port must be 0..65535"),
+    ('[server]\nheartbeat_seconds = -1\n', r"at least 0"),
+    ('[defaults]\ntimeout_seconds = "600"\n', r"timeout_seconds must be an integer"),
+    ('[defaults]\ntimeout_seconds = 0\n', r"timeout_seconds must be at least 1"),
+    ('[context]\nsatisfaction_check_start = true\n', r"must be an integer"),
+    ('[engagement]\nlevel = "3"\n', r"level must be an integer"),
+    ('[engagement]\nlevel = 2.5\n', r"level must be an integer"),
+    ('[engagement]\nbias = 3\n', r"bias must be task"),
+    (ROLE + 'temperature = "hot"\n', r"temperature must be a number"),
+    (ROLE + 'top_k = 1.5\n', r"top_k must be an integer"),
+    (ROLE + 'collapse_system_prompt = "yes"\n', r"collapse_system_prompt must be true or false"),
+    (ROLE + '[failover]\ncoding = "coder"\n', r"coding must be an array of role names"),
+    # cria's secrets file lives in one place
+    ('env_file = "/etc/passwd"\n', r"env_file must be ~/.cria/.env"),
+    ('env_file = "./.env"\n', r"env_file must be ~/.cria/.env"),
+    ('env_file = 5\n', r"env_file must be a string"),
 ])
 def test_removed_unknown_and_malformed_keys_fail_loudly_at_load(tmp_path, text, why):
     """Zero aliases: a removed key, a wrong type or a dangling reference stops startup with a pointed message instead of being ignored."""
     with pytest.raises(ValueError, match=why):
         load(tmp_path, text)
+
+
+def test_the_example_config_loads_and_documents_every_key_the_loader_accepts():
+    """cria.example.toml is the operator's reference: it must load as written, and every key any table accepts must appear in it (set or commented)."""
+    import dataclasses
+    import re
+    Config.load(EXAMPLE)
+    accepted = {f.name for cls in (cfgmod.ServerConfig, cfgmod.UpstreamConfig, cfgmod.LoggingConfig, cfgmod.IndicatorsConfig, cfgmod.ToolsConfig,
+                                   cfgmod.ContextConfig, cfgmod.SafetyConfig, cfgmod.RetentionConfig, cfgmod.PlannerConfig, cfgmod.System1Config,
+                                   cfgmod.AssistConfig, cfgmod.Backend) for f in dataclasses.fields(cls)}
+    accepted |= cfgmod._ROLE_KEYS | cfgmod._FAILOVER_CHAINS | cfgmod._ENGAGEMENT_KEYS | cfgmod._TOP_LEVEL_KEYS
+    accepted -= {"name", "drive", "question", "profile"}  # `name` is the table's own key; drive is the legacy spelling of level; question has no chain of its own
+    text = EXAMPLE.read_text()
+    missing = sorted(k for k in accepted if not re.search(rf"(?m)^#?\s*\[?{k}\b", text))
+    assert missing == []
+
+
+def test_env_file_may_name_only_the_cria_dir_secrets_file(tmp_path, monkeypatch):
+    """The documented `~/.cria/.env`, its absolute spelling and `$HOME`-relative expansion load; any other path is refused."""
+    assert Config.load(EXAMPLE).env_file == "~/.cria/.env"
+    assert load(tmp_path, f'env_file = "{cfgmod.CRIA_HOME / ".env"}"\n').env_file == str(cfgmod.CRIA_HOME / ".env")
+    assert load(tmp_path, "").env_file is None and load(tmp_path, 'env_file = ""\n').env_file is None
 
 
 def test_backends_and_roles_resolve_their_wire_conventions(tmp_path):

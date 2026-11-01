@@ -621,7 +621,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: write_shrink_facts, write_call_judge, write_call_judge_user. Dependencies: none.
-  Hooks: [`cria/writeproxy.py:_lower_synthetic`](../../cria/writeproxy.py#L1359), [`cria/server.py:CriaHandler._setup_translation`](../../cria/server.py#L1583).
+  Hooks: [`cria/writeproxy.py:_lower_synthetic`](../../cria/writeproxy.py#L1381), [`cria/server.py:CriaHandler._setup_translation`](../../cria/server.py#L1583).
   Regressions: [`tests/write_edit/test_write_edit_held_writes.py:test_only_a_clear_whole_file_ruling_lets_a_fragment_through_and_only_that_is_cached`](../../tests/write_edit/test_write_edit_held_writes.py#L134), [`tests/write_edit/test_write_edit_held_writes.py:test_a_removal_that_keeps_enough_lines_lands_and_the_facts_ride_on_the_result`](../../tests/write_edit/test_write_edit_held_writes.py#L146), [`tests/write_edit/test_write_edit_scenario_wire_turn.py:test_a_legacy_shrink_callback_wraps_the_program_so_a_stale_measure_never_refuses_a_write`](../../tests/write_edit/test_write_edit_scenario_wire_turn.py#L72).
 - `rejected-draft-provenance` — [`cria/returnedpolicies.py:REJECTED_DRAFT`](../../cria/returnedpolicies.py); execute `preserve_rejected_draft`.
   Stage `rejected-draft`; default level 2; scope `runtime`.
@@ -993,7 +993,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/config.py:Role.apply`](../../cria/config.py#L314)
+- [`cria/config.py:Role.apply`](../../cria/config.py#L316)
 - [`cria/massage.py:merge_for_alternation`](../../cria/massage.py#L327)
 - [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L897)
 
@@ -1067,7 +1067,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/config.py:PlannerConfig`](../../cria/config.py#L619)
+- [`cria/config.py:PlannerConfig`](../../cria/config.py#L621)
 - [`cria/server.py:CriaServer.__init__`](../../cria/server.py#L849)
 
 **Historical families:** F32.
@@ -1106,7 +1106,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/loop.py:_fill_missing_verdict_flag`](../../cria/loop.py#L1760)
 - [`cria/jsontext.py:close_unclosed_object`](../../cria/jsontext.py#L113)
 - [`cria/jsontext.py:strip_reasoning_prefix`](../../cria/jsontext.py#L43)
-- [`cria/config.py:Role.clean_content`](../../cria/config.py#L384)
+- [`cria/config.py:Role.clean_content`](../../cria/config.py#L386)
 
 **Historical families:** F33, F37.
 
@@ -1794,7 +1794,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/config.py:Role.apply`](../../cria/config.py#L314)
+- [`cria/config.py:Role.apply`](../../cria/config.py#L316)
 - [`cria/reasoning.py:detect_served_style`](../../cria/reasoning.py#L41)
 - [`cria/upstream.py:Upstream._reconcile_reasoning_convention`](../../cria/upstream.py#L835)
 

@@ -15,8 +15,10 @@ committed / lost with the workspace. Secrets belong in the environment; config i
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import tomllib
+import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -733,6 +735,7 @@ class Config:
             for _q, d in layers:
                 data = _deep_merge(data, d)
             source = " + ".join(str(q) for q, _ in layers)
+        _only("config", data, _TOP_LEVEL_KEYS, kind="entry")
         defaults = _defaults(data.get("defaults", {}))
         return cls(
             server=_server(data.get("server", {})),
@@ -740,26 +743,14 @@ class Config:
             logging=_logging(data.get("logging", {})),
             routing=_routing(data, defaults.base_url),
             indicators=_indicators(data.get("indicators", {})),
-            tools=ToolsConfig(
-                cheatsheet=bool(data.get("tools", {}).get("cheatsheet", True)),
-                focus=bool(data.get("tools", {}).get("focus", True)),
-                workspace_image_tool=data.get("tools", {}).get("workspace_image_tool"),
-            ),
-            context=ContextConfig(
-                focus_trim=bool(_context(data.get("context", {})).get("focus_trim", True)),
-                self_compact=bool(data.get("context", {}).get("self_compact", True)),
-                satisfaction_check_start=int(data.get("context", {}).get("satisfaction_check_start", 100)),
-                satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
-            ),
+            tools=ToolsConfig(**_table("tools", data.get("tools", {}), ToolsConfig)),
+            context=ContextConfig(**_table("context", _context(data.get("context", {})), ContextConfig)),
             safety=_safety(data.get("safety", {})),
             retention=_retention(data.get("retention", {})),
             assists=_assists(data.get("assists", {})),
             system1=_system1(data.get("system1", {})),
-            planner=PlannerConfig(
-                enabled=bool(data.get("planner", {}).get("enabled", False)),
-                max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
-            ),
-            env_file=(str(data["env_file"]) if data.get("env_file") else None),
+            planner=PlannerConfig(**_table("planner", data.get("planner", {}), PlannerConfig)),
+            env_file=_env_file(data.get("env_file")),
             source=source,
         )
 
@@ -814,57 +805,101 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+#: Every top-level entry a cria config may carry (the scalar ``env_file`` and one table per subsystem).
+_TOP_LEVEL_KEYS = frozenset({"env_file", "server", "defaults", "logging", "indicators", "tools", "context", "safety",
+                             "retention", "planner", "engagement", "assists", "system1", "backends", "roles",
+                             "failover"})
+#: The ``[failover]`` chain names: the task types the router reads (``Router._chain_for``) and the lane of each loop role.
+_FAILOVER_CHAINS = frozenset({"coding", "reasoning", "question", "classification", "compaction"})
+_ENGAGEMENT_KEYS = frozenset({"level", "bias", "drive"})
+
+
+def _only(table: str, d, allowed, *, kind: str = "key") -> None:
+    """Refuse a config table that is not a table or names a key cria does not read. A typo'd key used to be
+    dropped silently (``capture_call = true`` ran with capture off), the exact failure a config must never
+    have: say which key, in which table, and what IS supported."""
+    if not isinstance(d, dict):
+        raise ValueError(f"[{table}] must be a table")
+    unknown = sorted(str(k) for k in set(d) - set(allowed))
+    if unknown:
+        raise ValueError(f"[{table}] unknown {kind}{'s' if len(unknown) > 1 else ''} {', '.join(unknown)}; "
+                         f"supported: {', '.join(sorted(allowed))}")
+
+
+def _typed(table: str, key: str, value, want):
+    """``value`` as the declared type ``want`` (bool | int | float | str, optionally ``| None``), or a
+    ValueError naming the key. TOML is typed, so nothing is coerced: ``bool("false")`` is True and
+    ``int(True)`` is 1, and either would turn a quoted value into the opposite of what was written."""
+    kinds = {bool: "true or false", int: "an integer", float: "a number", str: "a string"}
+    base = [a for a in typing.get_args(want) if a is not type(None)] or [want]
+    ok = {bool: lambda v: type(v) is bool, int: lambda v: type(v) is int, str: lambda v: isinstance(v, str),
+          float: lambda v: type(v) in (int, float)}[base[0]](value)
+    if not ok:
+        raise ValueError(f"[{table}] {key} must be {kinds[base[0]]}, got {value!r}")
+    return float(value) if base[0] is float else value
+
+
+def _table(table: str, d, cls, *, floors: Mapping[str, float] | None = None) -> dict:
+    """The keyword arguments for dataclass ``cls`` from config table ``d``: only its fields are accepted,
+    each strictly typed, each at or above its floor in ``floors``. Omitted keys keep the dataclass default."""
+    names = {f.name for f in dataclasses.fields(cls)}
+    _only(table, d, names)
+    hints = typing.get_type_hints(cls)
+    out = {k: _typed(table, k, v, hints[k]) for k, v in d.items()}
+    for k, floor in (floors or {}).items():
+        if k in out and out[k] < floor:
+            raise ValueError(f"[{table}] {k} must be at least {floor:g}, got {out[k]!r}")
+    return out
+
+
 def _server(d: dict) -> ServerConfig:
-    return ServerConfig(
-        host=str(d.get("host", "127.0.0.1")),
-        port=int(d.get("port", 18085)),
-        heartbeat_seconds=float(d.get("heartbeat_seconds", 5.0)),
-    )
+    kw = _table("server", d, ServerConfig, floors={"port": 0, "heartbeat_seconds": 0})
+    if kw.get("port", 0) > 65535:
+        raise ValueError(f"[server] port must be 0..65535, got {kw['port']}")
+    return ServerConfig(**kw)
 
 
 def _defaults(d: dict) -> UpstreamConfig:
     """``[defaults]`` — the shared endpoint + timeout every backend inherits."""
-    return UpstreamConfig(
-        base_url=str(d.get("base_url", "http://127.0.0.1:18084")).rstrip("/"),
-        timeout_seconds=int(d.get("timeout_seconds", 600)),
-        context_window=int(d.get("context_window", 0) or 0),
-    )
+    kw = _table("defaults", d, UpstreamConfig, floors={"timeout_seconds": 1, "context_window": 0})
+    if "base_url" in kw:
+        kw["base_url"] = kw["base_url"].rstrip("/")
+    return UpstreamConfig(**kw)
 
 
 def _logging(d: dict) -> LoggingConfig:
-    level = str(d.get("level", "info")).lower()
-    if level not in {"debug", "info", "warn", "error"}:
-        raise ValueError(f"[logging] level must be debug|info|warn|error, got {level!r}")
-    return LoggingConfig(
-        level=level,
-        dir=str(d.get("dir", "~/.cria/logs")),
-        console=bool(d.get("console", True)),
-        jsonl=bool(d.get("jsonl", True)),
-        capture_calls=bool(d.get("capture_calls", False)),
-        capture_dir=str(d.get("capture_dir", "~/.cria/calls")),
-        capture_rendered=bool(d.get("capture_rendered", True)),
-    )
+    kw = _table("logging", d, LoggingConfig)
+    if "level" in kw:
+        kw["level"] = kw["level"].lower()
+        if kw["level"] not in {"debug", "info", "warn", "error"}:
+            raise ValueError(f"[logging] level must be debug|info|warn|error, got {kw['level']!r}")
+    return LoggingConfig(**kw)
 
 
 def _safety(d: dict) -> SafetyConfig:
-    perm = str(d.get("external_dir_permission", "none")).lower()
-    if perm not in {"none", "read", "write"}:
-        raise ValueError(f"[safety] external_dir_permission must be none|read|write, got {perm!r}")
-    return SafetyConfig(external_dir_permission=perm)
+    kw = _table("safety", d, SafetyConfig)
+    if "external_dir_permission" in kw:
+        kw["external_dir_permission"] = perm = kw["external_dir_permission"].lower()
+        if perm not in {"none", "read", "write"}:
+            raise ValueError(f"[safety] external_dir_permission must be none|read|write, got {perm!r}")
+    return SafetyConfig(**kw)
 
 
 def _indicators(d: dict) -> IndicatorsConfig:
-    return IndicatorsConfig(
-        enabled=bool(d.get("enabled", True)),
-        connect=bool(d.get("connect", True)),
-        route=bool(d.get("route", True)),
-        metrics=bool(d.get("metrics", True)),
-        assists=bool(d.get("assists", True)),
-        stats=bool(d.get("stats", True)),
-        status=bool(d.get("status", True)),
-        reasoning=bool(d.get("reasoning", True)),
-        reasoning_transcript=bool(d.get("reasoning_transcript", True)),
-    )
+    return IndicatorsConfig(**_table("indicators", d, IndicatorsConfig))
+
+
+def _env_file(value) -> str | None:
+    """``env_file`` — cria's secrets file. There is ONE place it may live (``~/.cria/.env``, beside the rest
+    of cria's private state); a config naming another path is refused rather than reading secrets from
+    wherever a (possibly per-workspace) config points."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"env_file must be a string path, got {value!r}")
+    if Path(value).expanduser() != CRIA_HOME / ".env":
+        raise ValueError(f"env_file must be ~/.cria/.env (cria's secrets live only there), got {value!r}")
+    return value
 
 
 def _engagement_level(eng: dict) -> int:
@@ -881,32 +916,40 @@ def _engagement_level(eng: dict) -> int:
         return MAX_ENGAGEMENT_LEVEL
     if "level" in eng:
         raw = eng["level"]
-        try:
-            lvl = int(raw)
-        except (TypeError, ValueError):
+        if type(raw) is not int:
             raise ValueError(f"[engagement] level must be an integer 0..{MAX_ENGAGEMENT_LEVEL}, got {raw!r}")
+        lvl = raw
         if not PURE_PROXY <= lvl <= MAX_ENGAGEMENT_LEVEL:
             raise ValueError(f"[engagement] level must be 0..{MAX_ENGAGEMENT_LEVEL}, got {lvl}")
         return lvl
     if "drive" in eng:
-        return MAX_ENGAGEMENT_LEVEL if bool(eng["drive"]) else PURE_PROXY
+        if type(eng["drive"]) is not bool:
+            raise ValueError(f"[engagement] drive must be true or false, got {eng['drive']!r}")
+        return MAX_ENGAGEMENT_LEVEL if eng["drive"] else PURE_PROXY
     return MAX_ENGAGEMENT_LEVEL
 
 
 def _routing(data: dict, defaults_base_url: str) -> RoutingConfig:
+    for table in ("backends", "roles", "failover", "engagement"):
+        if not isinstance(data.get(table, {}), dict):
+            raise ValueError(f"[{table}] must be a table")
     backends = {str(n): _backend(str(n), bd) for n, bd in data.get("backends", {}).items()}
     roles = {str(n): _role(str(n), rd, backends) for n, rd in data.get("roles", {}).items()}
 
-    failover = {
-        str(task): tuple(str(r) for r in chain)
-        for task, chain in data.get("failover", {}).items()
-    }
+    _only("failover", data.get("failover", {}), _FAILOVER_CHAINS, kind="chain")
+    failover = {}
+    for task, chain in data.get("failover", {}).items():
+        if not isinstance(chain, list) or any(not isinstance(r, str) for r in chain):
+            raise ValueError(f"[failover] {task} must be an array of role names, got {chain!r}")
+        failover[str(task)] = tuple(chain)
     for task, chain in failover.items():
         for r in chain:
             if r not in roles:
                 raise ValueError(f"[failover].{task} references role {r!r} with no [roles.{r}] table")
 
-    bias = str(data.get("engagement", {}).get("bias", "task")).lower()
+    _only("engagement", data.get("engagement", {}), _ENGAGEMENT_KEYS)
+    bias = data.get("engagement", {}).get("bias", "task")
+    bias = bias.lower() if isinstance(bias, str) else bias
     if bias not in {"task", "simple", "question"}:
         raise ValueError(f"[engagement] bias must be task|simple|question, got {bias!r}")
 
@@ -923,8 +966,14 @@ def _routing(data: dict, defaults_base_url: str) -> RoutingConfig:
 def _backend(name: str, d) -> Backend:
     if not isinstance(d, dict):
         raise ValueError(f"[backends.{name}] must be a table (transport = \"http\"|\"cli\" + its endpoint)")
-    transport = str(d.get("transport", "http")).lower()
+    transport = _typed(f"backends.{name}", "transport", d.get("transport", "http"), str).lower()
+
+    def _strs(table, allowed):
+        _only(table, d, allowed)
+        return {k: _typed(table, k, v, str) for k, v in d.items()}
+
     if transport == "cli":
+        d = _strs(f"backends.{name}", {"transport", "tool", "binary", "cwd"})
         tool = str(d.get("tool", "claude")).lower()
         if tool == "codex":
             # The codex CLI exposes only an AGENTIC `codex exec` (its own tool-use/sandbox loop that
@@ -941,6 +990,7 @@ def _backend(name: str, d) -> Backend:
                        binary=str(d.get("binary", "claude")),
                        cwd=(str(d["cwd"]) if d.get("cwd") else None))
     if transport == "http":
+        d = _strs(f"backends.{name}", {"transport", "base_url", "api_key_env", "model", "reasoning_style"})
         base_url = str(d["base_url"]).rstrip("/") if d.get("base_url") else None
         api_key_env = str(d["api_key_env"]) if d.get("api_key_env") else None
         if api_key_env and not base_url:
@@ -951,6 +1001,10 @@ def _backend(name: str, d) -> Backend:
             reasoning_style=(str(d["reasoning_style"]) if d.get("reasoning_style") else None),
         )
     raise ValueError(f"[backends.{name}] transport must be http|cli, got {transport!r}")
+
+
+#: The keys a ``[roles.<name>]`` table may carry: every ``Role`` field except its ``name``, plus ``temp`` (alias of temperature).
+_ROLE_KEYS = frozenset(f.name for f in dataclasses.fields(Role)) - {"name"} | {"temp"}
 
 
 def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
@@ -965,19 +1019,25 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
         raise ValueError(
             f"[roles.{name}]: put `model` on the [backends.*] it names, not the role. A served "
             f"backend omits it (cria uses the server's loaded model); a remote one names its wire model.")
-    bname = str(spec.get("backend", ""))
+    _only(f"roles.{name}", spec, _ROLE_KEYS)
+    bname = _typed(f"roles.{name}", "backend", spec.get("backend", ""), str)
     if bname not in backends:
         raise ValueError(f"[roles.{name}] backend = {bname!r} has no matching [backends.{bname}]")
 
     def _num(key):
         v = spec.get(key)
-        return None if v is None else float(v)
+        return None if v is None else _typed(f"roles.{name}", key, v, float)
 
     def _int(key):
         v = spec.get(key)
-        return None if v is None else int(v)
+        return None if v is None else _typed(f"roles.{name}", key, v, int)
 
     reasoning_val = spec.get("reasoning")
+    if reasoning_val is not None:
+        _typed(f"roles.{name}", "reasoning", reasoning_val, str)
+    for key in ("think_protocol", "vision_model"):
+        if spec.get(key) is not None:
+            _typed(f"roles.{name}", key, spec[key], str)
     # `temperature` (codex-local's name) OR the short `temp` — accept either.
     temperature = _num("temperature") if spec.get("temperature") is not None else _num("temp")
     return Role(
@@ -994,8 +1054,8 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
         repeat_penalty=_num("repeat_penalty"),
         presence_penalty=_num("presence_penalty"),
         min_p=_num("min_p"),
-        collapse_system_prompt=bool(spec.get("collapse_system_prompt", False)),
-        merge_consecutive_turns=bool(spec.get("merge_consecutive_turns", False)),
+        collapse_system_prompt=_typed(f"roles.{name}", "collapse_system_prompt", spec.get("collapse_system_prompt", False), bool),
+        merge_consecutive_turns=_typed(f"roles.{name}", "merge_consecutive_turns", spec.get("merge_consecutive_turns", False), bool),
         max_tokens=_int("max_tokens"),
         output_reserve=_int("output_reserve"),
         vision=spec.get("vision"),

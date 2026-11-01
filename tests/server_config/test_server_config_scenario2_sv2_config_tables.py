@@ -49,12 +49,12 @@ def test_the_documented_defaults_are_what_an_empty_config_gives():
 
 
 def test_accepted_spellings_normalise(tmp_path):
-    """Case-insensitive enums, trailing slashes, numeric strings, legacy drive, role short names and CLI backends all load to the documented values."""
-    cfg = load(tmp_path, '[server]\nport = "9000"\nheartbeat_seconds = 2\n[logging]\nlevel = "WARN"\ncapture_calls = true\n[safety]\nexternal_dir_permission = "READ"\n'
+    """Case-insensitive enums, trailing slashes, legacy drive, role short names and CLI backends all load to the documented values."""
+    cfg = load(tmp_path, '[server]\nport = 9000\nheartbeat_seconds = 2\n[logging]\nlevel = "WARN"\ncapture_calls = true\n[safety]\nexternal_dir_permission = "READ"\n'
                          '[indicators]\nenabled = false\nmetrics = false\n[engagement]\ndrive = false\nbias = "Simple"\n'
                          '[backends.cl]\ntransport = "CLI"\nbinary = "/opt/claude"\ncwd = "/w"\n'
                          '[backends.cloud]\nbase_url = "https://api.example/v1/"\napi_key_env = "K"\nmodel = "gpt-x"\nreasoning_style = "openai"\n'
-                         '[roles.a]\nbackend = "cl"\n[roles.b]\nbackend = "cloud"\ntemp = 0.3\ntop_k = "40"\nreasoning = "OFF"\nmax_tokens = 100\n'
+                         '[roles.a]\nbackend = "cl"\n[roles.b]\nbackend = "cloud"\ntemp = 0.3\ntop_k = 40\nreasoning = "OFF"\nmax_tokens = 100\n'
                          '[roles.c]\nbackend = "cloud"\ntemperature = 0.9\ntemp = 0.1\nthink_protocol = "system_directive"\ncollapse_system_prompt = true\nmerge_consecutive_turns = true\n')
     assert (cfg.server.port, cfg.server.heartbeat_seconds, cfg.logging.level, cfg.logging.capture_calls, cfg.safety.external_dir_permission) == (9000, 2.0, "warn", True, "read")
     assert (cfg.indicators.enabled, cfg.indicators.metrics, cfg.indicators.route) == (False, False, True)
