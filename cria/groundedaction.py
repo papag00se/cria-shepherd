@@ -571,7 +571,23 @@ class GroundedActions:
         THE UNIT IS A SEGMENT, NOT A LINE. A reasoner writes its whole answer as one paragraph, and
         judging the LINE it lives in let a 976-character description of real work count as invented code
         because one sentence in it quoted a command (20260819T133948 call 0110). Whitespace-insensitive,
-        because cria's own relay reflows the directive before anyone sees it."""
+        because cria's own relay reflows the directive before anyone sees it.
+
+        HISTORY OF THE TWO SHAPES (moved here from the dead `loop._strip_invented_code`, which rewrote the
+        directive and was never on the live path). A line that IS code and a call embedded in prose are
+        checked differently. THE LANGUAGE HALF of the line pattern is `_CODE_LINE`; the shell half lives in
+        `cria.shellshape` because `cat > REVIEW.md << 'EOF'` matched none of the old alternation, so the
+        count was zero and the command shipped (feed-pipeline-java x qwen35, 2026-08-19, call 0270).
+        EMPTY PARENS ARE A NAME, NOT CODE: `Importer.load()` says WHERE, like a file path; the ARGUMENT
+        text is what can be invented, so `_INLINE_CALL` needs some and `_QUOTABLE_MIN` bounds it
+        (`m.group(1)`, `sys.exit(0)`, `O(n)` hand the coder nothing to paste). Whether a NAME exists is a
+        different guard's question (`_symbol_not_in_the_file`, which reads the file). Walked on
+        feed-pipeline-java x nemotron-elastic (scored 16): the correct fix was refused because two
+        harmless spans counted. THE DOT WAS NEVER WHAT MADE IT CODE: the pattern once required a dotted
+        name, so a bare `new CSVParser(new StringReader(line), ',', ...)` (calls 0019 and 0060) scored 0
+        and shipped as dictated code; the real constructor, named by javac in the same prompt, takes eight
+        arguments and no Reader (36 compile errors). Dropping the dot found 134,084 more spans over the
+        captures, 99.8% of them real code; the floor costs 0.8% of the dotted hits."""
         if not evidence:
             return 0
         haystack = ' '.join(evidence.split())

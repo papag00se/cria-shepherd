@@ -13,7 +13,7 @@ disagreed:
 The gap between the first two cost a run. Walked on `feed-pipeline-java x qwen35` (2026-08-19) call
 0270: the flail steer told the coder ``Run `cat > REVIEW.md << 'EOF'` with file name and line
 numbers``. That heredoc appears nowhere the coder had written — the reasoner invented it — but
-``_CODE_LINE`` matched nothing in it, so ``_strip_invented_code`` reported zero spans, so the
+``_CODE_LINE`` matched nothing in it, so the invented-code count was zero (``_strip_invented_code``, since removed, then ``_invented_code_spans``), so the
 restate path (gated on that count) never ran, and the command shipped byte-identical.
 
 A SCORE, NOT A BOOLEAN, because the callers want different bars. Refusing to deliver a steer is
