@@ -481,3 +481,23 @@ def test_a_responses_instructions_persona_is_reduced_before_conversation_evidenc
     assert persona not in out[0]["content"] and cf._REDUCED_MARK in out[0]["content"]
     assert out[0]["content"].endswith(configured)
     assert sum("EVIDENCE" in str(m.get("content")) for m in out) == 6
+
+
+def test_the_compaction_note_renders_each_stub_a_bounded_number_of_times_not_once_per_older_turn(monkeypatch):
+    """ornith1.5_9b / Java run (154-item request): the stub reserve was re-summed from turn 0 for every turn, 243,499 stub
+    renderings for ~700 dropped turns and a note rebuilt on every drop. The work counted here is the renderings: linear in the
+    turns (twice each: once for the reserve, once if the turn is stubbed), and the reserve of each turn is still exactly the
+    naive sum over the older turns."""
+    dropped = [a("", f"c{i}", args=json.dumps({"path": f"src/m{i}.py"})) if i % 2 == 0 else tool(f"c{i - 1}", "line one\n" + "r" * 900)
+               for i in range(400)]
+    renderings = []
+    real = cf._turn_stub
+    monkeypatch.setattr(cf, "_turn_stub", lambda m, t: renderings.append(1) or real(m, t))
+    texts = [cf._msg_text(m).strip() for m in dropped]
+    reserves = cf._stub_reserves(dropped, texts)
+    assert len(renderings) == sum(1 for t in texts if t) <= len(dropped)
+    naive = [sum(est_tokens(real(dropped[j], texts[j])) for j in range(i) if texts[j]) for i in range(len(dropped))]
+    assert reserves == naive
+    renderings.clear()
+    note = cf._compacted_note(dropped, len(dropped), 1200)
+    assert len(renderings) <= 2 * len(dropped) and cf._COMPACTED_MARK in note["content"]

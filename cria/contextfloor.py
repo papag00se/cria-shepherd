@@ -388,15 +388,22 @@ def _reduce_restored_text(messages: list[dict], msg_budget: int, *, protected_ca
     return out, n
 
 
-def _stub_reserve(dropped_msgs: list, before: int) -> int:
-    """What the one-line stubs for every turn OLDER than ``before`` will actually cost.
+def _stub_reserves(dropped_msgs: list, texts: list[str]) -> list[int]:
+    """What the one-line stubs for every turn OLDER than each index will actually cost: element ``i``
+    is the sum for the turns before ``i`` (``texts[j]`` is turn ``j``'s stripped text; a turn with no
+    text has no stub).
 
     Measured, not a constant: a reserve that guesses high refuses a digest that would have fitted
     (it refused one by six tokens), and a reserve that guesses low is not a reserve. The turns are
-    already in hand, so the exact number is free."""
-    return sum(est_tokens(_turn_stub(dropped_msgs[j], t))
-               for j in range(before)
-               if (t := _msg_text(dropped_msgs[j]).strip()))
+    already in hand, so the exact number is free. One running sum, not a re-sum per turn: the
+    per-turn re-sum was quadratic in the dropped turns (243,499 stub renderings for one 154-item
+    request)."""
+    reserves, running = [], 0
+    for message, text in zip(dropped_msgs, texts):
+        reserves.append(running)
+        if text:
+            running += est_tokens(_turn_stub(message, text))
+    return reserves
 
 
 def _turn_stub(m: dict, text: str) -> str:
@@ -1408,8 +1415,10 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     stubbed = False
     # Newest-dropped first so a tight budget spends on the turns adjacent to the surviving active span
     # (most relevant to the current step); reassembled into chronological order for reading.
+    texts = [_msg_text(m).strip() for m in dropped_msgs]
+    stub_reserves = _stub_reserves(dropped_msgs, texts)
     for idx in range(len(dropped_msgs) - 1, -1, -1):
-        text = _msg_text(dropped_msgs[idx]).strip()
+        text = texts[idx]
         if not text:
             continue  # nothing to summarize (e.g. a bare tool-call frame) — not a loss to disclose
         if spent >= note_budget:
@@ -1429,7 +1438,7 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
         # never eat the note. The old rule was first-come-first-served against the whole budget, and
         # `digest_reduce` returns code and prose UNCHANGED by design — so one dropped `write_file`
         # payload took the lot and every older turn was counted away.
-        reserved = _stub_reserve(dropped_msgs, idx)
+        reserved = stub_reserves[idx]
         allowed = note_budget - spent - reserved
         cost = est_tokens(digest)
         if digest and cost <= allowed:
