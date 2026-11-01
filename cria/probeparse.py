@@ -1594,7 +1594,10 @@ _DEPENDENCY_MISSING = (
     # python: ModuleNotFoundError: No module named 'requests'
     ("python", re.compile(r"ModuleNotFoundError: No module named ['\"]([\w.]+)['\"]")),
     # node: Error: Cannot find module 'commander'
-    ("node", re.compile(r"Cannot find module ['\"]([^'\"]+)['\"]")),
+    # A PATH is a missing FILE, never a package: node names the entry script it was asked to run (`node goose` inside a
+    # container -> `Cannot find module '/usr/src/app/goose'`) or a relative require (`'./lib/x'`) the same way, and "the fix is
+    # the dependency" was appended to ten docker runs of one cell (e2e handles-cli-node 2026-11-01).
+    ("node", re.compile(r"Cannot find module ['\"](?![./~]|[A-Za-z]:[\\/])([^'\"]+)['\"]")),
     # rust: error[E0463]: can't find crate for `toml`
     ("rust", re.compile(r"can't find crate for `([\w-]+)`")),
     # go: no required module provides package example.com/x

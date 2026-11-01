@@ -106,6 +106,10 @@ def test_split_loc_reads_file_line_col(s, want):
     ("ModuleNotFoundError: No module named 'requests'", ("python", "requests")),
     ("cannot load such file -- countries (LoadError)", ("ruby", "countries")),
     ("Error: Cannot find module 'commander'", ("node", "commander")),
+    ("Error: Cannot find module '@scope/pkg/sub'", ("node", "@scope/pkg/sub")),
+    # ornith1.5_9b / handles-cli-node, real Codex 2026-11-01: `docker run image goose` -> node ran the argument as the script
+    ("Error: Cannot find module '/usr/src/app/goose'", None), ("Error: Cannot find module './lib/handle-lookup'", None),
+    ("Error: Cannot find module '../x'", None), ("Error: Cannot find module 'C:\\app\\goose'", None),
     ("error[E0463]: can't find crate for `toml`", ("rust", "toml")),
     ("no required module provides package example.com/dec; to add it:", ("go", "example.com/dec")),
     ("Could not resolve dependencies for project a:b:jar:1: org.x:csv:jar:1.9 was not found", ("java", "org.x:csv:jar:1.9")),
