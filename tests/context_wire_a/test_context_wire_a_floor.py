@@ -391,6 +391,16 @@ def test_structured_output_is_reduced_oldest_first_before_any_turn_is_dropped_an
     results = [m["content"] for m in out if m["role"] == "tool"]
     assert results[-1] == fresh and est_tokens(results[0]) < est_tokens(stale)
 
+def test_a_gate_result_is_never_reduced_even_when_it_is_the_oldest_and_largest_output():
+    """cria's own gate output is ground truth: under the same pressure that shrinks an ordinary stale result, the gate's identical (older) result is kept byte for byte."""
+    rows = lambda msg: '{"rows": [' + ",".join('{"m": "%s"}' % msg for _ in range(120)) + "]}"      # noqa: E731
+    gate_result, stale = rows("the gate found this in the list and on the page"), rows("an ordinary fetch found this on the page")
+    gate_call = a("", "g", "shell", json.dumps({"cmd": _gate_sentinel(["pytest -q"]) + "\ncd /ws && pytest -q"}))
+    msgs = [u("task"), gate_call, tool("g", gate_result), a("", "c1", "web_fetch"), tool("c1", stale), u("go")]
+    out, _, rep = cf.fit(msgs, None, window=2500, reserve=300, safety=1.0)
+    results = {m["tool_call_id"]: m["content"] for m in out if m["role"] == "tool"}
+    assert rep.outputs_reduced == 1 and results["g"] == gate_result and est_tokens(results["c1"]) < est_tokens(stale)
+
 
 def test_the_floor_reduces_the_harness_persona_before_conversation_evidence_and_labels_it():
     """phi4 / Java A5: Codex's 19 KB persona rode whole in the protected system message, so the floor dropped

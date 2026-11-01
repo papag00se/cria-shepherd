@@ -8114,8 +8114,8 @@ def _checks_ran_before(paths: list[str]) -> str:
 
     NOTE for whoever edits the prompt file: `prompts.load`/`render` do NOT strip `#` lines (only
     `load_map` does), so a rationale comment placed in that file would be sent to the model verbatim.
-    That is why this explanation lives here. tests/test_the_model_sees_neither_the_name_nor_the_
-    numbering.py enforces it.
+    That is why this explanation lives here. Covered by
+    tests/loop_rest/test_loop_rest_scenario2_lb2_gatereaders.py.
 
     Empty when cria knows of no intervening write — then the sentence reads "They last ran, and
     nothing has run them again since", which is still true and still claims no currency."""

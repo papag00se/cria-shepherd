@@ -104,6 +104,44 @@ def test_streamed_reasoning_reaches_the_disk_whether_or_not_the_stream_finishes(
     assert reasoning_files(tmp_path / "silent", "") == [] and reasoning_files(tmp_path / "silent", ".partial") == []
 
 
+def test_a_disk_that_refuses_the_reasoning_files_never_breaks_the_stream_and_each_refusal_is_survived_or_reported(tmp_path, monkeypatch):
+    """Reasoning is kept on a best-effort basis: a partial file that cannot be opened or written, closed or removed, and a final file that cannot be written, must leave the turn delivered, never
+    raise into the stream, and the one failure with a place to say so (the final file) says so in the event log."""
+    done = [sse({"reasoning_content": "a complete thought"}), sse({"content": "answer"}, {"completion_tokens": 4}, "stop"), b"data: [DONE]\n"]
+    monkeypatch.setattr(Upstream, "_partial_path", staticmethod(lambda capture_path: str(tmp_path / "missing-dir" / "partial.txt")))   # the partial cannot be opened at all
+    rlog = captured(tmp_path / "no-partial", done)
+    assert rlog.first("upstream.done") is not None and [p.read_text() for p in reasoning_files(tmp_path / "no-partial", "")] == ["a complete thought"]
+    monkeypatch.undo()
+
+    class Refusing:
+        def write(self, chunk):
+            raise OSError("disk full")
+
+        def close(self):
+            raise OSError("bad close")
+
+    capture = str(tmp_path / "0001-coder")
+    state = {"fh": Refusing()}
+    Upstream._stream_reasoning_to_disk(state, capture, "more thought")
+    assert state["fh"] is None                                          # the sink gives up on a failing disk; the next delta starts over
+    state["fh"] = Refusing()
+    Upstream._close_partial(None, capture)                              # unregistered: nothing to close, nothing raised
+    from cria import upstream as upstream_module
+    upstream_module._REASONING_SINKS[capture] = state
+    Upstream._close_partial(None, capture)
+    assert state["fh"] is None and capture not in upstream_module._REASONING_SINKS
+
+    stuck = tmp_path / "0002-coder.reasoning.partial.txt"
+    (stuck / "inner").mkdir(parents=True)                               # exists but cannot be unlinked
+    Upstream._close_partial(None, str(tmp_path / "0002-coder"))
+    assert stuck.is_dir()
+
+    (tmp_path / "0003-coder.reasoning.txt").mkdir()                     # the final file cannot be written
+    rlog = Rlog()
+    Upstream("http://fixture.invalid")._save_reasoning(str(tmp_path / "0003-coder.json"), "kept thought", None, rlog)
+    assert rlog.first("coder.reasoning") is None and "Is a directory" in rlog.first("coder.reasoning_error")["error"]
+
+
 class Clock:
     def __init__(self, seconds_per_frame):
         self.t, self.step = 1000.0, seconds_per_frame

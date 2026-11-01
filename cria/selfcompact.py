@@ -459,7 +459,7 @@ def serialize_blocks(messages: list[dict], defang: bool = False) -> list[str]:
 # whose carve-out read as a blanket licence to bound any prompt cria composes. #5 now reads "cria
 # never truncates" for every reader, with de-duplication and a model-made summary as the only
 # exceptions, and nothing here clips anything. `_bounded` and the elision marker are deleted; a
-# regression test (tests/test_the_transcript_is_never_clipped.py) forbids their return.
+# regression test (tests/compaction_handoff/test_compaction_handoff_evidence.py, the never-clipped transcript test) forbids their return.
 #
 # Kept because the two failures it records are the reasons the bound was wrong, and both are easy to
 # reintroduce. WRONG END: a test runner prints its banner first and its verdict last, so the first

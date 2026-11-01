@@ -2803,7 +2803,7 @@ def home_recursive_delete_refusal(command: str, level: str) -> str | None:
 # the input/heredoc owners use; `cd` as an argument, inside a quote or a heredoc body is not one) and
 # resolved against the cwd owner (`_follow_cd`, chained). A child shell (`bash -c`, `$( )`, a saved
 # script) does not export its cwd, so only the top level (_depth == 0) is judged. Walked: a persistent
-# bash, two guard decisions (tests/test_a_directory_change_is_not_a_read.py). BEST-EFFORT AND LEXICAL,
+# bash, two guard decisions (tests/shell_safety/test_shell_safety_routing.py, the `cd` rows). BEST-EFFORT AND LEXICAL,
 # NOT CONTAINMENT. Residual, not claimed: a `source`d script, a called function, `eval` or `trap` can
 # change directory out of sight; a relative `cd name` can be redirected by an inherited CDPATH; and a
 # symlink inside the project is lexically internal (the same lexical rule as every write target here). `builtin` dispatches like `command`; `pushd +N`, `popd` and an operand

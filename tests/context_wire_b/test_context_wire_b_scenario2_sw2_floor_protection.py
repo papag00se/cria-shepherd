@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from cria import contextfloor
+from cria import bodykeys, contextfloor
 
 call = lambda cid: {"role": "assistant", "content": "", "tool_calls": [{"id": cid, "function": {"name": "read_file", "arguments": "{}"}}]}   # noqa: E731
 result = lambda cid, text: {"role": "tool", "tool_call_id": cid, "content": text}                                                      # noqa: E731
@@ -48,3 +48,29 @@ def test_an_empty_body_or_no_window_passes_through_and_still_measures_the_menu()
     msgs = [{"role": "user", "content": "x" * 10000}]
     out, _, report = contextfloor.fit(msgs, None, window=0, reserve=100)
     assert out is msgs and report.window == 0 and not report.applied
+
+
+def test_preferred_headroom_drops_stale_turns_but_never_current_work_the_hard_budget_still_holds():
+    """Headroom is a preference: with it the oldest stale turns go first, and the moment what remains fits the HARD budget the live tail (the newest eight messages and their calls) stops being dropped even though the
+    preferred budget is not reached; without that hard budget everything droppable goes."""
+    stale = [m for i in range(3) for m in (call(f"s{i}"), result(f"s{i}", "y " * 800))]
+    live = [m for i in range(4) for m in (call(f"l{i}"), result(f"l{i}", "z " * 800))]
+    messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "task"}, *stale, *live, {"role": "user", "content": "go"}]
+    hard = contextfloor._msgs_tokens([m for m in messages if m not in stale]) + 300         # what remains once only the stale turns are gone, plus room for their one note
+    kept, dropped = contextfloor._drop_oldest(messages, 100, "task", sacrifice_budget=hard)
+    assert tools_of(kept) == ["l0", "l1", "l2", "l3"] and dropped == 6 and kept[0]["role"] == "system" and kept[-1]["content"] == "go"
+    assert "s0" not in [tc["id"] for m in kept for tc in m.get("tool_calls") or []]
+    kept, dropped = contextfloor._drop_oldest(messages, 100, "task")
+    assert tools_of(kept) == [] and dropped == 14
+
+
+def test_a_cria_anchor_and_its_pair_stay_protected_and_a_relocated_annotation_never_becomes_a_request():
+    """The drop mask: an annotation cria relocated after the request is history (droppable), never promoted to the active turn; a call carrying cria's briefing keeps its own result (else the call
+    dangles); a call whose result never arrived is simply droppable."""
+    tc = lambda cid: [{"id": cid, "function": {"name": "read_file", "arguments": "{}"}}]      # noqa: E731
+    annotation = {"role": "user", "content": "⟦ctx:inventory⟧ files", bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INVENTORY}
+    system, task, go = {"role": "system", "content": "s"}, {"role": "user", "content": "task"}, {"role": "user", "content": "go"}
+    assert contextfloor._protected_mask([system, task, go, annotation], "task") == [True, True, True, False]
+    briefing_call = {"role": "assistant", "content": "⟦ctx:briefing⟧ earlier work", "tool_calls": tc("k")}
+    messages = [system, task, briefing_call, result("k", "r"), {"role": "assistant", "content": "", "tool_calls": tc("dangling")}, go]
+    assert contextfloor._protected_mask(messages, "task") == [True, True, True, True, False, True]

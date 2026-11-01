@@ -248,6 +248,37 @@ def test_a_context_rejection_is_re_sent_only_if_the_re_fit_changed_the_bytes(sha
         assert len(set(sent)) == 1
 
 
+class Unclosable(urllib.error.HTTPError):
+    def close(self):
+        raise OSError("bad close")
+
+
+@pytest.mark.parametrize("lost", ["response-capture", "error-close"])
+def test_a_rejection_whose_evidence_cannot_be_kept_is_never_refit_and_says_which_custody_failed(lost, monkeypatch):
+    """The same long history that IS re-sent when the 400 is kept (above) is sent exactly once when the server's rejection cannot be written to the capture or its response cannot be closed: a
+    refit after lost evidence would act on a rejection nobody can audit. The primary error is still the server's 400."""
+    msgs = [{"role": "system", "content": "frame"}] + [{"role": "user" if i % 2 == 0 else "assistant", "content": "x" * 4000} for i in range(12)] + [{"role": "user", "content": "now"}]
+    if lost == "response-capture":
+        def refuse(path, payload, rlog):
+            raise OSError("capture disk full")
+        monkeypatch.setattr(upstream.callcapture, "capture_response", refuse)
+    up = upstream.Upstream("http://x", timeout_seconds=5, context_window=49152, capture_dir=None, capture_rendered=False)
+    sent = []
+
+    def always_overflows(req, timeout=None):
+        sent.append(req.data)
+        error = overflow()
+        if lost == "error-close":
+            error = Unclosable(error.url, error.code, error.msg, error.hdrs, io.BytesIO(json.dumps({"error": {"n_prompt_tokens": 94788, "n_ctx": 49152, "message": "exceeds the available context size"}}).encode()))
+        raise error
+
+    with pytest.raises(upstream.UpstreamError) as caught:
+        up._open_with_refit({"model": "m", "messages": msgs}, False, Rlog(), _transport=(None, always_overflows))
+    primary = caught.value.__cause__
+    assert len(sent) == 1 and isinstance(primary, urllib.error.HTTPError) and primary.code == 400
+    assert any(("secondary HTTP rejection evidence failure: capture disk full" if lost == "response-capture" else "secondary HTTP error close: bad close") in note for note in primary.__notes__)
+
+
 def test_a_continuation_never_promises_paired_results_the_body_does_not_hold():
     """phi4 / Java A2: the handoff listed five call ids 'remaining in their paired tool messages' while the body
     held ONE pair (the list was rendered before the floor and orphan repair settled what survives). From L3 the

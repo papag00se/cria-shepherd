@@ -1621,7 +1621,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
     # elsewhere "you have no content from them". It had the content and threw it away. (That second
     # claim is gone from every model-facing prompt as of 2026-08-08 — a 404 body is often the
     # diagnosis, and api.handle.me's names the wrong route outright. See
-    # tests/test_failed_fetch_has_no_content_claim.py, which keeps it gone.)
+    # tests/research_discovery/test_research_discovery_fetch_pages.py, which keeps the failed body.)
     #
     # Principle 5: cria never truncates what the model reads. A find on a document that fits was
     # truncation wearing a search's clothes.

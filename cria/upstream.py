@@ -592,6 +592,10 @@ def _validate_coder_route(provider, body, wire):
 
 
 class Upstream:
+    """An OpenAI-compatible chat endpoint. With no ``api_key`` this is the local
+    llama.cpp; with one it is an OpenAI-compatible *cloud* provider (Bearer auth) —
+    the same wire protocol, so one client serves both roles."""
+
     def _prep_protected_reads(self, body, stream, rlog, safety_override=None,
                               _previous_fit=None, _wire_overhead=0):
         reads = protected_reads(body)
@@ -653,10 +657,6 @@ class Upstream:
                     raise ReadFitUnknown('compaction_changed_user_packet', reads)
             current = replacement
         raise AssertionError('bounded protected-read preparation exhausted')
-
-    """An OpenAI-compatible chat endpoint. With no ``api_key`` this is the local
-    llama.cpp; with one it is an OpenAI-compatible *cloud* provider (Bearer auth) —
-    the same wire protocol, so one client serves both roles."""
 
     def __init__(self, base_url: str, timeout_seconds: int = 600, api_key: str | None = None,
                  context_window: int | None = None, capture_dir=None, capture_rendered: bool = True,

@@ -962,7 +962,7 @@ def _stand_in_arriving_orphans(messages: list[dict], tools, *, window: int, rese
             out.append(m)
             continue
         text = _msg_text(m)
-        if (est_tokens(text) + frame + overhead) * safety <= window - reserve or _marker_protected([m]):
+        if (est_tokens(text) + frame + overhead) * safety <= window - reserve:
             out.append(_orphan_result_as_user(m))
             continue
         note = _orphan_result_as_user(m, _not_delivered_note(

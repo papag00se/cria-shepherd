@@ -471,9 +471,9 @@ def _compaction_messages(messages: list) -> list[dict]:
     as an instruction still to follow rather than a request to fold (replayed live against p27
     CALL0046: it survived into the writer's evidence, the empty-briefing retry, and the validator's
     transcript — exactly the g8 0187/0188 failure `_compaction_transcript`'s own "ask goes last"
-    comment exists to prevent, and `tests/test_server.py::...ask_is_last_and_the_summarize_turn_is_
-    not_evidence` already asserts for the marked case). A compaction ask is ALWAYS the harness's
-    latest user turn, whatever it says — so drop that one turn by position, unconditionally."""
+    comment exists to prevent, and `tests/compaction_handoff/test_compaction_handoff_evidence.py`
+    asserts for the marked case: the harness's own ask never reaches the evidence). A compaction
+    ask is ALWAYS the harness's latest user turn, whatever it says — so drop that one turn by position, unconditionally."""
     return memoryhandoff.evidence_messages(messages, _HandoffEvidenceAdapter(_drop_harness_frame))
 
 
@@ -564,9 +564,9 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
     prefill costing **453 seconds**, against 25 seconds on the neighbouring call that reused 46,267
     cached tokens. On the level-1 arm the same call was still in flight when the run's gate fired.
 
-    `tests/test_engagement_levels.py` could not catch this: it reads the event log, and this function
-    emits no event. Gated at the call site, which is where its own docstring says a mechanism should
-    be gated when its state is not set anywhere else.
+    A test that reads the event log could not catch this: this function emits no event. Gated at
+    the call site, which is where its own docstring says a mechanism should be gated when its
+    state is not set anywhere else.
 
     THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
     drops the harness system prompt, the compactor role's reasoning-off then injects

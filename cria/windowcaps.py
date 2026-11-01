@@ -17,7 +17,7 @@ window of the model that will actually ANSWER:
   :func:`resolve` with the window it already measured.
 
 ``cap = clamp(reference * window // REFERENCE_WINDOW, floor, ceiling)``. At the 49,152-token window the
-caps were tuned on, that is EXACTLY the old constant (``tests/test_window_caps.py`` proves it for the
+caps were tuned on, that is EXACTLY the old constant (``tests/compaction_handoff/test_compaction_handoff_room.py`` proves it for the
 whole table). An UNKNOWN window — never discovered, or only a guess — yields the reference value, i.e.
 the old behaviour: unknown is not small (docs/principles.md). An operator override (a role's
 ``max_tokens`` / ``output_reserve``) is an ``int`` and is never rescaled by the table; what the floor HOLDS of it is
@@ -26,7 +26,7 @@ room — and the compaction predicate reads that same function, so a 16,384 oper
 only on paper.
 
 What does NOT belong here, and why, is written down next to the lint that enforces it
-(``tests/test_no_new_unmarked_bounds.py``): harness/OS transport limits, safety/time/resource bounds,
+(``tests/structure/test_structure_lints.py``): harness/OS transport limits, safety/time/resource bounds,
 one-word reply reserves and measured prompt-frame sizes do not move with the window.
 """
 from __future__ import annotations

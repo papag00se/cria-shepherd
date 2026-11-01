@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cria import writeproxy
+from cria import multipartcontext, writeproxy
 from cria.filecommands import MultipartCommandTooLarge
 from cria.multipart import BridgeError
 
@@ -59,3 +59,30 @@ def test_a_registered_multipart_read_replaces_the_command_and_the_original_goes_
     assert receipt(command(fallback)) != receipt(command(call))               # the replacement is correlated to the new id; the fallback keeps the original read's token
     declined, _ = lower(multipart_command=lambda original, effect, receipt: None, multipart_new_id=lambda: "newid")
     assert program(command(declined)) == program(command(plain)) and not [k for k, _ in events if k == "multipart.register_failed"]
+
+
+def test_a_shell_call_the_normalizer_privately_aliased_to_a_read_is_paged_and_an_ordinary_shell_call_is_not():
+    """A call named for the harness shell that the normalization producer recorded as a read (the held identity, never a guess from its text) is lowered AS that read and offered to the paged-read
+    registration; the same shell call with no held identity, or outside the request scope, is the harness's own command and is never registered."""
+    def lower_shell(alias=None, scoped=True):
+        call = {"id": "shell", "type": "function", "function": {"name": "exec_command", "arguments": json.dumps({"cmd": "ls"})}}
+        completion, registered = {"choices": [{"message": {"tool_calls": [call]}}]}, []
+        def register(original, effect, receipt):
+            registered.append((original["function"]["name"], json.loads(original["function"]["arguments"])))
+            return "echo BRIDGED"
+        def run():
+            if alias is not None:
+                multipartcontext.record(call, json.dumps(alias))
+            writeproxy.translate_outbound(completion, SHELL, injected={"read_file"}, workspace_root="/ws", multipart_command=register, multipart_new_id=lambda: "newid")
+        if scoped:
+            with multipartcontext.bound():
+                run()
+        else:
+            run()
+        return completion["choices"][0]["message"]["tool_calls"][0], registered
+    bridged, registered = lower_shell({"path": "/ws/f.txt"})
+    assert registered == [("read_file", {"path": "/ws/f.txt"})] and bridged["id"] == "newid" and command(bridged).endswith("\necho BRIDGED")
+    ordinary, registered = lower_shell()
+    assert registered == [] and ordinary["id"] == "shell" and command(ordinary) == "ls"
+    unscoped, registered = lower_shell({"path": "/ws/f.txt"}, scoped=False)
+    assert registered == [] and command(unscoped) == "ls"
