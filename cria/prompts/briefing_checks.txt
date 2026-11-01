@@ -8,10 +8,3 @@ testless = ⟦ctx:checks⟧ CHECK OBSERVATION — when this briefing was written
 # The additive existence correction receives observed names, not survey age or file contents.
 # It may not upgrade a stale survey or refute missing work INSIDE an existing file.
 files_exist = ⟦ctx:checks⟧ SURVEY OBSERVATION — these files were observed in the workspace survey: {{FILES}}. This establishes their existence at that observation; it does not establish their contents, current existence after later changes, or that missing work inside them is done.
-# Same shape again, for a briefing that calls a SYMBOL broken which the checks never named. Walked on
-# cart-billing-go x nemotron-elastic: the model worked out that `decimal.NewFromString` was the right
-# constructor, its edit failed to apply, cria compacted, and the briefing came back listing
-# NewFromString among the undefined symbols and telling the coder to use `NewFromFloat64` instead.
-# The compiler output in the same prompt named three symbols and NewFromString was not one of them.
-# That briefing then rode every prompt to the end of the run.
-symbols_fine = ⟦ctx:checks⟧ GROUND TRUTH — the checks that ran do NOT report a problem with: {{SYMBOLS}}. The summary above calls them broken or missing; the checks below are what actually ran, and they say nothing about them. Do not rewrite working code on the strength of that claim.
