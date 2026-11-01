@@ -26,8 +26,8 @@ SSE = (b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
 BIG = " ".join("w%05d" % i for i in range(30000))  # ~70k tokens on the fake chars/3 tokenizer
 
 
-COMPACTION_JUDGES = {"Answer PLAN if": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES", "FAITHFUL": "FAITHFUL",
-                     "present in the workspace right now": "app.py | PRESENT", "ALREADY created": "app.py | NOT CHANGED",
+COMPACTION_JUDGES = {"Answer PLAN if": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES",
+                     "what role does the briefing give that file": "app.py | EXISTS", "ALREADY created": "app.py | NOT CHANGED",
                      "which state of the code": "none", "what size does the briefing give": "none"}
 
 
@@ -120,7 +120,8 @@ class Wire:
                      indicators=IndicatorsConfig(enabled=indicators),
                      routing=routing(self.url) if routing else RoutingConfig(engagement_level=3))
         self.log = EventLog(dir=str(tmp), console=False)
-        up = Upstream(self.url, context_window=WINDOW, engagement_level=3,
+        # The upstream carries the SAME rung as the server (as __main__ builds it): a level-0 wire test must run the wire's level-0 gates.
+        up = Upstream(self.url, context_window=WINDOW, engagement_level=cfg.routing.engagement_level,
                       **({"capture_dir": tmp / "calls", "open_request": DefaultTransport()} if capture else {}))
         self.cria = CriaServer(cfg, self.log, up)
         threading.Thread(target=self.cria.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
@@ -327,6 +328,67 @@ def test_level_zero_forwards_tools_and_history_untouched_and_logs_only_transport
     assert bare["tools"] == tools and bare["messages"] == history
     assert kinds <= {"config.warn", "context.prefix", "ctx.estimate", "http.access", "request.recv",
                      "response.sent", "upstream.request", "upstream.done", "context.window"}
+
+
+def _atoms(messages):
+    """The conversation as ordered facts (text per role, calls, result slots), blind to how adjacent assistant pieces are grouped."""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        c = "".join(p.get("text", "") for p in c) if isinstance(c, list) else c
+        if c and c.strip():
+            out.append((m["role"], c.strip()))
+        out += [("call", t["function"]["name"], t["function"]["arguments"]) for t in m.get("tool_calls") or []]
+        if m["role"] == "tool":
+            out.append(("result", m["tool_call_id"], m["content"]))
+    return out
+
+
+def _codex_bodies():
+    """Real Codex-shaped Responses requests (the shapes of ~/.cria/calls inbound bodies): persona + developer, a shell function, a custom
+    patch tool and a native search; a history with a failed command, a failed patch and an empty search; and text that looks like dialect."""
+    shell = {"type": "function", "name": "exec_command", "description": "run", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}
+    patch = {"type": "custom", "name": "apply_patch", "description": "edit", "format": {"type": "grammar", "syntax": "lark", "definition": "start: x"}}
+    user = lambda t: {"type": "message", "role": "user", "content": [{"type": "input_text", "text": t}]}
+    call = lambda i, n, a: {"type": "function_call", "call_id": i, "name": n, "arguments": json.dumps(a)}
+    out = lambda i, t: {"type": "function_call_output", "call_id": i, "output": t}
+    note = {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I will look.\n```json\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"ls\"}}\n```"}]}
+    history = [user("<environment_context>\n<cwd>/work</cwd>\n</environment_context>"), user("fix the importer and run the tests"), note,
+               call("c1", "exec_command", {"cmd": "pytest -q"}), out("c1", "exec_command failed: No such file or directory"),
+               call("c2", "exec_command", {"cmd": "grep -rn nothing ."}), out("c2", ""),
+               {"type": "custom_tool_call", "call_id": "c3", "name": "apply_patch", "input": "*** Begin Patch\n*** End Patch"},
+               {"type": "custom_tool_call_output", "call_id": "c3", "output": "apply_patch verification failed"}, user("continue")]
+    common = {"model": "m", "stream": False, "instructions": "You are a coding agent running in the Codex CLI.\nBe precise.", "prompt_cache_key": "sid-1"}
+    return [dict(common, input=[user("hello")], tools=[shell]),
+            dict(common, input=history, tools=[shell, patch, {"type": "web_search"}], tool_choice="auto", parallel_tool_calls=True),
+            dict(common, input=history * 3, tools=[shell])]
+
+
+@pytest.mark.parametrize("index", range(3))
+def test_level_zero_ships_the_plain_translation_of_a_real_codex_request_and_level_two_visibly_does_not(tmp_path, index):
+    """The L0 control is the bare translation: system text, every message/call/result in order, tool menu, sampling keys and tool_choice equal
+    `responses.to_chat_body` of the inbound (private body hints removed, adjacent assistant pieces grouped), no cria marker anywhere; at L2 the
+    same shell-only request gets cria's tool menu, so the equality is not vacuous. (Replaying 100 real captured bodies at L0 found the
+    same equality; bodies that already carry cria banners or gate calls are L4+ output and are cleaned by the final wire at every level.)"""
+    from cria import responses
+    body = _codex_bodies()[index]
+    strip = lambda o: ({k: strip(v) for k, v in o.items() if not k.startswith("cria_")} if isinstance(o, dict)
+                       else [strip(v) for v in o] if isinstance(o, list) else o)
+    expected = strip(responses.to_chat_body(json.loads(json.dumps(body))))
+    sent = {}
+    for level in (0, 2):
+        w = Wire(tmp_path / f"l{level}", lambda url, level=level: RoutingConfig(engagement_level=level))
+        try:
+            w.post("/v1/responses", body)
+            sent[level] = w.fake.chats[-1][1]
+        finally:
+            w.close()
+    got = sent[0]
+    assert {k: v for k, v in got.items() if k != "messages"} == {k: v for k, v in expected.items() if k != "messages"}
+    assert got["messages"][0] == expected["messages"][0] and _atoms(got["messages"]) == _atoms(expected["messages"])
+    assert "\u27e6" not in json.dumps(got, ensure_ascii=False) and "cria" not in json.dumps(got).lower()
+    if index == 0:
+        assert sent[2]["tools"] != got["tools"]
 
 
 @pytest.mark.parametrize("mode,beat,text", [("chat-stream", b": cria", b"Hello world"),
