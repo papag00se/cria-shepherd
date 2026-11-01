@@ -272,7 +272,10 @@ def test_the_model_server_resetting_mid_answer_ends_in_response_failed_not_in_cl
     """A TCP reset from the MODEL's side is the same exception type as the harness hanging up. It must still
     end the harness's stream with its one retryable terminal event, never a silent EOF logged as a departed client."""
     w = gated()
-    w.fake.script = [FIRST, "RESET"]
-    events = sse_events(open_stream(w).read().decode())
+    w.fake.script = [FIRST, "WAIT", "RESET"]   # reset only after the harness has read the first text
+    with open_stream(w) as r:
+        first = read_until(r, b"first sentence")
+        w.fake.gate.set()
+        events = sse_events((first + r.read()).decode())
     assert [e["type"] for e in events][-1] == "response.failed", [e["type"] for e in events]
     assert "response.client_gone" not in [e["kind"] for e in w.events()]
