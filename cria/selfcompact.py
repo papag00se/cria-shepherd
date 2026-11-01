@@ -88,9 +88,28 @@ _ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", toolwire.SECT
 _COMPACTION_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", SUMMARY_MARKER, "⟦ctx:compacted⟧")
 
 
+def opens_in_crias_voice(m: dict, marks) -> bool:
+    """Does ``m`` carry one of ``marks`` as cria's own record, by PROVENANCE: the marker OPENS a line of the message's text.
+
+    Every ``⟦ctx:…⟧`` message cria injects opens with its marker (the continuation, the rollup, the task header, the facts ledger, the
+    briefing envelope, the floor's digest), so that is where cria speaks. The same bytes MID-line, in a user's question, in a file a tool
+    returned or in the coder's own sentence about the marker, are somebody else's text (the 74 of 20,848 captured requests that quote
+    ``⟦ctx:continuation⟧`` mid-text; `contextfloor._has_protect_marker` already decides this way). Matching them anywhere made a read of
+    cria's own source switch off the change-claim guard for the rest of the session and drop the user's own sentence from the handoff
+    evidence. Markers that are not ``⟦ctx:`` (a gate section prefix, a spec block) are cria-rendered payload text and keep substring matching
+    in :func:`_has_anchor`; this helper is for the namespace markers only."""
+    return any(ln.lstrip().startswith(tuple(marks)) for ln in _text(m).splitlines())
+
+
+_COMPACTION_SPEAKERS = {"user": _COMPACTION_MARKERS, "system": _COMPACTION_MARKERS, "developer": _COMPACTION_MARKERS,
+                        "assistant": ("⟦ctx:briefing⟧",)}   # a tool result is a tool's payload: cria never speaks there
+
+
 def body_is_compacted(messages: list) -> bool:
-    """True when this body carries evidence that older turns were actually compacted or dropped."""
-    return any(mk in _text(m) for m in messages for mk in _COMPACTION_MARKERS)
+    """True when this body carries evidence that older turns were actually compacted or dropped: a message in cria's own voice
+    (see :func:`opens_in_crias_voice`) from a role cria writes in, never a marker a file, a question or the coder quoted."""
+    return any(isinstance(m, dict) and opens_in_crias_voice(m, _COMPACTION_SPEAKERS.get(m.get("role"), ()))
+               for m in messages)
 
 
 @dataclass
@@ -142,7 +161,10 @@ def _has_anchor(m: dict) -> bool:
     the producer-stamped boundary (``payloadboundary.payload_of``); the note itself stays an anchor via
     :func:`_appended_anchor`. A boundary that no longer verifies keeps the old whole-text rule: the
     message stays verbatim, which loses nothing."""
-    return any(mk in _own_text(m) for mk in _ANCHOR_MARKERS)
+    own = _own_text(m)
+    lines = own.splitlines()
+    return any((any(ln.lstrip().startswith(mk) for ln in lines) if mk.startswith("⟦ctx:") else mk in own)
+               for mk in _ANCHOR_MARKERS)
 
 
 def _own_text(m: dict) -> str:

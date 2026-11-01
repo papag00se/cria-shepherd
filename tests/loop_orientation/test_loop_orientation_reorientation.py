@@ -126,3 +126,17 @@ def test_the_typed_record_adds_nothing_when_empty_or_unreadable_and_never_reache
         assert (result.reason, result.message) == ("script", steer(CANNED))
     else:
         assert (result.reason, result.message) == ("survey-only", None)
+
+
+def test_a_user_sentence_that_quotes_the_continuation_marker_is_not_the_handoff_to_author_guidance_from():
+    """audreorg2: the unowned path took ANY user text containing the marker as 'the summary' and asked a reasoner to author guidance from the
+    user's own question (real coder replies quote the marker mid-text in 74 of 20,848 captured requests). Only a message that OPENS with it is a
+    continuation; the quoting question leaves no summary, so the compatibility notice is delivered and no author is spent."""
+    question = f"Why does the harness print {MARK} after /compact?"
+    item = source("Inspect main.py.", texts=(TASK, question))
+    result = ro.reorient(item)
+    assert (result.reason, result.message) == ("no-summary-or-reasoner", steer(CANNED))
+    item.author.assert_not_called()
+    genuine = source("Inspect main.py.", texts=(TASK, question, SUMMARY))
+    assert ro.reorient(genuine).reason == "authored" and genuine.author.call_count == 1
+    assert SUMMARY in genuine.author.call_args.args[0].grounding and question not in genuine.author.call_args.args[0].grounding

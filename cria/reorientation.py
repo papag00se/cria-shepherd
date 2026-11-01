@@ -148,7 +148,7 @@ def _reason(source: ReorientationInput) -> tuple[str | None, str]:
         return _facts_only(source, "survey-only")
     # Unowned callers (a continuation cria did not produce) retain their compatibility notice and author.
     canned = prompts.load("reanchor")
-    summary = next((s for s in reversed(facts.user_texts) if CONTINUATION_MARKER in s), "")
+    summary = next((s for s in reversed(facts.user_texts) if s.lstrip().startswith(CONTINUATION_MARKER)), "")
     if not facts.reasoner_available or not summary.strip():
         return canned, "no-summary-or-reasoner"
     if DROPPED_PROSE_LEAD in summary:

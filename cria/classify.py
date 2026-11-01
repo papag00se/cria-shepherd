@@ -330,7 +330,8 @@ def is_title_request(task: str) -> bool:
 # continuation briefing ("Earlier in THIS session you worked… produced the summary below") reads as
 # task_type=reasoning, which routes the reasoning-ONLY chain — so after a harness compaction the whole
 # rest of a CODING session ran on the reasoner (temp 0.6, no coder output-reserve). Skip them and
-# classify the genuine user task underneath.
+# classify the genuine user task underneath. They OPEN the message: a task that merely says `[removed]` or quotes a
+# marker mid-text is the task (the whole message was skipped, and a one-message session started with an empty task).
 _CRIA_INJECTION_MARKERS = ("⟦ctx:", "[removed")
 
 
@@ -347,7 +348,7 @@ def latest_user_text(messages: list[dict]) -> str:
     for msg in reversed(messages or []):
         if msg.get("role") == "user":
             text = _content_text(msg.get("content"))
-            if any(mk in text for mk in _CRIA_INJECTION_MARKERS) or _ENV_ONLY.match(text):
+            if text.lstrip().startswith(_CRIA_INJECTION_MARKERS) or _ENV_ONLY.match(text):
                 continue   # cria's own scaffolding / the harness's environment report — keep looking for the task
             return text
     return ""

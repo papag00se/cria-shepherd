@@ -67,7 +67,8 @@ def whole_span(messages) -> bool:
     msgs = [m for m in (messages or []) if isinstance(m, dict)]
     if not msgs or selfcompact.body_is_compacted(msgs):
         return False
-    return not any(HARNESS_COMPACTION in _text(m) or CONTINUATION in _text(m) for m in msgs)
+    # The harness's compaction turn is a USER message that opens with its preamble; a file or a reply that quotes the sentence is not it.
+    return not any(m.get("role") == "user" and _text(m).lstrip().startswith(HARNESS_COMPACTION) for m in msgs)
 
 
 def _flat(value) -> str:

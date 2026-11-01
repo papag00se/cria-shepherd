@@ -5646,7 +5646,7 @@ def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:
     structurally, with no phrase-matching here. Falls back to the root, which is what the second
     shape's caller used to pass unconditionally."""
     for m in reversed(messages):
-        if m.get("role") == "user" and CONTINUATION_MARKER in _content_text(m.get("content")):
+        if m.get("role") == "user" and _content_text(m.get("content")).lstrip().startswith(CONTINUATION_MARKER):
             return _content_text(m.get("content"))
     return root_text
 
@@ -6049,7 +6049,7 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
     reframed = False
     for m in messages:
         text = _msg_text_content(m)  # handles list-shaped content (a chat client's structured parts)
-        if m.get("role") == "user" and _COMPACTION_MARKER in text:
+        if m.get("role") == "user" and text.lstrip().startswith(_COMPACTION_MARKER):
             idx = text.find(_COMPACTION_BOUNDARY)  # split off the harness preamble, keep the summary tail
             if idx != -1:
                 summary = text[idx + len(_COMPACTION_BOUNDARY):].lstrip("\n")
@@ -9363,7 +9363,7 @@ def _reorientation_inventory(sess, messages: list, rlog) -> str:
         return current
     origin = getattr(sess, "handoff_origin", None)
     summary = next((_msg_text_content(m) for m in reversed(messages) if m.get("role") == "user"
-                    and CONTINUATION_MARKER in _msg_text_content(m)), "")
+                    and _msg_text_content(m).lstrip().startswith(CONTINUATION_MARKER)), "")
     root = os.path.normpath(sess.workspace_root) if sess.workspace_root else ""
     if (isinstance(origin, _HandoffOrigin) and origin.inventory and origin.matches_continuation(summary)
             and root and os.path.normpath(origin.inventory_root or "") == root):
