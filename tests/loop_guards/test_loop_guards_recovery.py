@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cria import bodykeys, generation, generationguards as g, loop
+from cria import bodykeys, generation, generationguards as g, loop, massage
 from loop_guards_helpers import Chat, Log, reply
 
 BODY = lambda: {"messages": [{"role": "user", "content": "task"}], "tools": []}
@@ -225,3 +225,20 @@ def test_a_complete_turn_is_shipped_untouched_and_only_the_two_generation_errors
     assert {k: generation.is_generation_error({"type": k}) for k in kinds} == kinds
     assert not generation.is_generation_error(None) and not generation.is_generation_error("incomplete_stream_error")
     assert not generation.is_protocol_error({"type": generation.INCOMPLETE_STREAM_ERROR})
+
+
+@pytest.mark.parametrize("raw", [
+    '{"path": "main.go", "content": "package main\\n\\nfunc main() {}\\n\\nfunc other() {',      # cut after the empty brace pair of the code being written
+    "{\"cmd\": \"awk '{}' f; echo $",                                                          # `awk '{}'` inside a cut shell program
+    "prose with {} in it and no call at all",
+])
+def test_an_empty_object_found_inside_a_cut_argument_string_never_replaces_what_the_model_wrote(raw):
+    """Four real write_file calls (6,026 / 6,277 / 6,893 / 28,571 chars, one a whole test file) had their arguments replaced by `{}` because the
+    first brace-balanced span that parses is the empty pair of the code being written (`func main() {}`, `awk '{}'`, `${}`): the substitution
+    deleted the call. The raw text stays exactly as written and the refusal is logged, so the harness's parse error is true of the model's output."""
+    events = []
+    call = {"id": "c", "type": "function", "function": {"name": "write_file", "arguments": raw}}
+    out = massage.repair_tool_args({"choices": [{"message": {"tool_calls": [call]}}]},
+                                   SimpleNamespace(emit=lambda kind, **fields: events.append((kind, fields))))
+    assert out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == raw
+    assert events == [("massage.args_recovery_refused", {"tool": "write_file", "raw_chars": len(raw)})]

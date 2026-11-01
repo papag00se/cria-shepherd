@@ -87,3 +87,30 @@ def test_the_first_view_that_does_not_fit_one_more_turn_is_compacted_and_every_c
     verdict["retrospective"], seen[:] = "PLAN", []                         # the same view with the briefing rejected: every turn stays verbatim, nothing latches
     sess = PlanSession(plan=Plan(id="q", task="t", created="2026-10-30T00:00:00+00:00", items=[PlanItem("s")]))
     assert lp._self_compact(msgs, sess, None, _Rlog(), pinned_task="t") == msgs and seen and not sess.compact_state.summary
+
+
+@pytest.mark.parametrize("name", windowcaps.NAMES)
+def test_every_window_cap_is_its_reference_at_the_reference_window_clamped_to_its_row_and_never_shrinks_with_room(name):
+    """A cap is one number per window: the reference at 49,152 (and whenever the window is unknown or nonsense), the row's floor on a
+    tiny window, its ceiling on a huge one, and non-decreasing in between. The reference is also what an unresolved Cap behaves as."""
+    cap = getattr(windowcaps, name.upper())
+    reference, floor, ceiling = windowcaps._SPECS[name]
+    assert windowcaps.scaled(cap, windowcaps.REFERENCE_WINDOW) == reference == int(cap)
+    assert [windowcaps.scaled(cap, w) for w in (None, 0, -5, True, "49152")] == [reference] * 5
+    assert windowcaps.scaled(cap, 1) == floor and windowcaps.scaled(cap, 10**9) == ceiling
+    series = [windowcaps.scaled(cap, w) for w in (2_048, 8_192, 16_384, 32_768, 49_152, 131_072, 1_000_000)]
+    assert series == sorted(series) and floor <= min(series) and max(series) <= ceiling
+    assert all(type(v) is int for v in series)                    # a token count is never a float
+
+
+def test_a_body_carries_a_cap_only_as_an_unresolved_int_and_resolving_changes_nothing_else():
+    """`resolve_body` hands back the very same object when no field holds a Cap (a body without Caps ships byte-identical), and otherwise
+    replaces only the Cap fields with plain ints at the window; an explicit operator int is never rescaled."""
+    plain = {"max_tokens": 777, "messages": [], bodykeys.OUTPUT_RESERVE: None}
+    assert windowcaps.resolve_body(plain, 16_384) is plain and not windowcaps.has_caps(plain)
+    capped = {"max_tokens": windowcaps.JUDGE_REPLY, bodykeys.OUTPUT_RESERVE: 900, "messages": ["m"]}
+    assert windowcaps.has_caps(capped)
+    out = windowcaps.resolve_body(capped, 16_384)
+    assert out["max_tokens"] == windowcaps.scaled(windowcaps.JUDGE_REPLY, 16_384) and type(out["max_tokens"]) is int
+    assert out[bodykeys.OUTPUT_RESERVE] == 900 and out["messages"] == ["m"] and type(capped["max_tokens"]) is windowcaps.Cap
+    assert windowcaps.resolve(777, 16_384) == 777 and windowcaps.resolve(None, 16_384) is None
