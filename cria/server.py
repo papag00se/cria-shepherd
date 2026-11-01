@@ -2209,6 +2209,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                 hb.write(responses._event("response.failed",
                     {"response": {"id": resp_id, "status": "failed", "error": e.response_error}}))
                 return
+            except (BrokenPipeError, ConnectionResetError):
+                raise   # the harness hung up (text now leaves while the model writes): not an error, see below
             except Exception as e:  # noqa: BLE001 — the exact scope g4 died in, six times, silently:
                 # a FileNotFoundError here killed the handler with no event and no response; codex
                 # retried 5x into the void and exited the run. The harness gets a clean failed
@@ -2242,6 +2244,14 @@ class CriaHandler(BaseHTTPRequestHandler):
                 # with them: end with the retryable failure rather than show two different answers.
                 rlog.emit("response.progressive_diverged", level="error", error=str(e))
                 hb.write(responses.failed_event(resp_id, f"cria could not finish the streamed answer: {e}"))
+                return
+            except (BrokenPipeError, ConnectionResetError):
+                raise
+            except Exception as e:  # noqa: BLE001 — an item that cannot be built (a custom call with no string
+                # input) left the stream open mid-item with no terminal event: a bare EOF the harness reads
+                # as a user abort. The retryable failure is the one terminal event it can act on.
+                rlog.emit("response.error", level="error", error=repr(e))
+                hb.write(responses.failed_event(resp_id, f"cria internal error: {e}"))
                 return
             rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats,
                       status_lines=len(status_lines))

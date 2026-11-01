@@ -35,7 +35,7 @@ class Gated(H.FakeUpstream):
             self.rfile = io.BytesIO(raw)  # replay the consumed body to the shared fake
             return super().do_POST()
         self.server.streamed = bool(body.get("stream"))
-        text = "".join(p for p in script if p not in ("WAIT", "DROP"))
+        text = "".join(p for p in script if isinstance(p, str) and p not in ("WAIT", "DROP"))
         if not body.get("stream"):
             return self._reply({"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
                                 "usage": {"completion_tokens": 5}})
@@ -49,10 +49,15 @@ class Gated(H.FakeUpstream):
                 self.server.gate.wait(10)
             elif piece == "DROP":
                 return
+            elif isinstance(piece, dict):    # a native tool call: {"name": ..., "arguments": "<json text>"}
+                call = {"index": 0, "id": "call_9", "type": "function", "function": piece}
+                self.wfile.write(b"data: " + json.dumps({"choices": [{"delta": {"tool_calls": [call]}}]}).encode() + b"\n\n")
+                self.wfile.flush()
             else:
                 self.wfile.write(frame(piece))
                 self.wfile.flush()
-        self.wfile.write(frame(None, "stop") + b"data: [DONE]\n\n")
+        last = "tool_calls" if any(isinstance(p, dict) for p in script) else "stop"
+        self.wfile.write(frame(None, last) + b"data: [DONE]\n\n")
 
 
 @pytest.fixture
@@ -194,3 +199,35 @@ def test_a_call_written_as_text_without_a_leak_marker_is_still_a_call_never_a_fa
     assert final[-1]["arguments"] == buffered["output"][-1]["arguments"]
     said = lambda items: "".join(c["text"] for i in items if i["type"] == "message" for c in i["content"])
     assert said(final) == said(buffered["output"])          # the transcript the harness stores is the buffered one
+
+
+FREEFORM = [{"type": "custom", "name": "freeform", "description": "run", "format": {"type": "text"}}]
+
+
+def test_a_call_the_harness_cannot_be_given_still_ends_the_stream_with_one_terminal_event(gated):
+    """A custom (freeform) tool call whose arguments are not one string input cannot become an item. The
+    harness gets a retryable response.failed - not a bare EOF in the middle of an open message item."""
+    w = gated()
+    w.fake.script = [FIRST, {"name": "freeform", "arguments": '{"cmd": "ls"}'}]
+    events = sse_events(open_stream(w, FREEFORM).read().decode())
+    terminal = [e["type"] for e in events if e["type"] in ("response.completed", "response.failed", "response.incomplete")]
+    assert terminal == ["response.failed"], [e["type"] for e in events]
+    assert events[-1]["type"] == "response.failed" and events[-1]["response"]["error"]["message"]
+
+
+def test_the_harness_hanging_up_mid_answer_is_a_client_gone_not_an_error(gated):
+    """Text now leaves while the model writes, so a user interrupt lands inside the model call: it is logged as
+    the client leaving (and the model's stream is dropped), never as a cria internal error."""
+    import time
+    w = gated()
+    w.fake.script = [FIRST, "WAIT"] + [SECOND] * 40
+    r = open_stream(w)
+    read_until(r, b"first sentence")
+    r.close()
+    w.fake.gate.set()
+    for _ in range(100):
+        kinds = [e["kind"] for e in w.events()]
+        if "response.client_gone" in kinds or "response.error" in kinds:
+            break
+        time.sleep(0.05)
+    assert "response.client_gone" in kinds and "response.error" not in kinds, kinds[-6:]
