@@ -82,6 +82,7 @@ FIXED_SIZES = {
     ("system1.py", "WEIGHT_BUDGET_BYTES"): "measured: bundle graph + weights must stay under this on the actual files",
     ("system1.py", "ARENA_BUDGET_BYTES"): "safety: quadratic attention could ask for a 32 GiB buffer; the allocator refuses, the caller declines",
     ("system1.py", "_MIN_ARENA_BUDGET_BYTES"): "safety: floor for the configurable arena budget",
+    ("system1.py", "FIXED_ACTIVATION_BYTES"): "measured: the size-independent part of one call's peak activation memory (bisected at 1 GiB and 2 GiB arenas); the pre-flight token ceiling is derived from it and the arena budget, not from the context window",
     ("filepresence.py", "MAX_TOKENS"): "one-word: a claim list is a line per file name; a few hundred tokens covers any briefing",
     ("loop.py", "COMPACTION_VERDICT_RESERVE"): "measured: a lens answers ONE word; 16,384 held back starved 12 of 33 judge-shaped floor reductions (ornith-java captures 2026-10-26..28)",
     ("loop.py", "ask_closed(max_tokens=)"): "one-word: a closed question's single-verdict reply",
