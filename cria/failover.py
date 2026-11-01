@@ -150,6 +150,7 @@ def _run(chain_name, attempts, classify, rlog, *, behavior, sleep, definition):
                           attempt=attempt, error=str(e)[:300], **extra)
                 try:  # the proxy path shows it on the indicator (indicators.py note line)
                     rlog.failover_note = f"failover: {cur.role} → {action.role} ({action.reason})"
+                    rlog.failover_to = (action.role, extra.get("to_model"))  # who ANSWERS now: the banner must say so
                 except AttributeError:
                     pass
                 i, attempt = attempts.index(nxt), nxt.spent

@@ -809,8 +809,12 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
 def _note_failover(indic, rlog) -> None:
     """Show a chain walk on the indicator (the event ``failover.walk`` is the record)."""
     note = getattr(rlog, "failover_note", None)
-    if note and indic is not None and not indic.note:
-        indic.note = note
+    if note and indic is not None:
+        if not indic.note:
+            indic.note = note
+        role, model = getattr(rlog, "failover_to", (None, None))
+        if role:  # the route banner names the role/model that answered, not the one that was asked first
+            indic.role, indic.model = role, model or indic.model
 
 
 class _ClientHungUp(Exception):

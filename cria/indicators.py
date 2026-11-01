@@ -224,7 +224,7 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
     # is stripped inbound with it.
     pending = []
     if indic.route and indic.show_route:  # the ongoing route banner (config: [indicators] route)
-        pending.append(route_line(indic) + "\n")
+        pending.append(lambda: route_line(indic) + "\n")  # read at the flush: a failover walk renames the route while the stream opens
     t_first: float | None = None
     deltas = 0
     noted = False
@@ -243,7 +243,7 @@ def wrap_stream(chunks: Iterator[bytes], indic: Indicator) -> Iterator[bytes]:
                     pending.append(MARKER + indic.note + "\n")
                 noted = True
                 for h in pending:  # flush the banner inline, ahead of the first content token
-                    yield content_chunk(indic.model, h)
+                    yield content_chunk(indic.model, h() if callable(h) else h)
                 pending = []
                 if t_first is None:
                     t_first = time.monotonic()

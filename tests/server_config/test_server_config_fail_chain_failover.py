@@ -218,7 +218,9 @@ def test_a_failed_first_endpoint_walks_to_the_next_role_on_every_wire_mode(rig, 
     assert len(walks) == 1 and walks[0]["from"] == "coder" and walks[0]["to"] == "reasoner"
     assert walks[0]["failure"] == "unavailable" and walks[0]["chain"] == "coding" and walks[0]["to_window"] == 49152
     if mode.startswith("chat"):                                    # the indicator line the docs describe (the Responses adapter renders its own status line)
-        assert "failover: coder → reasoner" in raw
+        shown = text_of(mode, raw)
+        assert "failover: coder → reasoner" in shown
+        assert "⟦cria⟧ reasoner · model-b" in shown and "coder · model-a" not in shown   # the banner names who ANSWERED, not who was asked
 
 
 def test_a_healthy_first_endpoint_never_walks_and_the_standby_is_never_called(rig):

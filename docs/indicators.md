@@ -20,7 +20,7 @@ Each family has its own `[indicators]` switch (`enabled` is the master; with it 
 | `[indicators]` key | Line |
 |---|---|
 | `connect` | one banner on the first turn of a session, `⟦cria⟧ cria connected · <model>`, plus the template-compat glyphs (`cria/compat.py`): reports, never gates |
-| `route` | `⟦cria⟧ <role> · <model>`, the ongoing "which model answered" banner (a failover walk adds a note naming the roles) |
+| `route` | `⟦cria⟧ <role> · <model>`, the ongoing "which model answered" banner (after a failover walk the banner names the role and model that ANSWERED, and a note names the roles walked) |
 | `metrics` | the `· N tok/s` suffix on the route banner (suppressed under three streamed deltas, where a rate is noise) |
 | `assists` | `⟦cria⟧ <note>` guard/assist lines: repetition and rumination guards, "running the repo's checks (…)", truncation warnings, recoveries. Turning it off strips these notes from the completion before it ships |
 | `stats` | the terse end-of-turn summary line |

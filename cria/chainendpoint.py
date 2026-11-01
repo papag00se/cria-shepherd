@@ -104,7 +104,7 @@ class ChainEndpoint:
     def _info(self, i: int, rlog) -> Callable[[], dict]:
         def info():
             hop = self.hops[i]
-            return {"to_window": windowcaps.known_window(hop.provider, rlog),
+            return {"to_window": windowcaps.known_window(hop.provider, rlog), "to_model": hop.model(rlog),
                     "refit": "final wire re-fitted for the target endpoint's own window"}
         return info
 
