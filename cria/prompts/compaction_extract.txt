@@ -14,8 +14,7 @@ Return exactly these keys (use [] or "" when the piece shows nothing for a key):
   "environment": ["a fact about the environment that a tool result SHOWED (not an assumption)"],
   "pending": ["a requirement still unmet at the end of this piece, with its evidence"],
   "test_status": ["a test or build run and its actual outcome, as shown"],
-  "references": ["a URL, API, or library version actually read or fetched, and what it said"],
-  "latest_plan": ["the agent's stated next steps at the end of this piece, labelled as its plan"]
+  "references": ["a URL, API, or library version actually read or fetched, and what it said"]
 }
 
 Rules:

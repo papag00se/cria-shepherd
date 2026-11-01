@@ -37,7 +37,7 @@ from .content_reduce import est_tokens
 MARKER = "⟦ctx:extracted⟧"
 LIST_KEYS = ("files_touched", "commands_run", "errors", "accepted_fixes", "rejected_ideas",
              "constraints", "environment", "pending", "test_status", "references")
-KNOWN_KEYS = ("objective", "latest_plan") + LIST_KEYS
+KNOWN_KEYS = ("objective",) + LIST_KEYS
 EXTRACT_REPLY_TOKENS = windowcaps.EXTRACT_REPLY   # each extraction call's own reply room (4,096 at the 49,152-token window)
 FRAME_TOKENS = 2560             # system instruction + intro + ask around a composed request (the
                                 # self-compaction writer's frame measures ~1.9K)
@@ -48,7 +48,6 @@ MAX_PIECES = 24                 # bound on extra calls for one summary; the rest
 class MergedState:
     objective: str = ""
     lists: dict = field(default_factory=lambda: {k: [] for k in LIST_KEYS})
-    latest_plan: list = field(default_factory=list)
     chunks: int = 0
 
 
@@ -87,20 +86,18 @@ def valid_extraction(obj) -> dict | None:
         if None in entries:
             return None
         out[key] = [e for e in entries if e]
-        if key != "latest_plan":         # a goal or plan alone is not evidence of what happened
-            facts += len(out[key])
+        facts += len(out[key])          # a goal alone is not evidence of what happened
     return out if facts else None
 
 
 def merge(extractions: list[dict]) -> MergedState:
     """Deterministic merge (codex-local merger): union in order, newest wording kept on duplicates,
-    latest non-empty objective and plan."""
+    latest non-empty objective. The agent's stated plan is not extracted: the briefing writer is told not to
+    plan, and a plan section in its evidence was copied into the briefing and refused as PLAN."""
     state = MergedState(chunks=len(extractions))
     for e in extractions:
         if e.get("objective"):
             state.objective = e["objective"]
-        if e.get("latest_plan"):
-            state.latest_plan = list(e["latest_plan"])
     for key in LIST_KEYS:
         seen, merged = set(), []
         for e in reversed(extractions):
@@ -121,8 +118,6 @@ def render_state(state: MergedState, turns: int) -> str:
     for key in LIST_KEYS:
         if state.lists[key]:
             sections.append(f"{labels[key]}:\n" + "\n".join(f"- {i}" for i in state.lists[key]))
-    if state.latest_plan:
-        sections.append(f"{labels['latest_plan']}:\n" + "\n".join(f"- {i}" for i in state.latest_plan))
     return prompts.render("compaction_extracted_state", turns=turns, chunks=state.chunks,
                           state="\n\n".join(sections))
 

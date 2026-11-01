@@ -10,4 +10,3 @@ environment = ENVIRONMENT (shown by a tool result)
 pending = STILL UNMET AS OF THESE TURNS (later turns may have resolved them)
 test_status = TEST / BUILD RUNS
 references = REFERENCES READ
-latest_plan = LATEST STATED PLAN (the agent's plan, not a fact)

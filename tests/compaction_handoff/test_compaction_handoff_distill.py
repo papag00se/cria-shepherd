@@ -37,7 +37,7 @@ def test_an_extraction_must_have_the_contract_shape_and_the_merge_is_a_determini
     assert hd.valid_extraction({"errors": "E1", "pending": ["write REVIEW.md"]})["pending"] == ["write REVIEW.md"]
     state = hd.merge([{"objective": "old", "errors": ["E1", "E2"], "latest_plan": ["a"]}, {"objective": "", "errors": ["e2", "E3"], "latest_plan": []},
                       {"objective": "new", "errors": ["E4"], "latest_plan": ["b"]}])
-    assert state.objective == "new" and state.latest_plan == ["b"] and state.lists["errors"] == ["E1", "e2", "E3", "E4"]
+    assert state.objective == "new" and state.lists["errors"] == ["E1", "e2", "E3", "E4"]
 
 def test_a_failed_piece_stays_verbatim_in_place_recent_turns_and_facts_are_untouched_and_each_request_fits():
     """A piece that fails to extract stays verbatim in its place; newest turns and facts are untouched; every request fits its window."""
