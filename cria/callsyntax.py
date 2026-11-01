@@ -11,7 +11,7 @@ import re
 import uuid
 
 from . import jsontext
-from .jsontext import extract_json_object
+from .jsontext import extract_json_object, extract_leading_object
 from .toolargs import PATH_KEYS, WHOLE_FILE_WRITES
 
 _SHELL_ALIASES = {
@@ -540,7 +540,7 @@ def _reasoning_call_spans(text: str) -> list:
             continue
         args = obj.get("arguments", {})
         if isinstance(args, str):
-            args = extract_json_object(args)
+            args = extract_leading_object(args)
         if isinstance(args, dict):
             spans.append((m.start(), m.end(), "hermes-json", [(obj["name"], args)]))
     for m in _XML_FN.finditer(text):
@@ -648,7 +648,7 @@ def _xml_args(body: str) -> dict | None:
     params = _bounded_xml_params(body)
     if params:
         return {k: v.strip() for k, v in params}
-    obj = extract_json_object(body)
+    obj = extract_leading_object(body)
     return obj if isinstance(obj, dict) else None
 
 

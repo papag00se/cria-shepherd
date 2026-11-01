@@ -58,7 +58,11 @@ def _extract_leaked(content: str, schemas: dict | None = None, rlog=None) -> tup
             cleaned = cleaned.replace(m.group(0), '')
     for m in _XML_FN.finditer(content):
         name, body = m.group(1), m.group(2)
-        args = _xml_args(body) or {}
+        args = _xml_args(body)
+        if args is None:
+            if body.strip():
+                continue   # a body that is neither parameter tags nor a JSON object: arguments never arrived
+            args = {}      # an empty body is a call with no arguments
         resolved = _alias(name)
         converted = _convert_arguments(resolved, args, schemas or {}, rlog)
         calls.append(_toolcall(resolved, converted))

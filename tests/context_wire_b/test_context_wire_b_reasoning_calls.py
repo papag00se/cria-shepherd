@@ -51,11 +51,17 @@ def test_a_complete_emitted_call_in_reasoning_becomes_a_real_call_with_the_reaso
     LFM % "read_file('./spec.json')", LFM % "read_file(path='a' + 'b')", LFM % "read_file(path=os.getcwd())",            # positional / expression: never placed by guess or evaluated
     LFM % "read_file(path=b'x')", LFM % "read_file(path={'a', 'b'})", LFM % "read_file(path=1+2j)",                      # literal_eval accepts what the wire cannot carry
     "I should use read_file on ./spec.json, or maybe web_fetch(url) would be better.",                                  # naming a tool is not calling it
-    "<|tool_call>call:read_file{path:<|\"|>a.py<|\"|>}<tool_call|>"])                                                   # gemma salvage must not become a reasoning reader
+    "<|tool_call>call:read_file{path:<|\"|>a.py<|\"|>}<tool_call|>",                                                  # gemma salvage must not become a reasoning reader
+    # a JSON body cut inside its OWN object: the complete object nested in it is a fragment, not the arguments (fuzz, wave 12)
+    '<function=list_dir>{"path": ".", "env": {"A": "1"}, "timeout": </function>',
+    '<tool_call>{"name": "list_dir", "arguments": "{\\"path\\": \\".\\", \\"env\\": {\\"A\\": 1}, \\"t\\": "}</tool_call>'])
 def test_what_the_model_did_not_clearly_emit_is_never_taken_as_an_action(reasoning):
     """Each refusal stays as broken as before (the loop, not this, speaks about it): nothing is executed, evaluated or half-forwarded."""
     out = recover(reasoning)
     assert calls(out) == [] and out["choices"][0]["finish_reason"] == "stop"
+    content = {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": reasoning}}]}
+    if reasoning.startswith("<function=list_dir>"):   # the same body in CONTENT is not promoted either
+        assert calls(massage.recover_leaked_tool_calls(content, MENU, Rlog())) == []
 
 def test_recovery_is_gated_by_the_turn_the_menu_and_prior_recovery():
     """Only a lost turn (no text, in any content shape) on a request that advertises the tool recovers; a call the server already surfaced is not doubled; replays and finish=length change nothing; an off-menu attempt is spoken as a hint, not swallowed; content wins over reasoning; sentinels in content are stripped, not parsed."""
