@@ -116,6 +116,32 @@ def test_a_decorated_drop_keeps_its_producer_record_and_the_next_turn_reads_the_
     assert server._carried_ledger(stored(shipped), origin=origin) == origin.ledger
 
 
+QUOTED = indicators.MARKER + "status line copied from the reply footer"
+
+
+class QuotingProvider(Provider):
+    """The briefing writer quotes a status line of the harness's own reply footer inside an ACCEPTED briefing."""
+    def chat(self, body, log):
+        if self.first:
+            self.first = False
+            return json.dumps(completion(f"The session wrote a.py.\n{QUOTED}\nNothing else was done."))
+        return super().chat(body, log)
+
+
+def test_an_accepted_briefing_that_quotes_a_footer_line_keeps_its_producer_record():
+    """Every inbound reader strips lines that open with the footer marker, so the harness hands back the briefing WITHOUT the quoted line;
+    the record is kept for exactly that text (audreorg: the commit compared the stripped copy with the unstripped reply, recorded nothing,
+    and the next turn read cria's own accepted briefing as an account of unknown source)."""
+    loop_, key, owner = session("sid:audreorg-quoted-footer")
+    provider = QuotingProvider(verdict=True)
+    shipped = compact(handler(provider, (loop_, key, owner), decorate), key)
+    assert QUOTED in shipped and shipped.endswith(FOOTER)
+    origin = owner.handoff_origin
+    assert origin is not None and origin.dropped is False
+    summary = stored(shipped)[-1]["content"].removeprefix(PRE).lstrip("\n")
+    assert QUOTED not in summary and origin.matches_summary(summary)
+
+
 @pytest.mark.parametrize("alter", [
     lambda s: s.replace("confirmed written", "confirmed written\n- write_file b.py: confirmed written"),     # an event planted into the ledger
     lambda s: "Accepted briefing quoting it:\n" + s,                                                           # the ledger quoted inside another reply

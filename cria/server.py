@@ -785,16 +785,19 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             or bool(result.prose) != (result.effect is memoryhandoff.Effect.DELIVERED)):
         raise ValueError("Harness handoff settlement must match its returned result")
     shown_root, shown_text = shown_inventory[-1] if shown_inventory else ("", "")
-    origin = _HandoffOrigin(*expected, inventory=shown_text, inventory_root=shown_root)
+    # The record holds the reply AS EVERY INBOUND READER WILL SEE IT: without the lines that open with cria's
+    # marker. That is the footer `_finalize` appends, and also any such line the briefing writer itself quoted
+    # (a record keyed to the unstripped text could never equal the stored, stripped copy).
+    def as_stored(text: str) -> str:
+        return strip_history([{"role": "assistant", "content": text}])[0][0]["content"]
+    origin = _HandoffOrigin(as_stored(expected[0]), *expected[1:], inventory=shown_text, inventory_root=shown_root)
     def commit(retained):
         # Compared WITHOUT cria's own `⟦cria⟧` lines, which every inbound reader strips before it reads
         # the stored reply: `_finalize` appends the turn-stats footer to this text answer, and comparing
         # the decorated copy recorded no producer for any decorated drop (ornith1.5_9b / Java run 4,
         # 0042: the coder then read cria's own ledger framed as an ungrounded handoff).
-        shown = copy.deepcopy(retained)
-        strip_note_lines(shown)
         if (owner is not None and _handoff_session(server, sk) is owner
-                and _completion_text(shown) == origin.reply):
+                and as_stored(_completion_text(retained)) == origin.reply):
             owner.handoff_origin = origin
     if _defer_commit is None:
         commit(result.completion)  # compatibility caller receives this exact returned result
