@@ -4,7 +4,7 @@ The whole-briefing fidelity verdict (one word over a transcript-sized prompt) ca
 signal: replayed on real briefings it passed a correct briefing and a briefing with a fabricated
 claim at nearly the same rate (docs/open-threads.md, 2026-11-02). The typed lenses (`filepresence`)
 settle file presence, file changes, exact sizes of listed files and build state; this one settles the
-rest of the NUMERIC claims the same way, with no model in it at all (principle 1: deterministic code
+rest of the NUMERIC claims (and opaque identifiers such as addresses and hashes) the same way, with no model in it at all (principle 1: deterministic code
 gathers, only a judgment is asked of a model, and none is needed here).
 
 Code gathers the figures the briefing states — a number with a measure unit ("4,812 B", "47 tests",
@@ -42,6 +42,14 @@ _HEDGE = re.compile(
     r"less than|at least|at most|up to|some|estimated|target\w*|need\w*|require\w*|within|below|above|plus|"
     r"minus|vs\.?|versus)\s+$", re.I)
 _DERIVED_AFTER = re.compile(r"\s*(?:(?:[-–—+×]|\bplus\b|\bminus\b)\s*\d|\([^)]{0,40}\+\s*\d)")
+
+# An OPAQUE IDENTIFIER is copied or it is wrong: a bech32 address, a hash, a token, a UUID without dashes. One dropped
+# character ("...nlryhnlvzv0k9z7h9" for "...zv0qk9z7h9") makes a real lookup 404 for good, and the writer copies such strings
+# by estimation (e2e handles-cli-node 2026-11-01: 2 of 4 briefings that quoted the holder's stake address corrupted it, one was
+# ACCEPTED and became the coder's memory; a Oct-8 run of the same task did the same to an `addr1...` in 1 of 1). Letters AND
+# digits, 32+ characters, nothing but [A-Za-z0-9]: names, paths, slugs and snake/kebab identifiers (`_`, `-`, `.`, `/`) are
+# never read here. Of 337 real self-compaction briefings 3 carried one (5 tokens): 4 were exact, 1 was the corrupted address.
+_OPAQUE = re.compile(r"(?<![A-Za-z0-9_.-])(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{32,}(?![A-Za-z0-9_-])")
 
 _EVIDENCE_NUMBER = re.compile(rf"(?<![A-Za-z_\d.])(?:{_NUM})|(?<=m)(?:{_NUM})")
 
@@ -183,4 +191,7 @@ def ungrounded(briefing: str, evidence: list[str]) -> list[str]:
         host = (m.group(1) or m.group(2) or "").lower()
         if host and host not in lowered:
             found.append(host)
+    for m in _OPAQUE.finditer(briefing):
+        if m.group(0) not in haystack:     # case-sensitive: an identifier's case is part of it
+            found.append(m.group(0))
     return list(dict.fromkeys(found))

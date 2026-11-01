@@ -21,6 +21,11 @@ def figures(briefing, *evidence):
 
 
 CONVERSIONS = "tool: waited 2 seconds between polls, then 3000 ms\n"
+# ornith1.5_9b / handles-cli-node, real Codex 2026-11-01 (c2 capture 0041, accepted): the writer read the holder's stake address in
+# a tool result and briefed it with one character dropped ("...zv0qk9z7h9" -> "...zv0k9z7h9"), so every later lookup 404s.
+STAKE = "stake1u85prp8xt2lqxfkshjmtxvpa8w0g5galkdznlryhnlvzv0qk9z7h9"
+STAKE_COPIED_WRONG = STAKE.replace("zv0qk9", "zv0k9")
+ADDRESS_EVIDENCE = f"tool: HTTP 200 OK\n{{\"holder\":\"{STAKE}\",\"total_handles\":15}}\n"
 
 
 @pytest.mark.parametrize("briefing,refused", [
@@ -30,6 +35,8 @@ CONVERSIONS = "tool: waited 2 seconds between polls, then 3000 ms\n"
     ("Fetched via https://mirror.example.net/maven2.", ["mirror.example.net"]), ("Listens on localhost:9871.", ["localhost:9871"]),
     ("The same size twice: 4,812 B and 4812 bytes.", ["4,812 B", "4812 bytes"]),
     ("The wall time was 0.9 s.", ["0.9 s"]),                                   # a decimal the evidence rounds to nothing like (0.3706, 0.363)
+    (f"The holder is `{STAKE_COPIED_WRONG}` (stake address).", [STAKE_COPIED_WRONG]),   # a copied identifier with a dropped character
+    ("Digest 3fbe8f6eef60e423d6b40b45c443cbe0b948fcf314b84cdd.", ["3fbe8f6eef60e423d6b40b45c443cbe0b948fcf314b84cdd"]),
 ])
 def test_a_figure_that_occurs_nowhere_in_the_evidence_is_refused(briefing, refused):
     assert figures(briefing) == refused
@@ -47,6 +54,20 @@ def test_a_figure_that_occurs_nowhere_in_the_evidence_is_refused(briefing, refus
 ])
 def test_a_figure_the_evidence_states_or_the_briefing_hedges_or_derives_is_never_refused(briefing):
     assert figures(briefing, CONVERSIONS) == []
+
+
+def test_an_opaque_identifier_the_evidence_holds_exactly_is_never_refused_but_names_and_paths_are_never_read():
+    exact = f"The stake address is {STAKE}, so `/holders/{STAKE}` returns 15 handles."
+    names = "See `parse_toml_with_comments_and_arrays_v2`, `src/main/java/pipeline/ImporterFactoryBuilder9.java`, my-very-long-kebab-case-slug-2026-11-01."
+    assert figures(exact, ADDRESS_EVIDENCE) == []
+    assert figures(names, ADDRESS_EVIDENCE) == []
+    assert figures(f"The address is {STAKE.upper()}.", ADDRESS_EVIDENCE) == [STAKE.upper()]   # case is part of an identifier
+
+
+def test_a_briefing_that_miscopies_an_address_is_refused_before_any_model_is_asked():
+    ok, asked = validate(f"The holder is {STAKE_COPIED_WRONG}.", [ADDRESS_EVIDENCE])
+    assert ok is False and asked == []
+    assert validate(f"The holder is {STAKE}.", [ADDRESS_EVIDENCE])[0] is True
 
 
 def test_no_evidence_settles_nothing():
