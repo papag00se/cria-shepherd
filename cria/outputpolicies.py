@@ -20,7 +20,7 @@ from .callformats import (
     _pure_add_file, _read_command, _normalize_read_args,
 )
 from .callliterals import _FUSED_SENTINELS, _recover_write_args, recover_fused_call, trim_fused_tail
-from .jsontext import extract_json_object
+from .jsontext import extract_json_object, extract_leading_object
 from .shelltool import find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, parse_args as _args, tool_path as _tool_path
 
@@ -645,9 +645,13 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
                 json.loads(raw)
                 continue  # already valid
             except json.JSONDecodeError:
-                obj = extract_json_object(raw)
+                obj = extract_leading_object(raw)   # a cut call's nested object is not its arguments
                 if obj is None:
                     obj = _recover_write_args(raw)  # raw newlines / unescaped quotes in content
+                    if obj is None and extract_json_object(raw) is not None:
+                        # An object WAS findable, inside a call whose own object never closed: a
+                        # fragment of the arguments, not the arguments (see extract_leading_object).
+                        _log(rlog, "massage.args_recovery_refused", tool=fn.get("name"), raw_chars=len(raw))
                 if obj == {} and raw.strip():
                     # AN EMPTY OBJECT IS NOT A RECOVERY. It carries nothing the model wrote, and
                     # substituting it deletes the call. See the docstring for the four real ones.

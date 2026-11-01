@@ -1,7 +1,7 @@
 """massage: tool calls the model wrote in the wrong place or shape are normalized, never invented, and never forwarded half-written."""
 import json
 
-from context_wire_b_helpers import rows, sse
+from context_wire_b_helpers import Rlog, rows, sse
 from cria import massage
 
 SHELL = {"type": "function", "function": {"name": "shell", "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
@@ -75,6 +75,21 @@ def test_a_mangled_head_and_a_cut_write_are_left_for_the_refusal_floor_not_guess
     assert "<tool_call|>" in out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
     assert massage._recover_write_args(r'{"path":"a.py","content":"d = {\"k\": \"v\"},') is None
     assert massage._recover_write_args('{"path":"a.py","content":"print(\\"hi\\")\nx = \\"q\\"here"}') == {"path": "a.py", "content": 'print("hi")\nx = "q"here'}
+
+@rows([  # real update_plan / exec shapes cut at a byte offset (fuzz1, wave 12): an INNER object closed before the cut
+    '{"plan": [{"status": "completed", "step": "Analyze current implementation"}, {"status": "pending", "step": "Opti',
+    '{"plan":[{"step":"Fix the failing tests","status":"completed"},{"step":"Impl',
+    '{"cmd":"make test","env":{"A":"1"},"timeout":',
+    '```json\n{"cmd":"make","env":{"A":"1"},"timeo',
+])
+def test_a_cut_argument_string_is_left_as_written_never_replaced_by_an_object_nested_inside_it(raw):
+    """The first complete object inside a call whose OUTER object never closed is a fragment of the arguments, not the
+    arguments: reading it as the call hands the harness a different call than the model began (an update_plan whose
+    plan became one step's own {status, step}). The cut text stays as written so the refusal floor names the truth."""
+    rlog = Rlog()
+    out = massage.repair_tool_args(comp(calls=[("update_plan", raw)]), rlog)
+    assert out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == raw
+    assert rlog.first("massage.args_repaired") is None and rlog.first("massage.args_recovery_refused")["raw_chars"] == len(raw)
 
 def test_replayed_history_args_are_always_valid_json_and_never_lose_text():
     """One malformed historical tool_call 500s a strict template every turn (Fabliq: a python -c f-string ending in \\'). Valid args are untouched; unrecoverable text is preserved as _unparsed."""

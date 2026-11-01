@@ -82,6 +82,27 @@ def extract_json_object(text: str) -> dict | None:
     return _scan_object(denoise(text))
 
 
+def extract_leading_object(text: str) -> dict | None:
+    """The object ``text`` IS, not the first object found inside it.
+
+    Like :func:`extract_json_object` — same fences, same ``<think>`` preamble, same trailing prose — with
+    one added refusal: when the denoised text OPENS with ``{``, the answer is the object that opens
+    there or nothing. A call cut off mid-value never closes its outer object, and a scan for "the first
+    complete object" then lands on one nested inside it (a plan step, an ``env`` map) and hands that
+    fragment on as the whole arguments. Measured by cutting 300 real argument strings at every byte
+    offset (fuzz, wave 12): 1,198 of 63,665 cuts (1.9%) came back as a different, well-formed object.
+    Text that opens with prose still yields its first object, as before."""
+    if not text:
+        return None
+    cleaned = denoise(text).lstrip()
+    if not cleaned.startswith("{"):
+        return _scan_object(cleaned)
+    span = _balanced_object(cleaned, 0)
+    if span is None:
+        return None               # the opening object never closed: nothing nested in it is the answer
+    return _scan_object(cleaned)      # it closed: whatever the scan finds first, exactly as before
+
+
 def denoise(text: str) -> str:
     """The reply with a model's habitual wrappers removed — ``<think>`` preambles and ```` ``` ````
     fences. The ONE place that preprocessing lives, so :func:`extract_json_object` and
