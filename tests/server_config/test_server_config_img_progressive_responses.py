@@ -35,7 +35,7 @@ class Gated(H.FakeUpstream):
             self.rfile = io.BytesIO(raw)  # replay the consumed body to the shared fake
             return super().do_POST()
         self.server.streamed = bool(body.get("stream"))
-        text = "".join(p for p in script if isinstance(p, str) and p not in ("WAIT", "DROP"))
+        text = "".join(p for p in script if isinstance(p, str) and p not in ("WAIT", "DROP", "RESET"))
         if not body.get("stream"):
             return self._reply({"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
                                 "usage": {"completion_tokens": 5}})
@@ -48,6 +48,11 @@ class Gated(H.FakeUpstream):
             if piece == "WAIT":
                 self.server.gate.wait(10)
             elif piece == "DROP":
+                return
+            elif piece == "RESET":           # the model server dies: a TCP reset, not an orderly end
+                import socket, struct
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                self.connection.close()
                 return
             elif isinstance(piece, dict):    # a native tool call: {"name": ..., "arguments": "<json text>"}
                 call = {"index": 0, "id": "call_9", "type": "function", "function": piece}
@@ -261,3 +266,13 @@ def test_an_error_the_buffered_call_treats_as_terminal_is_not_asked_again_before
     with pytest.raises(Exception) as caught:
         CriaHandler._chat_progressive(None, Provider(), {}, progressive, Rlog())
     assert type(caught.value).__name__ in ("UpstreamProtocolError", "ReadFitUnknown", "InputOverflow") and asked == []
+
+
+def test_the_model_server_resetting_mid_answer_ends_in_response_failed_not_in_client_gone(gated):
+    """A TCP reset from the MODEL's side is the same exception type as the harness hanging up. It must still
+    end the harness's stream with its one retryable terminal event, never a silent EOF logged as a departed client."""
+    w = gated()
+    w.fake.script = [FIRST, "RESET"]
+    events = sse_events(open_stream(w).read().decode())
+    assert [e["type"] for e in events][-1] == "response.failed", [e["type"] for e in events]
+    assert "response.client_gone" not in [e["kind"] for e in w.events()]

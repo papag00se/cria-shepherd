@@ -813,6 +813,11 @@ def _note_failover(indic, rlog) -> None:
         indic.note = note
 
 
+class _ClientHungUp(Exception):
+    """The HARNESS's socket failed on a write. A reset or broken pipe raised while reading the MODEL's
+    stream is the same exception type, so only a failed write to the harness is converted to this."""
+
+
 def _terminal_upstream_error(e: BaseException) -> bool:
     """An error the buffered call itself never retries: a typed refit/overflow outcome or a malformed-
     generation protocol error. Asking the model again would repeat the doomed request, or (a protocol
@@ -1824,7 +1829,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             for raw in self._produce_stream(body, rlog):
                 hb.write(raw)
             rlog.emit("response.sent", stream=True, beats=hb.beats)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, _ClientHungUp):
             rlog.emit("response.client_gone", level="warn")
         finally:
             hb.stop()
@@ -2052,8 +2057,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         try:
             return provider.chat_watched(pbody, rlog, on_content=progressive.feed)
         except (UpstreamError, OSError) as e:
-            if (progressive.opened or isinstance(e, (BrokenPipeError, ConnectionResetError))
-                    or _terminal_upstream_error(e)):
+            if progressive.opened or _terminal_upstream_error(e):
                 raise
             rlog.emit("response.progressive_reask", level="warn", error=str(e))
             return provider.chat(pbody, rlog)
@@ -2213,8 +2217,13 @@ class CriaHandler(BaseHTTPRequestHandler):
             # before a word reaches the harness.
             progressive = None
             if not ind.decorates() and not self.server.cfg.routing.done_refusals:
+                def deliver(data: bytes) -> None:
+                    try:
+                        hb.write(data)
+                    except (BrokenPipeError, ConnectionResetError) as gone:
+                        raise _ClientHungUp() from gone
                 progressive = responses.ProgressiveMessage(
-                    hb.write, lambda text: massage.stream_leak_start(text, rlog),
+                    deliver, lambda text: massage.stream_leak_start(text, rlog),
                     massage.STREAM_HOLDBACK, 0)
             try:
                 comp, _indic = self._produce_completion(body, rlog, sess_key, progressive)
@@ -2223,8 +2232,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                 hb.write(responses._event("response.failed",
                     {"response": {"id": resp_id, "status": "failed", "error": e.response_error}}))
                 return
-            except (BrokenPipeError, ConnectionResetError):
-                raise   # the harness hung up (text now leaves while the model writes): not an error, see below
+            except _ClientHungUp:
+                raise   # the harness hung up while text left; the model's own resets are NOT this (they get a failed event)
             except Exception as e:  # noqa: BLE001 — the exact scope g4 died in, six times, silently:
                 # a FileNotFoundError here killed the handler with no event and no response; codex
                 # retried 5x into the void and exited the run. The harness gets a clean failed
@@ -2269,7 +2278,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return
             rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats,
                       status_lines=len(status_lines))
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, _ClientHungUp):
             rlog.emit("response.client_gone", level="warn")
         finally:
             self.server.unregister_stream(hb)
