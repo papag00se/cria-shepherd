@@ -197,6 +197,8 @@ def test_role_apply_attaches_sampling_reasoning_and_the_output_reserve_hint():
     Role("coder", "local", reasoning="on").apply(on)
     assert on["chat_template_kwargs"] == {"enable_thinking": True} and on["messages"] == body()["messages"]
     assert Role("c", "local", reasoning="off").clean_content("hmm 3x17.</think>\n\nNo, 51 is not prime.") == "No, 51 is not prime."
+    leaked = "hmm 3x17.</think>\n\nNo, 51 is not prime."
+    assert Role("c", "local", reasoning="on").clean_content(leaked) == leaked and Role("c", "local", reasoning="off").clean_content(None) == ""   # MUT2: only OFF strips
 
 
 @pytest.mark.parametrize("cap,internal,budget,expected", [

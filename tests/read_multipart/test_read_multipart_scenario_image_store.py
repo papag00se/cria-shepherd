@@ -22,6 +22,9 @@ def test_a_restarted_process_recovers_refs_and_observations_and_cleanup_needs_ev
     new = ImageStore(root, close_authority=object())
     with pytest.raises(ImageUnavailable): new.restore_session({**handle, 'directory': '../x'}, recovered_leases=())
     with pytest.raises(ImageUnavailable): new.restore_session({**handle, 'owner': 'other'}, recovered_leases=())
+    d = root / handle['directory']; d.chmod(0o755)                                    # MUT2: a retained directory that is not private is refused, not adopted
+    with pytest.raises(ImageUnavailable, match='private session directory'): new.restore_session(handle, recovered_leases=())
+    d.chmod(0o700)
     r = new.restore_session(handle, recovered_leases=(('h1', 'handler'), ('o1', 'image-observation')))
     with pytest.raises(ImageUnavailable, match='already active'): new.restore_session(handle, recovered_leases=())
     assert r.reinspect(ref) == IMAGE and r.pending_leases == 2 and r.pending_observations == 1

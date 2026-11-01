@@ -91,3 +91,11 @@ def test_unusable_roots_are_noted_not_fatal_and_wrong_mode_or_foreign_files_are_
     code, text = run(home, 'prune', '--older-than', '0s', '--apply')
     assert code == 0 and 'APPLY: will remove 0 entries' in text and 'refused: not an owned private directory' in text and 'multipart: root' in text and (d / 'f').exists()
     assert run(home, 'prune', '--kind', 'image', '--session', 'image-session-wide', '--apply')[1].count('refused') == 1 and (d / 'f').exists()
+
+
+def test_the_multipart_state_lock_is_released_when_the_plan_has_no_multipart_entry_to_wait_for(tmp_path):
+    """MUT2 (retention survivor): an image-only (here empty) plan must not keep the multipart state lock a live request may be waiting on."""
+    fd = os.open(tmp_path / 'lock', os.O_CREAT | os.O_RDWR); fds = {'multipart-lock': fd}
+    retention.apply_plan(tmp_path, [], fds, force=False, report=lambda entry, err: None)
+    assert 'multipart-lock' not in fds
+    with pytest.raises(OSError): os.fstat(fd)

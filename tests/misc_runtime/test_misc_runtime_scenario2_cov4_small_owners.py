@@ -23,6 +23,7 @@ def test_the_parent_of_a_path_fact_keeps_what_is_known_and_never_invents_a_locat
     (LIT("/w"), LIT("a/b"), LIT("/w/a/b")), (LIT("/w"), LIT("/etc"), LIT("/etc")),              # an absolute right side replaces the left
     (cf.PathFact("temp-dir"), LIT("sub"), cf.PathFact("owned-child", parent=cf.PathFact("temp-dir"))),
     (cf.PathFact("owned-child", parent=LIT("/w")), LIT("x/y"), cf.PathFact("owned-child", parent=cf.PathFact("owned-child", parent=LIT("/w")))),
+    (cf.PathFact("temp-dir"), LIT("/etc"), LIT("/etc")), (cf.PathFact("owned-child", parent=LIT("/w")), LIT("/etc"), LIT("/etc")),   # MUT2: an absolute right side escapes an owned tree too
     (cf.PathFact("temp-dir"), LIT("../out"), cf.PathFact("unknown")),                              # `..` leaves the owned tree
     (cf.PathFact("unknown"), LIT("x"), cf.PathFact("unknown")), (LIT("/w"), cf.PathFact("unknown"), cf.PathFact("unknown")),
 ])

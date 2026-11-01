@@ -83,6 +83,9 @@ def test_workspace_image_reads_are_only_issued_for_an_unambiguous_path_only_harn
     with pytest.raises(ImageUnavailable): ws.register(s, reply, tools)
     out = ws.register(s, issued('orig', {'path': '/w/a.png'}), workspace(rig)[1])
     assert out['choices'][0]['message']['tool_calls'][0]['id'].startswith('imgread_')
+    # MUT2: a reply with more than one choice is not a single coder action: nothing is registered and the ids stay as issued
+    two = {'choices': [issued('orig', {'path': '/w/a.png'})['choices'][0], issued('orig2', {'path': '/w/b.png'})['choices'][0]]}
+    kept = json.loads(json.dumps(two)); assert ws.register(s, two, tools) == kept
 
 
 @pytest.mark.parametrize('fault', ['late-issuer', 'changed-call', 'changed-result', 'unregistered'])
