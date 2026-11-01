@@ -16,7 +16,7 @@ import pytest
 from cria import completionmarks, denial, writeproxy
 from test_write_edit_marks_read_carrier_and_restart import lowered_read, under_pty
 from test_write_edit_over_completion_marks import SESSION, W, die_before, history, marks_dir, record, reply, sha, slow, start, turn
-from write_edit_helpers import command_of, harness_env, run, scratch_of, write_edit_workspace_view  # noqa: F401
+from write_edit_helpers import command_of, harness_env, lower, run, scratch_of, write_edit_workspace_view  # noqa: F401
 
 SLOW = "rp.parent.mkdir(parents=True,exist_ok=True)"
 LANDED = "sys.stdout.write(_rec('landed'"
@@ -299,3 +299,30 @@ def test_a_writer_that_finishes_between_the_two_looks_is_its_mark_not_dead(tmp_p
     done = subprocess.run([sys.executable, "-"], input=program, cwd=str(tmp_path), env=harness_env(tmp_path), capture_output=True, text=True, timeout=20)
     assert done.returncode == 0, done.stderr
     assert json.loads(done.stdout) == ["dead", ["landed", sha("A\n")]]
+
+
+# --- the carriers that stay unsound: nothing rides a fetch, a search, a native command or another tool ------------------------------
+
+PAGE = "line one\n\n\ntrailing blanks follow\n\n\n"
+
+
+@pytest.mark.parametrize("outstanding", [False, True], ids=["control", "a-lost-reply-write-outstanding"])
+def test_an_outstanding_write_adds_nothing_to_a_fetch_or_a_native_next_action(tmp_path, monkeypatch, outstanding):
+    """Only reads, listings, writes, edits and the gate carry the marks query. A fetched page is what the coder reads: the one existing
+    carrier holds a command's output in a shell variable and re-prints it, which strips trailing newlines (measured: the page above
+    loses two) and would push a near-budget page (9,000 bytes) past the harness cap by the up-to-3 KB record; a spill that fails prints no record
+    at all, so a carrier cannot assume the first line is one. So the lowered fetch, a native shell command and a tool cria does not
+    own are byte-for-byte the same with a write outstanding, and the fetched page arrives exactly."""
+    from cria import webfetch
+    monkeypatch.setattr(webfetch, "fetch_nav_result", lambda *a, **k: (PAGE, False, 200, None))
+    if outstanding:
+        turn([W("f.txt", "AAA\n", "x")])                                          # composed, reply never seen
+    native = {"id": "n", "type": "function", "function": {"name": "exec_command", "arguments": json.dumps({"cmd": "ls"})}}
+    mcp = {"id": "m", "type": "function", "function": {"name": "mcp__docs__lookup", "arguments": json.dumps({"q": "x"})}}
+    fetch = {"id": "f", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps({"url": "http://example.invalid/p"})}}
+    lowered = lower([native, mcp, fetch], injected=("web_fetch", "write_file"), session=SESSION)
+    commands = [command_of(tc) if tc["function"]["name"] == "exec_command" else tc["function"]["arguments"] for tc in lowered]
+    assert [c for c in commands if completionmarks.DIR_PREFIX in c or '"k":"survey"' in c] == []
+    assert json.loads(lowered[0]["function"]["arguments"])["cmd"] == "ls" and lowered[1] == mcp           # neither is wrapped or rewritten
+    shown = run(lowered[2], tmp_path).stdout
+    assert shown.split("\n", 1)[1] == PAGE                                         # the page, byte for byte, after the typed record

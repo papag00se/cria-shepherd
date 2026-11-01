@@ -115,15 +115,35 @@ once and before it; two witnesses that disagree witness nothing. Positive landin
 ledger's bytes) still require the call's own reply: a witnessed `landed` says the program FINISHED and what it left, not where it sits in
 the history, so nothing is ordered by a witness's position.
   (2) A lowered writer whose reply has not arrived: its mark, once a later program has read it, makes it `landed` / `did_not_run` /
-  `uncertain` (finished) or `incomplete` (no authentic mark at that moment: still running, killed or never started, which are NOT told
-  apart and are never claimed as `did_not_run`). Before any later program has run there is no witness: still unknown.
+  `uncertain` (finished). With no final mark the reader tells a live writer from a dead one WITHOUT any signal: at its start the program
+  leaves a second authenticated file (`s-<receipt>-<nonce>`, same directory, same checks as a mark) recording its own pid, its process
+  start time from `/proc/<pid>/stat` (field 22, clock ticks since boot), the boot id and its pid namespace. The reader (`_cm_liveness`)
+  reports `running` (the pid still has the recorded start time and is not a zombie), `dead` (no such process, a zombie, or a pid whose
+  start time differs: a RECYCLED pid is never believed to be the writer) or `incomplete` (no authentic start record, a record from another
+  boot or pid namespace, `pid <= 1`, or a `/proc` that does not answer for the reader's own process: nothing can be said, and no
+  guess is made). The mark is looked at again after a `dead` verdict, so a writer that finished between the two looks is its mark, not dead.
+  **`dead` is a witnessed end WITHOUT a final mark, and it is NOT proof the file is untouched**: a program killed after it replaced the file
+  and before its exit handler ran leaves the new bytes and no mark. So `dead` is never `did_not_run`, never a claimed landing, never a
+  learned outcome (the call stays outstanding and the gate keeps holding on it; the doctrine that the gate never approves on an
+  unestablished write is unchanged and the hold stays bounded by `MAX_COMPLETION_CHECKS`). What `dead` buys: the gate's notice
+  (`prompts/gate_unsettled_writes.txt`, key `dead`) tells the coder at the FIRST gate that the process that ran the write is gone and the
+  file may hold none, part or all of what was sent (a `running` writer and an unknown one get their own sentences), and a LATER-turn write
+  of the same file stops waiting `EDIT_SEQ_WAIT_SECONDS` for a mark that can never come and does not run `late` (nothing can land after
+  it). A start record is a correlation token like the mark, not a security boundary: a forger that knows the receipt and nonce could name a
+  dead pid and turn a slow writer into a `dead` report, which costs a hold and a rewrite (a landed rewrite supersedes it), never an approval.
+  Before any later program has run there is no witness: still unknown.
   (3) A writer from an EARLIER turn still running when a later turn writes the same file: the later program waits (bounded by
   `EDIT_SEQ_WAIT_SECONDS`, outside the directory lock, never forever) for the earlier writer's mark, and if the bound passes it runs and its
   record declares `late`, which the loop already reads as an unestablished touch. The set of earlier writers is cria's in-memory registry of
   composed-but-unresolved calls, REBUILT from every re-presented history (`writeproxy._adopt_marks` -> `completionmarks.adopt`: the stored
   sentinel of each lowered write/edit declares its receipt, its mark's nonce `cm` and its target, so a restart does not forget a write whose
-  reply is still outstanding). What a restart still loses: gate witnesses held only in `GuardState.gate_marks`, calls beyond the newest
-  64, and a call that never reached a history.
+  reply is still outstanding). What a restart still loses: gate witnesses held only in `GuardState.gate_marks` (the mark itself is read
+  again: the call is adopted as unresolved and the gate re-reads it) and a call that never reached a history. Calls beyond the newest 64
+  that a history names are no longer stranded: `adopt` queues their marks for release (a restart used to leave them in the private
+  directory until the TMPDIR was cleared), and the queue drains through the authenticated reader, `MAX_RELEASE` (64) per program or gate,
+  bounded in memory by `MAX_PENDING_RELEASE` (1024); a backlog larger than that, a session whose history is never presented again, and the
+  start records and marks of a still-outstanding call stay until `python -m cria.retention --kind transient` (the certified-shape sweep)
+  or a TMPDIR clear removes the directory.
   (4) The other carriers. The query is not only the next write's: the completion gate's worker (`gatecleanup`, request key `marks`) reads
   every unresolved call's mark before the checks start and after they end, and declares `{receipt: [state, sha256, final_before]}` in the
   completed transport's metadata (`probegate._declared_marks`; checker output can supply nothing). `probegate.unsettled_writes` leaves
@@ -132,12 +152,26 @@ the history, so nothing is ordered by a witness's position.
   (never recorded as a clean reading) and holds completion with `prompts/gate_unsettled_writes.txt`, bounded by `MAX_COMPLETION_CHECKS` like
   an unknown reading. A lowered `read_file` / `list_dir` composed while something is outstanding carries ONE extra survey-kind record
   (`wsview.marks_ride`: no body, typed `pm`) in the slot the sentinel's `sv` declares; with nothing outstanding the call is unchanged.
-  Release: the gate removes, through the authenticated reader, the marks cria has learned, and retires its own empty certified directory
-  through the owned retirement - only when nothing is outstanding and nothing but the certificate is in it. A `web_fetch`, a search and a
-  native command carry no query.
+  Release: the gate removes, through the authenticated reader, the marks AND start records cria has learned, and retires its own empty
+  certified directory through the owned retirement - only when nothing is outstanding and nothing but the certificate is in it.
+  **Accepted limit (assessed 2026-11-01): a `web_fetch`, a search, a native command and an MCP/other-tool next action carry no query.**
+  Native shell commands and harness/MCP tools are the harness's: cria composes no program for them and wraps none. The lowered fetch
+  and search ARE cria's, but the only carrier that exists (`_survey_after_first_record`) holds a command's output in a shell variable and
+  prints it back, which is lossy for a page the coder reads (measured: a page ending in two blank lines comes back without them, and a NUL
+  would go); the record is up to 3,162 bytes (32 outstanding writes) on a result already budgeted to 9,000 of the harness's 10,000, so a
+  near-budget page would be cut by the harness to pay for the instrumentation; and the first line of a fetch is not always a record (a
+  failed spill prints only the shell's own error and exits 1, measured), nor is it known at composition which command the externalization
+  owner finally delivers (inline, spill, cached). A spliced, budgeted ride on the inline branch alone is possible but would buy nothing:
+  every outstanding write is read at the latest by the next write, read, listing or the gate, no consumer acts earlier, and the
+  measured carrier effect on the end state is nil (open-threads item 18 (d)). `tests/write_edit/test_write_edit_marks4_dead_writer.py`
+  pins that a lowered fetch, a native command and an unowned tool are byte-for-byte unchanged, and the fetched page exact, with a write
+  outstanding. The per-turn queue of a SAME-turn batch (`editsequence`) still waits its bound for a predecessor that died without its
+  done-mark (the marks above order only EARLIER turns); a same-turn dead predecessor runs `late`.
   (1) A NATIVE shell writer (`> f`, `mv`, `sed -i`, a build) is still unattributable: cria composed no program, so no mark exists, and a
   finished writer and a still-running one print the same text. It stays `unestablished`; no wrapper is added to native commands.
-  Still indistinguishable, even with marks: a program killed by SIGKILL (no handler runs) versus one that never started versus one still
-  running; an unwritable marks directory (the program runs, no mark is left, the state is `incomplete`). Only the marks of calls whose
-  outcome is known are removed (by the next program, through the authenticated reader); the directory is never garbage-collected by prefix, so
-  the marks cria learns only at the last gate remain, bounded (`MAX_OUTSTANDING`), in a 0700 directory of the harness's own TMPDIR until it is cleared.
+  Still indistinguishable: a program that never started from one whose start record could not be left (an unwritable marks directory, no
+  `/proc`, or a harness that runs the reader and the writer in different pid namespaces or boots: the state is `incomplete`, never
+  `dead`). A live writer is `running` and is never waited on forever: the later write still runs `late` after its bound. Only the marks
+  and start records of calls whose outcome is known are removed (by the next program or gate, through the authenticated reader); the
+  directory is never garbage-collected by prefix, so what cria learns only at the last gate remains, bounded (`MAX_OUTSTANDING`), in a
+  0700 directory of the harness's own TMPDIR until it is cleared.

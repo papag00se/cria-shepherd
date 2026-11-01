@@ -10,22 +10,26 @@ needing "executor cooperation". This module is that cooperation, and it is delib
   (``.ctx-done-<session credential>``, created and certified by `ownedfiles.DIRECTORY_PROGRAM` - the same machinery as the
   batch markers of `editsequence`). It says ``landed`` (with the sha256 of the bytes it put on the file), ``did_not_run`` or
   ``uncertain``. A program that is killed leaves nothing: the absence of a mark is "not complete", never "did not run".
+* **At its start** the program leaves a second authenticated file for the same invocation: its own pid, its process start time
+  (``/proc/<pid>/stat``), the boot id and its pid namespace. With no final mark, the reader decides liveness from that alone, with no
+  signal: ``running`` (still that process), ``dead`` (gone, a zombie, or the pid now has another start time: a recycled pid is never
+  believed) or nothing to say. ``dead`` is a witnessed end without a final mark and NOT proof the file is untouched.
 * **Authenticated** means: the file is in the certified directory, is a regular single-link file of this user, mode 0600, and
   its content names the session credential, the call's receipt and THIS invocation's nonce (a fresh one per composition, so a
   mark left by an earlier attempt of the same call is STALE and is not read). The receipt and the nonce are correlation
   tokens exactly like `denial.receipt_for`: a guard against stale and misplaced facts, not a security boundary.
 * **Read back** by the next lowered write/edit program of the session: every call whose outcome cria has not yet learned is
   in its watch list, and its own record carries the typed report ``pm`` (receipt -> ``[state, sha256]``, state one of
-  ``landed`` / ``did_not_run`` / ``uncertain`` / ``incomplete``). `denial.witnessed_completions` turns that, statelessly and
-  from the re-presented history, into a known state for the call. ``incomplete`` is itself a fact: no authentic mark at that
-  moment (still running, killed, or never started - those are indistinguishable here and are not claimed apart).
+  ``landed`` / ``did_not_run`` / ``uncertain`` / ``running`` / ``dead`` / ``incomplete``). `denial.witnessed_completions` turns
+  that, statelessly and from the re-presented history, into a known state for the call. ``incomplete`` is itself a fact: no
+  authentic mark and no authentic start record at that moment (never started, or nothing can be said): never claimed to be more.
 * **Ordered**: a write of a LATER turn to a file that an earlier, still-unresolved lowered writer targets waits (bounded, outside
   the directory lock, never forever) for that writer's mark; if the bound passes it runs and says `late` - the same typed flag the
   per-turn queue uses, which already makes the loop treat the landed bytes as an unestablished touch.
 
 What stays unattributable and is NOT claimed: a NATIVE shell writer (cria composed no program, so there is no mark to leave),
-a writer that is killed, and anything after a cria restart (the registry below is process memory, so a restart falls back to
-exactly the unknown that preceded this module). Marks never block a write: a legitimate revert (A, B, A) is three ordinary
+and a writer on a system whose /proc cannot say (no start record: the state stays ``incomplete``). A cria restart no longer
+forgets the registry: it is rebuilt from the re-presented history (`adopt`). Marks never block a write: a legitimate revert (A, B, A) is three ordinary
 landed writes, each with its own mark.
 
 Cleanup: marks live in the certified directory, and the next program of the session removes the marks of every call whose outcome
@@ -46,7 +50,7 @@ from . import ownedfiles
 DIR_PREFIX = ".ctx-done-"
 MAX_OUTSTANDING = 32            # per session; the oldest is forgotten (its outcome is simply unknown again)
 MAX_RELEASE = 64                # marks one program or gate removes per run
-MAX_PENDING_RELEASE = 1024      # marks queued for removal in process memory (the newest are kept; a backlog drains MAX_RELEASE per carrier)
+MAX_PENDING_RELEASE = 16 * MAX_RELEASE   # marks queued for removal in process memory: 16 carriers' worth (the newest are kept; a backlog drains MAX_RELEASE per carrier)
 OPEN_WAIT_SECONDS = 5
 STATES = ("landed", "did_not_run", "uncertain")      # what an executor mark may say
 # What a read-back may report beyond a final mark, decided by the writer's own start record and /proc (never a signal):
