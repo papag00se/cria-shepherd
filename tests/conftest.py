@@ -71,6 +71,17 @@ def _no_assist_ran_unselected(_assist_level_watch):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_session_cwd_cache():
+    """The server remembers each session's working directory in a process-wide dict keyed by the harness session id; every
+    fake wire reuses ids like `sid-1`, so one test's workspace decided how the next test's `ls /elsewhere` was lowered
+    (a test passed alone and failed after any scenario that named a workspace)."""
+    from cria import server
+    server._CWD_BY_SESSION.clear()
+    yield
+    server._CWD_BY_SESSION.clear()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_rate_limit_state():
     """A cooldown one test's fake server recorded must not hold the next test's request to the same host:port."""
     from cria import ratelimit
