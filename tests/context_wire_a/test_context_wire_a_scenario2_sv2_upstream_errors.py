@@ -164,3 +164,54 @@ def test_a_length_finish_stays_length_so_the_caller_can_see_the_cut():
     up, _ = upstream([Stream([sse({"content": "x"}), sse({}, finish="length")])])
     out = json.loads(up.chat_watched(dict(MESSAGES), Rlog()))
     assert out["choices"][0]["finish_reason"] == "length" and out["choices"][0]["message"]["content"] == "x"
+
+
+def refused(code, headers, body=b"slow down"):
+    return urllib.error.HTTPError("http://fixture.invalid/v1/chat/completions", code, "Too Many Requests", headers, io.BytesIO(body))
+
+
+@pytest.fixture
+def clocked(monkeypatch):
+    """One fake clock for the retry sleeper AND the process's rate-limit wait state: every sleep advances it and is recorded."""
+    from cria import ratelimit
+
+    class Clock:
+        t, slept = 0.0, []
+
+        def sleep(self, seconds):
+            self.slept.append(seconds)
+            self.t += seconds
+    clock = Clock()
+    clock.slept = []
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    monkeypatch.setattr(ratelimit, "STATE", ratelimit.WaitState(lambda: clock.t, clock.sleep))
+    return clock
+
+
+@pytest.mark.parametrize("headers, body, waits", [
+    ({"Retry-After": "7"}, b"slow down", [7.0]),
+    ({"RateLimit-Reset": "3"}, b"slow down", [3.0]),
+    ({"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2"}, b"slow down", [2.0]),
+    ({}, b'{"error": {"message": "Rate limit reached. Please try again in 1.5s."}}', [1.5]),     # a delay only the body states
+    ({}, b'{"error": {"message": "busy"}}', [1.0]),                                                # none stated: the one default pause
+])
+def test_a_buffered_429_is_retried_once_after_exactly_the_servers_stated_wait(clocked, headers, body, waits):
+    """Retry-After / RateLimit-Reset / X-RateLimit-Reset / a body delay each set the sleep; the retry is never sent before it elapsed."""
+    up, opened = upstream([refused(429, headers, body), Buffered("after the wait")])
+    assert json.loads(up.chat(dict(MESSAGES), Rlog()))["choices"][0]["message"]["content"] == "after the wait"
+    assert clocked.slept == waits and len(opened) == 2
+
+
+def test_a_429_cooldown_is_shared_by_every_request_to_that_endpoint_and_a_long_one_is_not_sent_through(clocked):
+    """A second turn (another caller) to a rate-limited endpoint inside the window waits the remainder; over a turn's hold it is refused unsent with the delay."""
+    up, opened = upstream([refused(429, {"Retry-After": "120"}), Buffered("never reached")])
+    with pytest.raises(UpstreamError) as err:
+        up.chat(dict(MESSAGES), Rlog())                       # 120 s is over what a turn can hold: no retry
+    assert err.value.code == 429 and err.value.retry_after_ms == 120_000 and clocked.slept == [] and len(opened) == 1
+    with pytest.raises(UpstreamError) as again:
+        list(up.stream_chat(dict(MESSAGES), Rlog()))          # the other wire mode, same endpoint: not sent
+    assert again.value.code == 429 and again.value.retry_after_ms > 0 and len(opened) == 1
+    clocked.t += 100.0                                        # 20 s of the window remain: held, then sent
+    other, other_opened = upstream([Buffered("ok")])
+    assert json.loads(other.chat(dict(MESSAGES), Rlog()))["choices"][0]["message"]["content"] == "ok"
+    assert clocked.slept == [20.0] and len(other_opened) == 1

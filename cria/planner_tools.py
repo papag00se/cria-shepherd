@@ -25,11 +25,12 @@ import os
 from . import content_reduce
 import tempfile
 import uuid
+import urllib.error
 import urllib.parse
 import urllib.request
 from .planningcontracts import ToolResult
 
-from . import brave, prompts, webfetch, wsview, researchpolicies
+from . import brave, prompts, ratelimit, webfetch, wsview, researchpolicies
 from .searchloop import normalize_search
 
 # The READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
@@ -469,7 +470,9 @@ def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[d
     """One Brave Search GET. Returns a list of {title,url,description}. Endpoint/encoding/headers
     come from the shared `brave` module so the writeproxy's shell web_search can't diverge."""
     req = urllib.request.Request(brave.query_url(query, count), headers=brave.headers(api_key))
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with ratelimit.open_response(req, 30) as r:
+        if isinstance(r, urllib.error.HTTPError):
+            raise r                                  # a refusal is an error, not an empty result list
         data = json.loads(r.read())
     results = ((data.get("web") or {}).get("results")) or []
     return [{"title": x.get("title", ""), "url": x.get("url", ""), "description": x.get("description", "")}

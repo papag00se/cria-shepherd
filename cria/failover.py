@@ -14,12 +14,11 @@ reset would otherwise be a dead turn. Chain-walk matters once distinct endpoints
 """
 from __future__ import annotations
 
-import email.utils
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
-from . import generation, transientpolicy
+from . import generation, ratelimit, transientpolicy
 from .transientpolicy import (Failure, Behavior, RetrySame, NextInChain, HardFail, ChainExhausted)
 
 
@@ -50,30 +49,8 @@ def classify_failure(status_code: Optional[int], error_message: str,
     return Failure.MODEL_UNAVAILABLE
 
 
-def retry_after_ms(headers, now: Callable[[], float] = time.time) -> Optional[int]:
-    """How long the server said to wait before asking again, in ms, from a 429/503's response headers
-    (``Retry-After`` as delta-seconds or an HTTP date, ``Retry-After-Ms``, ``X-RateLimit-Reset-After``);
-    ``None`` when it named no delay. The longest advertised delay wins: waiting less is the early retry
-    a limiter punishes."""
-    if not headers:
-        return None
-    get = headers.get
-    found = []
-    for name, scale in (("Retry-After-Ms", 1), ("Retry-After", 1000), ("X-RateLimit-Reset-After", 1000)):
-        raw = (get(name) or "").strip()
-        if not raw:
-            continue
-        try:
-            value = float(raw) * scale
-        except ValueError:
-            try:
-                when = email.utils.parsedate_to_datetime(raw) if name == "Retry-After" else None
-            except (TypeError, ValueError):
-                when = None
-            value = (when.timestamp() - now()) * 1000 if when is not None else None
-        if value is not None and value == value and value >= 0:
-            found.append(int(value))
-    return max(found) if found else None
+# How long the server said to wait before asking again (headers in every dialect, plus the body): one reader, in ratelimit.
+retry_after_ms = ratelimit.delay_ms
 
 
 def decide_action(failure: Failure, current_role: str, chain_name: str, chain: Sequence[str],

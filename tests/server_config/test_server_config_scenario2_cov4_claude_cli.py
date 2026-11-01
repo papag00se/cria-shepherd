@@ -98,3 +98,20 @@ def test_the_resume_map_is_bounded_oldest_first_and_a_failed_call_leaves_it_unto
     fresh = ClaudeCliProvider(binary=binary)
     fresh.chat(BODY, Rlog(None))
     assert fresh._sessions == {}                                                         # a sessionless call remembers nothing to resume
+
+
+def test_a_claude_cli_api_429_carries_its_wait_and_cools_the_backend_down_for_every_session(tmp_path, monkeypatch):
+    """`claude -p` reports the API's refusal in its JSON result: the error is a 429 with the delay it named, and the NEXT invocation
+    (a different session) waits that out or, over a turn's hold, is not started at all (no child process runs)."""
+    from cria import ratelimit
+    clock = [0.0]
+    monkeypatch.setattr(ratelimit, "STATE", ratelimit.WaitState(lambda: clock[0], lambda s: clock.__setitem__(0, clock[0] + s)))
+    ran = tmp_path / "ran"
+    refusal = '{"is_error":true,"api_error_status":429,"result":"API Error: 429 {\\"error\\":{\\"message\\":\\"usage limit\\",\\"retry_after\\":600}}"}'
+    provider = ClaudeCliProvider(binary=fake(tmp_path, f'echo x >> "{ran}"\n' + say(refusal) + "exit 1\n"))
+    with pytest.raises(UpstreamError) as err:
+        provider.chat(BODY, Rlog("s1"))
+    assert err.value.code == 429 and err.value.retry_after_ms == 600_000
+    with pytest.raises(UpstreamError) as held:
+        provider.chat(BODY, Rlog("s2"))
+    assert held.value.code == 429 and held.value.retry_after_ms > 0 and ran.read_text().count("x") == 1

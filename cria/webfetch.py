@@ -39,7 +39,7 @@ from dataclasses import dataclass, replace
 from http.client import InvalidURL
 from typing import Any, Optional
 
-from . import apidiscovery, brave, denial, fetchfacts, prompts
+from . import apidiscovery, brave, denial, fetchfacts, prompts, ratelimit
 from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
                              SPILL_CONTENT_MAX, clip, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
@@ -109,12 +109,10 @@ def fetch(url: str, user_agent: Optional[str] = None) -> FetchResult:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
         "Accept-Language": "en-US,en;q=0.9",
     })
-    # Non-2xx must still yield the body (api.handle.me serves real docs on its 404) — HTTPError
-    # IS a response object, so catch it and read it exactly like a 200.
-    try:
-        resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S)  # noqa: S310 (scheme guarded above)
-    except urllib.error.HTTPError as e:
-        resp = e
+    # Non-2xx must still yield the body (api.handle.me serves real docs on its 404) — an HTTPError
+    # IS a response object, so open_response hands it back and it is read exactly like a 200. The same
+    # opener honours a host's stated rate limit (waits out a cooldown, retries a 429 once after the stated wait).
+    resp = ratelimit.open_response(req, REQUEST_TIMEOUT_S)  # noqa: S310 (scheme guarded above)
     with resp:
         status = int(getattr(resp, "status", 0) or getattr(resp, "code", 0) or 0)
         final_url = resp.geturl()
@@ -329,6 +327,9 @@ OVERSIZE_CHARS = CONTENT_CAP_TOKENS * 4  # bigger than one page → spill to a f
 SPILL_DIR = "./tmp/reference"
 
 
+_SPILL_STEM_MAX = 200   # bytes of readable stem; a file name is at most 255 bytes and `-<8 hex>.txt` follows
+
+
 def _spill_name(url: str) -> str:
     """A stable, filesystem-safe name under :data:`SPILL_DIR` for a URL's spilled doc — stable so a
     re-fetch of the same url points the model at the same file (no duplicate spills)."""
@@ -347,6 +348,11 @@ def _spill_name(url: str) -> str:
     # whatever cria leaves lying in the tree. So the name states what the file is. The original
     # extension survives inside the name (`…_decimal.go.txt`), which keeps the stable-name property
     # this function exists for.
+    # A NAME THE FILE SYSTEM CAN HOLD. The stem is the URL's whole path, and a path of ~250+ characters made a name past the
+    # 255-byte limit: the saved copy then failed at `base64 -d >` and the page could never be saved at all. A long stem is cut and
+    # carries a digest of the WHOLE stem (the way `search_spill_name` does), so it stays stable per URL and distinct per URL.
+    if len(stem) > _SPILL_STEM_MAX:
+        stem = stem[:_SPILL_STEM_MAX] + "-" + hashlib.sha1(stem.encode("utf-8")).hexdigest()[:8]
     if not stem.endswith(".txt"):
         stem += ".txt"
     return f"{SPILL_DIR}/{stem}"
@@ -1505,6 +1511,7 @@ def fetch_nav_result(url: str, *, find: Optional[str] = None, cursor: Optional[s
     out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
     captured = _CAPTURE.get()
     _CAPTURE.set(None)
+    out += _rate_limit_wait_note(url, status, discovered)
     observation = researchpolicies.current().failure
     if observation is not None:
         decision = observation.execute(researchpolicies.FailureInput(
@@ -1679,6 +1686,18 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
 
 
 # --- paging (content_reduce.rs::page_from + render_page) ------------------------------------
+
+def _rate_limit_wait_note(url: str, status: Optional[int], discovered: bool) -> str:
+    """The server's stated wait, said once under a 429/503 it just sent: how many seconds remain before this host will be
+    asked again. Read from the process's wait state (the one `ratelimit.open_response` recorded from the server's own
+    headers or body), never guessed — a request sent sooner is not sent, and the model should know why."""
+    if discovered or status not in (429, 503):
+        return ""
+    left = ratelimit.STATE.remaining_ms(ratelimit.key_for(url))
+    if left <= 0:
+        return ""
+    return "\n\n" + prompts.fill(prompts.load_map("fetch_client_error")["wait"], seconds=str(-(-left // 1000)))
+
 
 def _parse_cursor(c: str) -> int:
     c = (c or "").strip()

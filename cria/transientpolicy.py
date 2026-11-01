@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 from .assistcontract import Policy, Reference
+from . import ratelimit
 
 class Failure(Enum):
     RATE_LIMIT = "rate_limit"
@@ -28,7 +29,7 @@ class Failure(Enum):
 class Behavior:
     retry_same_attempts: int = 2
     rate_limit_default_wait_ms: int = 1000
-    rate_limit_max_wait_ms: int = 30000
+    rate_limit_max_wait_ms: int = ratelimit.MAX_WAIT_MS
     retry_same_backoff_ms: int = 500
 
 

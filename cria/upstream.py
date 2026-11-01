@@ -25,7 +25,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
-from . import bodykeys, prompts, windowcaps
+from . import bodykeys, prompts, ratelimit, windowcaps
 from . import (callcapture, config, contextfloor, failover, generation, indicators, massage, modelview,
                reasoning, rumination, tokenratio)
 
@@ -1308,6 +1308,15 @@ class Upstream:
     def _open_with_refit(self, body: dict, stream: bool, rlog, *, _transport=None) -> tuple:
         """Selected capacity policy over required final preparation and single-send custody."""
         from . import assistruntime, capacitypolicy
+        # A host that said "wait" is waited on by EVERY request this process sends it, not only the one that was told.
+        limit_key = ratelimit.key_for(self._chat_url)
+        try:
+            ratelimit.STATE.hold(limit_key)
+        except ratelimit.RateLimited as held:
+            rlog.emit('upstream.error', level='error', url=self._chat_url, error=str(held))
+            refused = UpstreamError(str(held))
+            refused.code, refused.retry_after_ms = 429, held.retry_after_ms
+            raise refused from held
         runtime = (assistruntime.current() if assistruntime.is_bound() else
                    assistruntime.AssistRuntime.select(level=self._engagement_level))
         transport = ((self._receive_open, urllib.request.urlopen)
@@ -1340,6 +1349,7 @@ class Upstream:
                 caller_refit=body.get(bodykeys.CONTEXT_REFIT_NO_CHANGE),
                 model=lambda: body.get('model'))
         if isinstance(result.outcome, capacitypolicy.Accepted):
+            ratelimit.observe(ratelimit.STATE, limit_key, 200, getattr(result.outcome.response, 'headers', None))
             reads = protected_reads(body)
             if reads:
                 _read_positions(json.loads(result.prepared.wire).get('messages') or [], reads)
@@ -1353,7 +1363,10 @@ class Upstream:
             getattr(e, 'response_error', None)) else UpstreamError)
         err = error_class(str(e), getattr(e, 'response_error', None))
         err.code = getattr(e, 'code', None)
-        err.retry_after_ms = failover.retry_after_ms(getattr(e, 'headers', None))
+        code = getattr(e, 'code', None)
+        err.retry_after_ms = ratelimit.observe(
+            ratelimit.STATE, limit_key, code if isinstance(code, int) else 0, getattr(e, 'headers', None),
+            _http_error_body(e) if isinstance(e, urllib.error.HTTPError) and code in (429, 503) else None)
         raise err from e
 
     def _send_capacity(self, prepared, body, stream, rlog, attempt, runtime, transport):

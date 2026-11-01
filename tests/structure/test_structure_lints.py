@@ -68,6 +68,8 @@ FIXED_SIZES = {
     ("depsurface.py", "MAX_FILE_BYTES"): "safety: bounded read-only scan of a dependency source file, never a full-tree crawl",
     ("depsurface.py", "MAX_ROOT_DIRS"): "safety: bounded directory walk under a declared dependency root (feed-pipeline-java opencsv case)",
     ("apidiscovery.py", "MAX_PROBE_BYTES"): "safety: read far enough that a real schema parses (a 2 MB cut made a real MCP/GraphQL server look empty); a hit is disclosed",
+    ("ratelimit.py", "MAX_WAIT_MS"): "safety: the longest a request holds a turn waiting out a stated rate limit; a longer wait is reported, not slept",
+    ("ratelimit.py", "_BODY_PROBE_BYTES"): "safety: a refusal body is read this far for a stated delay (the caller still gets the whole body)",
     ("webfetch.py", "MAX_BODY_BYTES"): "safety: raw-body read cap raised well past real specs (was 512 KiB); a body beyond it is disclosed as truncated",
     ("groundtruth.py", "DEFAULT_FILE_CAP"): "safety: last-resort valve for a pathologically huge file; the context floor is the window-aware bound",
     ("planner.py", "_GROUND_SCAN_MAX_BYTES"): "safety: bounded sweep; a token this common is found long before",

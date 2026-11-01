@@ -25,8 +25,11 @@ import time
 from dataclasses import dataclass
 from typing import Iterator
 
+from . import ratelimit
 from .classify import latest_user_text
 from .upstream import UpstreamError
+
+_RATE_LIMIT_KEY = "claude-cli"   # the CLI is one account's quota: every session of the process shares its cooldown
 
 
 @dataclass
@@ -77,6 +80,13 @@ class ClaudeCliProvider:
         if resume:
             args += ["--resume", resume]
 
+        try:
+            ratelimit.STATE.hold(_RATE_LIMIT_KEY)
+        except ratelimit.RateLimited as held:
+            rlog.emit("claude.error", level="error", error=str(held))
+            refused = UpstreamError(str(held))
+            refused.code, refused.retry_after_ms = 429, held.retry_after_ms
+            raise refused from held
         rlog.emit("claude.invoke", model=model, resume=bool(resume), cwd=self._cwd)
         t0 = time.monotonic()
         try:
@@ -97,7 +107,12 @@ class ClaudeCliProvider:
 
         if proc.returncode != 0:
             rlog.emit("claude.error", level="error", code=proc.returncode, stderr=(proc.stderr or ""))
-            raise UpstreamError(f"claude CLI exited {proc.returncode}: {(proc.stderr or '').strip()}")
+            err = UpstreamError(f"claude CLI exited {proc.returncode}: {(proc.stderr or '').strip()}")
+            limited = _rate_limit_delay(proc.stdout, proc.stderr)
+            if limited is not False:                  # the CLI reported an API 429: carry the wait, remember it for the process
+                err.code = 429
+                err.retry_after_ms = ratelimit.observe(ratelimit.STATE, _RATE_LIMIT_KEY, 429, None, limited)
+            raise err
 
         result = _parse_claude_json(proc.stdout, fallback_model=model)
         if result.session_id and session_key:  # only a REAL id is remembered for a later --resume
@@ -113,6 +128,21 @@ class ClaudeCliProvider:
             session=bool(result.session_id),
         )
         return result
+
+
+def _rate_limit_delay(stdout: str, stderr: str):
+    """``False`` when the CLI's failure is not an API rate limit; else the text its wait can be read from. The CLI prints
+    the API's refusal in its JSON result (``api_error_status`` 429 / "API Error: 429 ...") — the body carries any delay."""
+    text = f"{stdout or ''}\n{stderr or ''}"
+    try:
+        obj = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        obj = None
+    if isinstance(obj, dict) and (obj.get("api_error_status") == 429 or str(obj.get("result", "")).startswith("API Error: 429")):
+        return str(obj.get("result", "")) + "\n" + (stderr or "")
+    if "API Error: 429" in text or "rate_limit_error" in text:
+        return text
+    return False
 
 
 def _parse_claude_json(stdout: str, fallback_model: str) -> ClaudeResult:

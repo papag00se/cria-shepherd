@@ -68,3 +68,12 @@ def _no_assist_ran_unselected(_assist_level_watch):
         found, _violations[:] = list(_violations), []
     assert not found, ("assist code ran under a bound runtime that did not select it (assist, bound level, callable): "
                        + repr(sorted(set(found))[:5]))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit_state():
+    """A cooldown one test's fake server recorded must not hold the next test's request to the same host:port."""
+    from cria import ratelimit
+    ratelimit.STATE.clear()
+    yield
+    ratelimit.STATE.clear()
