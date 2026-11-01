@@ -1,0 +1,13 @@
+The objective is to fix a rounding bug in cart calculations, migrate discount codes to an external JSON file with a fallback mechanism, replace `float64` money arithmetic with a third-party decimal library, and add logging for totals to `stderr`.
+
+Current progress:
+- The initial state of the project has been established. The core logic resides in `cart.go`, which currently uses `float64` for all calculations and hard-coded values in the `Discounts` map.
+- The current implementation of `Total()` in `cart.go` performs rounding via `float64(int(taxed*100)) / 100`, which is identified as the source of the one-cent discrepancy (e.g., producing `48.57` instead of `48.58`).
+
+What remains to be done:
+- Fix the rounding bug and add a regression test in `cart_test.go`.
+- Create `discounts.json` and update `cart.go` to load these values with a hard-coded fallback.
+- Integrate a third-party decimal module into `go.mod` and refactor `cart.go` to use it for all money arithmetic while keeping the `Item` struct fields as `float64`.
+- Implement `stderr` logging for subtotal, discount code, and final total.
+
+The last action taken was identifying the current logic in `cart.go` to prepare for the rounding fix.

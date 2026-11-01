@@ -20,10 +20,13 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from . import groundtruth, prompts, writerecord
+from . import groundtruth, prompts, windowcaps, writerecord
 
 # A claim list is a line per file name; a few hundred tokens covers any real briefing.
 MAX_TOKENS = 2048
+# The per-file confirmation thinks first (7 to 10 s on the real briefing, up to 1,300 tokens of reasoning), so it gets
+# the judge's reply room, a share of the answering model's window; an answer cut short is empty and leaves the claim standing.
+CONFIRM_MAX_TOKENS = windowcaps.JUDGE_REPLY
 
 
 def _plain(text: str) -> str:
@@ -88,8 +91,27 @@ def unsupported_changes(summarize, chat_fn, role, briefing: str, messages, rlog,
         return []
     answer = _ask_lines(summarize, chat_fn, role, briefing, rlog, phase, "changes")
     record = writerecord.WriteRecord(messages)
-    return [path for path in _claimed(answer, briefing, "CHANGED")
-            if groundtruth.names_a_workspace_file(path) and not record.may_have_changed(path)]
+    unsupported = [path for path in _claimed(answer, briefing, "CHANGED")
+                   if groundtruth.names_a_workspace_file(path) and not record.may_have_changed(path)]
+    return [path for path in unsupported
+            if not _says_not_changed(summarize, chat_fn, role, briefing, path, rlog, phase)]
+
+
+def _says_not_changed(summarize, chat_fn, role, briefing: str, path: str, rlog, phase: str) -> bool:
+    """Does a focused, reasoned reading of the briefing about ONE file say it was NOT changed?
+
+    The one-line-per-file listing is a closed, cold question over every name at once: on the real AUD5 briefing
+    ("The last action taken was identifying the current logic in `cart.go`"; every change under "What remains") it
+    listed `cart.go | CHANGED` 7 of 8, while the write record correctly said nothing touched it. This runs only for
+    a file the record cannot support, and only the briefing's own sentences about that file decide it. Anything
+    but a final line of exactly NOT CHANGED (an empty, cut or unreadable reply) leaves the claim standing: the
+    listing's refusal was the standing behaviour and an undecidable reading never clears it."""
+    system = prompts.render("compaction_validate_changes_file", path=path)
+    answer = summarize(chat_fn, replace(role, reasoning="on"), system, prompts.load("compaction_validate_changes_file_ask"),
+                       rlog, phase=f"{phase}-changes-file", max_tokens=CONFIRM_MAX_TOKENS, retry_off=False, temperature=0.0,
+                       evidence_blocks=[prompts.render("compaction_candidate", briefing=briefing.strip())])
+    lines = [line.strip("`*. ").upper() for line in answer.splitlines() if line.strip()]
+    return bool(lines) and lines[-1] == "NOT CHANGED"
 
 
 # A byte count the briefing literally states: digits (thousands separators allowed) then B / byte(s).

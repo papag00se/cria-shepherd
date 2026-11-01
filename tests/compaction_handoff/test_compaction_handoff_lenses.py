@@ -123,6 +123,32 @@ def test_the_real_c1_briefing_is_refused_only_when_the_model_says_orders_db_exis
     system = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "files")["messages"][0]["content"]
     assert "REQUIRED" in system and "existing deployments hold" in system        # the question names the role that mention has
 
+# ornith1.5_9b / cart-billing-go (AUD5, 20260812T205119 0006-self-compact): "The last action taken was identifying the current logic in
+# `cart.go`" with every change under "What remains". The one-line-per-file listing named `cart.go | CHANGED` on 7 of 8 real replays (2 at
+# temperature 0, 6 at 0.7) over a transcript that only READ it. The per-file reasoned question read the same briefing as NOT CHANGED 32 of 32
+# (4 files x 8) and CHANGED on 24 of 24 appended fabrications (`pom.xml` dependency updated, `REVIEW.md` (235 B) written, `discounts.json` created).
+AUD5 = Path(__file__).with_name("fpres_aud5_cart_go_briefing.txt").read_text()
+CART_READ = TASK + [call("r1", "read_file", path="cart.go"), result("r1", "package cart")]
+
+@pytest.mark.parametrize("confirmation,accepted", [
+    ("Only the sentence about cart.go: it identified logic.\nNOT CHANGED", True),     # the reasoned reading clears a listing's false claim
+    ("`cart.go` is described as edited.\nCHANGED", False),                              # a claim the reading keeps is still refused
+    ("NOT CHANGED, except it is unclear.", False), ("", False)])                       # an unreadable or empty reply never clears it
+def test_a_listed_change_claim_nothing_wrote_is_refused_only_while_a_reasoned_question_about_that_file_does_not_clear_it(confirmation, accepted):
+    """The listing's CHANGED line for a file no write could have touched is confirmed by one reasoning-ON question about that file alone."""
+    ok, asked, answers, seen = validate(AUD5, messages=CART_READ, changes="cart.go | CHANGED\ncart_test.go | NOT CHANGED",
+                                        changes_file=confirmation)
+    assert ok is accepted and asked.count("changes_file") == 1 and ("changes" in answers) is (not accepted)
+    ask = next(b for b in seen if lens_of(b["messages"][0]["content"]) == "changes_file")
+    assert "`cart.go`" in ask["messages"][0]["content"] and "cart_test.go" not in ask["messages"][0]["content"]
+    assert AUD5.strip() in " ".join(str(m["content"]) for m in ask["messages"])     # it reads the briefing, not the transcript
+    assert ask["chat_template_kwargs"]["enable_thinking"] is True and ask["temperature"] == 0.0
+
+def test_a_file_a_write_could_have_changed_is_never_put_to_the_reasoned_question():
+    """A supported claim (a landed write names the file) needs no confirmation: the typed record settles it."""
+    ok, asked, _, _ = validate(AUD5, messages=CART_READ + write("w1", path="cart.go"), changes="cart.go | CHANGED", changes_file="NOT CHANGED")
+    assert ok is True and "changes_file" not in asked
+
 def test_a_build_claim_is_matched_through_markup_the_copy_dropped():
     """A quoted build claim still matches the briefing when the copy dropped its markup (backticks, quotes)."""
     ok, _, _, _ = validate("It `compiles` and \"tests pass\".", messages=HISTORY, build="It compiles and tests pass. | GREEN")

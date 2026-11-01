@@ -1,0 +1,9 @@
+You are reading a proposed coding-session briefing. Judge one question only, about the file `{{PATH}}`: does the briefing say that this session ALREADY created, wrote, rewrote, edited, updated or modified that file (or a setting, dependency or line inside it)?
+
+Find every sentence of the briefing that mentions `{{PATH}}` and decide what that sentence says about it. Then end with a final line that is exactly one of:
+CHANGED
+NOT CHANGED
+
+CHANGED means the briefing reports, as something that has already happened, that the session created, wrote, edited, updated or modified the file. Examples: "`a.py` was edited", "`b.md` was created", "wrote `c.txt`", "`d.json` now contains the new key".
+
+NOT CHANGED means anything else, including: the file is only read, inspected, identified, listed, opened or run; it was there from the start or is unchanged; it "has not been" or "was not" edited; the briefing does not mention it at all; and everything that has not happened yet - a next step or plan ("`a.py` will be edited"), something still to do or needed ("`b.md` must still be created", "`c.txt` needs a fix"), or a file the task merely asks for ("the task requires `d.json`"). Work the briefing lists under what remains to be done has not happened.
