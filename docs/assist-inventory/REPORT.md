@@ -148,7 +148,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/outputpolicies.py:recover_text_calls`](../../cria/outputpolicies.py#L415)
 - [`cria/massage.py:recover_leaked_tool_calls`](../../cria/massage.py#L62)
 - [`cria/outputpolicies.py:recover_reasoning_tool_calls`](../../cria/outputpolicies.py#L501)
-- [`cria/callsyntax.py:_strip_channel`](../../cria/callsyntax.py#L688)
+- [`cria/callsyntax.py:_strip_channel`](../../cria/callsyntax.py#L695)
 - [`cria/callliterals.py:recover_fused_call`](../../cria/callliterals.py#L335)
 - [`cria/massage.py:_recover_fused_call`](../../cria/massage.py#L71)
 - [`cria/callliterals.py:trim_fused_tail`](../../cria/callliterals.py#L215)

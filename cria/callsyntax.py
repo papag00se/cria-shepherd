@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import json
+from bisect import bisect_left
 import re
 import uuid
 
@@ -579,33 +580,39 @@ def _bounded_xml_params(body: str) -> list:
     Returns the shape `_XML_PARAM.findall` did, so the caller is unchanged and both dialect channels
     keep one definition of the syntax."""
     out = []
-    for m in _PARAM_OPEN.finditer(body):
+    # Every opener's balancing closer in ONE pass (the innermost unmatched opener takes each closer).
+    # A scan from each opener that re-searched the rest of the body for the next closer was cubic in
+    # the number of openers: 3,000 stacked openers (a repetition loop) cost 15 s.
+    balanced: dict[int, int] = {}
+    pending: list[int] = []
+    openers = list(_PARAM_OPEN.finditer(body))
+    oi, ci = 0, body.find(_PARAM_CLOSE)
+    while oi < len(openers) or ci != -1:
+        if ci == -1 or (oi < len(openers) and openers[oi].start() < ci):
+            pending.append(openers[oi].end())
+            oi += 1
+        else:
+            if pending:
+                balanced[pending.pop()] = ci
+            ci = body.find(_PARAM_CLOSE, ci + len(_PARAM_CLOSE))
+    boundaries: list[int] = []
+    for tag in _PARAM_HARD_BOUNDARIES:
+        j = body.find(tag)
+        while j != -1:
+            boundaries.append(j)
+            j = body.find(tag, j + 1)
+    boundaries.sort()
+    for idx, m in enumerate(openers):
         name, start = m.group(1), m.end()
-        depth, i, end = 1, start, None
-        while i < len(body):
-            nxt_open = _PARAM_OPEN.search(body, i)
-            nxt_close = body.find(_PARAM_CLOSE, i)
-            if nxt_close == -1:
-                break                                  # never closed at all
-            if nxt_open and nxt_open.start() < nxt_close:
-                depth += 1
-                i = nxt_open.end()
-                continue
-            depth -= 1
-            if depth == 0:
-                end = nxt_close
-                break
-            i = nxt_close + len(_PARAM_CLOSE)
+        end = balanced.get(start)
         if end is None:
             # Unbalanced: stop at the earliest thing that cannot be part of this value.
             end = len(body)
-            sib = _PARAM_OPEN.search(body, start)
-            if sib:
-                end = min(end, sib.start())
-            for tag in _PARAM_HARD_BOUNDARIES:
-                j = body.find(tag, start)
-                if j != -1:
-                    end = min(end, j)
+            if idx + 1 < len(openers):
+                end = min(end, openers[idx + 1].start())
+            k = bisect_left(boundaries, start)
+            if k < len(boundaries):
+                end = min(end, boundaries[k])
         out.append((name, body[start:end]))
     return out
 

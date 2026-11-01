@@ -131,6 +131,7 @@ def test_a_cut_write_with_thousands_of_unclosed_braces_is_read_in_linear_time_an
     assert out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == raw
     assert time.perf_counter() - started < 3
     assert jsontext.extract_json_object("{" * 20000 + '"') is None
+    assert jsontext.extract_json_object('{"a":"' + "\\" * 50000) is None and time.perf_counter() - started < 3   # a run of backslashes, the escape scan's own worst case
     assert jsontext.close_unclosed_object('{ "a": ' + "{ " * 20000) == {}      # only the innermost brace is repairable by closers alone
 
 
@@ -147,3 +148,50 @@ def test_the_memoized_brace_scan_answers_exactly_what_one_scan_per_brace_answers
                 if c == "{":
                     assert jsontext._balanced_object(s, i) == jsontext._balanced_object_from(s, i), (s, i)
                     assert jsontext._unclosed_tail(s, i) == jsontext._unclosed_tail_from(s, i), (s, i)
+
+
+def _params_one_scan_per_opener(body):
+    """The definition of callsyntax._bounded_xml_params: each opener searches the rest of the body for its own balancing closer."""
+    from cria import callsyntax as cs
+    out = []
+    for m in cs._PARAM_OPEN.finditer(body):
+        name, start = m.group(1), m.end()
+        depth, i, end = 1, start, None
+        while i < len(body):
+            nxt_open, nxt_close = cs._PARAM_OPEN.search(body, i), body.find(cs._PARAM_CLOSE, i)
+            if nxt_close == -1:
+                break
+            if nxt_open and nxt_open.start() < nxt_close:
+                depth, i = depth + 1, nxt_open.end()
+                continue
+            depth -= 1
+            if depth == 0:
+                end = nxt_close
+                break
+            i = nxt_close + len(cs._PARAM_CLOSE)
+        if end is None:
+            end = len(body)
+            sib = cs._PARAM_OPEN.search(body, start)
+            if sib:
+                end = min(end, sib.start())
+            for tag in cs._PARAM_HARD_BOUNDARIES:
+                j = body.find(tag, start)
+                if j != -1:
+                    end = min(end, j)
+        out.append((name, body[start:end]))
+    return out
+
+
+def test_thousands_of_stacked_parameter_openers_are_paired_in_one_pass_exactly_as_one_scan_per_opener_would():
+    """3,000 `<parameter=…>` openers (a repetition loop) cost 15 s: every opener re-searched the rest of the body. One pass now; same pairing on random tag soup."""
+    import random
+    import time
+    from cria import callsyntax
+    started = time.perf_counter()
+    pairs = callsyntax._bounded_xml_params("<parameter=a>" * 3000 + "</parameter>")
+    assert len(pairs) == 3000 and pairs[-1] == ("a", "") and time.perf_counter() - started < 2
+    rng = random.Random(5)
+    tokens = ["<parameter=a>", "<parameter=b>", "</parameter>", "</function>", "</tool_call>", "x", "\n", "<parameter=c> ", "text ", "<function=f>"]
+    for _ in range(3000):
+        body = "".join(rng.choice(tokens) for _ in range(rng.randint(0, 14)))
+        assert callsyntax._bounded_xml_params(body) == _params_one_scan_per_opener(body), body
