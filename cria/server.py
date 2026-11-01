@@ -1070,6 +1070,8 @@ def _chat_shape_error(body: dict) -> str | None:
     messages = body.get("messages")
     if messages is not None and (not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages)):
         return "messages must be an array of objects"
+    if not messages:
+        return "messages must not be empty"     # no model's template renders none: it used to travel upstream and come back a 502
     if any(m.get("content") is not None and not isinstance(m["content"], (str, list)) for m in messages or ()):
         return "message content must be a string, an array of parts, or null"
     if body.get("tools") is not None and (not isinstance(body["tools"], list) or any(not isinstance(t, dict) for t in body["tools"])):
@@ -2231,6 +2233,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         except ValueError as e:
             rlog.emit("request.unsupported", level="warn", api="responses", error=str(e))
             self._send_json(400, {"error": str(e)})
+            return
+        if not body["messages"]:
+            rlog.emit("request.unsupported", level="warn", api="responses", error="no input")
+            self._send_json(400, {"error": "input holds no message (nothing to answer)"})
             return
         sess_key = f"sid:{sess}" if sess else session_key(None, body.get("messages", []))
         self._multipart_original_body = copy.deepcopy(body)

@@ -70,6 +70,10 @@ CHAT_USER = {"role": "user", "content": "hi"}
     ("/v1/chat/completions", json.dumps({"messages": [{"role": "assistant", "tool_calls": [5]}]}).encode()),
     ("/v1/chat/completions", b'{"messages": [{"role": "user", "content": "hi"}], "messages": "dup"}'),  # last duplicate wins
     ("/v1/chat/completions", b'{"messages": [{"role": "user", "content": "\xff\xfe"}]}'),        # invalid UTF-8
+    ("/v1/chat/completions", b'{}'),                                                             # no messages at all: nothing to answer
+    ("/v1/chat/completions", b'{"messages": []}'),
+    ("/v1/responses", b'{}'),
+    ("/v1/responses", b'{"input": []}'),
     ("/v1/responses", b'{"input": 5}'),
     ("/v1/responses", b'{"input": {"a": 1}}'),
 ])
