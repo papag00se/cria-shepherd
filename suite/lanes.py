@@ -318,6 +318,16 @@ def release_lease():
     fleet_gpu.LEASE_PATH.unlink(missing_ok=True)
 
 
+SERVERS = {}      # lane -> Popen of the server this process started
+
+
+def check_server(lane_name):
+    """Raise when a lane server this process started has exited, naming how (negative = killed by that signal)."""
+    code = SERVERS[lane_name].poll()
+    if code is not None:
+        raise RuntimeError(f'{lane_name} server exited with status {code}')
+
+
 def start_server(model, lane_name, window):
     """Launch the model on the lane's card with the lane's slots; wait until ready; return verified state."""
     lane = LANES[lane_name]
@@ -335,6 +345,7 @@ def start_server(model, lane_name, window):
     with log.open('wb') as stream:
         proc = subprocess.Popen(plan['argv'], cwd=plan['cwd'], env=env, stdin=subprocess.DEVNULL,
                                 stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+    SERVERS[lane_name] = proc
     state = dict(lane=lane_name, model=model, window=window, slots=lane.slots, port=lane.port, gpu=lane.gpu,
                  pid=proc.pid, start_ticks=start_ticks(proc.pid), argv=plan['argv'],
                  argv_sha256=hashlib.sha256(json.dumps(plan['argv']).encode()).hexdigest(), log=str(log),
@@ -375,6 +386,7 @@ def stop_server(lane_name):
     if state is None:
         return
     stop_pid(state['pid'], state['start_ticks'])
+    SERVERS.pop(lane_name, None)
     (lane_dir(lane_name) / 'server.json').unlink()
     if LANES[lane_name].card == '3090':
         release_lease()

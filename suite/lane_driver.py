@@ -149,6 +149,8 @@ class Driver:
                 self.blocked = True
 
     def step(self):
+        for lane in self.servers:
+            lanes.check_server(lane)
         self.reap()
         self.reconcile()
         if self.blocked:
