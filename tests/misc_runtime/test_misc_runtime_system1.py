@@ -1,12 +1,11 @@
 """System 1 (optional CPU classifier) is advisory: every failure is typed and declines. Real runtime, fake ONNX/tokenizer engines."""
-import hashlib, json, sys, time, types
+import json, types
 from pathlib import Path
 
 import pytest
 
 from cria import callcapture, system1, system1wiring
 from cria.system1 import FAMILIES, MAX_WINDOW_TOKENS, System1Error, System1Runtime
-from suite import fresh_l5_campaign
 from suite.run import collect_capture
 
 DICT = {"public_directive": "run it"}
@@ -49,9 +48,9 @@ def eng(monkeypatch):
 
 
 def make_bundle(root, eng, mutate=None):
-    """A manifest-valid bundle on disk (fake weights); its self-test is produced with the fake engines."""
+    """A bundle on disk (fake weights); its self-test is produced with the fake engines."""
     (root / "policy").mkdir(parents=True)
-    blobs = {"model.onnx": b"graph", "model.onnx.data": b"w" * 70, "tokenizer.json": b"{}", "tokenizer_config.json": b"{}",
+    blobs = {"model.onnx": b"graph", "model.onnx.data": b"w" * 70, "tokenizer.json": b"{}",
              "config.json": json.dumps({"architecture_type": "uni-encoder", "prompt_first": True, "class_token_index": 128001,
                                         "text_token_index": 128002}).encode()}
     selftest = []
@@ -62,12 +61,7 @@ def make_bundle(root, eng, mutate=None):
                          "input_ids_sha256": system1._ids_sha(ids), "logits": [2.0, -1.0]})
     for name, data in blobs.items():
         (root / name).write_bytes(data)
-    (root / "manifest.json").write_text(json.dumps({
-        "schema": system1.MANIFEST_SCHEMA, "bundle_id": "fake", "renderer": system1.RENDERER, "selftest": selftest,
-        "max_window_tokens": MAX_WINDOW_TOKENS, "weight_budget_bytes": system1.WEIGHT_BUDGET_BYTES, "graph": "model.onnx",
-        "weights": ["model.onnx.data"], "tokenizer": "tokenizer.json", "tokenizer_config": "tokenizer_config.json", "config": "config.json",
-        "families": {f: {"labels": list(s.labels), "state_key": s.state_key, "policy": f"policy/{f}.txt"} for f, s in FAMILIES.items()},
-        "files": {n: {"bytes": len(d), "sha256": hashlib.sha256(d).hexdigest()} for n, d in blobs.items()}}))
+    (root / "selftest.json").write_text(json.dumps(selftest))
     if mutate:
         mutate(root)
     return root
@@ -112,11 +106,11 @@ def test_the_exact_window_fits_decision_is_argmax_in_label_order_and_only_the_tr
     assert len(eng.fed) == fed + 4
 
 
-@pytest.mark.parametrize("mutate", [lambda r: (r / "model.onnx.data").write_bytes(b"w" * 69 + b"x"), lambda r: (r / "extra.bin").write_bytes(b"x")],
-                         ids=["flipped-byte", "unlisted-file"])
-def test_a_tampered_bundle_stops_the_service_before_the_graph_loads(eng, tmp_path, mutate):
-    """Verification precedes loading; with [system1] enabled a bad bundle is a StartupError, never a silent fallback."""
-    eng.ort.InferenceSession = lambda *a, **k: pytest.fail("graph loaded from an unverified bundle")
+@pytest.mark.parametrize("mutate", [lambda r: (r / "policy" / "dictation.txt").write_bytes(b"another policy"), lambda r: (r / "selftest.json").unlink()],
+                         ids=["wrong-policy", "no-selftest"])
+def test_an_unusable_bundle_stops_the_service_before_the_graph_loads(eng, tmp_path, mutate):
+    """Loading the bundle's files precedes the graph; with [system1] enabled a bad bundle is a StartupError, never a silent fallback."""
+    eng.ort.InferenceSession = lambda *a, **k: pytest.fail("graph loaded from an unusable bundle")
     with pytest.raises(system1wiring.StartupError):
         system1wiring.build(NS(enabled=True, threads=1, bundle_path=make_bundle(tmp_path / "b", eng, mutate)))
 
@@ -133,6 +127,4 @@ def test_classifier_records_are_complete_and_invisible_to_the_suites_llm_evidenc
     record = json.loads(Path(j.capture_path).read_text())
     assert record["request"]["rendered_input"] == j.rendered_input and record["request"]["input_ids"] == list(j.input_ids)
     assert "messages" not in record["request"] and len(list((session / "system1").iterdir())) == 2
-    row = {"capture_dirs": [str(session)], "capture_dir": str(session), "calls": 2, "phases": {"coder": 1, "satisfaction": 1},
-           "started": time.time() - 30, "wall_seconds": 3600}
-    assert collect_capture([session])["calls"] == 2 and fresh_l5_campaign._valid_capture_evidence(row) is True
+    assert collect_capture([session])["calls"] == 2

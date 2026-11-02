@@ -703,7 +703,7 @@ class System1Config:
     dictates code. Disabled by default; when disabled nothing here is imported or loaded.
 
     ``bundle_dir`` is explicit and required once enabled — cria never searches for an artifact.
-    Config only validates shape; the artifact itself is verified when the service starts
+    Config only validates shape; the artifact itself is loaded when the service starts
     (:func:`cria.system1wiring.build`), which refuses to start on a broken bundle or missing
     dependencies rather than silently running without the classifier."""
 

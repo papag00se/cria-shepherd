@@ -32,7 +32,6 @@ from .chainendpoint import ChainEndpoint, Hop
 from .config import Backend, RoutingConfig
 from .envfile import env_secret
 from .upstream import Upstream
-from . import receivecapture
 
 
 _LANES = {"coder": "coding", "reasoner": "reasoning", "classifier": "classification",
@@ -79,9 +78,7 @@ class Router:
                                            engagement_level=cfg.engagement_level,
                                            capture_dir=getattr(local_provider, '_capture_dir', None),
                                            capture_rendered=getattr(local_provider, '_capture_rendered', True),
-                                           open_request=(getattr(local_provider, '_receive_open', None)
-                                                         or receivecapture.DefaultTransport())
-                                           if getattr(local_provider, '_capture_dir', None) is not None else None)
+                                           open_request=getattr(local_provider, '_open', None))
         )
         self._claude_factory = claude_factory or (
             lambda b: ClaudeCliProvider(b.binary, b.cwd, timeout)

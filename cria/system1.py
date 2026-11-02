@@ -5,20 +5,20 @@
 * ``retrospective`` — state ``{'candidate_briefing': text}`` -> ``RETROSPECTIVE`` | ``PLAN``
 * ``dictation``     — state ``{'public_directive': text}``  -> ``DESCRIBES`` | ``DICTATES``
 
-It is the serving half of a frozen training artifact. Everything that determined the training
-inputs is frozen with the weights in ONE immutable bundle directory (``manifest.json`` + graph +
-external weights + tokenizer + native config + the exact policy bytes), and nothing here is tuned:
+It is the serving half of a trained artifact. Everything that determined the training inputs sits
+with the weights in ONE bundle directory (graph + external weights + tokenizer + native config + the
+exact policy bytes + the producer's self-test cases), loaded directly, and nothing here is tuned:
 
 * the model input is the native single-label uni-encoder, prompt-first rendering —
   ``<<LABEL>>L0<<LABEL>>L1<<SEP>>`` + policy + the state rendered ``key: value`` — tokenised
   by the published native ``tokenizers`` backend with NO truncation and NO padding;
-* the label order is code (:data:`FAMILIES`), never read from the manifest, because the order is the
+* the label order is code (:data:`FAMILIES`), never read from the bundle, because the order is the
   meaning of the logit columns;
 * the whole input must fit the frozen window (:data:`MAX_WINDOW_TOKENS`) or the call is refused
   (:class:`System1NoFit`) — cria never clips what the classifier reads (principle 5);
 * the choice is the arg-max of the calibrated logits, exactly the native single-label rule.
 
-Failure is loud and typed (:class:`System1Error`): a bundle that does not verify, a state that is not
+Failure is loud and typed (:class:`System1Error`): a bundle that does not load, a state that is not
 the trained key set, an input that does not fit, a runtime failure, or a non-finite output.
 There is no fallback and no reasoner behind it — the caller declines its guidance (principle 4/13).
 
@@ -36,7 +36,6 @@ import hashlib
 import importlib
 import json
 import math
-import os
 import threading
 import time
 import types
@@ -49,13 +48,12 @@ from . import callcapture
 
 # ---- frozen contract -------------------------------------------------------------------------
 
-MANIFEST_NAME = "manifest.json"
-MANIFEST_SCHEMA = "system1-bundle/1"
-RENDERER = "gliclass-uni-encoder-prompt-first/1"
+GRAPH_FILE = "model.onnx"
+TOKENIZER_FILE = "tokenizer.json"
+CONFIG_FILE = "config.json"
+SELFTEST_FILE = "selftest.json"
 #: The frozen model window: the longest whole input the classifier accepts, in tokens.
 MAX_WINDOW_TOKENS = 16384
-#: graph + external weights must stay strictly under this (bytes), measured on the actual files.
-WEIGHT_BUDGET_BYTES = 250_000_000
 LABEL_TOKEN = "<<LABEL>>"
 SEP_TOKEN = "<<SEP>>"
 #: ids the native config pins for the two structural tokens (checked against the bundle's config).
@@ -64,7 +62,6 @@ _TEXT_TOKEN_INDEX = 128002
 #: The frozen production fidelity gate (rtol = atol); the self-test replays frozen INT4 calls through
 #: the same engine, so it is never looser than the gate the artifact was admitted under.
 SELFTEST_RTOL = SELFTEST_ATOL = 2e-4
-_CHUNK = 8 * 1024 * 1024
 #: The ORT CPU arena ceiling for ALL inference memory in the process (activations; the weights are
 #: separate). The encoder's attention is quadratic in tokens — a complete 4,096-token input peaks near
 #: 6 GiB and a complete 16,384-token input asks for a single 32 GiB buffer — so without a bound one
@@ -231,151 +228,56 @@ class System1Judgment:
     wait_s: float
     inference_s: float
     elapsed_s: float
-    manifest_sha256: str
     bundle_id: str
     capture_path: str | None = None
 
 
-# ---- bundle verification ---------------------------------------------------------------------
+# ---- bundle loading --------------------------------------------------------------------------
 
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(_CHUNK), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _is_sha(value: object) -> bool:
-    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
-
-
-def _relative(name: object) -> str:
-    if not isinstance(name, str) or not name or name.startswith("/") or "\\" in name \
-            or any(part in ("", ".", "..") for part in name.split("/")):
-        raise System1BundleError(f"manifest names an unsafe bundle path: {name!r}")
-    return name
+def policy_file(family: str) -> str:
+    return f"policy/{family}.txt"
 
 
 @dataclass(frozen=True)
 class Bundle:
-    """A verified bundle: manifest, its hash, and the policy bytes read exactly once."""
+    """A loaded bundle: its directory, the policy texts and the producer's self-test cases, each read once."""
     root: Path
-    manifest: Mapping
-    manifest_sha256: str
     policies: Mapping[str, str]
+    selftest: tuple
 
     @property
     def bundle_id(self) -> str:
-        return self.manifest["bundle_id"]
+        return self.root.name
 
-    def path(self, key: str) -> Path:
-        return self.root / self.manifest[key]
+    def path(self, name: str) -> Path:
+        return self.root / name
 
 
-def verify_bundle(bundle_dir: Path | str, *, expected_manifest_sha256: str | None = None) -> Bundle:
-    """Validate a bundle completely BEFORE anything is loaded; raises :class:`System1BundleError`.
+def load_bundle(bundle_dir: Path | str) -> Bundle:
+    """Read a bundle directory's files directly; raises :class:`System1BundleError` when one cannot be used.
 
-    Checks: manifest schema/contract; every listed file's exact size and SHA-256; no unlisted file,
-    no symlink (a bundle is standalone, never a pointer into a training tree); the graph+weight
-    budget on the real file sizes (checked before hashing so an oversized bundle is never read);
-    the native config's structural contract; and the policy bytes."""
+    The native config must carry the structural contract the renderer needs, each policy must be the
+    policy its family was trained under (the policy is part of the model), and the self-test must cover
+    every family."""
     root = Path(bundle_dir)
     try:
-        if root.is_symlink() or not root.is_dir():
-            raise System1BundleError(f"System 1 bundle is not a directory: {root}")
-        raw = (root / MANIFEST_NAME).read_bytes()
-    except OSError as exc:
-        raise System1BundleError(f"cannot read System 1 bundle manifest in {root}: {exc}") from exc
-    manifest_sha = hashlib.sha256(raw).hexdigest()
-    if expected_manifest_sha256 is not None and manifest_sha != expected_manifest_sha256:
-        raise System1BundleError(f"manifest SHA-256 {manifest_sha} is not the pinned {expected_manifest_sha256}")
-    try:
-        manifest = json.loads(raw)
-    except ValueError as exc:
-        raise System1BundleError(f"manifest is not JSON: {exc}") from exc
-    if not isinstance(manifest, dict) or manifest.get("schema") != MANIFEST_SCHEMA:
-        raise System1BundleError(f"manifest schema must be {MANIFEST_SCHEMA!r}")
-    if not isinstance(manifest.get("bundle_id"), str) or not manifest["bundle_id"]:
-        raise System1BundleError("manifest has no bundle_id")
-    if manifest.get("renderer") != RENDERER:
-        raise System1BundleError(f"manifest renderer must be {RENDERER!r}")
-    if manifest.get("max_window_tokens") != MAX_WINDOW_TOKENS:
-        raise System1BundleError(f"manifest window must be the frozen {MAX_WINDOW_TOKENS} tokens")
-    if manifest.get("weight_budget_bytes") != WEIGHT_BUDGET_BYTES:
-        raise System1BundleError(f"manifest weight budget must be the frozen {WEIGHT_BUDGET_BYTES} bytes")
-    files = manifest.get("files")
-    if not isinstance(files, dict) or not files:
-        raise System1BundleError("manifest lists no files")
-    for name, entry in files.items():
-        _relative(name)
-        if not (isinstance(entry, dict) and type(entry.get("bytes")) is int and entry["bytes"] >= 0
-                and _is_sha(entry.get("sha256"))):
-            raise System1BundleError(f"manifest entry for {name!r} needs integer bytes and a hex sha256")
-    roles = {"graph": manifest.get("graph"), "tokenizer": manifest.get("tokenizer"),
-             "tokenizer_config": manifest.get("tokenizer_config"), "config": manifest.get("config")}
-    weights = manifest.get("weights")
-    if not isinstance(weights, list) or not weights:
-        raise System1BundleError("manifest names no external weight file")
-    families = manifest.get("families")
-    if not isinstance(families, dict) or set(families) != set(FAMILIES):
-        raise System1BundleError(f"manifest families must be exactly {sorted(FAMILIES)}")
-    policy_names = {}
-    for family, spec in FAMILIES.items():
-        entry = families[family]
-        if not isinstance(entry, dict) or entry.get("labels") != list(spec.labels) \
-                or entry.get("state_key") != spec.state_key:
-            raise System1BundleError(f"manifest {family} labels/state key differ from the frozen contract")
-        policy_names[family] = entry.get("policy")
-    for name in [*roles.values(), *weights, *policy_names.values()]:
-        if _relative(name) not in files:
-            raise System1BundleError(f"manifest role file {name!r} is not in its file list")
-
-    # unlisted files and links are tampering / a training-tree dependency
-    present = set()
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        for entry in [*dirnames, *filenames]:
-            full = Path(dirpath) / entry
-            if full.is_symlink():
-                raise System1BundleError(f"bundle contains a symlink: {full}")
-        for filename in filenames:
-            present.add((Path(dirpath) / filename).relative_to(root).as_posix())
-    present.discard(MANIFEST_NAME)
-    if present != set(files):
-        raise System1BundleError(f"bundle files differ from the manifest: unlisted {sorted(present - set(files))}, "
-                                 f"missing {sorted(set(files) - present)}")
-    # the budget is judged on the bytes actually on disk, before any of them is read
-    on_disk = {name: (root / name).stat().st_size for name in files}
-    budget_bytes = sum(on_disk[name] for name in [roles["graph"], *weights])
-    if budget_bytes >= WEIGHT_BUDGET_BYTES:
-        raise System1BundleError(f"graph+weights are {budget_bytes} bytes; the budget is under {WEIGHT_BUDGET_BYTES}")
-    for name, entry in files.items():
-        if on_disk[name] != entry["bytes"]:
-            raise System1BundleError(f"{name} is {on_disk[name]} bytes, manifest says {entry['bytes']}")
-        if _file_sha256(root / name) != entry["sha256"]:
-            raise System1BundleError(f"{name} does not match its manifest SHA-256 (tampered or corrupt)")
-
-    try:
-        config = json.loads((root / roles["config"]).read_bytes())
-    except ValueError as exc:
-        raise System1BundleError(f"native config is not JSON: {exc}") from exc
+        config = json.loads((root / CONFIG_FILE).read_bytes())
+        selftest = json.loads((root / SELFTEST_FILE).read_bytes())
+        policy_bytes = {family: (root / policy_file(family)).read_bytes() for family in FAMILIES}
+        policies = {family: data.decode("utf-8") for family, data in policy_bytes.items()}
+    except (OSError, ValueError) as exc:
+        raise System1BundleError(f"cannot read the System 1 bundle in {root}: {exc}") from exc
     expected = {"architecture_type": "uni-encoder", "prompt_first": True,
                 "class_token_index": _CLASS_TOKEN_INDEX, "text_token_index": _TEXT_TOKEN_INDEX}
     for key, value in expected.items():
         if config.get(key) != value:
             raise System1BundleError(f"native config {key} is {config.get(key)!r}, the renderer needs {value!r}")
-    try:
-        policy_bytes = {family: (root / name).read_bytes() for family, name in policy_names.items()}
-        policies = {family: data.decode("utf-8") for family, data in policy_bytes.items()}
-    except (OSError, UnicodeDecodeError) as exc:
-        raise System1BundleError(f"cannot read a policy file: {exc}") from exc
-    for family, data in policy_bytes.items():  # the policy is part of the model: no override, even with a valid manifest
+    for family, data in policy_bytes.items():
         if hashlib.sha256(data).hexdigest() != FAMILIES[family].policy_sha256:
             raise System1BundleError(f"{family} policy is not the policy the model was trained under")
-    selftest = manifest.get("selftest")
     if not isinstance(selftest, list) or {c.get("family") for c in selftest if isinstance(c, dict)} != set(FAMILIES):
-        raise System1BundleError("manifest needs at least one selftest case for every family")
-    return Bundle(root, types.MappingProxyType(manifest), manifest_sha, types.MappingProxyType(policies))
+        raise System1BundleError("the self-test needs at least one case for every family")
+    return Bundle(root, types.MappingProxyType(policies), tuple(selftest))
 
 
 # ---- runtime ---------------------------------------------------------------------------------
@@ -412,18 +314,17 @@ def _register_arena(ort, budget: int) -> None:
 
 
 class System1Runtime:
-    """Verified, loaded GLiClass v2 classifier. Construct once; share across sessions and threads."""
+    """Loaded GLiClass v2 classifier. Construct once; share across sessions and threads."""
 
     def __init__(self, bundle_dir: Path | str, threads: int = 6, *,
                  capture_dir: Path | str | None = None,
-                 expected_manifest_sha256: str | None = None,
                  memory_budget_bytes: int = ARENA_BUDGET_BYTES) -> None:
         if type(threads) is not int or threads < 1:
             raise System1BundleError(f"threads must be a positive integer, got {threads!r}")
         if type(memory_budget_bytes) is not int or memory_budget_bytes < _MIN_ARENA_BUDGET_BYTES:
             raise System1BundleError(f"memory_budget_bytes must be an integer of at least "
                                      f"{_MIN_ARENA_BUDGET_BYTES}, got {memory_budget_bytes!r}")
-        self._bundle = verify_bundle(bundle_dir, expected_manifest_sha256=expected_manifest_sha256)
+        self._bundle = load_bundle(bundle_dir)
         self._capture_dir = Path(capture_dir).expanduser() if capture_dir is not None else None
         self._lock = threading.Lock()
         ort = _import("onnxruntime")
@@ -432,7 +333,7 @@ class System1Runtime:
         self._ort = ort
         _register_arena(ort, memory_budget_bytes)
         try:
-            tokenizer = tokenizers.Tokenizer.from_file(str(self._bundle.path("tokenizer")))
+            tokenizer = tokenizers.Tokenizer.from_file(str(self._bundle.path(TOKENIZER_FILE)))
             tokenizer.no_truncation()
             tokenizer.no_padding()
             options = ort.SessionOptions()
@@ -440,7 +341,7 @@ class System1Runtime:
             options.inter_op_num_threads = 1
             options.add_session_config_entry(_ARENA_CONFIG, "1")  # use the bounded shared arena
             options.add_session_config_entry(*_NO_SPIN_CONFIG)
-            self._session = ort.InferenceSession(str(self._bundle.path("graph")), sess_options=options,
+            self._session = ort.InferenceSession(str(self._bundle.path(GRAPH_FILE)), sess_options=options,
                                                  providers=["CPUExecutionProvider"])
             providers = list(self._session.get_providers())
             names = [item.name for item in self._session.get_inputs()]
@@ -457,10 +358,6 @@ class System1Runtime:
             if self._tokenizer.token_to_id(token) != index:
                 raise System1BundleError(f"tokenizer maps {token} to {self._tokenizer.token_to_id(token)}, not {index}")
         self._selftest()
-
-    @property
-    def manifest_sha256(self) -> str:
-        return self._bundle.manifest_sha256
 
     @property
     def bundle_id(self) -> str:
@@ -521,8 +418,7 @@ class System1Runtime:
             family=family, label=prepared.labels[logits.index(top)], labels=prepared.labels, logits=logits,
             probabilities=probabilities, rendered_input=prepared.rendered_input, input_ids=prepared.input_ids,
             token_count=prepared.token_count, tokenize_s=tokenized - started, wait_s=acquired - tokenized,
-            inference_s=finished - acquired, elapsed_s=finished - started,
-            manifest_sha256=self._bundle.manifest_sha256, bundle_id=self._bundle.bundle_id)
+            inference_s=finished - acquired, elapsed_s=finished - started, bundle_id=self._bundle.bundle_id)
 
     def _decode(self, out, classes: int) -> tuple[float, ...]:
         np = self._np
@@ -558,7 +454,7 @@ class System1Runtime:
                       tokens=result.token_count, tokenize_s=result.tokenize_s, wait_s=result.wait_s,
                       inference_s=result.inference_s, elapsed_s=result.elapsed_s,
                       input_sha256=_text_sha(result.rendered_input),
-                      manifest_sha256=result.manifest_sha256, bundle_id=result.bundle_id, capture=path)
+                      bundle_id=result.bundle_id, capture=path)
         return result
 
     def judge(self, family: str, state: Mapping[str, str], *, rlog=None) -> str:
@@ -569,8 +465,7 @@ class System1Runtime:
 
     def _request(self, family: str, state, prepared: "PreparedInput | None") -> dict:
         """The native request exactly as the model received it (whatever of it exists at failure time)."""
-        request = {"api": "system1.onnx", "bundle_id": self._bundle.bundle_id,
-                   "manifest_sha256": self._bundle.manifest_sha256, "family": family,
+        request = {"api": "system1.onnx", "bundle_id": self._bundle.bundle_id, "family": family,
                    "state": dict(state) if isinstance(state, Mapping) else None}
         if prepared is not None:
             request.update(labels=list(prepared.labels), policy=prepared.policy,
@@ -618,15 +513,14 @@ class System1Runtime:
                                   {"error": type(exc).__name__, "message": str(exc)}, rlog)
         over = {"tokens": exc.tokens, "ceiling": exc.ceiling} if isinstance(exc, System1OverCeiling) else {}
         rlog.emit("system1.error", level="error", family=family, error=type(exc).__name__, message=str(exc), **over,
-                  input_sha256=_text_sha(prepared.rendered_input) if prepared is not None else None,
-                  manifest_sha256=self._bundle.manifest_sha256, capture=path)
+                  input_sha256=_text_sha(prepared.rendered_input) if prepared is not None else None, capture=path)
 
     # -- startup self-test -------------------------------------------------------------------------
 
     def _selftest(self) -> None:
         """Run the producer's recorded cases: same token ids' digest, same label, logits within
         :data:`SELFTEST_ATOL`/:data:`SELFTEST_RTOL`. A graph, tokenizer or policy that does not reproduce them is refused."""
-        for case in self._bundle.manifest["selftest"]:
+        for case in self._bundle.selftest:
             try:
                 family, state = case["family"], case["state"]
                 result = self.infer(family, state)

@@ -17,7 +17,7 @@ class Server:
 
     def __init__(self, up, density):
         self.ops, self.posts, self.density = [], [], density
-        up._ordinary_open, up._receive_open = self.metadata, self.generate
+        up._ordinary_open, up._open = self.metadata, self.generate
 
     def metadata(self, packet, **kwargs):
         data = json.loads(packet.data)

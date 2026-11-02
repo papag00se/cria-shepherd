@@ -36,17 +36,10 @@ class HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-INSTALLED: urllib.request.OpenerDirector | None = None     # the opener install_http_only_redirects put in place, so a reader can tell it from a foreign one
-
-
 def install_http_only_redirects() -> None:
     """Install the one process-wide default opener, once at startup. ``urllib.request.urlopen`` stays the name every caller (and
-    every test that pins it as the no-network seam) goes through; only what it does on a redirect changes. The receive-custody
-    transport (``receivecapture``) refuses an installed opener it did not build, except this one: the stdlib's own handlers
-    plus a redirect policy, nothing it would have to infer."""
-    global INSTALLED
-    INSTALLED = urllib.request.build_opener(HttpOnlyRedirects)
-    urllib.request.install_opener(INSTALLED)
+    every test that pins it as the no-network seam) goes through; only what it does on a redirect changes."""
+    urllib.request.install_opener(urllib.request.build_opener(HttpOnlyRedirects))
 
 
 class SlowBody(TimeoutError):

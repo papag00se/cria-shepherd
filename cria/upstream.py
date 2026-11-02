@@ -677,10 +677,7 @@ class Upstream:
         self._api_key = api_key
         # When set, capture the EXACT body of every model call to a file here (opt-in).
         self._capture_dir = capture_dir
-        if open_request is None and capture_dir is not None:
-            from .receivecapture import DefaultTransport
-            open_request = DefaultTransport()
-        self._receive_open = open_request
+        self._open = open_request
         # Also capture the rendered prompt (chat template applied) — only for a local server
         # (cloud has no /apply-template). The true string the model tokenizes.
         self._capture_rendered = capture_rendered and api_key is None
@@ -722,9 +719,7 @@ class Upstream:
         return h
 
     def _ordinary_open(self, req, *, timeout):
-        # Preparation and captured dispatch share cache provenance at construction.
-        opening = getattr(self._receive_open, 'ordinary', urllib.request.urlopen)
-        return opening(req, timeout=timeout)
+        return urllib.request.urlopen(req, timeout=timeout)
 
     def loaded_model(self, rlog) -> str | None:
         """The model id ACTUALLY loaded at this local server — llama.cpp's /v1/models returns its
@@ -1329,8 +1324,7 @@ class Upstream:
             raise refused from held
         runtime = (assistruntime.current() if assistruntime.is_bound() else
                    assistruntime.AssistRuntime.select(level=self._engagement_level))
-        transport = ((self._receive_open, urllib.request.urlopen)
-                     if _transport is None else _transport)
+        transport = (self._open or urllib.request.urlopen) if _transport is None else _transport
         sends = 0
 
         def prepare(safety):
@@ -1391,7 +1385,6 @@ class Upstream:
                 operation.start(self, body, data)
             rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
                       stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
-            receipt = None
             try:
                 # THE DEAD-STREAM DEADLINE LIVES AT THE WIRE, FOR STREAMING OPENS.
                 #
@@ -1416,30 +1409,11 @@ class Upstream:
                 # Buffered POSTs keep the long timeout: their whole generation arrives as one read,
                 # so a short deadline there would cut a working call.
                 read_deadline = rumination.WIRE_SILENCE_SECONDS if stream else self._timeout
-                from . import receivecapture
-                if self._capture_dir is not None and capture_path is None:
-                    raise receivecapture.CaptureFailure('configured request capture unavailable; no dispatch')
-                receipt = (receivecapture.Receipt(capture_path, request_sha256=hashlib.sha256(data).hexdigest())
-                           if capture_path is not None else None)
-                receive_open, ordinary_open = transport
-                opening = receive_open or receivecapture.default_open_request
-                try:
-                    if receive_open is None and self._capture_dir is None:
-                        # Capture-off retains the transport captured for this operation.
-                        resp = ordinary_open(req, timeout=max(read_deadline, 1.0))
-                    else:
-                        resp = opening(req, timeout=max(read_deadline, 1.0), receipt=receipt)
-                except BaseException as exc:
-                    if receipt is not None:
-                        receipt.partial(exc)
-                        if not isinstance(exc, urllib.error.HTTPError):
-                            receipt.finish(exc)
-                    raise
+                resp = transport(req, timeout=max(read_deadline, 1.0))
                 return capacitypolicy.Accepted(resp)
             except urllib.error.URLError as e:
                 failed_custody = False
                 if isinstance(e, urllib.error.HTTPError):
-                    from .receivecapture import finalize_http_error
                     try:
                         rejected = _http_error_body(e)
                         callcapture.capture_response(capture_path, rejected, rlog)
@@ -1447,10 +1421,8 @@ class Upstream:
                         # Retain the rejection as primary, but never refit after lost evidence.
                         failed_custody = True
                         e.add_note('secondary HTTP rejection evidence failure: ' + str(secondary))
-                        if receipt is not None:
-                            receipt.partial(secondary)
                     finally:
-                        failed_custody = finalize_http_error(e, receipt) or failed_custody
+                        e.close()
                 real = window = None
                 if isinstance(e, urllib.error.HTTPError) and not failed_custody:
                     try:
@@ -1525,7 +1497,7 @@ class Upstream:
         from . import assistruntime
         runtime = (assistruntime.current() if assistruntime.is_bound() else
                    assistruntime.AssistRuntime.select(level=self._engagement_level))
-        transport = (self._receive_open, urllib.request.urlopen)
+        transport = self._open or urllib.request.urlopen
         iterator = self._stream_chat(body, rlog, _transport=transport)
 
         def selected_stream():
@@ -1626,7 +1598,7 @@ class Upstream:
         runtime = (assistruntime.current() if assistruntime.is_bound() else
                    assistruntime.AssistRuntime.select(level=self._engagement_level))
         opening, sleeper = self._open_with_refit, time.sleep
-        transport = (self._receive_open, urllib.request.urlopen)
+        transport = self._open or urllib.request.urlopen
         with assistruntime.bound(runtime):
             return self._chat(body, rlog, runtime, opening, sleeper, transport)
 

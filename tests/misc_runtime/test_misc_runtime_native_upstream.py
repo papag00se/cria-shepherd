@@ -29,7 +29,7 @@ def test_native_sizing_sends_the_callers_whole_input_or_refuses_but_never_delete
         posts.append(json.loads(packet.data))
         return io.BytesIO(b'{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}')
     monkeypatch.setattr(up, "_ordinary_open", metadata)
-    monkeypatch.setattr(up, "_receive_open", generation)
+    monkeypatch.setattr(up, "_open", generation)
     body = {"model": "native-fit", bodykeys.PINNED_TASK: "Perform the original task.", bodykeys.OUTPUT_RESERVE: 64, "messages": [
         {"role": "user", "content": "Keep this preceding constraint. " + "documentation " * 1600 + " FINAL_CONSTRAINT_BYTE"},
         {"role": "user", "content": "Perform the original task."},

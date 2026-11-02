@@ -12,7 +12,6 @@ from cria.config import (Backend, Config, IndicatorsConfig, LoggingConfig, Role,
                          ServerConfig, UpstreamConfig)
 from cria.events import EventLog
 from cria.indicators import MARKER, PROSE_DROPPED_MARKER
-from cria.receivecapture import DefaultTransport
 from cria.server import CriaServer
 from cria.upstream import Upstream
 
@@ -124,7 +123,7 @@ class Wire:
         self.log = EventLog(dir=str(tmp), console=False)
         # The upstream carries the SAME rung as the server (as __main__ builds it): a level-0 wire test must run the wire's level-0 gates.
         up = Upstream(self.url, context_window=WINDOW, engagement_level=cfg.routing.engagement_level,
-                      **({"capture_dir": tmp / "calls", "open_request": DefaultTransport()} if capture else {}))
+                      **({"capture_dir": tmp / "calls"} if capture else {}))
         self.cria = CriaServer(cfg, self.log, up)
         threading.Thread(target=self.cria.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
 
@@ -374,8 +373,8 @@ def test_the_dropped_prose_marker_never_reaches_the_model_at_any_level(tmp_path,
     assert "README.md" in sent and PROSE_DROPPED_MARKER not in sent and "cria" not in sent.lower()
 
 
-def test_call_capture_keeps_the_exact_request_prompt_response_and_received_bytes(tmp_path):
-    """With capture on, each model call leaves its exact body, rendered prompt, parsed response and the raw bytes received, numbered in call order."""
+def test_call_capture_keeps_the_exact_request_prompt_and_response(tmp_path):
+    """With capture on, each model call leaves its exact body, rendered prompt and parsed response, numbered in call order."""
     w = Wire(tmp_path, capture=True)
     try:
         sent = chat_body("hello capture")
@@ -388,5 +387,3 @@ def test_call_capture_keeps_the_exact_request_prompt_response_and_received_bytes
     assert json.loads((folder / "0001-proxy.json").read_text())["body"] == sent
     assert "hello capture" in (folder / "0001-proxy.prompt.txt").read_text()
     assert json.loads((folder / "0001-proxy.response.json").read_text())["choices"][0]["message"]["content"] == "Hi"
-    raw = (folder / "0001-proxy.json.receive-0001-origin.bin").read_bytes()
-    assert raw.startswith(b"HTTP/1.0 200") and raw.endswith(b'"usage": {"completion_tokens": 1}}')

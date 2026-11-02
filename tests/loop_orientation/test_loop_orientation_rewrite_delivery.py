@@ -42,7 +42,7 @@ def rewritten_driver(monkeypatch, replies):
     drv._ctx.pilot_runtime = assistruntime.AssistRuntime.select(level=5)
     drv._ctx.assists = True
     send, posted = transport(replies)
-    monkeypatch.setattr(drv._ctx.coder_chat.__self__, "_receive_open", send)
+    monkeypatch.setattr(drv._ctx.coder_chat.__self__, "_open", send)
     return drv, body, posted
 
 def event(drv, body):
@@ -73,7 +73,7 @@ def test_a_carried_guidance_note_says_how_many_of_the_coders_calls_ago_it_was_de
     calls = lambda n, k: {"choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant", "content": None, "tool_calls": [
         {"id": f"r{n}-{i}", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"f.txt"}'}} for i in range(k)]}}]}
     send, posted = transport([calls(1, 2), calls(2, 1), calls(3, 1)])
-    monkeypatch.setattr(drv._ctx.coder_chat.__self__, "_receive_open", send)
+    monkeypatch.setattr(drv._ctx.coder_chat.__self__, "_open", send)
     for turn in range(3):
         message = drv.drive(body, KEY, None, Log())["choices"][0]["message"]
         body = copy.deepcopy(body)

@@ -212,7 +212,7 @@ def test_a_context_rejection_is_re_sent_only_if_the_re_fit_changed_the_bytes(sha
         raise overflow()
 
     with pytest.raises(upstream.UpstreamError) as caught:
-        up._open_with_refit({"model": "m", "messages": msgs}, False, rlog, _transport=(None, always_overflows))
+        up._open_with_refit({"model": "m", "messages": msgs}, False, rlog, _transport=always_overflows)
     assert len(sent) == sends
     if sends == 2:
         assert len(sent[1]) < len(sent[0]) and not rlog.named("upstream.refit_no_change")

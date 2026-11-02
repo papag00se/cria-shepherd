@@ -90,7 +90,7 @@ level = 5
 
 # Atomic opt-outs for registered assists (only level-eligible ones; unknown, duplicate or still-depended-on IDs are
 # startup errors). `profile = "rank4-ablation"` is an exact experimental selection and rejects extra `disabled`.
-# See README.md and docs/assist-inventory/REPORT.md.
+# See README.md.
 # [assists]
 # disabled = ["schema-argument-conversion", "historical-argument-recovery"]
 

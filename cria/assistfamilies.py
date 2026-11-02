@@ -1,6 +1,6 @@
 """Canonical assist-family identities and implementation ownership.
 
-Families own maintenance responsibilities and frozen lineage, not runtime dispatch.
+Families own maintenance responsibilities and lineage, not runtime dispatch.
 Registered atomic membership is derived from production executable definitions;
 all other navigation coverage remains pending migration unless explicitly classified as
 an indivisible required source contract. Foundations, support,

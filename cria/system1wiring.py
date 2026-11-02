@@ -65,8 +65,7 @@ def build(cfg, log: Log | None = None, *, capture_dir=None):
         raise StartupError(f"[system1] bundle {bundle} cannot be loaded: {type(exc).__name__}: {exc}") from exc
     if log is not None:
         log.emit("system1.loaded", bundle_dir=str(bundle), threads=cfg.threads,
-                 capture=capture_dir is not None, bundle_id=runtime.bundle_id,
-                 manifest_sha256=runtime.manifest_sha256)
+                 capture=capture_dir is not None, bundle_id=runtime.bundle_id)
     return runtime
 
 

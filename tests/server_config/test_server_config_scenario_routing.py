@@ -55,14 +55,11 @@ def test_a_server_reported_context_overflow_is_re_fitted_once_and_the_smaller_bo
     assert sorted(p.name for p in (tmp_path / "calls" / "sid-1").glob("000?-proxy.json")) == ["0001-proxy.json", "0002-proxy.json"]
 
 
-@pytest.mark.parametrize("mode,marker,client_status,upstream_status,tail", [
-    ("chat-stream", "hello", 200, b"200 OK", b'"completion_tokens":2}}\n\ndata: [DONE]\n\n'),
-    ("chat-buffered", "__500__", 502, b"500 Internal Server Error", b'{"error": {"message": "template rejected"}}'),
-    ("chat-stream", "__500__", 200, b"500 Internal Server Error", b'{"error": {"message": "template rejected"}}'),
-    ("chat-buffered", "__DROP__", 500, b"200 OK", b'{"choices": [{"mess')])  # the connection dies mid-body
-def test_call_capture_keeps_exactly_the_bytes_the_wire_delivered_for_a_stream_a_rejection_and_a_cut_connection(tmp_path, mode, marker, client_status, upstream_status, tail):
-    """The capture is custody of what the socket returned: the status line, headers and body as received (a stream's SSE frames, a 500's own error JSON, a body cut at 19 of 500
-    promised bytes), with metadata that finished, closed and accounts for every returned byte. The client still gets a clean error status (a cut body is a 500 today, not a 502)."""
+@pytest.mark.parametrize("mode,marker,client_status", [
+    ("chat-stream", "hello", 200), ("chat-buffered", "__500__", 502),
+    ("chat-stream", "__500__", 200), ("chat-buffered", "__DROP__", 500)])  # the last: the connection dies mid-body
+def test_the_client_gets_a_clean_status_for_a_stream_a_rejection_and_a_cut_connection(tmp_path, mode, marker, client_status):
+    """A stream, a 500 with its own error JSON and a body cut at 19 of 500 promised bytes each reach the client as a clean status (a cut body is a 500 today, not a 502)."""
     w = Wire(tmp_path, capture=True)
     try:
         try:
@@ -71,12 +68,7 @@ def test_call_capture_keeps_exactly_the_bytes_the_wire_delivered_for_a_stream_a_
             status = e.code
     finally:
         w.close()
-    folder = tmp_path / "calls" / "sid-1"
-    raw = (folder / "0001-proxy.json.receive-0001-origin.bin").read_bytes()
-    meta = json.loads((folder / "0001-proxy.json.receive.json").read_text())
-    (seg,) = meta["segments"]
-    assert status == client_status and raw.startswith(b"HTTP/1.0 " + upstream_status + b"\r\n") and raw.endswith(tail)
-    assert meta["finished"] and seg["closed"] and seg["returned_bytes"] == seg["successful_write_bytes"] == len(raw) and meta["failed"] == []
+    assert status == client_status
 
 
 def test_a_roles_portability_knobs_shape_the_request_the_served_model_receives(tmp_path):
