@@ -58,6 +58,13 @@ class ReadFact:
     pre: str
 
 
+class _Unreplayable(ValueError):
+    """One stored entry whose received pages do not replay; `cid` is the page that stopped it (None: after the last)."""
+    def __init__(self, message, cid=None):
+        super().__init__(message)
+        self.cid = cid
+
+
 class Bridge:
     def __init__(self, storage_dir=None):
         self.lock = threading.RLock()
@@ -238,6 +245,93 @@ class Bridge:
             except FileNotFoundError: pass
             os.close(directory)
 
+    @staticmethod
+    def _replay_entry(entry, assembly, spec):
+        """Re-take the pages a stored entry already received, to rebuild what they proved.
+
+        The stored calls that already ran are NOT compared with what today's page builder would emit: they are what was
+        issued and run, and every page proves itself on arrival (token, receipt, identity, digest). Re-deriving them made
+        any deploy that touched the builder turn every stored entry, settled ones included, into a corrupt session. A page
+        the current code can no longer take ends that one read unverified (`_Unreplayable`); a state that contradicts
+        itself is still a corrupt file."""
+        for cid in entry.calls:
+            if cid not in entry.received:
+                if cid != entry.pending or cid != next(reversed(entry.calls)):
+                    raise ValueError('missing prior page')
+                continue
+            content=entry.received[cid]; env=resultnotes.exec_envelope(content)
+            if cid == entry.failure_id and entry.failure_kind != 'binary':
+                if entry.failure_kind == 'invalid':
+                    # A page the code no longer takes (`_fail_entry`) may sit before the calls issued after it; nothing
+                    # after it is replayed, and those calls stay recognised as the read's own.
+                    break
+                if cid != entry.pending or cid != next(reversed(entry.calls)):
+                    raise ValueError('misplaced failed result')
+                if entry.failure_kind == 'running' and not (env and env.running):
+                    raise ValueError('running status not declared')
+                if entry.failure_kind == 'cut' and not (env and not env.running and env.cut_warning):
+                    raise ValueError('cut status not declared')
+                if entry.failure_kind == 'nonzero' and not (env and not env.running and not env.cut_warning
+                        and env.exit_code is not None and env.exit_code != 0 and env.exit_code == entry.failure_code):
+                    raise ValueError('exit status not declared')
+                if entry.failure_kind == 'unknown' and not (env and not env.running and not env.cut_warning and env.exit_code is None):
+                    raise ValueError('unknown status not declared')
+                continue
+            if env is not None:
+                if env.running or env.exit_code != 0: raise ValueError('failed page')
+                content=content[env.record_start:]
+            try:
+                assembly.take(content, bool(env and env.cut_warning))
+            except InvalidPage as exc:
+                raise _Unreplayable(str(exc), cid) from exc
+        if assembly._complete:
+            try:
+                entry.result=verify_original(assembly,spec.receipt).stdout
+            except BinaryBody:
+                # The last page is a verified page; the body it completes is the binary fact.
+                if entry.failure_kind != 'binary': raise
+            except InvalidPage as exc:
+                raise _Unreplayable(str(exc), next(reversed(entry.calls))) from exc
+            else:
+                if entry.failure_kind == 'binary': raise ValueError('binary status not declared')
+        elif entry.failure_kind == 'binary':
+            raise ValueError('binary status not declared')
+        if entry.fallback_kind is not None and (entry.result is None or entry.settled):
+            raise ValueError('invalid fit fallback state')
+
+    @staticmethod
+    def _check_pending_command(entry, assembly, spec, fn):
+        """The one stored call that can still be HANDED to the harness (a retried request, an initial delivery) is a still-paging
+        entry's pending call that no result has answered; a stored call must never be executed on the file's word alone, so it
+        must be what cria would issue now. When a deploy changed the builder it is not: that read cannot continue, and ends
+        unverified on its own (the page it never got, typed 'invalid'); the session's other reads are untouched. Calls that already
+        ran, and entries that are complete or already failed, are never handed out again and are not compared."""
+        from . import writeproxy
+        pending = entry.pending
+        if (entry.result is not None or entry.failure_id is not None or not entry.calls
+                or pending in entry.received):
+            return
+        command = filecommands.build_multipart_page(spec, assembly.offset, live=assembly.live_pages, limit=assembly.limit,
+                                                    refetch=bool(assembly.refetches))
+        if pending == spec.call_id:
+            command = writeproxy._sentinel(fn['name'], fn['arguments'], spec.receipt, False) + '\n' + command
+        if entry.calls[pending] != writeproxy._shell_call(pending, entry.shell, command, 0):
+            entry.failure_id, entry.failure_kind, entry.failure_code = pending, 'invalid', None
+
+    @staticmethod
+    def _fail_entry(entry, exc):
+        """End one read unverified: its last received page is the failed one, typed 'invalid'. The calls stay, so the
+        history's private carriers are still recognised and replaced; nothing is claimed about the file."""
+        at = exc.cid
+        received = [c for c in entry.calls if c in entry.received]
+        if at is None or at not in entry.received:
+            at = received[-1] if received else None
+        if at is None:
+            raise ValueError('nothing received to end unverified') from exc
+        entry.result = None
+        entry.fallback_kind = None
+        entry.failure_id, entry.failure_kind, entry.failure_code = at, 'invalid', None
+
     def _load(self, session):
         if self.storage_dir is None or session in self.loaded:
             return
@@ -274,7 +368,6 @@ class Bridge:
                         or not all(isinstance(k,str) for k in item['private'])
                         or len(item['private']) != len(set(item['private']))):
                     raise ValueError('invalid entry')
-                from . import writeproxy
                 spec=filecommands.MultipartReadSpec(**item['spec'])
                 if (type(spec.read_instead) is not bool or not isinstance(spec.path,str)
                         or not isinstance(spec.pre,str) or not isinstance(spec.not_read,str)):
@@ -294,7 +387,9 @@ class Bridge:
                 if (type(entry.offered) is not bool or type(entry.settled) is not bool
                         or entry.fallback_kind not in (None,'unknown','overflow')
                         or (entry.failure_id is None and (entry.failure_kind is not None or entry.failure_code is not None))
-                        or (entry.failure_id is not None and (entry.failure_id not in entry.received
+                        or (entry.failure_id is not None and (
+                            (entry.failure_id not in entry.received
+                             and not (entry.failure_kind == 'invalid' and entry.failure_id == entry.pending and entry.failure_id in entry.calls))
                             or entry.failure_kind not in ('running','cut','nonzero','unknown','invalid','binary')))):
                     raise ValueError('invalid lifecycle or failure status')
                 if ((entry.calls and next(iter(entry.calls)) != spec.call_id)
@@ -303,46 +398,16 @@ class Bridge:
                         or entry.private != set(entry.calls)-{spec.call_id}
                         or (entry.calls and entry.pending not in entry.calls)):
                     raise ValueError('invalid call sequence')
-                for cid, call in entry.calls.items():
-                    command=filecommands.build_multipart_page(spec,assembly.offset,live=assembly.live_pages,limit=assembly.limit,refetch=bool(assembly.refetches))
-                    if cid == spec.call_id:
-                        command=writeproxy._sentinel(fn['name'],fn['arguments'],spec.receipt,False)+'\n'+command
-                    if call != writeproxy._shell_call(cid,entry.shell,command,0):
-                        raise ValueError('changed continuation command')
-                    if cid not in entry.received:
-                        if cid != entry.pending or cid != next(reversed(entry.calls)):
-                            raise ValueError('missing prior page')
-                        continue
-                    content=entry.received[cid]; env=resultnotes.exec_envelope(content)
-                    if cid == entry.failure_id and entry.failure_kind != 'binary':
-                        if cid != entry.pending or cid != next(reversed(entry.calls)):
-                            raise ValueError('misplaced failed result')
-                        if entry.failure_kind == 'running' and not (env and env.running):
-                            raise ValueError('running status not declared')
-                        if entry.failure_kind == 'cut' and not (env and not env.running and env.cut_warning):
-                            raise ValueError('cut status not declared')
-                        if entry.failure_kind == 'nonzero' and not (env and not env.running and not env.cut_warning
-                                and env.exit_code is not None and env.exit_code != 0 and env.exit_code == entry.failure_code):
-                            raise ValueError('exit status not declared')
-                        if entry.failure_kind == 'unknown' and not (env and not env.running and not env.cut_warning and env.exit_code is None):
-                            raise ValueError('unknown status not declared')
-                        continue
-                    if env is not None:
-                        if env.running or env.exit_code != 0: raise ValueError('failed page')
-                        content=content[env.record_start:]
-                    assembly.take(content, bool(env and env.cut_warning))
-                if assembly._complete:
-                    try:
-                        entry.result=verify_original(assembly,spec.receipt).stdout
-                    except BinaryBody:
-                        # The last page is a verified page; the body it completes is the binary fact.
-                        if entry.failure_kind != 'binary': raise
-                    else:
-                        if entry.failure_kind == 'binary': raise ValueError('binary status not declared')
-                elif entry.failure_kind == 'binary':
-                    raise ValueError('binary status not declared')
-                if entry.fallback_kind is not None and (entry.result is None or entry.settled):
-                    raise ValueError('invalid fit fallback state')
+                try:
+                    self._replay_entry(entry, assembly, spec)
+                except _Unreplayable as exc:
+                    # The entry's own pages do not replay (a page format the current code no longer takes, a
+                    # status its bytes do not declare). That ends THIS read unverified, typed and labelled; it is
+                    # not a fact about the other reads of the session, and must not mark every later result
+                    # unverified. Only the structure of the file as a whole is "corrupt".
+                    self._fail_entry(entry, exc)
+                else:
+                    self._check_pending_command(entry, assembly, spec, fn)
                 if spec.call_id in restored: raise ValueError('duplicate logical call')
                 restored[spec.call_id]=entry
             cache=obj['cache']
@@ -611,7 +676,9 @@ class Bridge:
                     tid = m.get('tool_call_id')
                     if tid in private: continue
                     if tid in originals:
-                        m['content'] = originals[tid]
+                        # A read that failed before any page came back (the call is the harness's, not answered through us) keeps
+                        # whatever the harness reported, labelled below.
+                        if originals[tid] is not None: m['content'] = originals[tid]
                         moved = next((e for e in active if e.spec.call_id == tid and e.result is not None
                                       and e.failure_id is None and e.fallback_kind is None and e.assembly.source_changed), None)
                         if moved is not None:

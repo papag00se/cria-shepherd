@@ -26,7 +26,7 @@ def test_state_that_cannot_be_trusted_fails_closed_every_time(tmp_path):
     obj = json.loads(good); entry = obj['entries'][0]
     entry['calls'][entry['pending']]['function']['arguments'] = json.dumps({'cmd': 'touch stolen'})          # valid JSON, tampered command
     state.write_text(json.dumps(obj))
-    with pytest.raises(BridgeError): Bridge(storage).incoming('s', messages)
+    assert Bridge(storage).incoming('s', messages)[1] == []                                                    # a stored call that is not cria's is never handed out; that read ends unverified
     for _ in range(2):
         state.write_text('{"truncated"')
         with pytest.raises(BridgeError): Bridge(storage).incoming('s', messages)

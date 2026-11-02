@@ -71,6 +71,9 @@ ROWS = {
 }
 
 
+ENDS_THE_READ_UNVERIFIED = {"spec-token-changed"}
+
+
 @pytest.mark.parametrize("name", sorted(ROWS))
 def test_every_single_field_corruption_of_saved_state_is_refused_on_reload(tmp_path, name):
     """Saved state is re-derived, not believed: each corrupted field raises BridgeError and nothing is restored; the same file, uncorrupted, restores and replays the identical call."""
@@ -82,8 +85,16 @@ def test_every_single_field_corruption_of_saved_state_is_refused_on_reload(tmp_p
     obj = json.loads(good)
     ROWS[name](obj)
     state.write_text(json.dumps(obj))
-    with pytest.raises(BridgeError, match="multipart session state is (corrupt|unreadable)"):
-        Bridge(storage).incoming("s", messages)
+    if name in ENDS_THE_READ_UNVERIFIED:
+        # Not the file's structure: this one read's pages do not take under the stored token, so it ends unverified and the
+        # session lives.
+        calls = Bridge(storage).incoming("s", messages)[1]
+        assert calls == []
+        assert Bridge(storage).continuation_state("s").pending == ()
+    else:
+        # An edited stored call is refused outright (corrupt on reload, or no longer the call the history holds); it is never handed out.
+        with pytest.raises(BridgeError, match="multipart session state is (corrupt|unreadable)|changed known call"):
+            Bridge(storage).incoming("s", messages)
     state.write_text(good)
     assert Bridge(storage).incoming("s", messages)[1] == first[1]
 
