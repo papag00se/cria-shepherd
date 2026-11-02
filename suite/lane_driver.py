@@ -160,10 +160,14 @@ class Driver:
                 order = {m: i for i, m in enumerate(l0_campaign.MODELS)}
                 self.switch_model(min((c['model'] for _, c in later), key=order.get))
                 wanted = self.pending(self.model)
-        for lane in self.servers:
-            while wanted and self.used(lane) < lanes.LANES[lane].slots and not self.capped():
-                campaign, cell = wanted.pop(0)
-                self.launch(lane, campaign, cell)
+        while wanted and not self.capped():
+            # Fill the least-loaded lane first so a short queue spreads over both cards.
+            free = [n for n in self.servers if self.used(n) < lanes.LANES[n].slots]
+            if not free:
+                break
+            lane = min(free, key=lambda n: self.used(n) / lanes.LANES[n].slots)
+            campaign, cell = wanted.pop(0)
+            self.launch(lane, campaign, cell)
         levels = {c.level for c, _ in self.pending(self.model)} if self.model and not self.capped() else set()
         self.stop_rows(keep=lambda key: key[1] == self.model and key[2] in levels)
 
