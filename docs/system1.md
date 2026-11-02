@@ -56,3 +56,7 @@ The admitted standalone bundle is `expanded-v2-live`, manifest SHA-256 `854cb99b
 Complete final qualification calls are retained at `~/.cria/calls/system1-serving-v2-20261025/qualification-003.jsonl`, SHA-256 `e446e4af829aad7fa9c5d2992789db84c372587384c76f31b54353f0c20d1e65`. Training remains as described in [methodology](training/methodology.md); serving uses neither training dependencies nor GPU inference.
 
 The two coding cells run with this classifier active (`ornith1.5_9b / Java`, planner OFF; independent terminal judgments 2% and 15% usefulness) are not classifier evidence: neither was an ablation, and the retained run records and call captures live under `~/.cria/suite/_campaigns/system1-v2-ornith-java-20261025` and `~/.cria/calls/`. What they taught is in [the decision log](decision-log.md) ("System1 deployment cells").
+
+## Development runs on the GPU
+
+Production System 1 is CPU-only. In development, judge on the GPU with `~/.local/share/cria/envs/system1-dev-gpu/bin/python scripts/system1_gpu_judge.py FAMILY IN.json OUT.json` (same `cria.system1` code and live bundle, CUDA provider; GPU and CPU verdicts matched 62 of 62 on real briefings, 2026-11-01). Use the CPU only when measuring timings.
