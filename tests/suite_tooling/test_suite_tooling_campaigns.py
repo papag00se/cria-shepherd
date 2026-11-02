@@ -36,7 +36,7 @@ def test_manifest_is_48_fresh_pending_planner_off_cells_and_old_scores_earn_no_c
     assert cmd[cmd.index("--level") + 1] == str(level) and "--restored-fleet" in cmd
     assert "--planner" not in cmd and "--fresh-l5" not in cmd
     with pytest.raises(ValueError):
-        campaign.create_manifest("x", REV, {}, level=3)
+        campaign.create_manifest("x", REV, {}, level=6)
 
 
 def test_interrupted_attempt_blocks_and_a_cell_awaits_judgment_before_the_next(monkeypatch):

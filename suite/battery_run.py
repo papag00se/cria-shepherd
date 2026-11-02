@@ -125,8 +125,8 @@ def main() -> int:
             from . import l0_campaign
         except ImportError:
             import l0_campaign
-        if args.level not in (0, 5) or args.arm or args.planner != "off" or args.fresh_l5:
-            ap.error("restored campaigns require --restored-fleet --level 0 or 5, planner off")
+        if args.level not in range(6) or args.arm or args.planner != "off" or args.fresh_l5:
+            ap.error("restored campaigns require --restored-fleet --level 0-5, planner off")
         if args.campaign_id and not args.campaign_revision:
             ap.error("--campaign-id requires --campaign-revision")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:

@@ -972,8 +972,8 @@ def _main(scope) -> None:
         CALLS_DIR, EVENTS_DIR = Path(lane_row["calls_dir"]), Path(lane_row["logs_dir"])
         cria_toml = Path(lane_row["config"])
     if args.restored_fleet:
-        if args.level not in (0, 5) or args.planner != "off" or args.fresh_l5:
-            ap.error("--restored-fleet requires L0 or L5 with planner off")
+        if args.level not in range(6) or args.planner != "off" or args.fresh_l5:
+            ap.error("--restored-fleet requires L0-L5 with planner off")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
             ap.error("restored model/task must belong to the eight by six roster")
         fleet = l0_campaign.fleet_snapshot(level=args.level, lanes=bool(lane_row))
@@ -1052,7 +1052,7 @@ def _main(scope) -> None:
             harness_argv, args.model, lane_row["window"], adapter.base_url, Path(env['CODEX_HOME']),
             cria_config=cria_toml)
     elif args.restored_fleet:
-        if args.level == 5:
+        if args.level >= 1:   # L1-L5 make role calls: scope the role sampling
             try:
                 from .restored_roles import scoped
             except ImportError:
@@ -1191,7 +1191,7 @@ def _main(scope) -> None:
     if args.restored_fleet:
         try:
             row["actual_sent_sampling"] = l0_campaign.actual_sampling(
-                capture_snapshot, args.model, spec["coder"], coder_only=args.level == 5)
+                capture_snapshot, args.model, spec["coder"], coder_only=args.level >= 1)
             if lane_row:
                 lanes.verify_row(lane_row)
                 lanes.verify_server(lanes.server_state(lane_row["lane"]))

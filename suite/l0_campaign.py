@@ -206,8 +206,8 @@ def validate_live(config_path, *, level=0, lanes=False):
     engagement level), so it is checked for the planner-off/capture invariants, not for a serving level."""
     from cria.config import _engagement_level
     cfg=tomllib.loads(Path(config_path).read_text())
-    if level not in (0, 5):
-        raise ValueError('restored campaigns support only L0 or L5')
+    if level not in range(6):
+        raise ValueError('restored campaigns support L0-L5')
     if lanes:
         if cfg.get('planner',{}).get('enabled',False) is not False or cfg.get('logging',{}).get('capture_calls') is not True:
             raise ValueError('lane rows require planner off and capture_calls=true in the source config')
@@ -310,7 +310,7 @@ def valid_row(row, manifest, *, allow_capture_errors=False):
                      else _valid_capture_evidence(row))
     if not capture_valid: return False
     try:
-        if manifest['level'] == 5:
+        if manifest['level'] >= 1:   # L1-L5 make role calls: the row's role sampling receipt applies
             try:
                 from .restored_roles import render
             except ImportError:
@@ -329,7 +329,7 @@ def valid_row(row, manifest, *, allow_capture_errors=False):
             return False
         return (row.get('source_coder_sampling') == source and
                 row.get('actual_sent_sampling') == actual_sampling(row['capture_snapshot'],row['model'],source,
-                                                                 coder_only=manifest['level'] == 5)
+                                                                 coder_only=manifest['level'] >= 1)
                 and bool(row.get('injected_sampling'))
                 and all(item.get('fields') == source for item in row['injected_sampling']))
     except (OSError,ValueError,KeyError,TypeError): return False
@@ -352,8 +352,8 @@ def save(path, value):
 
 
 def create_manifest(campaign_id, revision, snapshot, *, level=0):
-    if type(level) is not int or level not in (0, 5):
-        raise ValueError('restored campaigns support only L0 or L5')
+    if type(level) is not int or level not in range(6):
+        raise ValueError('restored campaigns support L0-L5')
     return {'schema':1,'campaign_id':campaign_id,'revision':revision,'created':time.time(),
             'models':list(MODELS),'tasks':list(TASKS),'level':level,'planner':'off','pacing_policy':POLICY,
             'fleet_snapshot':snapshot,'cells':[{'model':m,'task':t,'state':'pending'} for m in MODELS for t in TASKS]}
@@ -484,7 +484,7 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--level', type=int, choices=(0, 5), default=0)
+    ap.add_argument('--level', type=int, choices=range(6), default=0)
     ap.add_argument('--campaign-id',required=True)
     ap.add_argument('--campaign-revision',required=True)
     ap.add_argument('--resume-after-launcher-repair', '--resume-after-infrastructure-repair',

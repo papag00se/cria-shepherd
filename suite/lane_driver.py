@@ -215,8 +215,8 @@ def main():
     l0_campaign.validate_revision(args.campaign_revision)
     specs = [(cid, int(level)) for cid, level in (item.rsplit(':', 1) for item in args.campaign)]
     for _, level in specs:
-        if level not in (0, 5):
-            ap.error('restored campaigns support only L0 or L5')
+        if level not in range(6):
+            ap.error('restored campaigns support L0-L5')
     import shutil
     for exe in ('ruby', 'go', 'python', 'mvn', 'node', 'cargo'):
         if not shutil.which(exe):

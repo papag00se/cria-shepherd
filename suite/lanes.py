@@ -444,7 +444,7 @@ def start_row(lane_name, model, level, roles, window, *, port):
     original = LIVE_CONFIG.read_bytes()
     logs, calls = directory / 'logs', directory / 'calls'
     logs.mkdir(parents=True), calls.mkdir(parents=True)
-    if level == 5:
+    if level >= 1:   # L1-L5 make role calls (reasoner/classifier/compactor): apply the row's role sampling
         active, receipt = role_receipt(original, roles, directory / 'roles')
     else:
         active, receipt = original, None
