@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 import subprocess
 import sys
 import time
@@ -33,7 +32,7 @@ except ImportError:
     import results_store as _rs
 
 NOTE_PREFIX = "BATTERY2"
-COUNTED_PREFIXES = ("FRESH-L5", NOTE_PREFIX, "LOWSCORE", "RERANK")
+COUNTED_PREFIXES = (NOTE_PREFIX, "LOWSCORE", "RERANK")
 # Current roster: Nemotron Elastic restored 2026-09-30; eight models entered on 2026-09-27.
 # Retired models remain named in reports and keep their rows in results.jsonl / historical_ladder.json.
 # Keys renamed 2026-09-27 (operator): ternary-bonsai-2 -> bonsai2, ornith15 -> ornith1.5,
@@ -49,7 +48,6 @@ MODELS = ("gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
 # docs/model-history.md), where only a mean/best line survives.
 # Logical display names come from the one official-name registry. Executable keys stay intact.
 DISPLAY = tuple(dict.fromkeys(canonical_name(model) for model in MODELS))
-REPORT_INFERENCE_REVISION = "f79cc6146470281b5909cf605b27afca1177e2d1"
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 ARMS = ("BASE", "CRIA")
@@ -126,25 +124,19 @@ def sha() -> str:
         return "?"
 
 
-def _stamp(rs: list[dict], now: float | None = None) -> str:
-    fmt = "%Y-%m-%d %H:%M"
-    written = time.strftime(fmt, time.localtime(now if now is not None else time.time()))
-    latest = max((row for row in rs if row.get("started")),
-                 key=lambda row: row["started"], default=None)
-    if latest is None:
-        return f"**Last updated {written}** — no completed rows yet."
-    finished = time.strftime(fmt, time.localtime(
-        latest["started"] + (latest.get("wall_seconds") or 0)))
-    return f"**Last updated {written}** — newest row `{latest.get('run_id', '?')}`, finished {finished}."
-
-
 _HIST_PATH = SUITE / "historical_ladder.json"
+REPORT_PATH = SUITE.parent / "docs" / "battery-report.md"
+LEGEND = ("Legend: \U0001F7E2 \u226588% \u00b7 \U0001F7E1 \u226563% \u00b7 \U0001F7E0 \u226538% \u00b7 \U0001F534 <38%; blank = pending/unjudged. "
+          "Usefulness: share of requested work delivered as useful code. Percentages are independently judged "
+          "usefulness; averages include judged zeros, exclude failed/unjudged attempts, and use known metrics only. "
+          "Average minutes are wall time (including judge waits); partially filled rows have partial coverage. "
+          "Avg tok/s is the mean of known per-task all-phase generation rates, not wall-time throughput; "
+          "`\u00b7` = unknown timing. Ruby/Go/Python/Java/Node/Rust are the six task columns.")
 
 
 def _historical() -> dict:
-    """FROZEN inference-usefulness data for models whose per-cell scores no longer survive in
-    results.jsonl (a field rename orphaned them). Recovered from a committed report and never
-    regenerated; see suite/historical_ladder.json. Empty dict if the file is missing."""
+    """Recorded inference-usefulness data for models whose per-cell scores no longer survive in results.jsonl
+    (see suite/historical_ladder.json); empty when the file is missing."""
     try:
         return json.loads(_HIST_PATH.read_text())
     except (OSError, ValueError):
@@ -161,457 +153,87 @@ def _dot(pct) -> str:
     return f"{_badge(pct)} {round(pct)}%" if pct is not None else "\u00b7"
 
 
-def report(rs: list[dict], now: float | None = None) -> str:
-    """The engagement ladder: one colored-dot cell per (level, model, task), the cell an inferred
-    usefulness percentage. FROZEN models render from suite/historical_ladder.json (recovered
-    inference judgments the field rename orphaned); every other model reads LIVE usefulness_percent
-    from results.jsonl. The ladder format persists here in the generator so a regeneration can never
-    eat it again."""
-    hist = _historical()
-    frozen = {}
-    for name, levels in hist.get("frozen", {}).items():
-        frozen.setdefault(canonical_name(name), {}).update(levels)
-    labels = hist.get("levels", {})
-    tasks = hist.get("tasks", list(TASKS))
-    tlabels = hist.get("task_labels", list(tasks))
-    live = []
-    for row in rs:
-        m = canonical_name(row.get("model", ""))
-        if m and m not in frozen and isinstance(row.get("usefulness_percent"), int) and m not in live:
-            live.append(m)
-    # Normalize lookup/display only. Return the original selected row with its provenance intact.
-    everything = list(dict.fromkeys(list(frozen.keys()) + live))
-    ordered = [m for m in DISPLAY if m in everything]
-    retired = [m for m in everything if m not in DISPLAY]
-    out = ["# Battery — the engagement ladder", "", _stamp(rs, now),
-           f"**Report code revision `{sha()}`; inference anchor remains `{REPORT_INFERENCE_REVISION}`.**", "",
-           "Each cell is an inferred usefulness percentage \U0001F7E2\u226588 \U0001F7E1\u226563 "
-           "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
-           "each rung implying every rung below it. Model rows use the [official project names](model-names.md). "
-           "Gemma4/QAT share the single `gemma4_12b` row: frozen history remains for unreplaced cells "
-           "and the latest live judgment supersedes its matching cell. Historical model keys, run IDs "
-           "and executable aliases retain their original provenance.", ""]
-    for lvl in range(6):
-        lv = str(lvl)
-        rowdata = []
-        for m in ordered:
-            fro = frozen.get(m, {}).get(lv)
-            cells, mins, calls = [], [], []
-            for t in tasks:
-                r = level_cell(rs, lvl, m, t)
-                cells.append(r.get("usefulness_percent")
-                             if r and isinstance(r.get("usefulness_percent"), int) else None)
-                if judged(r) and _measurement(r.get("wall_seconds")):
-                    mins.append(_wall_minutes(r))
-                if judged(r) and _measurement(r.get("calls")):
-                    calls.append(r["calls"])
-            if fro:
-                # A frozen row is recovered history for a model whose per-cell judgments were
-                # orphaned. A fresh LIVE judgment supersedes it PER CELL (an un-paused model's
-                # new campaign must be visible, not shadowed by its own past); cells the
-                # campaign has not re-judged keep their frozen value so history never vanishes.
-                cells = [live if live is not None else old
-                         for live, old in zip(cells, list(fro["pct"]) + [None] * len(tasks))]
-            mn = round(sum(mins) / len(mins)) if mins else (fro.get("min") if fro else None)
-            cl = round(sum(calls) / len(calls)) if calls else (fro.get("calls") if fro else None)
-            if any(p is not None for p in cells):
-                rowdata.append((m, cells, mn, cl))
-        if not rowdata:
-            continue
-        allp = [p for _m, cells, _mn, _cl in rowdata for p in cells if p is not None]
-        lvavg = round(sum(allp) / len(allp)) if allp else 0
-        label = labels.get(lv, "")
-        out.append(f"### Level {lvl}" + (f" \u2014 {label}" if label else "") + f" \u2014 {lvavg}%")
-        out.append("")
-        out.append("| model | " + " | ".join(tlabels) + " | avg pct | avg min | avg calls |")
-        out.append("|---|" + "---|" * len(tlabels) + "---:|---:|---:|")
-        for m, cells, mn, cl in rowdata:
-            present = [p for p in cells if p is not None]
-            total = f"{round(sum(present) / len(present))}%" if present else "\u00b7"
-            cellstr = " | ".join(_dot(p) for p in cells)
-            out.append(f"| {m} | {cellstr} | {total} | "
-                       f"{mn if mn is not None else '\u00b7'} | {cl if cl is not None else '\u00b7'} |")
-        out.append("")
-    if retired:
-        out.append("Retired from the battery (history kept in suite/results/results.jsonl and "
-                   "suite/historical_ladder.json): " + ", ".join(retired) + ".")
-        out.append("")
-    return add_throughput_column("\n".join(out) + "\n", rs)[0]
-
-
 def _measurement(value) -> bool:
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and math.isfinite(value) and value >= 0)
 
 
-def _rate_mean(values) -> str:
-    return f'{sum(values) / len(values):.1f}' if values else '·'
+def _mean(values, *, digits: int | None = None):
+    if not values:
+        return None
+    mean = sum(values) / len(values)
+    return round(mean, digits) if digits is not None else round(mean)
 
 
-def add_throughput_column(text: str, rs: list[dict], *, refresh_levels=None) -> tuple[str, str]:
-    """Append/refresh rates using authoritative rows matching the standing task scores.
+def _table(rs: list[dict], hist: dict, tasks, level: int) -> dict:
+    """model -> (six cell percentages, avg minutes, avg calls, avg tok/s) at one level.
 
-    This never changes a score or reconstructs timing from rounded rates. Frozen-only
-    history has no invented rate. Each task's stored all-phase rate has equal row weight.
-    """
-    eligible = [r for r in rs if judged(r) and not r.get('aborted')
-                and r.get('terminal') != 'harness-error']
-    out, coverage = [], []
-    level = None
-    for line in text.splitlines():
-        heading = re.match(r'(?:## L|### Level )([0-5])\b', line)
-        if heading:
-            level = int(heading.group(1))
-        if line.startswith('| model |'):
-            if 'avg tok/s' not in line:
-                line += ' avg tok/s |'
-        elif line.startswith('|---|'):
-            if out[-1].count('|') > line.count('|'):
-                line += '---:|'
-        elif level is not None and line.startswith('| '):
-            fields = [f.strip() for f in line.strip('|').split('|')]
-            if len(fields) not in (10, 11):
-                raise ValueError('malformed standing row for throughput')
-            if len(fields) == 11 and refresh_levels is not None and level not in refresh_levels:
-                out.append(line)
-                continue  # preserve other levels' row bytes; shared L5 ordering may move rows
-            rates, sources, judged_count = [], [], 0
-            for task, score in zip(TASKS, fields[1:7]):
-                if not score or score == '·':
-                    continue
-                match = re.search(r'(\d+)%$', score)
-                if not match:
-                    raise ValueError('malformed standing score')
-                judged_count += 1
-                row = level_cell(eligible, level, fields[0], task)
-                if (row is not None and row.get('usefulness_percent') == int(match.group(1))
-                        and _measurement(row.get('avg_tok_s'))):
-                    rates.append(row['avg_tok_s'])
-                    sources.append(row.get('run_id', '?'))
-            fields = fields[:10] + [_rate_mean(rates)]
-            line = '| ' + ' | '.join(fields) + ' |'
-            coverage.append(f'L{level}/{fields[0]}: tok/s{len(rates)}/{judged_count}; sources '
-                            + (', '.join(sources) if sources else 'none'))
-        out.append(line)
-    return '\n'.join(out) + '\n', '\n'.join(coverage)
-
-
-def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True) -> str:
-    """Render only independently judged selected logical cells, never failed originals.
-
-    The campaign manifest owns selection, including linked replacements/dispositions.
-    Metrics come only from each selected result row; missing values retain coverage gaps.
-    Ambiguous selection is an error, not permission to take the latest/best attempt.
-    """
-    selected = {}
-    used = set()
-    for cell in manifest['cells']:
-        key = (cell['model'], cell['task'])
-        link = None
-        if cell['state'] == 'done':
-            run_id, cohort = cell['run_id'], manifest['campaign_id']
-        elif cell['state'] == 'infrastructure-failed':
-            links = [mapping[cell['run_id']] for mapping in
-                     (manifest.get('successful_replacements', {}),
-                      manifest.get('judged_operator_dispositions', {}))
-                     if cell['run_id'] in mapping]
-            if len(links) > 1:
-                raise ValueError('multiple dispositions for one logical cell')
-            if not links:
-                continue
-            link = links[0]
-            run_id, cohort = link['run_id'], link['campaign_id']
-        else:
+    A cell is the latest judged, non-aborted row of the cell; a recorded (frozen) cell is replaced by a
+    live judgment of the same cell."""
+    frozen = {}
+    for name, levels in hist.get("frozen", {}).items():
+        frozen.setdefault(canonical_name(name), {}).update(levels)
+    eligible = [r for r in rs if judged(r) and not r.get("aborted") and r.get("terminal") != "harness-error"]
+    models = [m for m in DISPLAY if m in frozen or any(canonical_name(r.get("model", "")) == m for r in eligible)]
+    out = {}
+    for model in models:
+        old = frozen.get(model, {}).get(str(level)) or {}
+        live = [level_cell(eligible, level, model, task) for task in tasks]
+        recorded = list(old.get("pct", [])) + [None] * len(tasks)
+        cells = [r["usefulness_percent"] if r else recorded[i] for i, r in enumerate(live)]
+        if all(c is None for c in cells):
             continue
-        found = [r for r in rs if r.get('run_id') == run_id]
-        if len(found) != 1 or key in selected or run_id in used:
-            raise ValueError('missing or ambiguous selected result')
-        row = found[0]
-        pct = row.get('usefulness_percent')
-        if (row.get('campaign_id') != cohort or (row.get('model'), row.get('task')) != key
-                or not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 100
-                or row.get('terminal') == 'harness-error' or row.get('superseded')):
-            raise ValueError('selected cell lacks matching independently judged result')
-        if link and link.get('termination') == 'operator-ended':
-            if (row.get('terminal') != 'operator-ended' or row.get('natural_completion') is not False
-                    or link.get('natural_completion') is not False):
-                raise ValueError('operator disposition cannot claim natural completion')
-        elif row.get('terminal') == 'operator-ended':
-            raise ValueError('operator-ended result requires explicit disposition')
-        selected[key] = row
-        used.add(run_id)
-    labels = tuple(TASK_LANGUAGES[task].lower() for task in TASKS)
-    out = ['| model | ' + ' | '.join(labels) + ' | avg pct | avg min | avg calls | avg tok/s |',
-           '|---|' + '---|' * len(TASKS) + '---:|---:|---:|---:|']
-    coverage = []
-    for model in manifest['models']:
-        present = [selected[(model, t)] for t in TASKS if (model, t) in selected]
-        cells = [(_dot(selected[(model, t)]['usefulness_percent'])
-                  if (model, t) in selected else '') for t in TASKS]
-        pct = [r['usefulness_percent'] for r in present]
-        minutes = [_wall_minutes(r) for r in present if _measurement(r.get('wall_seconds'))]
-        calls = [r['calls'] for r in present if _measurement(r.get('calls'))]
-        means = [str(round(sum(v) / len(v))) + suffix if v else '·'
-                 for v, suffix in ((pct, '%'), (minutes, ''), (calls, ''))]
-        rates = [r['avg_tok_s'] for r in present if _measurement(r.get('avg_tok_s'))]
-        out.append('| ' + model + ' | ' + ' | '.join(cells + means + [_rate_mean(rates)]) + ' |')
-        if present:
-            n = len(present)
-            coverage.append(f'{model}: usefulness{len(pct)}/{n}, minutes{len(minutes)}/{n}, calls{len(calls)}/{n}, tok/s{len(rates)}/{n}')
-    if not include_coverage:
-        return '\n'.join(out) + '\n'
-    out += ['', '**Row-average coverage:** ' + ('; '.join(coverage) if coverage else 'no judged cells') + '.',
-            'Means use selected independently judged logical cells once; zeros count, pending/unjudged '
-            'cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, '
-            'not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits '
-            '(not active-work minutes); operator-ended measurement basis remains in attempt provenance. '
-            'Token rate is the arithmetic mean of known per-task avg_tok_s values, displayed to one '
-            'decimal; each run rate uses timed output tokens over timed generation seconds across all '
-            'captured phases, not coder-only speed or wall-time throughput. '
-            'A mean with incomplete coverage is a partial known-metric mean.', '']
-    return '\n'.join(out)
+        rows = [r for r in live if r]
+        minutes = _mean([_wall_minutes(r) for r in rows if _measurement(r.get("wall_seconds"))])
+        calls = _mean([r["calls"] for r in rows if _measurement(r.get("calls"))])
+        rate = _mean([r["avg_tok_s"] for r in rows if _measurement(r.get("avg_tok_s"))], digits=1)
+        out[model] = (cells, old.get("min") if minutes is None else minutes,
+                      old.get("calls") if calls is None else calls, rate)
+    return out
 
 
-def order_by_l5(text: str) -> str:
-    """Reorder every standing table by exact L5 task-score means, retaining row bytes.
-
-    Ties (including no judged L5 scores) use model identity, not prior row order.
-    Historical subsets share this order without inventing absent rows or measurements.
-    """
-    sections = re.split(r'(?=^## L[0-5] — )', text, flags=re.M)
-    if len(sections) != 7:
-        raise ValueError('shared ordering requires six L0–L5 tables')
-    tables, l5_scores = [], {}
-    for level, section in enumerate(sections[1:]):
-        lines = section.splitlines(keepends=True)
-        entries, seen = [], set()
-        for index, line in enumerate(lines):
-            if not line.startswith('| ') or line.startswith('| model |'):
-                continue
-            fields = [field.strip() for field in line.strip().strip('|').split('|')]
-            if len(fields) not in (10, 11) or fields[0] in seen:
-                raise ValueError('malformed or duplicate model row')
-            seen.add(fields[0])
-            scores = []
-            for value in fields[1:7]:
-                if value in ('', '·'):
-                    continue
-                match = re.search(r'(\d+)%$', value)
-                if not match or not 0 <= int(match.group(1)) <= 100:
-                    raise ValueError('malformed standing usefulness score')
-                scores.append(int(match.group(1)))
-            if level == 5:
-                l5_scores[fields[0]] = scores
-            entries.append((index, fields[0], line))
-        tables.append((lines, entries))
-
-    def rank(model):
-        scores = l5_scores.get(model, [])
-        return (not scores, -Fraction(sum(scores), len(scores)) if scores else Fraction(0), model)
-
-    for level, (lines, entries) in enumerate(tables):
-        ordered = sorted(entries, key=lambda entry: rank(entry[1]))
-        for (index, _, _), (_, _, row) in zip(entries, ordered):
-            lines[index] = row
-        sections[level + 1] = ''.join(lines)
-    return ''.join(sections)
+def report(rs: list[dict], now: float | None = None) -> str:
+    """The standing scorecard: an `Updated:` line, then one table per engagement level L0-L5 (a colored-dot
+    cell per task, the cell an inferred usefulness percentage), then the legend. Every table lists its models in
+    the order of their exact L5 mean usefulness (highest first, ties by model name, models without an L5 score
+    last)."""
+    hist = _historical()
+    tasks = hist.get("tasks", list(TASKS))
+    labels = hist.get("levels", {})
+    tables = [_table(rs, hist, tasks, level) for level in range(6)]
+    l5 = {model: [p for p in cells if p is not None] for model, (cells, *_rest) in tables[5].items()}
+    rank = lambda model: (not l5.get(model), -Fraction(sum(l5[model]), len(l5[model])) if l5.get(model) else 0, model)
+    updated = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(now if now is not None else time.time()))
+    out = ["# Battery report", "", f"Updated: {updated}", ""]
+    for level, table in enumerate(tables):
+        scores = [p for cells, *_rest in table.values() for p in cells if p is not None]
+        out += [f"## L{level} \u2014 {labels.get(str(level), '')} \u2014 {_mean(scores) or 0}%", "",
+                "| model | " + " | ".join(TASK_LANGUAGES[t].lower() for t in TASKS)
+                + " | avg pct | avg min | avg calls | avg tok/s |",
+                "|---|" + "---|" * len(TASKS) + "---:|---:|---:|---:|"]
+        for model in sorted(table, key=rank):
+            cells, minutes, calls, rate = table[model]
+            known = [p for p in cells if p is not None]
+            out.append("| " + " | ".join([model, *map(_dot, cells), f"{_mean(known)}%",
+                       *("\u00b7" if v is None else str(v) for v in (minutes, calls, rate))]) + " |")
+        out.append("")
+    return "\n".join(out) + "\n" + LEGEND + "\n"
 
 
-def _standing_metric_sources(evidence: str, rs: list[dict], level: int, model: str) -> dict:
-    """Read the last published run bindings, not the latest/best judged attempts.
-
-    Legacy throughput disclosures bind only tasks with known timing. New disclosures
-    bind every task, including explicit unknowns, so a later unselected attempt cannot
-    silently fill a measurement gap. Both formats identify exact authoritative runs.
-    """
-    sources = {}
-    prefix = f'Standing metric sources L{level}/{model}: '
-    legacy = f'L{level}/{model}: tok/s'
-    for line in reversed(evidence.splitlines()):
-        if line.startswith(prefix):
-            sources = json.loads(line[len(prefix):])
-            if (not isinstance(sources, dict) or set(sources) != set(TASKS)
-                    or any(value is not None and (not isinstance(value, str) or not value)
-                           for value in sources.values())):
-                raise ValueError('malformed standing metric source bindings')
-            return sources
-        elif line.startswith(legacy):
-            match = re.fullmatch(re.escape(legacy) + r'\d+/\d+; sources (.+)', line)
-            if not match:
-                raise ValueError('malformed standing throughput source bindings')
-            sources = {}
-            if match.group(1) == 'none':
-                return sources
-            for run_id in match.group(1).split(', '):
-                found = [r for r in rs if r.get('run_id') == run_id]
-                if (len(found) != 1 or found[0].get('level') != level
-                        or canonical_name(found[0].get('model', '')) != model
-                        or found[0].get('task') not in TASKS or found[0]['task'] in sources):
-                    raise ValueError('missing or ambiguous standing metric source')
-                sources[found[0]['task']] = run_id
-            return sources
-    return sources
-
-
-def _retained_metric_row(rs: list[dict], sources: dict, level: int,
-                         model: str, task: str, score: int) -> dict | None:
-    if task not in sources:
-        # Legacy reports did not bind unknown-rate tasks. Bootstrap only the latest
-        # matching standing row, never search older judgments by percentage.
-        row = level_cell([r for r in rs if judged(r) and not r.get('aborted')
-                          and r.get('terminal') != 'harness-error'], level, model, task)
-        return row if (row and type(row.get('usefulness_percent')) is int
-                       and row['usefulness_percent'] == score) else None
-    run_id = sources[task]
-    if run_id is None:
-        return None  # an explicit published gap stays unknown until selected
-    found = [r for r in rs if r.get('run_id') == run_id]
-    if (len(found) != 1 or found[0].get('level') != level
-            or canonical_name(found[0].get('model', '')) != model
-            or found[0].get('task') != task or type(found[0].get('usefulness_percent')) is not int
-            or found[0]['usefulness_percent'] != score or found[0].get('aborted')
-            or found[0].get('terminal') == 'harness-error' or found[0].get('superseded')):
-        raise ValueError('invalid retained standing metric source')
-    return found[0]
-
-
-def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
-    path = SUITE.parent / 'docs' / 'battery-report.md'
-    existing = path.read_text() if path.exists() else ''
-    if campaign is None:
-        raise ValueError('standing report requires explicit --campaign-id; refusing overwrite')
-    level = campaign.get('level')
-    if type(level) is not int or level not in range(6):
-        raise ValueError('campaign requires an explicit engagement level')
-    # Validate authoritative selection before deriving any display data.
-    table = fresh_table(campaign, rs, include_coverage=False)
-    sections = re.split(r'(?=^## L[0-5] — )', existing, flags=re.M)
-    if (len(sections) != 7 or sections[0] != '# Battery report\n\n'
-            or existing.count('| model |') != 6 or existing.count('Legend:') != 1):
-        raise ValueError('report must already satisfy six-table etiquette; preserve legacy evidence before migration')
-    for index, section in enumerate(sections[1:]):
-        lines = section.splitlines()
-        if not re.fullmatch(rf'## L{index} — .+ — \d+%', lines[0]):
-            raise ValueError('report level titles must retain descriptions and averages')
-        body = [line for line in lines[1:] if line.strip()]
-        if index == 5:
-            if not body[-1].startswith('Legend:'):
-                raise ValueError('report legend missing')
-            body = body[:-1]
-        if not body or any(not line.startswith('|') for line in body):
-            raise ValueError('score report cannot contain narrative or attempt ledgers')
-    section = sections[level + 1]
-    lines = section.splitlines()
-    old_rows = {}
-    for line in lines:
-        if line.startswith('| ') and not line.startswith('| model |'):
-            fields = [field.strip() for field in line.strip('|').split('|')]
-            if len(fields) not in (10, 11) or fields[0] in old_rows:
-                raise ValueError('malformed or duplicate model row')
-            old_rows[fields[0]] = fields
-    evidence = path.with_name('battery-report-evidence.md')
-    prior_evidence = evidence.read_text() if evidence.exists() else ''
-    coverage, rate_coverage, source_coverage = [], [], []
-    for line in table.splitlines()[2:]:
-        fields = [field.strip() for field in line.strip('|').split('|')]
-        model = fields[0]
-        if not any(fields[1:7]):
-            continue  # pending attempts never erase a standing judgment
-        target = old_rows.setdefault(model, [model] + [''] * 6 + ['·'] * 3)
-        for column, value in enumerate(fields[1:7], 1):
-            if value:
-                target[column] = value
-        scores = [int(re.search(r'(\d+)%$', v).group(1)) for v in target[1:7] if v and v != '·']
-        target[7] = f'{round(sum(scores) / len(scores))}%'
-        metrics = []
-        retains_scores = any(not fresh and standing not in ('', '·')
-                             for fresh, standing in zip(fields[1:7], target[1:7]))
-        sources = _standing_metric_sources(prior_evidence, rs, level, model) if retains_scores else {}
-        bindings = dict.fromkeys(TASKS)
-        for column, task in enumerate(TASKS, 1):
-            if not target[column] or target[column] == '·':
-                continue
-            score = int(re.search(r'(\d+)%$', target[column]).group(1))
-            if fields[column]:
-                # fresh_table has already rejected ambiguous/failed/unjudged selections.
-                cell = next(c for c in campaign['cells'] if (c['model'], c['task']) == (model, task))
-                run_id = cell['run_id']
-                if cell['state'] == 'infrastructure-failed':
-                    links = {**campaign.get('successful_replacements', {}),
-                             **campaign.get('judged_operator_dispositions', {})}
-                    run_id = links[run_id]['run_id']
-                row = next(r for r in rs if r.get('run_id') == run_id)
-                if row.get('level') != level:
-                    raise ValueError('selected result engagement differs from campaign')
-            else:
-                row = _retained_metric_row(rs, sources, level, model, task, score)
-                if row is None:
-                    continue
-            metrics.append(row)
-            bindings[task] = row['run_id']
-        minutes = [_wall_minutes(r) for r in metrics if _measurement(r.get('wall_seconds'))]
-        calls = [r['calls'] for r in metrics if _measurement(r.get('calls'))]
-        target[8:10] = [str(round(sum(v) / len(v))) if v else '·' for v in (minutes, calls)]
-        timed = [r for r in metrics if _measurement(r.get('avg_tok_s'))]
-        target[10:] = [_rate_mean([r['avg_tok_s'] for r in timed])]
-        coverage.append(f'{model}: usefulness{len(scores)}/6, minutes{len(minutes)}/6, calls{len(calls)}/6')
-        rate_coverage.append(f'L{level}/{model}: tok/s{len(timed)}/{len(scores)}; sources '
-                             + (', '.join(r['run_id'] for r in timed) if timed else 'none'))
-        source_coverage.append(f'Standing metric sources L{level}/{model}: '
-                               + json.dumps(bindings, sort_keys=True))
-    all_scores = [int(re.search(r'(\d+)%$', v).group(1))
-                  for fields in old_rows.values() for v in fields[1:7] if v and v != '·']
-    title = re.sub(r'\d+%$', f'{round(sum(all_scores) / len(all_scores))}%' if all_scores else '0%', lines[0])
-    header = next(line for line in lines if line.startswith('| model |'))
-    separator = next(line for line in lines if line.startswith('|---|'))
-    tail = '\n\nLegend:' + existing.split('Legend:', 1)[1] if level == 5 else '\n\n'
-    sections[level + 1] = title + '\n\n' + '\n'.join([header, separator] +
-        ['| ' + ' | '.join(fields) + ' |' for fields in old_rows.values()]) + tail
-    # Selected models' aggregates already use selected + retained exact run bindings.
-    # Never refresh unselected standings. Only legacy rows lacking a timing column
-    # enter the explicit column-migration path; existing metrics remain byte-identical.
-    text, migration_coverage = add_throughput_column(''.join(sections), rs, refresh_levels=set())
-    # Shared ranking is finalized after the standing overlay, even on non-L5 updates.
-    text = order_by_l5(text)
-    # Normalize legacy average labels in every table without touching measurements.
-    display_lines = text.splitlines(keepends=True)
-    for index, line in enumerate(display_lines):
-        if line.startswith('| model |'):
-            fields = line.split('|')
-            fields[8] = ' avg pct '
-            display_lines[index] = '|'.join(fields)
-    text = ''.join(display_lines)
-    # Measurement gaps and campaign provenance belong outside the score report.
-    note = ('\n\n## Standing update — ' + campaign['campaign_id'] + f' — L{level}\n\n'
-            + '; '.join(coverage) + '.\nPending cells retain prior standings; metrics use matching authoritative '
-            'judged result rows only, never historical rounded row means. Unknown metrics are excluded.\n\n'
-            + fresh_table(campaign, rs).split('**Row-average coverage:**', 1)[1]
-            + '\n\nThroughput coverage and authoritative source runs:\n'
-            + '\n'.join(rate_coverage + ([migration_coverage] if migration_coverage else []))
-            + '\n' + '\n'.join(source_coverage) + '\n')
-    with evidence.open('a') as stream:
-        stream.write(note)
-    temp = path.with_suffix('.tmp')
+def write_report(rs: list[dict], now: float | None = None) -> Path:
+    """Write docs/battery-report.md from the result rows."""
+    text = report(rs, now)
+    temp = REPORT_PATH.with_name(f".{REPORT_PATH.name}.{os.getpid()}.tmp")
     temp.write_text(text)
-    temp.replace(path)
-    return path
+    temp.replace(REPORT_PATH)
+    return REPORT_PATH
 
 
 def main() -> int:
-    campaign = None
-    if '--campaign-id' in sys.argv:
-        index = sys.argv.index('--campaign-id')
-        if index + 1 >= len(sys.argv):
-            raise SystemExit('--campaign-id requires a manifest name')
-        name = sys.argv[index + 1]
-        if Path(name).name != name:
-            raise SystemExit('campaign-id must be a manifest name')
-        manifest = Path.home() / '.cria/suite/_campaigns' / name / 'manifest.json'
-        campaign = json.loads(manifest.read_text())
-    rs = rows(all_rows=campaign is not None)
     if "--write" in sys.argv:
-        print(f"wrote {write_report(rs, campaign=campaign)}")
+        print(f"wrote {write_report(rows(all_rows=True))}")
         return 0
+    rs = rows()
 
     print("BATTERY CAMPAIGN — inferred usefulness percentages\n")
     for task in TASKS:

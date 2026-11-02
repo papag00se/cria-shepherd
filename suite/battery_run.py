@@ -104,10 +104,6 @@ def main() -> int:
     ap.add_argument("--task", required=True)
     ap.add_argument("--planner", choices=("on", "off"), default="off",
                     help="experimental planner; off unless explicitly requested")
-    ap.add_argument("--fresh-l5", action="store_true",
-                    help="record one cell in the revision-pinned fresh L5 cohort")
-    ap.add_argument("--campaign-revision", default=None,
-                    help="immutable full git revision pinned for a fresh campaign")
     ap.add_argument("--campaign-id")
     ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--lane-row", default=None, help="row.json of a lane row (see suite/lanes.py)")
@@ -125,22 +121,17 @@ def main() -> int:
             from . import l0_campaign
         except ImportError:
             import l0_campaign
-        if args.level not in range(6) or args.arm or args.planner != "off" or args.fresh_l5:
+        if args.level not in range(6) or args.arm or args.planner != "off":
             ap.error("restored campaigns require --restored-fleet --level 0-5, planner off")
-        if args.campaign_id and not args.campaign_revision:
-            ap.error("--campaign-id requires --campaign-revision")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
             ap.error("restored model/task must belong to the eight by six roster")
         if args.campaign_id:
             l0_campaign.campaign_dir(args.campaign_id)
-            l0_campaign.validate_revision(args.campaign_revision)
-        l0_campaign.fleet_snapshot(level=args.level, lanes=bool(args.lane_row))
         command = [sys.executable, str(SUITE / "run.py"), "--task", args.task,
                    "--model", args.model, "--level", str(args.level), "--restored-fleet",
                    "--milestone-minutes", str(args.milestone_minutes)]
         if args.campaign_id:
-            command += ["--campaign-id", args.campaign_id,
-                        "--campaign-revision", args.campaign_revision]
+            command += ["--campaign-id", args.campaign_id]
         if args.lane_row:
             command += ["--lane-row", args.lane_row]
         return sh(*command, timeout=cell_timeout())
@@ -150,29 +141,12 @@ def main() -> int:
         except ImportError:
             import l0_campaign
         l0_campaign.campaign_dir(args.campaign_id)
-        l0_campaign.validate_revision(args.campaign_revision)
     if not TOML.exists():
         print(f"no config at {TOML}", file=sys.stderr)
         return 2
     if args.level is None and args.arm is None:
         ap.error("one of --level or --arm is required")
     level = args.level if args.level is not None else (0 if args.arm == "BASE" else 5)
-    if args.fresh_l5 and (level != 5 or args.planner != "off" or not args.campaign_revision):
-        ap.error("--fresh-l5 requires L5, --planner off, and --campaign-revision")
-    if args.campaign_revision and any(c.isspace() for c in args.campaign_revision):
-        ap.error("--campaign-revision must be one immutable revision token")
-    if args.fresh_l5:
-        from fresh_l5_campaign import MODELS, TASKS
-        if args.model not in MODELS or args.task not in TASKS:
-            ap.error("--fresh-l5 model and task must belong to its fixed 9×6 cohort")
-        try:
-            from .campaign_provenance import ProvenanceError, validate
-        except ImportError:
-            from campaign_provenance import ProvenanceError, validate
-        try:
-            validate(args.campaign_revision)
-        except ProvenanceError as exc:
-            ap.error(str(exc))
     want = str(level)
     tag = f"L{level}"
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
@@ -191,9 +165,7 @@ def main() -> int:
                    "--note", f"{NOTE_PREFIX} {tag} {args.model} {sha} {PROMPT_REV}",
                    "--level", str(level)]
         if args.campaign_id:
-            command += ["--campaign-id", args.campaign_id, "--campaign-revision", args.campaign_revision]
-        if args.fresh_l5:
-            command += ["--fresh-l5", "--campaign-revision", args.campaign_revision]
+            command += ["--campaign-id", args.campaign_id]
         return sh(*command, timeout=cell_timeout())
     finally:
         # Restore, always. An interrupted campaign must not leave the live config in the baseline

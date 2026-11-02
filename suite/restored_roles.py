@@ -1,6 +1,5 @@
-"""Cell-scoped canonical role sampling; preserve all non-sampling configuration bytes."""
+"""Cell-scoped canonical role sampling; all non-sampling configuration bytes are preserved."""
 from contextlib import contextmanager
-import hashlib
 import os
 import re
 import subprocess
@@ -43,29 +42,17 @@ def restart():
     subprocess.run(['sudo', '-n', 'systemctl', 'restart', 'cria.service'], check=True)
 
 
-def receipt(original, roles, evidence):
-    """Write the before/active config copies under `evidence`; return (active bytes, receipt)."""
-    evidence = Path(evidence)
-    active = render(original.decode(), roles).encode()
-    evidence.mkdir(parents=True, exist_ok=True)
-    before, during = evidence / 'config-before.toml', evidence / 'config-active.toml'
-    before.write_bytes(original)
-    during.write_bytes(active)
-    return active, dict(before=str(before), active=str(during),
-                        before_sha256=hashlib.sha256(original).hexdigest(),
-                        active_sha256=hashlib.sha256(active).hexdigest(), roles=roles)
-
-
 @contextmanager
-def scoped(path, roles, evidence, *, restart_service=restart):
+def scoped(path, roles, *, restart_service=restart):
+    """Apply the row's role sampling to the live config for one cell and put the original bytes back after."""
     path = Path(path)
     original = path.read_bytes()
     original_stat = path.stat()
-    active, receipt_ = receipt(original, roles, evidence)
+    active = render(original.decode(), roles).encode()
     try:
         path.write_bytes(active)
         restart_service()
-        yield receipt_
+        yield
     finally:
         if path.read_bytes() != active:
             raise ValueError('live config changed during cell; refusing to overwrite newer edits; original preserved')

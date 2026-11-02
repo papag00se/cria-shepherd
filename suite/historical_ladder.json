@@ -1,7 +1,7 @@
 {
   "_comment": "FROZEN historical inference-usefulness ladder, recovered from battery-report.md @8dc5aef after a field rename (usefulness -> usefulness_percent) + a report() rewrite orphaned it out of results.jsonl. These are inferred usefulness judgments (NOT mechanical grades) for the models whose per-cell scores no longer survive in results.jsonl. battery_status.report() renders these for the frozen models and the LIVE usefulness_percent from results.jsonl for every other model. Task order = shipping-rates-rb, cart-billing-go, orders-api-py, feed-pipeline-java, handles-cli-node, rust-toml-cli (ruby, go, python, java, node, rust). Nemotron Elastic L0-L4 was restored from pre-purge acd9017f^; its old L5 observation is intentionally excluded from this frozen L0-L4 record and is never a fresh L5 result.",
   "levels": {
-    "0": "pure proxy \u2014 wire translation only",
+    "0": "Pure proxy \u2014 wire translation only",
     "1": "TOOL_CALL_FIXES \u2014 dialect and template repair",
     "2": "SIMPLE_TOOLS \u2014 cria's tool menu, lowered to shell",
     "3": "CONTEXT_FIXES \u2014 floor, trims, dedups, compaction reframing",

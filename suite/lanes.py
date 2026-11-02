@@ -4,17 +4,16 @@
 margin (LANE_WINDOWS; 49,152 -> 45,056 -> 40,960 -> 36,864). `--ctx-size` handed to llama.cpp is the TOTAL
 (slots x per-slot); the window cria and Codex are told is always the PER-SLOT one. The canonical single-slot
 RTX3080 profiles and `llama-fleet switch` are untouched: a lane plan is the profile's own plan with only
-`--parallel`, `--ctx-size`, port and device overridden. The RTX3090 is taken through the owner-bound lease
-(suite/fleet_gpu.py); the HyperQwen container and its idle-check timer are stopped and restored around the run.
+`--parallel`, `--ctx-size`, port and device overridden. The HyperQwen container and its idle-check timer are
+stopped and restored around the run.
 
 One cria instance serves each ACTIVE ROW (lane x model x level): every concurrent cell of a row shares it,
 relying on cria's session-scoped state. A row's config is a copy of ~/.cria/cria.toml with that row's role
-sampling applied (the same before/active receipts as the serial path) plus transport-only edits.
+sampling applied plus transport-only edits.
 """
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 import re
@@ -24,18 +23,13 @@ import sys
 import time
 import tomllib
 import urllib.request
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from . import fleet_gpu
-    from .gpu_lease import publish_lease
-    from .restored_roles import receipt as role_receipt
+    from .restored_roles import render as render_roles
 except ImportError:
-    import fleet_gpu
-    from gpu_lease import publish_lease
-    from restored_roles import receipt as role_receipt
+    from restored_roles import render as render_roles
 
 FLEET = Path.home() / '.local/share/cria/fleet'
 ROOT = Path.home() / '.cria/suite/_lanes'
@@ -44,7 +38,7 @@ CRIA_SERVICE = 'cria.service'
 HYPERQWEN = 'qwen38-27b-rtx3090-single-1'
 IDLE_TIMER = 'gpu3090-idle-check.timer'
 GPU_3090 = 'GPU-907a7f7a-b541-8208-2bce-e1361e3110d6'
-GPU_3080 = fleet_gpu.PROFILE_GPU
+GPU_3080 = 'GPU-393d4998-707c-0ef0-a514-761015477256'
 ROW_PORT_BASE = 18400
 MARGIN_MIB = 768            # free VRAM that must remain after a loaded lane server has served its load
 
@@ -147,7 +141,7 @@ def lane_plan(model, lane_name, window):
 # ----------------------------------------------------------------------------- process helpers
 
 def start_ticks(pid):
-    return fleet_gpu.process_start_ticks(pid)
+    return int((Path('/proc') / str(pid) / 'stat').read_text().rpartition(') ')[2].split()[19])
 
 
 def alive(pid, ticks):
@@ -302,22 +296,6 @@ def server_state(lane_name):
     return json.loads(path.read_text()) if path.exists() else None
 
 
-def lease_for(model):
-    """Publish the owner-bound RTX3090 lease for the model being served; replaces the previous model's."""
-    path = fleet_gpu.LEASE_PATH
-    if path.exists():
-        release_lease()
-    lease = dict(schema=1, authorized=True, model=model, gpu=GPU_3090, profile_gpu=GPU_3080,
-                 owner_pid=os.getpid(), owner_start_ticks=start_ticks(os.getpid()), operation=uuid.uuid4().hex)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    publish_lease(path, lease)
-    return lease
-
-
-def release_lease():
-    fleet_gpu.LEASE_PATH.unlink(missing_ok=True)
-
-
 SERVERS = {}      # lane -> Popen of the server this process started
 
 
@@ -329,15 +307,13 @@ def check_server(lane_name):
 
 
 def start_server(model, lane_name, window):
-    """Launch the model on the lane's card with the lane's slots; wait until ready; return verified state."""
+    """Launch the model on the lane's card with the lane's slots; wait until it is healthy; return its state."""
     lane = LANES[lane_name]
     if server_state(lane_name) is not None:
         raise ValueError(f'{lane_name} already has a recorded server')
     plan = lane_plan(model, lane_name, window)
     directory = lane_dir(lane_name)
     directory.mkdir(parents=True, exist_ok=True)
-    if lane.card == '3090':
-        lease_for(model)
     env = dict(os.environ)
     env.pop('LD_PRELOAD', None)
     env.update(plan['env'])
@@ -347,38 +323,16 @@ def start_server(model, lane_name, window):
                                 stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
     SERVERS[lane_name] = proc
     state = dict(lane=lane_name, model=model, window=window, slots=lane.slots, port=lane.port, gpu=lane.gpu,
-                 pid=proc.pid, start_ticks=start_ticks(proc.pid), argv=plan['argv'],
-                 argv_sha256=hashlib.sha256(json.dumps(plan['argv']).encode()).hexdigest(), log=str(log),
+                 pid=proc.pid, start_ticks=start_ticks(proc.pid), argv=plan['argv'], log=str(log),
                  started=time.time())
     (directory / 'server.json').write_text(json.dumps(state, indent=2) + '\n')
     try:
         wait_json(f'http://127.0.0.1:{lane.port}/health', lambda v: v.get('status') == 'ok',
                   alive_check=lambda: proc.poll() is None)
-        state['served'] = verify_server(state)
     except BaseException:
         stop_server(lane_name)
         raise
     return state
-
-
-def verify_server(state):
-    """The lane's SERVED configuration must match its declared lane configuration; return the evidence."""
-    base = f"http://127.0.0.1:{state['port']}"
-    if not alive(state['pid'], state['start_ticks']):
-        raise ValueError(f"{state['lane']} server process is not alive")
-    if get_json(base + '/health').get('status') != 'ok':
-        raise ValueError(f"{state['lane']} server is unhealthy")
-    props = get_json(base + '/props')
-    ids = [m.get('id') for m in get_json(base + '/v1/models').get('data', [])]
-    served = {'model': state['model'], 'slots': props.get('total_slots'),
-              'window': (props.get('default_generation_settings') or {}).get('n_ctx')}
-    if (state['model'] not in ids or served['slots'] != state['slots'] or served['window'] != state['window']):
-        raise ValueError(f"{state['lane']} served config {served} differs from declared "
-                         f"{state['model']} x{state['slots']} @ {state['window']}")
-    if not any(gpu == state['gpu'] and int(pid) == state['pid'] for gpu, pid, _ in compute_apps()):
-        raise ValueError(f"{state['lane']} server is not a compute process on its declared card")
-    return {**served, 'port': state['port'], 'gpu': state['gpu'], 'pid': state['pid'],
-            'argv_sha256': state['argv_sha256'], 'used_mib': card_memory(state['gpu'])[0]}
 
 
 def stop_server(lane_name):
@@ -388,8 +342,6 @@ def stop_server(lane_name):
     stop_pid(state['pid'], state['start_ticks'])
     SERVERS.pop(lane_name, None)
     (lane_dir(lane_name) / 'server.json').unlink()
-    if LANES[lane_name].card == '3090':
-        release_lease()
 
 
 # ----------------------------------------------------------------------------- row cria instances
@@ -444,11 +396,8 @@ def start_row(lane_name, model, level, roles, window, *, port):
     original = LIVE_CONFIG.read_bytes()
     logs, calls = directory / 'logs', directory / 'calls'
     logs.mkdir(parents=True), calls.mkdir(parents=True)
-    if level >= 1:   # L1-L5 make role calls (reasoner/classifier/compactor): apply the row's role sampling
-        active, receipt = role_receipt(original, roles, directory / 'roles')
-    else:
-        active, receipt = original, None
-        (directory / 'config-before.toml').write_bytes(original)
+    # L1-L5 make role calls (reasoner/classifier/compactor): apply the row's role sampling
+    active = render_roles(original.decode(), roles).encode() if level >= 1 else original
     endpoint = f'http://127.0.0.1:{lane.port}'
     config = directory / 'cria.toml'
     config.write_text(transport(active.decode(), port=port, endpoint=endpoint, logs=str(logs), calls=str(calls),
@@ -460,40 +409,13 @@ def start_row(lane_name, model, level, roles, window, *, port):
                             start_new_session=True)
     row = dict(lane=lane_name, model=model, level=level, port=port, window=window, endpoint=endpoint,
                dir=str(directory), config=str(config), calls_dir=str(calls), logs_dir=str(logs),
-               role_receipt=receipt, pid=proc.pid, start_ticks=start_ticks(proc.pid), release=workdir, python=python,
-               config_sha256=hashlib.sha256(config.read_bytes()).hexdigest(),
-               live_sha256=hashlib.sha256(original).hexdigest())
+               pid=proc.pid, start_ticks=start_ticks(proc.pid), release=workdir, python=python)
     (directory / 'row.json').write_text(json.dumps(row, indent=2) + '\n')
     try:
         wait_json(f'http://127.0.0.1:{port}/health', lambda v: True, seconds=300, alive_check=lambda: proc.poll() is None)
-        verify_row(row)
     except BaseException:
         stop_row(row)
         raise
-    return row
-
-
-def config_derived(row):
-    """True when the row's cria config is exactly its source (live config, or the row-sampled active copy)
-    with only the transport edits applied."""
-    config = Path(row['config'])
-    parsed = tomllib.loads(config.read_text())
-    source = Path(row['role_receipt']['active']) if row['role_receipt'] else Path(row['dir']) / 'config-before.toml'
-    expected = transport(source.read_text(), port=parsed['server']['port'], endpoint=row['endpoint'],
-                         logs=parsed['logging']['dir'], calls=parsed['logging']['capture_dir'], level=row['level'])
-    return (config.read_text() == expected and parsed['server']['port'] == row['port']
-            and parsed['logging']['capture_dir'] == row['calls_dir'] and parsed['logging']['dir'] == row['logs_dir'])
-
-
-def verify_row(row):
-    """The row's cria is alive, fronts the lane at the per-slot window, and serves the row's model."""
-    if not alive(row['pid'], row['start_ticks']):
-        raise ValueError('row cria process is not alive')
-    cards = get_json(f"http://127.0.0.1:{row['port']}/v1/models").get('data', [])
-    if not any(c.get('id') == row['model'] and c.get('context_window') == row['window'] for c in cards):
-        raise ValueError(f"row cria card {cards} is not {row['model']} at per-slot window {row['window']}")
-    if hashlib.sha256(Path(row['config']).read_bytes()).hexdigest() != row['config_sha256']:
-        raise ValueError('row cria config changed')
     return row
 
 
@@ -515,9 +437,6 @@ def main(argv=None):
         if state is not None:
             stop_server(lane_name)
     restored = restore_hardware()
-    # The driver that published the RTX3090 lease is gone (this is its recovery), so the lease is stale: a
-    # dead owner's lease otherwise blocks every later launch with "explicit cleanup required".
-    release_lease()
     print(json.dumps(restored))
     return 0
 

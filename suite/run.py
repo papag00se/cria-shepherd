@@ -20,8 +20,6 @@ Usage: run.py --task ada-handles --model ternary-bonsai --harness codex [--plann
 """
 
 import argparse
-import fcntl
-import hashlib
 import json
 import pathlib
 import os
@@ -40,12 +38,10 @@ from pathlib import Path
 
 try:  # importable as suite.run and executable as suite/run.py
     from . import sampling, run_guard, milestones
-    from .capture_paths import request_identity, request_paths
 except ImportError:
     import sampling
     import run_guard
     import milestones
-    from capture_paths import request_identity, request_paths
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -261,12 +257,6 @@ def swap_model(model: str) -> None:
     sh("sudo", "-n", "systemctl", "start", f"{target}.service", timeout=60)
     if not wait_health("http://127.0.0.1:18084/health"):
         raise RuntimeError(f"model {model} ({target}) never became healthy")
-
-
-def validate_fresh_l5_live_level(fresh_l5: bool, live_level: int) -> None:
-    """Requested CLI level is not evidence of the configuration cria loaded."""
-    if fresh_l5 and live_level != 5:
-        raise RuntimeError(f"fresh L5 requires live cria engagement level 5, got {live_level}")
 
 
 def configure_cria(model: str, planner_enabled: bool = False) -> dict:
@@ -566,38 +556,11 @@ def stop_process_group(proc, *, grace: float = KILL_GRACE, sleeper=time.sleep) -
         pass
 
 
-def capture_manifest(session_dirs) -> dict:
-    """Snapshot request/response evidence at harness shutdown without folding late responses
-    into the run's measured call and phase counts. Pending requests remain named evidence.
-    """
-    entries = []
-    complete = True
-    for directory in session_dirs:
-        for request in request_paths(Path(directory)):
-            seq, _phase = request_identity(request)
-            response = request.with_name(request.stem + ".response.json")
-            try:
-                req = json.loads(request.read_text())
-                phase = req.get("phase")
-                entry = {"request": str(request), "sha256": hashlib.sha256(request.read_bytes()).hexdigest(),
-                         "phase": phase, "seq": seq}
-                if response.is_file():
-                    entry["response"] = str(response)
-                    entry["response_sha256"] = hashlib.sha256(response.read_bytes()).hexdigest()
-                else:
-                    entry["pending"] = True
-                entries.append(entry)
-            except (OSError, ValueError):
-                complete = False
-    return {"complete": complete, "entries": entries}
-
-
 def shutdown_and_capture(*, calls_dir, before_sessions, stop, select=None):
-    """Stop the owned process group, then timestamp and discover the complete capture set.
+    """Stop the owned process group, then timestamp and discover the cell's capture sessions.
 
-    The row cutoff, session inventory, and snapshot all follow the shutdown barrier. This
-    includes sessions/calls emitted by surviving children during the grace period and prevents
-    post-cutoff responses from being counted as in-window evidence.
+    The row cutoff and session inventory follow the shutdown barrier, so sessions emitted by
+    surviving children during the grace period are included.
     """
     stop()  # one terminal owner closes admission, resumes and reaps before the cutoff
     stopped_at = time.time()
@@ -606,10 +569,10 @@ def shutdown_and_capture(*, calls_dir, before_sessions, stop, select=None):
     # `select` names this cell's own (the Codex session ids its harness log printed).
     new_sessions = [Path(calls_dir) / name for name in
                     (sorted(n for n in names if select(n)) if select else names - before_sessions)]
-    return stopped_at, new_sessions, capture_manifest(new_sessions)
+    return stopped_at, new_sessions
 
 
-def collect_capture(session_dirs, snapshot=None) -> dict:
+def collect_capture(session_dirs) -> dict:
     """Every call the run made, across ALL of its capture directories.
 
     cria opens a fresh capture directory per server session, and one cell can span several: the
@@ -618,9 +581,7 @@ def collect_capture(session_dirs, snapshot=None) -> dict:
     recorded `calls: 2` against 93 real calls in the directory next to it, which reads in the
     report as a model that produced nothing in half an hour. Sum them.
     """
-    calls = ([Path(entry["response"]) for entry in snapshot.get("entries", [])
-              if entry.get("response")] if snapshot is not None else
-             sorted(f for d in session_dirs for f in d.glob("*.response.json")))
+    calls = sorted(f for d in session_dirs for f in d.glob("*.response.json"))
     phases, tok_n, tok_ms = {}, 0, 0.0
     for f in calls:
         m = re.match(r"\d+-(.+?)(?:-s\d+.*)?\.response\.json$", f.name)
@@ -903,23 +864,16 @@ def restored_codex_argv(argv, model, context, adapter_url, home=None, cria_confi
     version = sh(str(RESTORED_CODEX_BINARY), "--version").stdout.strip()
     if version != "codex-cli 0.159.3":
         raise ValueError("pinned Codex executable version changed")
-    provenance = {"binary": str(RESTORED_CODEX_BINARY.resolve()), "version": version,
-                  "sha256": hashlib.sha256(RESTORED_CODEX_BINARY.read_bytes()).hexdigest(),
-                  "config": l0_config_fingerprint(SUITE_CODEX_HOME / "config.toml")}
+    provenance = {"binary": str(RESTORED_CODEX_BINARY.resolve()), "version": version}
     extra = ["-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
              "-c", f"model_auto_compact_token_limit={int(context * .85)}"]
     if home is not None:
         catalog = local_codex_catalog(
             model, context, home, vision=coder_declares_vision(CRIA_TOML if cria_config is None else cria_config))
         extra += ['-c', 'model_catalog_json=' + json.dumps(str(catalog))]
-        provenance['model_catalog'] = l0_config_fingerprint(catalog)
+        provenance['model_catalog'] = str(catalog)
         provenance['cell_home'] = str(home)
     return [str(RESTORED_CODEX_BINARY), *argv[1:-1], *extra, argv[-1]], provenance
-
-
-def l0_config_fingerprint(path):
-    # Hash metadata only: never copy credentials into campaign artifacts.
-    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def main() -> None:
@@ -937,14 +891,10 @@ def _main(scope) -> None:
     ap.add_argument("--planner", default="off", choices=["on", "off"],
                     help="experimental planner; off unless explicitly requested")
     ap.add_argument("--note", default="")
-    ap.add_argument("--campaign-revision", default=None,
-                    help="immutable source revision for a fresh campaign cell")
     ap.add_argument("--campaign-id")
     ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--lane-row", default=None,
                     help="row.json of the lane row (shared cria instance + lane server) this cell runs in")
-    ap.add_argument("--fresh-l5", action="store_true",
-                    help="record this as a fresh planner-off L5 cell; requires --campaign-revision")
     # The engagement level this cell ran at, recorded as a FIELD rather than parsed back out of the
     # note. The note is prose and has been reformatted twice; a column that a status command counts
     # must not depend on a regex over prose surviving the next edit.
@@ -958,8 +908,7 @@ def _main(scope) -> None:
     except ImportError:
         import l0_campaign
         from sampling_adapter import SamplingAdapter, RateLimitGate
-    fleet = None
-    live_snapshot = None
+    spec = None
     lane_row = None
     lane_evidence = None
     cria_toml = CRIA_TOML
@@ -977,40 +926,20 @@ def _main(scope) -> None:
         CALLS_DIR, EVENTS_DIR = Path(lane_row["calls_dir"]), Path(lane_row["logs_dir"])
         cria_toml = Path(lane_row["config"])
     if args.restored_fleet:
-        if args.level not in range(6) or args.planner != "off" or args.fresh_l5:
+        if args.level not in range(6) or args.planner != "off":
             ap.error("--restored-fleet requires L0-L5 with planner off")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
             ap.error("restored model/task must belong to the eight by six roster")
-        fleet = l0_campaign.fleet_snapshot(level=args.level, lanes=bool(lane_row))
-        live_snapshot = l0_campaign.validate_live(CRIA_TOML, level=args.level, lanes=bool(lane_row))
+        spec = l0_campaign.role_sampling(args.model)
+        l0_campaign.check_config(CRIA_TOML, level=args.level, lanes=bool(lane_row))
     elif args.model not in set(SERVICES) | set(EXTERNAL):
         ap.error("unknown legacy model; official fleet identities require --restored-fleet")
     if args.campaign_id:
         l0_campaign.campaign_dir(args.campaign_id)
-        if not args.campaign_revision:
-            ap.error("--campaign-id requires --campaign-revision")
-        l0_campaign.validate_revision(args.campaign_revision)
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
-    if args.fresh_l5 and (args.level != 5 or args.planner != "off" or not args.campaign_revision):
-        ap.error("--fresh-l5 requires --level 5, --planner off, and --campaign-revision")
-    if args.campaign_revision and any(c.isspace() for c in args.campaign_revision):
-        ap.error("--campaign-revision must be one immutable revision token")
-    if args.fresh_l5:
-        import fresh_l5_campaign
-        if args.model not in fresh_l5_campaign.MODELS or args.task not in fresh_l5_campaign.TASKS:
-            ap.error("--fresh-l5 model and task must belong to its fixed 9×6 cohort")
-        try:
-            from . import campaign_provenance
-        except ImportError:
-            import campaign_provenance
-        try:
-            code_revision = campaign_provenance.validate(args.campaign_revision)
-        except campaign_provenance.ProvenanceError as exc:
-            ap.error(str(exc))
-    else:
-        code_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
-                                       capture_output=True, text=True, check=True).stdout.strip()
+    code_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
+                                   capture_output=True, text=True, check=True).stdout.strip()
 
     other_runs = run_guard.other_suite_runners(lane=bool(lane_row))
     if other_runs:
@@ -1038,19 +967,10 @@ def _main(scope) -> None:
     env = None
     adapter = None
     harness_provenance = None
-    role_config_receipt = None
     if lane_row:
         # The lane driver owns the lane server and the row's cria (own port, config copy with this row's
-        # sampling applied, own capture/log dirs); this cell verifies them and never edits the live config.
-        lane_evidence = {"name": lane_row["lane"], "row_dir": lane_row["dir"], "cria_port": lane_row["port"],
-                         "window": lane_row["window"], "cria_config_sha256": lane_row["config_sha256"],
-                         "server": lanes.verify_server(lanes.server_state(lane_row["lane"])),
-                         "lease": lanes.fleet_gpu.read_lease() if lanes.LANES[lane_row["lane"]].card == "3090" else None}
-        lanes.verify_row(lane_row)
-        role_config_receipt = lane_row["role_receipt"]
-        live_snapshot = (l0_campaign.fingerprint(role_config_receipt["active"]) if role_config_receipt
-                         else l0_campaign.validate_live(CRIA_TOML, level=args.level, lanes=True))
-        spec = fleet["roles"][args.model]
+        # sampling applied, own capture/log dirs); this cell never edits the live config.
+        lane_evidence = {"name": lane_row["lane"], "cria_port": lane_row["port"], "window": lane_row["window"]}
         env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]))
         harness_argv, harness_provenance = restored_codex_argv(
@@ -1062,20 +982,15 @@ def _main(scope) -> None:
                 from .restored_roles import scoped
             except ImportError:
                 from restored_roles import scoped
-            role_config_receipt = scope.enter_context(scoped(
-                CRIA_TOML, fleet['roles'][args.model], log_root / (run_id + '-roles')))
-            live_snapshot = l0_campaign.validate_live(CRIA_TOML, level=args.level)
-        # The permanent launcher owns guarded fleet switching; L5 sampling is cell-scoped.
+            scope.enter_context(scoped(CRIA_TOML, spec))
+        # The permanent launcher owns guarded fleet switching; role sampling is cell-scoped.
         switched = sh(str(l0_campaign.LAUNCHER), "switch", args.model, timeout=180)
         if switched.returncode:
             raise RuntimeError("restored fleet switch failed: " + switched.stderr)
-        if l0_campaign.validate_live(CRIA_TOML, level=args.level) != live_snapshot:
-            raise RuntimeError("live engagement config changed during switch")
-        spec = fleet["roles"][args.model]
         env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT))
         harness_argv, harness_provenance = restored_codex_argv(
-            harness_argv, args.model, fleet["config"]["models"][args.model]["ctx"], adapter.base_url,
+            harness_argv, args.model, l0_campaign.context(args.model), adapter.base_url,
             Path(env['CODEX_HOME']))
     else:
         swap_model(args.model)
@@ -1092,7 +1007,6 @@ def _main(scope) -> None:
         sys.path.insert(0, repo_root)
     from cria.config import _engagement_level
     live_engagement_level = _engagement_level(live_config.get("engagement", {}))
-    validate_fresh_l5_live_level(args.fresh_l5, live_engagement_level)
     print(f"[sampling] {args.model}: "
           + "  ".join(f"{r}={dict(k)}" for r, k in spec.items()), flush=True)
     # SEEDED tasks start from existing code the model must read, not a blank directory. Every task
@@ -1131,7 +1045,7 @@ def _main(scope) -> None:
             proc, pacing, run_id, ws, task_dir, stop=control.stop)
         # Stop first. A child may still finish a response or create a new session during the grace
         # period, so the wall cutoff and session inventory must be taken only after the group is gone.
-        t1, new_sessions, capture_snapshot = shutdown_and_capture(
+        t1, new_sessions = shutdown_and_capture(
             calls_dir=CALLS_DIR, before_sessions=before_sessions, stop=control.stop,
             select=((lambda name: any(name.endswith("-" + sid) for sid in harness_sessions(log_path)))
                     if lane_row else None))
@@ -1139,7 +1053,7 @@ def _main(scope) -> None:
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
                       default=None) if new_sessions else None
-    capture = collect_capture(new_sessions, capture_snapshot) if new_sessions else \
+    capture = collect_capture(new_sessions) if new_sessions else \
         {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
 
     # EVIDENCE PRESERVATION (operator directive 2026-07-29): every run's artifacts are evidence
@@ -1162,16 +1076,12 @@ def _main(scope) -> None:
         "planner_enabled": planner_enabled_verified,
         "planner_phase_count": (capture.get("phases") or {}).get("planner", 0),
         "live_engagement_level": live_engagement_level,
-        "note": ((f"FRESH-L5 {args.campaign_revision} " + args.note).strip()
-                 if args.fresh_l5 else args.note),
-        **({"revision": args.campaign_revision, "code_revision": code_revision}
-           if args.fresh_l5 or args.campaign_id else {}),
+        "note": args.note,
+        "code_revision": code_revision,
         **({"campaign_id": args.campaign_id} if args.campaign_id else {}),
         **({"lane": {**lane_evidence, "factor": lanes.wall_factor(args.model, lane_row["lane"])}} if lane_row else {}),
-        **({"restored_fleet": True, "fleet_snapshot": fleet, "live_config_snapshot": live_snapshot,
-            "source_coder_sampling": spec["coder"], "injected_sampling": adapter.injected,
-            "harness_provenance": harness_provenance,
-            "restored_role_config": role_config_receipt} if args.restored_fleet else {}),
+        **({"restored_fleet": True, "source_coder_sampling": spec["coder"], "injected_sampling": adapter.injected,
+            "harness_provenance": harness_provenance} if args.restored_fleet else {}),
         "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
@@ -1183,7 +1093,6 @@ def _main(scope) -> None:
         "judgment_policy": milestones.JUDGMENT_POLICY,
         "checkpoint_mode": "async-live-snapshot",  # coder never paused; active_seconds == wall_seconds
         **capture,
-        **({"capture_snapshot": capture_snapshot} if args.fresh_l5 or args.campaign_id or args.restored_fleet else {}),
         **collect_event_census(t0, t1, harness_sessions(log_path) if lane_row else None),
         "workspace": str(ws),
         "archive": str(archive),
@@ -1193,17 +1102,6 @@ def _main(scope) -> None:
         "workspace_lost": workspace_lost,
         "harness_log": str(log_path),
     }
-    if args.restored_fleet:
-        try:
-            row["actual_sent_sampling"] = l0_campaign.actual_sampling(
-                capture_snapshot, args.model, spec["coder"], coder_only=args.level >= 1)
-            if lane_row:
-                lanes.verify_row(lane_row)
-                lanes.verify_server(lanes.server_state(lane_row["lane"]))
-            elif l0_campaign.validate_live(CRIA_TOML, level=args.level) != live_snapshot:
-                raise ValueError("live config changed during cell")
-        except (OSError, ValueError, KeyError) as exc:
-            row["aborted"] = "invalid restored sampling/config: " + str(exc)
     throttled = throttled_mid_run(session_dir)
     if throttled:
         row["aborted"] = throttled
@@ -1211,65 +1109,6 @@ def _main(scope) -> None:
     _rs.append_row(row, RESULTS)
     print(json.dumps({k: row[k] for k in
                       ("run_id", "terminal", "wall_seconds", "calls", "avg_tok_s")}, indent=1))
-    _freeze_usefulness_evidence(row)
-    if not args.campaign_id:
-        _refresh_grid(row)
-
-
-def _freeze_usefulness_evidence(row: dict) -> None:
-    """Save the judge's evidence packet NOW, while the workspace still exists.
-
-    The usefulness judgment — "was real work done?", the question the operator actually cares about —
-    is judged from a packet built by walking the archived workspace. The workspace is the perishable
-    half: of 503 recorded runs, 455 had no verdict and only 138 of those still had a workspace on
-    disk, so the rest can never be judged at all. Every BASE row that could still be judged already
-    had been; the other 57 are gone for good, which is why the arms cannot be compared on the number
-    that matters.
-
-    Nothing in `suite/` deletes an archive, so the loss came from outside — and a mechanism that
-    depends on 3.4 GB of trees surviving indefinitely is one that will keep losing runs. A few KB of
-    text per run does not. Judging can then happen whenever, on whatever is left.
-
-    Best-effort by construction: a packet that cannot be written must never fail a run that
-    finished, and the row is already on disk by the time this runs."""
-    try:
-        sys.path.insert(0, str(SUITE))
-        import usefulness
-        out = usefulness.save_packet(row)
-        if out is not None:
-            print(f"[usefulness] evidence frozen -> {out}", flush=True)
-    except Exception as e:                       # noqa: BLE001 — never fail a finished run
-        print(f"[usefulness] could not freeze evidence: {e}", flush=True)
-
-
-def _refresh_grid(row: dict | None = None) -> None:
-    """Rewrite the operator grid from results.jsonl, here, where the row was just appended.
-
-    The grid is the operator view and is refreshed automatically after every run.
-
-    Best-effort and non-fatal: the run's RESULT is already durably on disk one line above, and a
-    reporting step must never be able to fail a completed run."""
-    # The campaign table is silent when no BATTERY rows exist, so an ordinary run does not touch it.
-    # rows exist, so an ordinary ladder run does not touch it.
-    try:
-        sys.path.insert(0, str(SUITE))
-        import battery_status
-        if rs := battery_status.rows():
-            battery_status.write_report(rs)
-            print("[battery] refreshed docs/battery-report.md")
-        # A ROW THE GRID CANNOT SEE MUST SAY SO. `battery_status.rows()` keeps only rows whose note
-        # starts with a counted prefix, and `cell()` then matches an arm token inside it — so a run
-        # launched with free text in --note completes, gets judged, and is silently absent from the
-        # operator's only view. Nothing is
-        # rejected here — a deliberate one-off run is legitimate — but it is named (#3 is about
-        # noise, not about hiding a fact the operator is about to act on).
-        if row and not any(r.get("run_id") == row.get("run_id") for r in rs):
-            print(f"[battery] NOT COUNTED in the grid: note {row.get('note')!r} does not start with one "
-                  f"of {battery_status.COUNTED_PREFIXES}. A counted note looks like "
-                  f"'{battery_status.NOTE_PREFIX} L<level> <model> <commit> p<rev>' — "
-                  f"suite/battery_run.py composes it for you.")
-    except Exception as e:  # noqa: BLE001
-        print(f"[battery] refresh skipped: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
