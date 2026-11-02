@@ -146,10 +146,9 @@ BRIEFING_OPEN = "⟦ctx:briefing⟧"
 BRIEFING_CLOSE = "⟦/ctx:briefing⟧"
 CONTINUATION_MARKER = "⟦ctx:continuation⟧"   # leads cria's compaction reframe — marks it as cria
 #   scaffolding so classify.latest_user_text skips it (it reads as reasoning and mis-routes the role)
-# The re-anchor note injected on the FIRST turn after a detected harness compaction (the plan-off
-# path — the loop instead re-plans from the summary) lives in prompts/reanchor.txt. Seed incident: a
-# compacted model treated its OWN earlier work as a previous agent's and duplicated a file under a
-# different dir; the note re-orients it to inspect before creating.
+# After a detected harness compaction the coder is told only the typed landed-write record
+# (reorientation.py, prompts/reanchor_facts.txt). Seed incident: a compacted model treated its OWN
+# earlier work as a previous agent's and duplicated a file under a different dir.
 # Both `compaction_reframe_dropped*` templates say this in their first sentence (a test pins it): the
 # continuation then holds NO model-authored prose, only re-derived ground truth.
 _DROPPED_PROSE_LEAD = "the handoff summary from that turn did not survive"
@@ -1388,20 +1387,6 @@ def _statement_deliverable(task: str, messages, chat, role, rlog, sess) -> bool:
             pass
     return answer
 
-
-# A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
-# checkable against the text the directive was written FROM, which is what makes them worth checking:
-# cria cannot judge whether a paraphrase is faithful, and can always tell whether a name was there.
-# THE PATH ARM SWALLOWED A SENTENCE'S FULL STOP AND MATCHED ENGLISH. `lib/shipping/rates.rb.` read
-# as invented while the path itself was right there in the source; so did `target/.`. And a slash
-# between two words is prose, not a path: `I/O`, `trim/normalise`, `problems/risks`,
-# `blank/non-numeric`, `SKU/quantity/price.`. Thirteen of the thirty-two invented-name refusals on
-# the re-orientation seat — 41% — were solely one of those two artifacts, each one discarding a whole
-# model call and replacing its answer with the canned text.
-#
-# So a path segment may not END on a separator or a dot, and a bare word/word with no dot and no
-# further separator is not a path.
-_GROUNDABLE_NAME = reorientation._GROUNDABLE_NAME
 
 def _workspace_basename_matches(root: str, name: str) -> list[str] | None:
     """Workspace-relative paths whose basename is ``name`` — ``None`` when cria cannot say.
@@ -5381,17 +5366,7 @@ class Loop:
         reoriented = False
         reorient = next(iter(runtime.bindings(reorientation.DEFINITION.policy.stage)), None)
         if reorient is not None and rewritten:
-            origin = getattr(sess, "handoff_origin", None)
-            result = reorient.execute(reorientation.ReorientationInput(True,
-                lambda: reorientation.ReorientationFacts(tuple(_msg_text_content(m) for m in raw
-                    if m.get("role") == "user"), self._ctx.reasoner_role is not None, root_task,
-                    next((_msg_text_content(m) for m in raw if m.get("role") == "user"
-                        and isinstance(origin, _HandoffOrigin)
-                        and origin.matches_continuation(_msg_text_content(m))), "")),
-                lambda: _reorientation_inventory(sess, rlog),
-                reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
-                None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
-                    self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding"),
+            result = reorient.execute(reorientation.ReorientationInput(True, None, rlog,
                 lambda: _reorientation_written(sess)))
             if result.message is not None:
                 history = history + [result.message]
@@ -9365,19 +9340,10 @@ def _read_ground_truth(sess, messages: list[dict], restored: dict | None = None)
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
 
 
-def _reorientation_inventory(sess, rlog) -> str:
-    """The workspace listing for the post-compaction orienter of an UNOWNED continuation: this
-    request's own survey, or nothing. (An owned handoff is followed by no author, so no listing is
-    asked for; a listing recorded at the briefing writer was reachable only through that path.)"""
-    current = workspace_inventory(sess.workspace_root or "", flavor="briefing")
-    rlog.emit("loop.reanchor_inventory", source="current" if current else "none")
-    return current
-
-
 def _reorientation_written(sess) -> tuple[tuple[str, str], ...]:
     """(path, survey note) for every file this session's landed write calls produced — typed records
     only (`sess.written_files`, keyed like the ledger), sized from the latest survey when it lists the
-    file. The facts-only orientation an owned handoff falls back to when its authored guidance is refused."""
+    file. The whole of what the coder is told after a history rewrite."""
     written = getattr(sess, "written_files", None)
     if not written:
         return ()

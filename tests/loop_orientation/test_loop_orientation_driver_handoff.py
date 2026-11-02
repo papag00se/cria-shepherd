@@ -34,27 +34,17 @@ def after_work(task, summary):
 def steers(framed):
     return [m["content"] for m in framed["messages"] if str(m.get("content")).startswith("⟦ctx:steer⟧")]
 
-def test_author_gets_the_task_apart_from_the_history_and_the_coder_keeps_the_task(monkeypatch):
-    """A failed-dependency summary cannot erase the library requirement nor pass for the task itself."""
-    framed, author = prepare(monkeypatch, after_work(TASK, SUMMARY))
-    system, grounding = author.call_args.args[2:4]
-    assert grounding.index(TASK) < grounding.index("HISTORICAL CONTINUATION") < grounding.index(SUMMARY)
-    assert "requirements are not evidence of completed work" in system
-    assert any(m.get("content") == TASK for m in framed["messages"])
-    assert "Importer.java" in steers(framed)[0]
-
-    _, only = prepare(monkeypatch, [{"role": "user", "content": SUMMARY}])
-    grounding = only.call_args.args[3]
-    assert "Original task not independently available" in grounding and grounding.count(SUMMARY) == 1
-
 @pytest.mark.parametrize("task", ["Do not inspect any files. Make the first requested edit.",
                                   "Inspect the relevant files before editing."])
-def test_a_handoff_cria_produced_never_overrides_the_task_with_a_canned_inspection(monkeypatch, task):
+@pytest.mark.parametrize("owned", [True, False])
+def test_no_continuation_is_followed_by_an_authored_or_canned_inspection(monkeypatch, task, owned):
     """ornith1.5_9b: an author that cannot ground its directive left the compatibility 'INSPECT first' notice to
-    contradict a task that forbade inspection. With a producer-owned handoff the optional steer is simply omitted."""
-    origin = loop._HandoffOrigin("Earlier work", "", False, continuation=SUMMARY)
-    framed, _ = prepare(monkeypatch, after_work(task, SUMMARY), answer="Inspect phantom.py before editing.", origin=origin)
+    contradict a task that forbade inspection. Whether or not the handoff is cria's own, no author is asked and no
+    inspection order is sent; the coder keeps the task."""
+    origin = loop._HandoffOrigin("Earlier work", "", False, continuation=SUMMARY) if owned else None
+    framed, author = prepare(monkeypatch, after_work(task, SUMMARY), answer="Inspect phantom.py before editing.", origin=origin)
     assert steers(framed) == [] and any(m.get("content") == task for m in framed["messages"])
+    author.assert_not_called()
 
 @pytest.mark.parametrize("plan_off", [True, False])
 def test_a_gap_named_by_the_scheduled_review_reaches_the_coder_turn_it_precedes_and_is_consumed(monkeypatch, plan_off):

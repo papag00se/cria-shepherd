@@ -1,7 +1,7 @@
 """A harness compaction mid-session: what the coder is handed afterwards, and what the harness is told.
 
 The coder read a.py, the file then grew on disk (4 -> 6 lines), and the harness replaced the history with a summary.
-Through the real plan-off Loop (only the model server is fake) the next coder frame must carry the re-anchor notice, a
+Through the real plan-off Loop (only the model server is fake) the next coder frame must carry the typed landed-write record, a
 read ledger that DATES the old line count against the workspace's own copy, and the file's current text; the outgoing
 completion says the session was re-anchored.
 """
@@ -43,7 +43,8 @@ def test_after_a_compaction_the_coder_is_re_anchored_with_a_dated_ledger_and_the
     out = driver.drive({"messages": compacted, "tools": TOOLS, "stream": True}, "sid:k", None, log)
     frame = [m["content"] for m in seen[-1] if m["role"] == "user"]
     assert out["cria_notes"] == ["re-anchored after a harness compaction"] and "loop.history_rewritten" in log.kinds()
-    assert any(t.startswith("⟦ctx:steer⟧ context notice: the harness just compacted") for t in frame)
+    assert any(t.startswith("⟦ctx:steer⟧ Harness record of this session's own earlier work, not guidance") and
+               f"- {tmp_path}/b.py (6 B in the latest survey)" in t for t in frame)
     ledger = next(t for t in frame if t.startswith("⟦ctx:facts⟧"))
     assert f"{path} (6 lines now — 4 lines when you last read or wrote it, so the file has changed since)" in ledger
     current = next(t for t in frame if t.startswith("⟦ctx:current⟧"))
