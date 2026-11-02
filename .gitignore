@@ -30,3 +30,4 @@ suite/results/*.log
 # one cleaner took a workspace mid-run and the row landed 0/0 with nothing to explain it.
 /runs/
 walkdata/
+suite/results/.results.jsonl.lock
