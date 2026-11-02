@@ -91,6 +91,14 @@ def fingerprint(path, *, large=False):
     return out
 
 
+def unit_environment_ok(environment):
+    """The base offline environment, plus at most operator-declared LLAMA_ARG_* server options
+    (e.g. `LLAMA_ARG_CACHE_RAM`, model-settings.md); the exact effective value is recorded in the snapshot."""
+    base = {f'HOME={Path.home()}', 'PATH=/usr/bin:/bin', 'HF_HUB_OFFLINE=1', 'LLAMA_ARG_OFFLINE=1'}
+    tokens = set(environment.split())
+    return base <= tokens and all(t.startswith('LLAMA_ARG_') for t in tokens - base)
+
+
 def fleet_snapshot(*, level=0, lanes=False):
     """Read-only validation. No switch, restart, model inference or implicit acquisition.
 
@@ -168,7 +176,7 @@ def fleet_snapshot(*, level=0, lanes=False):
             f'path={LAUNCHER} ;' not in start or values.get('User') != Path.home().name
             or values.get('WorkingDirectory') != str(FLEET) or values.get('Restart') != 'no'
             or values.get('KillMode') != 'control-group'
-            or values.get('Environment') != f'HOME={Path.home()} PATH=/usr/bin:/bin HF_HUB_OFFLINE=1 LLAMA_ARG_OFFLINE=1'):
+            or not unit_environment_ok(values.get('Environment',''))):
             raise ValueError('unsafe effective unit: '+unit)
         values["ExecStart"] = f"{LAUNCHER} serve {model}"
         effective_units[unit]=values

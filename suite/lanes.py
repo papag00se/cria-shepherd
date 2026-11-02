@@ -122,6 +122,13 @@ def lane_window(model, lane_name, window=None):
     return min(window, profile_context(model))
 
 
+def unit_server_options(unit):
+    """Operator-declared `LLAMA_ARG_*` options of the model's effective unit (drop-ins), which a lane honors."""
+    out = subprocess.run(['systemctl', 'show', unit, '-p', 'Environment', '--value'], capture_output=True,
+                         text=True, check=True).stdout
+    return dict(t.split('=', 1) for t in out.split() if t.startswith('LLAMA_ARG_') and t != 'LLAMA_ARG_OFFLINE=1')
+
+
 def lane_plan(model, lane_name, window):
     """The model's own profile plan with only parallel/ctx/port/device overridden for the lane."""
     import copy
@@ -132,6 +139,7 @@ def lane_plan(model, lane_name, window):
     record['config']['ctx'] = lane.slots * window
     plan = cli.make_plan(record, port=lane.port)
     plan['env']['CUDA_VISIBLE_DEVICES'] = lane.gpu
+    plan['env'].update(unit_server_options(record['unit']))
     plan['window'] = window
     return plan
 
