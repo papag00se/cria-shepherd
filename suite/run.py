@@ -44,6 +44,8 @@ except ImportError:
     import milestones
 
 SUITE = Path(__file__).resolve().parent
+if str(SUITE.parent) not in sys.path:   # run as suite/run.py, this module imports cria
+    sys.path.insert(0, str(SUITE.parent))
 RESULTS = SUITE / "results" / "results.jsonl"
 try:  # the one locked reader/writer of results.jsonl
     from . import results_store as _rs
