@@ -145,6 +145,8 @@ An undecidable completion judgment means **not done**.
 
 A failed judge must never remove real results or produce a false success. Fail open only toward continuing work or restoring the ability to work.
 
+This governs ONE question: whether the coder's task is done. It is not a rule for the suite, campaigns, deployment or bookkeeping: a run that fails or is interrupted is simply rerun, and nothing is blocked because its evidence cannot be proven.
+
 ### 14. cria must NEVER end a session by handing back to a human
 Do not escalate to a human, stronger model, or declared capability ceiling.
 
