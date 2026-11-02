@@ -26,7 +26,7 @@ SSE = (b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
 BIG = " ".join("w%05d" % i for i in range(30000))  # ~70k tokens on the fake chars/3 tokenizer
 
 
-COMPACTION_JUDGES = {"Answer PLAN if": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES",
+COMPACTION_JUDGES = {"Decide PLAN only from": "RETROSPECTIVE", "Answer NARROWS if": "PRESERVES",
                      "what role does the briefing give that file": "app.py | EXISTS", "ALREADY created": "app.py | NOT CHANGED",
                      "which state of the code": "none", "what size does the briefing give": "none"}
 

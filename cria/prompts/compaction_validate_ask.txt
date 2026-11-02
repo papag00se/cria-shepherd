@@ -1,1 +1,1 @@
-Classify the candidate now. Answer with exactly one of the two allowed words from the question above.
+Judge the candidate now. Quote any instruction sentence, then end with a final line containing only PLAN or RETROSPECTIVE.

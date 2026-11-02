@@ -7567,13 +7567,19 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         return False
 
     def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
-        answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
+        # REASONING ON: with it off the question was a coin-flip on real writer replies (31% PLAN on briefings with
+        # no instruction sentence, 41% on ones with an explicit one; decision-log "The reasoner retrospective lens").
+        # The reply quotes the instruction sentences it found and ENDS with the verdict word: the verdict is the
+        # last line, anything else (empty, cut off) is no answer and the briefing is refused.
+        answer = summarize(chat_fn, replace(role, reasoning="on"), system_prompt,
                            prompts.load("compaction_validate_ask"), rlog,
                            phase=f"{phase}-{lens}", max_tokens=JUDGE_MAX_TOKENS, retry_off=False,
                            temperature=0.0, evidence_blocks=blocks,
                            output_reserve=COMPACTION_VERDICT_RESERVE)
-        answers[lens] = answer.strip()[:40]
-        return answer.strip().upper() == accepted_word
+        lines = [ln.strip() for ln in answer.strip().splitlines() if ln.strip()]
+        verdict = lines[-1] if lines else ""
+        answers[lens] = verdict[:40]
+        return verdict.upper() == accepted_word
 
     # Candidate-only on purpose. In the captured false accepts, an obvious "Next step" section was
     # buried behind 12K-32K tokens of history and the judge overlooked the simplest invariant.
