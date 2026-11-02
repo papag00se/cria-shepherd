@@ -990,7 +990,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/cleanupsafety.py:analyze`](../../cria/cleanupsafety.py#L12)
-- [`cria/cleanupsafety.py:review`](../../cria/cleanupsafety.py#L41)
+- [`cria/cleanupsafety.py:review`](../../cria/cleanupsafety.py#L39)
 - [`cria/cleanup_python.py`](../../cria/cleanup_python.py)
 - [`cria/cleanup_languages.py`](../../cria/cleanup_languages.py)
 - [`cria/cleanup_extra.py`](../../cria/cleanup_extra.py)

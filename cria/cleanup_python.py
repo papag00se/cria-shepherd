@@ -7,10 +7,14 @@ unknown. Function summaries are limited to undecorated zero-argument helpers.
 """
 import ast
 import posixpath
-from .cleanupfacts import Analysis, Finding, PathFact as Atom, classify, parent_fact, join_fact
+import shlex
+from .cleanupfacts import Analysis, Finding, PathFact as Atom, classify, parent_fact, join_fact, shell_text_finding
 
 
 UNKNOWN = frozenset({Atom('unknown')})
+# Calls that hand a shell text to the machine's shell (always), or only with shell=True / as an argument list.
+_SHELL_TEXT_APIS = frozenset({'os.system', 'os.popen', 'subprocess.getoutput', 'subprocess.getstatusoutput'})
+_SUBPROCESS_APIS = frozenset({'subprocess.' + f for f in ('run', 'call', 'check_call', 'check_output', 'Popen')})
 
 
 def value(kind, text='', parent=None):
@@ -45,6 +49,21 @@ class PythonPaths:
                           tuple(sorted({a.text or a.kind for a in targets})))
         if finding not in self.findings:
             self.findings.append(finding)
+
+    def shell(self, node, always):
+        """The literal command a process call hands over, read by dirguard's own shell reader (never a second one here)."""
+        first = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == 'args'), None)
+        text = None
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            shell = any(k.arg == 'shell' and isinstance(k.value, ast.Constant) and k.value.value is True for k in node.keywords)
+            text = first.value if always or shell else None
+        elif always is False and isinstance(first, (ast.List, ast.Tuple)) and first.elts and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, str) for e in first.elts) and not any(
+                k.arg == 'shell' for k in node.keywords):
+            text = shlex.join(e.value for e in first.elts)
+        found = text and shell_text_finding(text, node.lineno, ast.get_source_segment(self.source, node) or '')
+        if found and found not in self.findings:
+            self.findings.append(found)
 
     def parent(self, atoms):
         return frozenset(parent_fact(a) for a in atoms)
@@ -125,6 +144,10 @@ class PythonPaths:
         if api in ('shutil.rmtree', 'os.remove', 'os.unlink', 'os.rmdir', 'os.removedirs'):
             if report:
                 self.target(n, first, api == 'shutil.rmtree', possible)
+            return UNKNOWN
+        if api in _SHELL_TEXT_APIS or api in _SUBPROCESS_APIS:
+            if report:
+                self.shell(n, api in _SHELL_TEXT_APIS)
             return UNKNOWN
         if api in ('builtins.open', 'io.open'):
             mode = args[1] if len(args) > 1 else kw.get('mode', value('literal', 'r'))

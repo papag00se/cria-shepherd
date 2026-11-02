@@ -6,7 +6,7 @@ execution under the adapter's documented assumptions. This is not a sandbox.
 from dataclasses import asdict
 from pathlib import PurePosixPath
 from . import prompts, dirguard
-from .cleanupfacts import Analysis, Finding
+from .cleanupfacts import Analysis, shell_text_finding
 
 
 def analyze(path: str, source: str, workspace: str | None, permission: str = 'none') -> Analysis:
@@ -27,11 +27,9 @@ def analyze(path: str, source: str, workspace: str | None, permission: str = 'no
         language = LANGUAGES.get(suffix, 'universal')
         result = inspect_source(source, language, workspace, permission)
         if language == 'shell':
-            root = dirguard._root_delete_assessment(source)
+            root = shell_text_finding(source, 1, source)
             if root:
-                rule, targets = ('root', ('/',)) if root == 'PROVEN' else ('root_uncertain', ())
-                return Analysis('shell', result.findings + (Finding(root, rule, 1, source, targets),),
-                                'supported-subset')
+                return Analysis('shell', result.findings + (root,), 'supported-subset')
         return result
     except (RecursionError, SyntaxError, ValueError) as exc:
         return Analysis('python' if suffix in ('.py', '.pyw') else 'universal', (),

@@ -7,8 +7,9 @@ syntax/dispatch stays UNKNOWN. These adapters are not cria-wide language support
 """
 from dataclasses import dataclass
 import re
+import shlex
 
-from .cleanupfacts import Analysis, Finding, PathFact, classify, join_fact, parent_fact
+from .cleanupfacts import Analysis, Finding, PathFact, classify, join_fact, parent_fact, shell_text_finding
 from .cleanup_languages import Token, LEADS, name, ARROW_MEMBER_LANGUAGES, MEMBER_OPS
 
 LANGUAGES = {
@@ -300,6 +301,8 @@ class Contract:
     target: int = 0
     label: str | None = None
     mode: int | None = None
+    # The call hands a shell text (or a program and its argument list) to the machine's shell; dirguard reads it.
+    shell: bool = False
 
 
 class Inspector:
@@ -335,6 +338,12 @@ class Inspector:
                 contracts.update(remove=Contract(), fopen=Contract(mode=1))
             if 'unistd.h' in headers:
                 contracts.update(unlink=Contract(), rmdir=Contract())
+            if headers & {'stdlib.h', 'cstdlib'} or (lang == 'objective-c' and 'Foundation/Foundation.h' in headers):
+                contracts['system'] = Contract(shell=True)
+                if lang == 'cpp':
+                    contracts['std::system'] = Contract(shell=True)
+            if headers & {'stdio.h', 'cstdio'}:
+                contracts['popen'] = Contract(shell=True)
             if lang == 'cpp':
                 if 'cstdio' in headers:
                     contracts.update({'std::remove': Contract(), 'std::fopen': Contract(mode=1)})
@@ -346,7 +355,8 @@ class Inspector:
         if lang == 'swift':
             imported = any(t.kind == 'word' and t.text == 'import' and i+1 < len(ts) and ts[i+1].text == 'Foundation' for i,t in enumerate(ts))
             if imported:
-                contracts.update({'FileManager.default.removeItem': Contract(True, label='atPath'),
+                contracts.update({'system': Contract(shell=True), 'Process.run': Contract(shell=True),
+                                  'FileManager.default.removeItem': Contract(True, label='atPath'),
                                   'FileManager.default.createFile': Contract(label='atPath')})
                 self.helpers['URL'] = 'url'
         self.constants = {}
@@ -363,12 +373,15 @@ class Inspector:
             self.dart_io = any(t.kind == 'word' and t.text == 'import' and i+2 < len(ts) and ts[i+1].kind == 'literal'
                                and ts[i+1].text == 'dart:io' and ts[i+2].text == ';' for i,t in enumerate(ts))
             if self.dart_io:
+                contracts.update({'Process.' + m: Contract(shell=True) for m in ('run', 'runSync', 'start', 'startSync')})
                 self.constants.update({'Directory.systemTemp': 'shared', 'Directory.systemTemp.path': 'shared'})
         if lang == 'lua':
-            contracts.update({'os.remove': Contract(), 'io.open': Contract(mode=1)})
+            contracts.update({'os.remove': Contract(), 'io.open': Contract(mode=1),
+                              'os.execute': Contract(shell=True), 'io.popen': Contract(shell=True)})
         if lang == 'perl':
             contracts.update({'unlink': Contract(), 'rmdir': Contract(), 'open': Contract(target=2, mode=1),
-                              'CORE::unlink': Contract(), 'CORE::rmdir': Contract(), 'CORE::open': Contract(target=2, mode=1)})
+                              'CORE::unlink': Contract(), 'CORE::rmdir': Contract(), 'CORE::open': Contract(target=2, mode=1),
+                              **{prefix + call: Contract(shell=True) for prefix in ('', 'CORE::') for call in ('system', 'exec')}})
             used = {name(ts[i+1:i+4]) for i,t in enumerate(ts) if t.kind == 'word' and t.text in ('use', 'require')}
             if 'File::Spec' in used:
                 self.helpers.update({'File::Spec->tmpdir': 'shared', 'File::Spec->catdir': 'join', 'File::Spec->catfile': 'join'})
@@ -384,7 +397,8 @@ class Inspector:
                         contracts['remove_tree'] = Contract(True)
         if lang == 'r':
             for prefix in ('', 'base::'):
-                contracts.update({prefix+'unlink': Contract(label='x'), prefix+'file.remove': Contract(),
+                contracts.update({prefix+'system': Contract(shell=True), prefix+'system2': Contract(shell=True),
+                                  prefix+'unlink': Contract(label='x'), prefix+'file.remove': Contract(),
                                   prefix+'writeLines': Contract(target=1, label='con')})
                 self.helpers[prefix+'dirname'] = 'parent'
                 self.helpers[prefix+'file.path'] = 'join'
@@ -520,6 +534,9 @@ class Inspector:
                 self.emit(start, end, self.path(argument(args, 0)), known=False)
             return
         known = self.known(raw)
+        if contract.shell:
+            self.shell(self.shell_text(raw, args), start, end, known)
+            return
         if contract.mode is not None:
             mode_seq = argument(args, contract.mode)
             mode = self.path(mode_seq)
@@ -556,6 +573,58 @@ class Inspector:
                     or (self.language == 'r' and raw.rsplit('::', 1)[-1] == 'file.remove'))
         for target in positional(args) if variadic else [target_seq]:
             self.emit(start, end, self.path(target), recursive, known)
+
+    def shell(self, text, start, end, known=True):
+        """A shell text handed over by a call or a command literal is judged by dirguard's own shell reader."""
+        found = text and shell_text_finding(text, self.source.count('\n', 0, start)+1, self.source[start:end],
+                                            known and not self.uncertain)
+        if found and found not in self.findings:
+            self.findings.append(found)
+
+    @staticmethod
+    def literals(seq):
+        """The text of every item of a closed list (`[…]`, `c(…)`) or of one string literal (C joins adjacent ones); None if any
+        item is not a plain literal."""
+        seq = [t for t in seq if t.kind != 'newline']
+        if seq and all(t.kind == 'literal' for t in seq):
+            return [''.join(t.text for t in seq)]
+        if len(seq) >= 3 and seq[-1].text == ')' and seq[0].kind == 'word' and seq[1].text == '(':
+            seq = seq[1:]
+        if len(seq) >= 2 and seq[0].text in ('[', '(') and end_group(seq, 0) == len(seq)-1:
+            items = arguments(seq[1:-1])
+            return [i[0].text for i in items if len(i) == 1 and i[0].kind == 'literal'] if all(
+                len(i) == 1 and i[0].kind == 'literal' for i in items) else None
+        return None
+
+    def shell_text(self, raw, args):
+        """The command line a shell-handing call spells with closed literals only, else None (computed text proves nothing)."""
+        base = raw.rsplit('::', 1)[-1].rsplit('.', 1)[-1]
+        plain = positional(args)
+        if raw.startswith('Process.') or base == 'system2':
+            # A program and its argument list (Dart `Process.run('sh', ['-c', …])`, Swift `Process.run(URL(…), arguments: […])`,
+            # R `system2('rm', c(…))`): the program is the one literal of the first argument.
+            program = [t for t in (plain[0] if plain else []) if t.kind == 'literal']
+            rest = keyword(args, 'arguments') or keyword(args, 'args') or (plain[1] if len(plain) > 1 else [])
+            items = self.literals(rest) if rest else None
+            if len(program) != 1 or items is None:
+                return None
+            return shlex.join([program[0].text, *items]) if base != 'system2' else ' '.join([program[0].text, *items])
+        items = self.literals(plain[0]) if plain else None
+        if items is None:
+            return None
+        # `system("rm", "-rf", "/")` (Perl list form) is a program and arguments, not one shell string.
+        extra = [self.literals(a) for a in plain[1:]] if self.language == 'perl' and len(plain) > 1 else []
+        if extra and all(e is not None and len(e) == 1 for e in extra):
+            return shlex.join([*items, *(e[0] for e in extra)])
+        return items[0] if len(items) == 1 and not extra else None
+
+    def command_literal(self, t):
+        """A Perl backtick/`qx` or Julia backtick literal: the shell text itself, closed expressions only."""
+        head = self.source[t.start:t.start+2]
+        if t.kind == 'opaque' and (head[:1] == '`' or (self.language == 'perl' and head == 'qx')) \
+                and not any(c in t.text for c in '$@\\'):
+            return t.text
+        return None
 
     def dart(self, i):
         """Direct constructor receivers only, never an arbitrary .delete method."""
@@ -666,6 +735,9 @@ class Inspector:
             held_until = -1
             for i,t in enumerate(ts):
                 if i <= held_until:
+                    continue
+                if self.language in ('perl', 'julia') and self.command_literal(t):
+                    self.shell(self.command_literal(t), t.start, t.end)
                     continue
                 if self.language == 'julia' and t.kind == 'op' and t.text == '@':
                     j = i+1

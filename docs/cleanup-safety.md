@@ -66,8 +66,25 @@ PowerShell `GetTempFileName()`), is PROVEN `temp_parent`; the fresh resource its
 scope. Any argument that could move a fresh resource elsewhere (`tempdir(DIR => …)`, `tempfile(tmpdir=…)`) is
 unresolved; a property or variable spelling that is declared, shadowed or reassigned anywhere in the candidate
 (`$env:TEMP = …`, `let FileManager = …`) is unresolved. C and Lua have no recursive delete, so no temp rule applies.
-Not resolved: paren-less Perl calls whose argument is a bare word (`remove_tree File::Spec->tmpdir;`), joins
-with the temp directory as the left operand, and shell strings handed to `system`/`os.execute`/`Process.run`.
+Shell strings (wave 19): a call that hands a command to the machine's shell is read by `dirguard`'s own shell reader
+(`cleanupfacts.shell_text_finding` -> `dirguard._root_delete_assessment`, the reader a saved `.sh` script already goes through; there is
+no second analyser): C/C++/Objective-C `system` (with `<stdlib.h>`/`<cstdlib>`/Foundation) and `popen`, Swift `system` and
+`Process.run(URL(fileURLWithPath: "…"), arguments: […])`, Dart `Process.run/runSync/start/startSync('prog', ['arg', …])` (with
+`dart:io`), Lua `os.execute`/`io.popen`, Perl `system`/`exec` (a string or the list form) and backtick/`qx` literals, R
+`system`/`system2('prog', c(…))`, Julia backtick commands, Python `os.system`/`os.popen`/`subprocess.*` (a string only with
+`shell=True`; a list of literals; import aliases resolved by the existing Python adapter) and JavaScript/TypeScript
+`child_process` `exec`/`execSync` (a shell text) and `execFile*`/`spawn*` (program and literal list), through a namespace import,
+a named import, a destructured `require` or `require('child_process').…`. Closed literals only: a computed, interpolated or
+escaped string, a name that is declared or shadowed in the candidate, a call without its library declaration, or a
+preprocessor/dynamic-code candidate is UNKNOWN (logged, never refused). `PROVEN` root deletion refuses and a wildcard that may supply the
+recursive option is `root_uncertain`, exactly as for a script. Not resolved: a `Process` built by property assignment
+(`p.executableURL = …; p.arguments = […]`, NSTask), PowerShell (native commands are the script's own commands, not strings handed
+to a function; `Invoke-Expression` already makes the candidate uncertain), a multi-line named import, and the other languages'
+process APIs (Go `exec.Command`, Rust `Command`, Java `Runtime.exec`, C# `Process.Start`, Ruby `system`, PHP `system`/`shell_exec`).
+Also fixed there: `x.exec(...)` (a regex or method call) no longer counts as the dynamic-code builtin that withheld every JS/TS
+API identity in the file.
+Not resolved: paren-less Perl calls whose argument is a bare word (`remove_tree File::Spec->tmpdir;`) and joins
+with the temp directory as the left operand.
 PowerShell switch parameters (`-Recurse`, `-Force`, `-WhatIf`, `-Confirm`, …) take no value, so a positional path
 after them is read (`Remove-Item -Recurse '/'` was missed before).
 

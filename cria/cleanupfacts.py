@@ -75,6 +75,19 @@ class Finding:
     targets: tuple[str, ...] = ()
 
 
+def shell_text_finding(text, line, evidence, known=True):
+    """What a shell text a program hands to a shell (a saved script, `system("…")`, `os.execute`, a backtick, a
+    `Process.run` argument list) does to the filesystem root: dirguard's own shell reader decides, never a second
+    reader here. None when it finds nothing; UNKNOWN when the call's identity is not established."""
+    verdict = dirguard._root_delete_assessment(text)
+    if not verdict:
+        return None
+    if not known:
+        return Finding('UNKNOWN', 'unresolved', line, evidence)
+    return (Finding('PROVEN', 'root', line, evidence, ('/',)) if verdict == 'PROVEN'
+            else Finding('POSSIBLE', 'root_uncertain', line, evidence))
+
+
 @dataclass(frozen=True)
 class Analysis:
     language: str
