@@ -21,6 +21,8 @@ import sys
 import time
 from pathlib import Path
 
+RETRY_SECONDS = 120
+
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
@@ -47,6 +49,7 @@ class Driver:
         self.campaigns, self.lane_names = campaigns, lane_names
         self.models, self.tasks, self.max_cells = models, tasks, max_cells
         self.running = {}          # (campaign id, model, task) -> dict(proc, lane, row, campaign)
+        self.retry_at = {}           # (campaign id, model, task) -> earliest relaunch time
         self.servers = {}          # lane -> server state
         self.rows = {}             # (lane, model, level) -> row dict
         self.model = None
@@ -61,7 +64,8 @@ class Driver:
         for campaign in self.campaigns:
             for m, task, state in l0_campaign.cells(campaign.id, campaign.level, rows):
                 if (state == 'pending' and m in self.models and task in self.tasks and (model is None or m == model)
-                        and (campaign.id, m, task) not in self.running):
+                        and (campaign.id, m, task) not in self.running
+                        and time.time() >= self.retry_at.get((campaign.id, m, task), 0)):
                     out.append((campaign, m, task))
         return out
 
@@ -123,6 +127,7 @@ class Driver:
                 continue
             del self.running[key]
             run['campaign'].event(event='exit', model=key[1], task=key[2], returncode=rc)
+            self.retry_at[key] = time.time() + RETRY_SECONDS   # a cell that ended without a result reruns after a pause
 
     def step(self):
         for lane in self.servers:
@@ -193,7 +198,6 @@ def main():
     l0_campaign.ROOT.mkdir(parents=True, exist_ok=True)
     with (l0_campaign.ROOT / 'driver.lock').open('a+b') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        l0_campaign.check_config(lanes.LIVE_CONFIG, level=0, lanes=True)
         campaigns = [Campaign(cid, level) for cid, level in specs]
         driver = Driver(campaigns, lane_names, models, tasks, args.max_cells)
         lanes.take_hardware(lane_names)

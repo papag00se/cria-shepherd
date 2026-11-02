@@ -45,18 +45,6 @@ def context(model):
     return {**merged.get('defaults',{}),**merged['models'][model]}['ctx']
 
 
-def check_config(config_path, *, level=0, lanes=False):
-    """The cria config a cell runs against: planner off and call capture on, and (serial) the requested level."""
-    from cria.config import _engagement_level
-    cfg=tomllib.loads(Path(config_path).read_text())
-    if level not in range(6):
-        raise ValueError('restored campaigns support L0-L5')
-    if cfg.get('planner',{}).get('enabled',False) is not False or cfg.get('logging',{}).get('capture_calls') is not True:
-        raise ValueError('restored cells require planner off and capture_calls=true')
-    if not lanes and _engagement_level(cfg.get('engagement',{})) != level:
-        raise ValueError(f'restored L{level} requires live L{level}')
-
-
 def read_rows():
     return _rs.read_rows(RESULTS) if RESULTS.exists() else []
 

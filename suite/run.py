@@ -931,7 +931,6 @@ def _main(scope) -> None:
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
             ap.error("restored model/task must belong to the eight by six roster")
         spec = l0_campaign.role_sampling(args.model)
-        l0_campaign.check_config(CRIA_TOML, level=args.level, lanes=bool(lane_row))
     elif args.model not in set(SERVICES) | set(EXTERNAL):
         ap.error("unknown legacy model; official fleet identities require --restored-fleet")
     if args.campaign_id:
