@@ -160,8 +160,18 @@ def _valid_capture_evidence(row: dict, *, allow_errors: bool = False) -> bool:
                     and followup_response.stat().st_mtime >= followup.stat().st_mtime)
             except (OSError, ValueError, TypeError):
                 bounded_followup = False
-        if (not (actual_requests == named_requests or bounded_followup)
-                or actual_responses - expected_responses != ({Path(next(iter(extras)).with_name(next(iter(extras)).stem + ".response.json"))} if bounded_followup else set())
+        # A LANE row's cria outlives the cell: when the cell is stopped (a milestone decision) it can finish the
+        # stopped session's in-flight turn and write more calls into this directory after the cut. Those are
+        # admissible only when EVERY extra request and response was written after the cutoff; they are never
+        # credited (calls/phases come from the snapshot). Serial rows keep the one bounded follow-up above.
+        late_lane = False
+        if row.get("lane") is not None and extras and not bounded_followup:
+            late_responses = {p.with_name(p.stem + ".response.json") for p in extras}
+            unexpected = actual_responses - expected_responses
+            late_lane = (all(p.stat().st_mtime > cutoff for p in extras)
+                         and unexpected <= late_responses and all(p.stat().st_mtime > cutoff for p in unexpected))
+        if (not (actual_requests == named_requests or bounded_followup or late_lane)
+                or (not late_lane and actual_responses - expected_responses != ({Path(next(iter(extras)).with_name(next(iter(extras)).stem + ".response.json"))} if bounded_followup else set()))
                 or any(str(entry.get("phase", "")).startswith("planner") for entry in model_entries)):
             return False
         phases = {}
