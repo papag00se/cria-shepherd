@@ -160,7 +160,7 @@ puts the hardware back and releases the RTX3090 lease however the driver ends:
 
 ```bash
 systemd-run --user --unit=lanes-ID --collect --working-directory="$PWD" \
-    -p ExecStopPost="/usr/bin/python3 $PWD/suite/lanes.py restore" -p StandardOutput=file:"$HOME/.cria/suite/_lanes/ID.log" \
+    -p ExecStopPost="/usr/bin/python3 $PWD/suite/lanes.py restore" -p StandardOutput=append:"$HOME/.cria/suite/_lanes/ID.log" -p StandardError=append:"$HOME/.cria/suite/_lanes/ID.log" \
     python3 suite/lane_driver.py --campaign l5-20261102:5 [--campaign l0-20261102:0] \
     --campaign-revision "$(git rev-parse HEAD)" [--lanes 3090x4,3080x2] [--models M,..] [--tasks T,..] [--max-cells N]
 ```
