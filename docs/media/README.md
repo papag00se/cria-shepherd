@@ -13,7 +13,7 @@ The front page uses project artwork, a four-cell assist illustration, an archite
 | `battery_media.py`, `battery-l0.*`, `battery-l5.*` | Grid renderer and generated SVG/PNG images. |
 | `battery-data.json` | Display roster, scores, original standing snapshots and export metadata. |
 | `battery-report-snapshot.md` | Unmodified standing report from `suite.battery_status`. |
-| `best_l5.py`, `battery-l5-best.json` | Historical L5 selection code and cell-level provenance. |
+| `best_l5.py`, `battery-l5-best.json` | Historical L5 selection code and its selected cells. |
 | `snapshot-battery.py` | Standing-report exporter, with column and total validation. |
 | `battery-comparison.md` | Generated text tables and measurement definitions. |
 | `ornith-l0-search.md` | Record of the retained-history baseline search. |
@@ -63,7 +63,7 @@ The metric is holistically inferred usefulness. Mechanical grades, pass counts a
 
 L0 retains the standing snapshot. L5 selects the highest retained final judgment for each model/task, after keeping the latest available judgment for each original run. The search covers working ledger bytes and distinct ledger/frozen-summary versions reachable through retained Git refs. Accepted fields are `usefulness_percent`, its documented predecessor `usefulness`, and explicit frozen inferred-usefulness cells.
 
-Each selected cell records its source file, revision, checksum and run ID where available. Frozen summaries retain their source record when an original run ID is unavailable. Input hashes and `source_inputs_dirty` identify uncommitted source data; a Git revision alone cannot reproduce those inputs.
+Each selected cell records its source file, revision and run ID where available.
 
 Averages weight observed cells equally, include zeros and exclude missing entries. `standing_l0` and `standing_l5` preserve the original report values. `roster_model_order` retains the full display roster; `excluded_models` currently hides `phi4`. Clear that exclusion and refresh L5 to restore its display row. No Ornith L0 usefulness cells were recovered for the six-task battery.
 

@@ -21,6 +21,10 @@ honestly — a usefulness percentage measures delivered code — but never let a
 verdict on the weights. See [principle 16](docs/principles.md#16-it-is-always-crias-fault-the-models-fault-is-not-a-finding),
 which carries the incident that made this a ban rather than a preference.
 
+## No process gates
+
+Before adding any check that blocks, refuses, validates, hashes or preserves a process (not what the model reads, and not a completion judgment), it must enforce a rule in [`docs/walk-analysis.md`](docs/walk-analysis.md) or [`docs/principles.md`](docs/principles.md); otherwise record the fact in the result row and move on. Fail-closed applies only to completion judgments. A failed or interrupted run is simply rerun.
+
 ## The doctrine in one screen (full text in [`docs/principles.md`](docs/principles.md))
 
 - **Ground truth over judgment** — deterministic code GATHERS facts; a reasoner JUDGES. Verify by *doing* (cria runs its own read-only probes), not by reading the model's claim. Files alone are never signal. Surface every metric from the authoritative event, never a re-count or text-match. Don't fear an extra reasoner call that grounds the next action — a purposeful call is cheap next to the coder churn (re-fetches, failed edits, gate loops) it prevents. **A single focused question is a first-class tool**: when deterministic code reaches for a keyword/verb list or a proximity window to settle what is really a judgment, ask instead. That is not extra inference — it is the cheaper half of the trade, and it avoids a pattern that must be retuned every time reality writes a sentence it did not anticipate (measured: one such rule took four revisions and three false positives in four runs).
@@ -37,20 +41,7 @@ which carries the incident that made this a ban rather than a preference.
 
 ## Battery report etiquette
 
-Before publishing scores or chat progress, read [`docs/battery-report-policy.md`](docs/battery-report-policy.md).
-All operator-facing checkpoint/final/progress/blocker updates use official model / language labels,
-never task types (e.g. `gemma4_12b / Go`, not `Gemma/cart`). Use
-`suite/report_labels.py::cell_label` and its shared language mapping; keep internal task/run IDs and
-archive/command provenance unchanged. Scheduled supervision follows the same rule.
-`docs/battery-report.md` contains exactly six latest-value L0–L5 tables, original descriptive
-level titles with table-average usefulness, and a legend—no supervision prose or attempt ledger.
-All six tables share descending exact L5 average-usefulness order, synchronized on every publication;
-ties use ascending official model identity, unscored L5 identities follow scored ones, and historical
-subsets preserve that shared relative order without fabricated rows. Other levels keep their scores/metrics.
-Evidence and metric-coverage disclosures belong in `docs/battery-report-evidence.md` and external
-campaign records. Use the guarded campaign-aware writer; do not paste historical/campaign previews
-wholesale into the scorecard. Pending cells retain prior judged standings; never publish checkpoints
-as final scores, erase failed originals, or select best rather than latest judgments.
+Operator-facing progress uses official model / language labels, never task types (e.g. `gemma4_12b / Go`, not `Gemma/cart`), via `suite/report_labels.py::cell_label`. `docs/battery-report.md` is written only by `suite/battery_status.py`: the title, an `Updated:` line, six L0–L5 tables in shared L5 order, and the legend (see [`docs/battery-report-policy.md`](docs/battery-report-policy.md)).
 
 ## Planning policy — OFF unless explicitly requested
 
@@ -65,17 +56,7 @@ Planning was deliberately retired from normal operation. Keep its implementation
 - **Open the file before you quote a number about it.** Any claim about how a model behaves — a rate, a count, a "N of M" — requires that you have read at least one of the underlying captures **in full**: the prompt cria sent, the reply, the reasoning. `grep -c` over `~/.cria/calls` measures string frequency, not behavior. If your scorer re-implements a check cria already owns (a verdict parser, a phase's key, a tool-name match), it is wrong; import cria's. Five measurements of one subsystem were reported wrong in a single evening this way, each collapsing the instant a file was actually opened. See principle 23b.
 - **Codex test launches must be sandboxed** — use `suite/run.py` (battery/ladder already route through it), or reuse its `_codex_argv` and isolated environment/scratch setup. Missing/invalid machine-local policy must stop the launch; never bypass the sandbox or launch bare Codex for a repo test. Writes are limited to the cell workspace and install/scratch directory. This does not change ordinary Codex sessions or globally sandbox pytest. See [`suite/README.md`](suite/README.md#machine-local-codex-sandbox-policy).
 - **Every fix needs a fails-before / passes-after test**; run `python -m pytest` (stdlib-only, fake upstream, no GPU/network).
-- **Commits** — branch off `main` for changes; commit + push per unit of work; end commit messages with the co-author trailer.
-
-## Walk/fix retention — operator policy (2026-10-13)
-
-Durable outputs are repository changes (including necessary behavioral regressions) and actual
-model-call logs. After ALL associated fixes settle ACCEPTED or REJECTED, remove the walk,
-validation and supporting scratch; do not archive it indefinitely for bug explanations or scores.
-Keep only necessary unresolved inputs, unique unapplied code/tests, active owners and operative
-gates until their work closes. Incidental old report/hash links do not extend retention.
-Follow [the explicit closure lifecycle](suite/README.md#closed-walk-and-fix-retention);
-`suite/close_walk.py` validates a complete operator closure declaration, not model completion.
+- **Commits** — branch off `main` for changes; commit + push per unit of work.
 
 ## Live testing (the running service)
 

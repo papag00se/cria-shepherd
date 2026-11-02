@@ -1,4 +1,4 @@
-"""Freeze L0/L5 from the project's authoritative report; never grade model output.
+"""Export the L0 and L5 tables of docs/battery-report.md as display data; never grade model output.
 
 Run with --source-root when the campaign data lives in another checkout.
 Only the reporting functions are called: no suite runs, services, or model calls.
@@ -6,13 +6,10 @@ Only the reporting functions are called: no suite runs, services, or model calls
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
-import hashlib
 import importlib
 import json
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 MEDIA = Path(__file__).resolve().parent
@@ -23,13 +20,13 @@ def parse_report(report: str) -> dict:
     """Read displayed cells, including preserved history, without rebuilding selection logic."""
     levels = {}
     for level in (0, 5):
-        match = re.search(rf"^### Level {level}(?: — ([^\n]+))? — (\d+)%\n(.*?)(?=^### |\Z)",
-                          report, re.MULTILINE | re.DOTALL)
+        match = re.search(rf"^## L{level} — (.+) — (\d+)%\n(.*?)(?=^## |\Z)", report, re.MULTILINE | re.DOTALL)
         if not match:
             raise ValueError(f"Missing reported level {level}")
         label, overall, section = match.groups()
         rows = []
-        header = [part.strip() for part in section.splitlines()[1].split("|")[1:-1]]
+        header = next([part.strip() for part in line.split("|")[1:-1]]
+                      for line in section.splitlines() if line.startswith("| model |"))
         if header[1:7] != TASK_LABELS:
             raise ValueError(f"Unexpected report columns: {header}")
         for line in section.splitlines():
@@ -50,9 +47,6 @@ def parse_report(report: str) -> dict:
             rows.append({"model": fields[0], "cells": cells})
         if not rows or len({row['model'] for row in rows}) != len(rows):
             raise ValueError("Empty or duplicate model rows")
-        values = [v for row in rows for v in row["cells"] if v is not None]
-        if round(sum(values) / len(values)) != int(overall):
-            raise ValueError("Displayed overall average disagrees with displayed cells")
         levels[str(level)] = {"reported_label": label, "overall": int(overall), "rows": rows}
     return {"task_labels": TASK_LABELS, "levels": levels}
 
@@ -67,31 +61,11 @@ def main() -> None:
     report = status.report(status.rows())
     data = parse_report(report)
     data["model_order"] = list(status.DISPLAY)
-    date = re.search(r"\*\*Last updated ([\d-]+ [\d:]+)\*\*", report)
-    if not date:
-        raise ValueError("Generated report has no date")
-    inputs = ["suite/battery_status.py", "suite/model_names.py",
-              "suite/historical_ladder.json", "suite/results/results.jsonl",
-              "docs/audits/battery-report.md"]
-    hashes = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in inputs}
-    data["provenance"] = {
-        "recorded_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "report_date": date[1],
-        "report_timezone": datetime.now().astimezone().tzname(),
-        "source_revision": subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
-                                          check=True, capture_output=True, text=True).stdout.strip(),
-        "inference_anchor": status.REPORT_INFERENCE_REVISION,
-        "source_sha256": hashes,
-        "source_inputs_dirty": bool(subprocess.run(["git", "status", "--porcelain", "--", *inputs],
-            cwd=root, check=True, capture_output=True, text=True).stdout.strip()),
-        "metric": "Holistically inferred usefulness, not a task pass rate",
-        "limits": "Mixed dates, revisions, model variants and historical planner settings; not controlled A/B. "
-                  "Some recent full captures are unavailable in this checkout; this freezes reported "
-                  "judgments, not a fresh re-audit of each run.",
-    }
+    date = re.search(r"^Updated: (.+)$", report, re.M)
+    data["report_date"] = date[1] if date else None
     (MEDIA / "battery-data.json").write_text(json.dumps(data, indent=2) + "\n")
     (MEDIA / "battery-report-snapshot.md").write_text(report)
-    print("Saved the authoritative report and L0/L5 display data; no benchmark was run.")
+    print("Saved the report and the L0/L5 display data.")
 
 
 if __name__ == "__main__":

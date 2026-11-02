@@ -26,4 +26,4 @@ For each supported fix, name the calls, upstream owner, falsifiable explanation,
 
 Finding no supported fix is a valid result. If the cause remains unresolved, name its owner and one next source question or test; do not call it explained. This adds no fix quota, approval chain or closure gate.
 
-Implementation, model replays and live changes require separate authorization. Follow normal test, review and [retention policy](../suite/README.md#closed-walk-and-fix-retention).
+Implementation, model replays and live changes require separate authorization. Follow normal test and review.

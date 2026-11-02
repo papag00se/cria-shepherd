@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -33,8 +32,8 @@ def git(root, *args):
 def versions(root, relative):
     """Working bytes first, then each distinct retained Git blob, newest first."""
     content = (root / relative).read_bytes()
-    seen = {hashlib.sha256(content).hexdigest()}
-    yield content, {"path": relative, "revision": "working-tree", "sha256": next(iter(seen))}
+    seen = {content}
+    yield content, {"path": relative, "revision": "working-tree"}
     commits = git(root, "log", "--all", "--date-order", "--format=%H", "--", relative).decode().splitlines()
     for commit in commits:
         # Deletion commits have no blob; this is an absence, not an alternate score.
@@ -43,11 +42,10 @@ def versions(root, relative):
             continue
         blob = entry.split()[2]
         content = git(root, "cat-file", "blob", blob)
-        digest = hashlib.sha256(content).hexdigest()
-        if digest in seen:
+        if content in seen:
             continue
-        seen.add(digest)
-        yield content, {"path": relative, "revision": commit, "blob": blob, "sha256": digest}
+        seen.add(content)
+        yield content, {"path": relative, "revision": commit}
 
 
 def score_of(row):
@@ -155,7 +153,6 @@ def export(root, output=MEDIA):
             "report_date": now.strftime("%Y-%m-%d %H:%M"), "report_timezone": now.tzname(),
             "source_revision": git(root, "rev-parse", "HEAD").decode().strip(),
             "omitted_models": data.get("excluded_models", []),
-            "identity_registry_sha256": hashlib.sha256((MEDIA.parents[1] / "suite/model_names.py").read_bytes()).hexdigest(),
             "selection": "Latest retained final judgment per run, then maximum per canonical model/task; "
                          "also include explicitly frozen inference-usefulness history. Superseded runs count; "
                          "grade/checkpoint fields do not. Working ledger takes priority over Git history.",
@@ -172,7 +169,7 @@ def export(root, output=MEDIA):
     data["levels"]["5"] = {k: best[k] for k in ("selection", "overall", "rows", "provenance")}
     data["model_order"] = models
     (output / "battery-data.json").write_text(json.dumps(data, indent=2) + "\n")
-    print("Saved historical L5 maxima with cell-level provenance; L0 scores retained.")
+    print("Saved historical L5 maxima; L0 scores retained.")
 
 
 def main():

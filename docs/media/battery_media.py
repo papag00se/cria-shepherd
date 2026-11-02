@@ -144,8 +144,7 @@ def comparison_text(data):
             "not independently re-judged here. A new controlled, planner-off campaign is needed before "
             "claiming an assist uplift.", "",
             "## Sources", "",
-            f"Reporting snapshot: **{data['provenance']['report_date']} "
-            f"{data['provenance']['report_timezone']}**. This is the report's export timestamp, "
+            f"Reporting snapshot: **{data['report_date']}**. This is the report's export timestamp, "
             "not the date of every underlying run.", "",
             f"L5 best-recorded export: **{data['levels']['5']['provenance']['report_date']} "
             f"{data['levels']['5']['provenance']['report_timezone']}**.", "",
