@@ -27,6 +27,11 @@ from pathlib import Path
 SUITE = Path(__file__).resolve().parent
 REPO = SUITE.parent
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
 LEVEL_TEST = REPO / "tests" / "test_engagement_levels.py"
 
@@ -63,7 +68,7 @@ def rows() -> list[dict]:
     if not RESULTS.exists():
         return []
     out = []
-    for line in RESULTS.read_text(errors="replace").splitlines():
+    for line in _rs.read_text(RESULTS, errors="replace").splitlines():
         if not line.strip():
             continue
         try:

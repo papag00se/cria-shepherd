@@ -12,6 +12,11 @@ except ImportError:
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 MANIFEST = SUITE / "results" / "fresh-l5-manifest.json"
 MODELS = ("gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5", "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill", "nemotron-elastic")
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py", "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
@@ -22,7 +27,7 @@ def rows():
     if not RESULTS.exists():
         return []
     out = []
-    for line in RESULTS.read_text(errors="replace").splitlines():
+    for line in _rs.read_text(RESULTS, errors="replace").splitlines():
         try: out.append(json.loads(line))
         except ValueError: continue
     return out

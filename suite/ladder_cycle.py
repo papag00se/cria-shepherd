@@ -32,6 +32,11 @@ except ImportError:
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 
 LEVELS = (0, 1, 2, 3, 4, 5)
 # Current roster: Nemotron Elastic restored 2026-09-30; eight models entered on 2026-09-27.
@@ -58,7 +63,7 @@ def done() -> set[tuple[int, str, str]]:
     out: set[tuple[int, str, str]] = set()
     if not RESULTS.exists():
         return out
-    for line in RESULTS.read_text(errors="replace").splitlines():
+    for line in _rs.read_text(RESULTS, errors="replace").splitlines():
         if not line.strip():
             continue
         try:

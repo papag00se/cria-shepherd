@@ -49,6 +49,11 @@ except ImportError:
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 # One stray 403 is a blip; a run peppered with them was throttled. Measured: the affected
 # runs carried dozens, the healthy ones none.
 THROTTLE_PROMPTS = 5
@@ -1203,11 +1208,7 @@ def _main(scope) -> None:
     if throttled:
         row["aborted"] = throttled
         print(f"[throttled] {throttled}")
-    RESULTS.parent.mkdir(parents=True, exist_ok=True)
-    with open(RESULTS, "a") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)   # concurrent lane cells append one whole row at a time
-        fh.write(json.dumps(row) + "\n")
-        fh.flush()
+    _rs.append_row(row, RESULTS)
     print(json.dumps({k: row[k] for k in
                       ("run_id", "terminal", "wall_seconds", "calls", "avg_tok_s")}, indent=1))
     _freeze_usefulness_evidence(row)

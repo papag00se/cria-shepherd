@@ -41,6 +41,11 @@ MODELS = ('gemma4_12b','ornith1.5_9b','bonsai2','nemotron-elastic','ling3.0_tiny
           'phi4','k2_horizon_7b','qwen3.8_9b_distill')
 GPU = fleet_gpu.PROFILE_GPU
 RESULTS = SUITE/'results/results.jsonl'
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 POLICY = 'inferred-progress-15m-protected-30m-v1'
 
 
@@ -263,7 +268,7 @@ def actual_sampling(snapshot, model, knobs, *, coder_only=False):
 
 def read_rows():
     if not RESULTS.exists(): return []
-    return [json.loads(line) for line in RESULTS.read_text().splitlines() if line.strip()]
+    return _rs.read_rows(RESULTS)
 
 
 def lane_valid(row):
@@ -445,9 +450,11 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *
                        for r in rows) != 1):
             raise ValueError('repair can preserve only one blocked, unscored exact attempt')
         failure_cell = matches[0]
-    if any(c['state'] not in ('done', 'pending', 'infrastructure-failed')
+    # A finished cell still awaiting its final usefulness judgment has complete evidence (its row); the judgment
+    # attaches to that row later, so it is preserved like a judged one.
+    if any(c['state'] not in ('done', 'awaiting-usefulness', 'pending', 'infrastructure-failed')
            and c is not failure_cell for c in manifest['cells']):
-        raise ValueError('repair requires completed judgments and untouched pending cells')
+        raise ValueError('repair requires completed cells and untouched pending cells')
     preserved = dict(manifest.get('preserved_runs', {}))
     for cell in manifest['cells']:
         if cell['state'] == 'infrastructure-failed':
@@ -464,7 +471,8 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *
             found = [r for r in rows if r.get('campaign_id') == manifest['campaign_id']
                      and r.get('run_id') == cell['run_id']]
             if (len(found) != 1 or found[0].get('started', 0) < manifest['created']
-                    or not valid_row(found[0], manifest) or not judgment(found[0])):
+                    or not valid_row(found[0], manifest)
+                    or (cell['state'] == 'done' and not judgment(found[0]))):
                 raise ValueError('repair requires valid completed fresh evidence')
             row = found[0]
         preserved[row['run_id']] = {**{k: row[k] for k in ('revision', 'model', 'task')},

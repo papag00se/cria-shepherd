@@ -20,6 +20,10 @@ import workspace_evidence
 SUITE = Path(__file__).resolve().parent
 ROOT = SUITE.parent
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
 
 
 SYSTEM = SUITE / "prompts" / "usefulness_judge.txt"
@@ -191,23 +195,21 @@ def record(run_id: str, verdict: dict) -> dict:
     if normalized is None:
         raise ValueError("final judgment requires usefulness_percent, reason, and evidence")
     v = {**normalized, "judged_by": verdict.get("judged_by", "campaign agent, full toolset")}
-    rows = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
-    row = next((r for r in rows if r.get("run_id") == run_id), None)
-    if row is None:
-        raise SystemExit(f"no row for {run_id}")
-    v["evidence_digest"] = evidence(row)[1]
-    VERDICTS.mkdir(parents=True, exist_ok=True)
-    verdict_path(run_id).write_text(json.dumps(v, indent=1))
-    out = []
-    for r in rows:
-        if r.get("run_id") == run_id:
-            r = dict(r)
-            r.pop("usefulness_judgment", None)
-            r.update({"usefulness_percent": v["usefulness_percent"],
-                      "usefulness_reason": v.get("reason", ""),
-                      "usefulness_model": v["judged_by"]})
-        out.append(json.dumps(r))
-    RESULTS.write_text("\n".join(out) + "\n")
+    with _rs.rewrite(RESULTS) as rows:   # one locked read-modify-write: no torn read, no lost concurrent append
+        row = next((r for r in rows if r.get("run_id") == run_id), None)
+        if row is None:
+            raise SystemExit(f"no row for {run_id}")
+        v["evidence_digest"] = evidence(row)[1]
+        VERDICTS.mkdir(parents=True, exist_ok=True)
+        verdict_path(run_id).write_text(json.dumps(v, indent=1))
+        for i, r in enumerate(rows):
+            if r.get("run_id") == run_id:
+                r = dict(r)
+                r.pop("usefulness_judgment", None)
+                r.update({"usefulness_percent": v["usefulness_percent"],
+                          "usefulness_reason": v.get("reason", ""),
+                          "usefulness_model": v["judged_by"]})
+                rows[i] = r
     return v
 
 
@@ -229,7 +231,7 @@ def main() -> int:
     s_.add_argument("--since", type=float, default=0.0)
 
     args = ap.parse_args()
-    rows = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
+    rows = _rs.read_rows(RESULTS)
 
     if args.cmd == "pending":
         want = [r for r in pending(rows)

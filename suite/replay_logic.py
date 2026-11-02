@@ -40,6 +40,11 @@ from cria import (execcheck, jsontext, loop, massage, planner, probegate,  # noq
 from cria.jsontext import extract_json_object, strip_think  # noqa: E402
 
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 STEER_RE = re.compile(r"⟦ctx:steer⟧|GROUND TRUTH — the repo's own checks fail")
 BULLET_RE = re.compile(r"•\s*(.+)")
 
@@ -125,7 +130,7 @@ def runs():
     if not RESULTS.exists():
         return []
     out = []
-    for line in RESULTS.read_text().splitlines():
+    for line in _rs.read_text(RESULTS).splitlines():
         if not line.strip():
             continue
         try:

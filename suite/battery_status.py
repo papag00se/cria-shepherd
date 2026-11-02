@@ -27,6 +27,11 @@ except ImportError:  # direct suite/battery_status.py invocation
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
+try:  # the one locked reader/writer of results.jsonl
+    from . import results_store as _rs
+except ImportError:
+    import results_store as _rs
+
 NOTE_PREFIX = "BATTERY2"
 COUNTED_PREFIXES = ("FRESH-L5", NOTE_PREFIX, "LOWSCORE", "RERANK")
 # Current roster: Nemotron Elastic restored 2026-09-30; eight models entered on 2026-09-27.
@@ -54,7 +59,7 @@ def rows(*, all_rows: bool = False) -> list[dict]:
     if not RESULTS.exists():
         return []
     out = []
-    for line in RESULTS.read_text().splitlines():
+    for line in _rs.read_text(RESULTS).splitlines():
         try:
             row = json.loads(line)
         except ValueError:
