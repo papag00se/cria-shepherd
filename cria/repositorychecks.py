@@ -17,7 +17,7 @@ import json
 from typing import Callable, Protocol
 import uuid
 
-from . import completionmarks, participation, probegate, proberun, prompts
+from . import participation, probegate, proberun, prompts
 from .assistcontract import Policy, Reference
 from .shelltool import find_shell_tool, shell_args, with_time_budget, tool_declares_time_budget
 
@@ -323,13 +323,16 @@ def _count_unknown(state: State, outcome: probegate.GateOutcome) -> None:
 
 def _learn_marks(state: State, outcome: probegate.GateOutcome) -> None:
     """The gate read the completion marks of the session's unreplied write calls (`completionmarks`): every FINISHED one is now a
-    known state (held on the session for the history readers, and queued for release), and a reading that left one unsettled
-    counts toward the same bound as an unknown one."""
+    known state for this process (held on the session for the history readers), and a reading that left one unsettled counts toward
+    the same bound as an unknown one.
+
+    The mark FILE is not released here. No coder-visible result carries the gate's reading (`probegate.clean_gate_results`), so
+    `gate_marks` dies with the process while the re-presented history still names the call with no reply: a mark released now and
+    a restart left that call `incomplete` for good (a landed write read as unknown). The call stays outstanding until a record the
+    history DOES keep - a later write's or read's `pm`, or the call's own reply - settles it (`writeproxy._learn_completions`)."""
     witnessed = getattr(outcome, "witnessed", None) or {}
     if witnessed:
         state.gate_marks = {**(state.gate_marks or {}), **witnessed}
-        for receipt in witnessed:
-            completionmarks.settle(receipt)
     state.gate_unsettled_streak = state.gate_unsettled_streak + 1 if outcome.unsettled_writes else 0
 
 

@@ -137,8 +137,12 @@ the history, so nothing is ordered by a witness's position.
   record declares `late`, which the loop already reads as an unestablished touch. The set of earlier writers is cria's in-memory registry of
   composed-but-unresolved calls, REBUILT from every re-presented history (`writeproxy._adopt_marks` -> `completionmarks.adopt`: the stored
   sentinel of each lowered write/edit declares its receipt, its mark's nonce `cm` and its target, so a restart does not forget a write whose
-  reply is still outstanding). What a restart still loses: gate witnesses held only in `GuardState.gate_marks` (the mark itself is read
-  again: the call is adopted as unresolved and the gate re-reads it) and a call that never reached a history. Calls beyond the newest 64
+  reply is still outstanding). A gate's reading is held in `GuardState.gate_marks` for the life of the process only (no
+  coder-visible result carries it, `probegate.clean_gate_results`), so the gate does NOT release the mark file it read: the call stays
+  outstanding until a record the history keeps (a later write's or read's `pm`, or the call's own reply) settles it, and a restart in
+  between finds the file and the call adopted as unresolved, so the next carrier reads it again (before this, a gate-witnessed
+  landed write released by a later program and followed by a restart read `incomplete` for good). What a restart still loses: a call
+  that never reached a history. Calls beyond the newest 64
   that a history names are no longer stranded: `adopt` queues their marks for release (a restart used to leave them in the private
   directory until the TMPDIR was cleared), and the queue drains through the authenticated reader, `MAX_RELEASE` (64) per program or gate,
   bounded in memory by `MAX_PENDING_RELEASE` (1024); a backlog larger than that, a session whose history is never presented again, and the
@@ -152,8 +156,8 @@ the history, so nothing is ordered by a witness's position.
   (never recorded as a clean reading) and holds completion with `prompts/gate_unsettled_writes.txt`, bounded by `MAX_COMPLETION_CHECKS` like
   an unknown reading. A lowered `read_file` / `list_dir` composed while something is outstanding carries ONE extra survey-kind record
   (`wsview.marks_ride`: no body, typed `pm`) in the slot the sentinel's `sv` declares; with nothing outstanding the call is unchanged.
-  Release: the gate removes, through the authenticated reader, the marks AND start records cria has learned, and retires its own empty
-  certified directory through the owned retirement - only when nothing is outstanding and nothing but the certificate is in it.
+  Release: the gate removes, through the authenticated reader, the marks AND start records cria has learned from a record the history
+  keeps (not what only its own reading learned: see (3)), and retires its own empty certified directory through the owned retirement - only when nothing is outstanding and nothing but the certificate is in it.
   **Accepted limit (assessed 2026-11-01): a `web_fetch`, a search, a native command and an MCP/other-tool next action carry no query.**
   Native shell commands and harness/MCP tools are the harness's: cria composes no program for them and wraps none. The lowered fetch
   and search ARE cria's, but the only carrier that exists (`_survey_after_first_record`) holds a command's output in a shell variable and
