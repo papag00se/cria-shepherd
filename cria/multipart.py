@@ -240,6 +240,11 @@ class MultipartRead:
         """True when the first page took no snapshot, so later pages read the path itself."""
         return self.snapshot is not None and self.snapshot[0] == 'live'
 
+    def again(self) -> 'MultipartRead':
+        """A fresh assembly for the same read, started over (the source changed under the first one): same token, semantics and the
+        room already measured beside the shell's noise, nothing else."""
+        return MultipartRead(self.token, self.outcome, self.semantics, room=self.room)
+
     @property
     def source_changed(self) -> bool:
         """The path's identity at the last page differs from the one the snapshot was taken from (absent counts)."""

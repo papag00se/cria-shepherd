@@ -34,6 +34,7 @@ class Entry:
     failure_code: int | None = None
     fallback_kind: str | None = None
     original: dict | None = None
+    rounds: int = 1     # 2 once the read was issued again because the source changed during the first (never persisted: replay derives it)
 
 
 @dataclass(frozen=True)
@@ -255,6 +256,11 @@ class Bridge:
         the current code can no longer take ends that one read unverified (`_Unreplayable`); a state that contradicts
         itself is still a corrupt file."""
         for cid in entry.calls:
+            if assembly._complete and assembly.source_changed and entry.rounds == 1:
+                # A page after a complete read whose source changed under it is the one re-issue `incoming` makes (a fresh first
+                # page): the read starts over. Anything else after completion is still refused by `take`.
+                assembly = entry.assembly = assembly.again()
+                entry.rounds = 2
             if cid not in entry.received:
                 if cid != entry.pending or cid != next(reversed(entry.calls)):
                     raise ValueError('missing prior page')
@@ -407,7 +413,7 @@ class Bridge:
                     # unverified. Only the structure of the file as a whole is "corrupt".
                     self._fail_entry(entry, exc)
                 else:
-                    self._check_pending_command(entry, assembly, spec, fn)
+                    self._check_pending_command(entry, entry.assembly, spec, fn)
                 if spec.call_id in restored: raise ValueError('duplicate logical call')
                 restored[spec.call_id]=entry
             cache=obj['cache']
@@ -647,7 +653,16 @@ class Bridge:
                     except InvalidPage:
                         e.failure_id, e.failure_kind = e.pending, 'invalid'
                         e.failure_code = None
-                else:
+                    else:
+                        if e.assembly.source_changed and e.rounds == 1:
+                            # The file changed while it was being read: what these pages hold is already stale, and a label asking
+                            # the coder to read it again lands about half the time. Read it again here, once (a fresh first page, a
+                            # fresh snapshot), and deliver what is current; a second change is delivered labelled as before.
+                            e.result = None
+                            e.assembly = e.assembly.again()
+                            e.rounds = 2
+                            complete = False
+                if not complete:
                     next_id = 'ctxread_' + uuid.uuid4().hex
                     cmd = filecommands.build_multipart_page(e.spec, e.assembly.offset, live=e.assembly.live_pages, limit=e.assembly.limit, refetch=bool(e.assembly.refetches))
                     call = writeproxy._shell_call(next_id, e.shell, cmd, 0)
