@@ -110,11 +110,12 @@ def main() -> int:
                     help="immutable full git revision pinned for a fresh campaign")
     ap.add_argument("--campaign-id")
     ap.add_argument("--restored-fleet", action="store_true")
+    ap.add_argument("--lane-row", default=None, help="row.json of a lane row (see suite/lanes.py)")
     ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
                     help="review every 15 active minutes; continuation decisions start at minute 30")
     args = ap.parse_args()
 
-    other_runs = run_guard.other_suite_runners()
+    other_runs = run_guard.other_suite_runners(lane=bool(args.lane_row))
     if other_runs:
         print("another suite/run.py is active (its checkpoint judgments may still be pending); leaving it untouched: "
               + "; ".join(f"pid {pid}" for pid, _ in other_runs), file=sys.stderr)
@@ -133,16 +134,15 @@ def main() -> int:
         if args.campaign_id:
             l0_campaign.campaign_dir(args.campaign_id)
             l0_campaign.validate_revision(args.campaign_revision)
-        if args.level:
-            l0_campaign.fleet_snapshot(level=args.level)
-        else:
-            l0_campaign.fleet_snapshot()
+        l0_campaign.fleet_snapshot(level=args.level, lanes=bool(args.lane_row))
         command = [sys.executable, str(SUITE / "run.py"), "--task", args.task,
                    "--model", args.model, "--level", str(args.level), "--restored-fleet",
                    "--milestone-minutes", str(args.milestone_minutes)]
         if args.campaign_id:
             command += ["--campaign-id", args.campaign_id,
                         "--campaign-revision", args.campaign_revision]
+        if args.lane_row:
+            command += ["--lane-row", args.lane_row]
         return sh(*command, timeout=cell_timeout())
     if args.campaign_id:
         try:

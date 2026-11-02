@@ -148,6 +148,21 @@ python3 suite/battery_run.py --level 0 --restored-fleet \
 
 `--campaign-id` and `--campaign-revision` are also supported by `suite/run.py`. Legacy service and sampling registries remain available only on the existing path without `--restored-fleet`; archived identities are preserved.
 
+## Parallel lanes (one cell per slot, both GPUs)
+
+[`suite/lanes.py`](lanes.py) serves **one model per card, many slots of that one model, one cell per slot**. The 3090 lane is 4 slots at 49,152 tokens each; the 3080 lane is 2 slots at the largest per-slot window that fits with `MARGIN_MIB` free after a loaded run (49,152 → 45,056 → 40,960 → 36,864; recorded per model in `LANE_WINDOWS`, `None` = 3090 lane only). A model's profile context caps its window (`bonsai2`/`k2_horizon_7b` 40,960, `phi4` 16,384). `--ctx-size` is the TOTAL (slots × per-slot); the window cria and Codex are told is the PER-SLOT one, and the lane is only admitted when `/props` reports exactly the declared slots and per-slot `n_ctx`. The canonical single-slot RTX3080 profiles and `llama-fleet switch` are unchanged: a lane plan is the profile's own plan with only `--parallel`, `--ctx-size`, port and device overridden. The 3090 is taken through the owner-bound lease; `lanes.take_hardware` stops/restores the HyperQwen container, its idle-check timer and any running managed fleet model, and `python suite/lanes.py restore` recovers an interrupted run.
+
+Each ACTIVE ROW (lane × model × level) gets one cria instance on its own port (from 18400) with its own config copy (the row's role sampling applied through the same before/active receipts as the serial path, plus transport-only edits: port, endpoint, logs, captures, engagement level) and its own capture/log directories under `~/.cria/suite/_lanes/<lane>/rows/`. Every concurrent cell of that row shares the instance (cria state is session-scoped); a cell's sessions and events are the Codex session ids its harness log printed. Row instances run the deployed `cria.service` code (same python and release directory); the service itself is not used or edited by lane runs.
+
+```bash
+python suite/lane_driver.py --campaign l5-20261102:5 [--campaign l0-20261102:0] \
+    --campaign-revision "$(git rev-parse HEAD)" [--lanes 3090x4,3080x2] [--models M,..] [--tasks T,..] [--max-cells N]
+```
+
+The driver serves one model at a time (the lease names one model), fills every free slot of its lanes with that model's pending cells across all campaigns/levels, and switches model only when every slot has drained. A cell awaiting its usefulness judgment does not hold a slot; an invalid or failed cell blocks new launches, lets running cells finish and ends the run with no retry. Per-cell provenance, revision, weights, runtime and receipt checks are unchanged; the row additionally records the lane, its served-config evidence and the row config (`l0_campaign.lane_valid`).
+
+`suite/lane_measure.py` measures each model × lane with a fixed load (~6K-token code prompt, 600-token outputs: solo, then every slot at once) and reports the fit and the factor. **Reported wall minutes** are solo-equivalent rough estimates: measured minutes × `LANE_FACTORS[model][lane]` (per-stream tok/s at the lane's slot count ÷ solo tok/s on the same card; an unmeasured model uses the `ornith1.5_9b` factor). The factor is applied by `battery_status` from the row's `lane`; `wall_seconds` stays the measured value.
+
 ## Usefulness judgments
 
 ```bash

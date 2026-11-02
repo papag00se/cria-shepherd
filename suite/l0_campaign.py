@@ -91,8 +91,12 @@ def fingerprint(path, *, large=False):
     return out
 
 
-def fleet_snapshot(*, level=0):
-    """Read-only validation. No switch, restart, model inference or implicit acquisition."""
+def fleet_snapshot(*, level=0, lanes=False):
+    """Read-only validation. No switch, restart, model inference or implicit acquisition.
+
+    `lanes=True`: the profiles stay the canonical single-slot ones (only their launch is overridden by a lane),
+    and the lane's SERVED configuration is verified per cell against its declared lane configuration, so the
+    per-cell lease/served evidence lives in the row, not in this campaign-constant snapshot."""
     receipt=json.loads(READINESS.read_text())
     validate_readiness(receipt)
     completion=Path(receipt['completion_receipt'])
@@ -122,7 +126,7 @@ def fleet_snapshot(*, level=0):
     add(Path.home()/'.local/share/mise/installs/codex/0.159.3/bin/codex')
     add(Path.home()/'.cria/codex-home/config.toml')
     add(Path.home()/'.cria/suite-codex-policy.toml')
-    live_config=validate_live(Path.home()/'.cria/cria.toml', level=level)
+    live_config=validate_live(Path.home()/'.cria/cria.toml', level=level, lanes=lanes)
     effective_units={}
     for model in MODELS:
         cfg={**config.get('defaults',{}),**config['models'][model]}
@@ -180,7 +184,7 @@ def fleet_snapshot(*, level=0):
                 'config':config,'known_limits':receipt.get('known_limits'),
                 'phi4_known_limits':receipt['models']['phi4']['known_limits']}
     lease = fleet_gpu.read_lease()
-    if lease is not None:
+    if lease is not None and not lanes:
         installed_helper = FLEET / 'tools/fleet_gpu.py'
         if installed_helper.read_bytes() != Path(fleet_gpu.__file__).read_bytes():
             raise ValueError('fleet GPU selection differs from the campaign source')
@@ -189,11 +193,17 @@ def fleet_snapshot(*, level=0):
     return snapshot
 
 
-def validate_live(config_path, *, level=0):
+def validate_live(config_path, *, level=0, lanes=False):
+    """`lanes=True`: the live file is only the SOURCE of each lane row's cria config copy (the row sets its own
+    engagement level), so it is checked for the planner-off/capture invariants, not for a serving level."""
     from cria.config import _engagement_level
     cfg=tomllib.loads(Path(config_path).read_text())
     if level not in (0, 5):
         raise ValueError('restored campaigns support only L0 or L5')
+    if lanes:
+        if cfg.get('planner',{}).get('enabled',False) is not False or cfg.get('logging',{}).get('capture_calls') is not True:
+            raise ValueError('lane rows require planner off and capture_calls=true in the source config')
+        return fingerprint(config_path)
     if (_engagement_level(cfg.get('engagement',{})) != level or
         cfg.get('planner',{}).get('enabled',False) is not False or
         cfg.get('logging',{}).get('capture_calls') is not True):
@@ -248,6 +258,23 @@ def read_rows():
     return [json.loads(line) for line in RESULTS.read_text().splitlines() if line.strip()]
 
 
+def lane_valid(row):
+    """A lane cell ran on a lane whose SERVED config matched its declaration, in a row cria derived from its config."""
+    try:
+        from . import lanes
+    except ImportError:
+        import lanes
+    lane, declared = row['lane'], lanes.LANES.get(row['lane'].get('name'))
+    served = lane.get('server') or {}
+    row_config = Path(lane['row_dir'])
+    return (declared is not None and served.get('model') == row['model'] and served.get('slots') == declared.slots
+            and served.get('window') == lane['window'] and served.get('gpu') == declared.gpu
+            and lane['window'] <= lanes.profile_context(row['model'])
+            and lane.get('factor') == lanes.wall_factor(row['model'], declared.name)
+            and hashlib.sha256((row_config / 'cria.toml').read_bytes()).hexdigest() == lane['cria_config_sha256']
+            and lanes.config_derived({**json.loads((row_config / 'row.json').read_text())}))
+
+
 def valid_row(row, manifest, *, allow_capture_errors=False):
     try:
         from .fresh_l5_campaign import _valid_capture_evidence
@@ -290,6 +317,8 @@ def valid_row(row, manifest, *, allow_capture_errors=False):
                     or row.get('live_config_snapshot', {}).get('sha256') != receipt.get('active_sha256')):
                 return False
         source=snapshot['roles'][row['model']]['coder']
+        if row.get('lane') is not None and not lane_valid(row):
+            return False
         return (row.get('source_coder_sampling') == source and
                 row.get('actual_sent_sampling') == actual_sampling(row['capture_snapshot'],row['model'],source,
                                                                  coder_only=manifest['level'] == 5)
@@ -346,7 +375,8 @@ def preserved_failed_row(cell, rows, manifest):
     return None
 
 
-def reconcile(manifest, rows):
+def reconcile(manifest, rows, active=()):
+    """`active`: (model, task) cells whose runner process is still alive; they have no result yet by design."""
     cohort=[r for r in rows if r.get('campaign_id') == manifest['campaign_id']]
     for cell in manifest['cells']:
         if cell['state'] == 'infrastructure-failed':
@@ -354,6 +384,7 @@ def reconcile(manifest, rows):
                 cell.update(state='blocked', reason='preserved infrastructure failure changed; no automatic retry')
             continue
         if cell['state'] == 'blocked': continue
+        if cell['state'] == 'running' and (cell['model'], cell['task']) in active: continue
         found=[r for r in cohort if r.get('model') == cell['model'] and r.get('task') == cell['task']]
         if not found:
             if cell['state'] != 'pending': cell['state']='blocked'; cell['reason']='attempt has no result; no automatic retry'
@@ -367,10 +398,11 @@ def reconcile(manifest, rows):
     return manifest
 
 
-def cell_command(manifest, cell):
-    return [sys.executable,str(SUITE/'battery_run.py'),'--level',str(manifest['level']),'--model',cell['model'],
+def cell_command(manifest, cell, lane_row=None):
+    command = [sys.executable,str(SUITE/'battery_run.py'),'--level',str(manifest['level']),'--model',cell['model'],
             '--task',cell['task'],'--restored-fleet','--campaign-id',manifest['campaign_id'],
             '--campaign-revision',manifest['revision']]
+    return command + ['--lane-row', str(lane_row)] if lane_row else command
 
 
 def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *, failed_run_id=None):

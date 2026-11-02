@@ -186,7 +186,7 @@ def test_restored_battery_delegates_without_touching_the_live_arm_and_legacy_arm
     """--restored-fleet launches run.py through the campaign path (no set_level); legacy BASE/CRIA arms pass
     `--planner off` (4a089fe7: selecting full engagement must not opt into planning); cells have no timeout cap."""
     calls = []
-    monkeypatch.setattr(battery_run.run_guard, "other_suite_runners", lambda: [])
+    monkeypatch.setattr(battery_run.run_guard, "other_suite_runners", lambda **_: [])
     monkeypatch.setattr(battery_run, "sh", lambda *cmd, **kw: calls.append(cmd) or 0)
     monkeypatch.setattr(campaign, "fleet_snapshot", lambda **kw: {})
     monkeypatch.setattr(campaign, "validate_revision", lambda v: v)
@@ -203,7 +203,7 @@ def test_restored_battery_delegates_without_touching_the_live_arm_and_legacy_arm
         config = tmp_path / f"{arm}.toml"
         config.write_text("[engagement]\nlevel = 5\n")
         calls.clear()
-        monkeypatch.setattr(battery_run.run_guard, "other_suite_runners", lambda: [])
+        monkeypatch.setattr(battery_run.run_guard, "other_suite_runners", lambda **_: [])
         monkeypatch.setattr(battery_run, "TOML", config)
         monkeypatch.setattr(battery_run, "sh", lambda *cmd, **kw: calls.append(cmd) or 0)
         monkeypatch.setattr(sys, "argv", ["battery_run.py", "--arm", arm, "--model", "m", "--task", "t"])

@@ -20,6 +20,7 @@ Usage: run.py --task ada-handles --model ternary-bonsai --harness codex [--plann
 """
 
 import argparse
+import fcntl
 import hashlib
 import json
 import pathlib
@@ -586,7 +587,7 @@ def capture_manifest(session_dirs) -> dict:
     return {"complete": complete, "entries": entries}
 
 
-def shutdown_and_capture(*, calls_dir, before_sessions, stop):
+def shutdown_and_capture(*, calls_dir, before_sessions, stop, select=None):
     """Stop the owned process group, then timestamp and discover the complete capture set.
 
     The row cutoff, session inventory, and snapshot all follow the shutdown barrier. This
@@ -595,8 +596,11 @@ def shutdown_and_capture(*, calls_dir, before_sessions, stop):
     """
     stop()  # one terminal owner closes admission, resumes and reaps before the cutoff
     stopped_at = time.time()
+    names = set(p.name for p in Path(calls_dir).glob("2*"))
+    # A lane row's cria is shared by concurrent cells, so "new since launch" cannot attribute sessions;
+    # `select` names this cell's own (the Codex session ids its harness log printed).
     new_sessions = [Path(calls_dir) / name for name in
-                    set(p.name for p in Path(calls_dir).glob("2*")) - before_sessions]
+                    (sorted(n for n in names if select(n)) if select else names - before_sessions)]
     return stopped_at, new_sessions, capture_manifest(new_sessions)
 
 
@@ -629,7 +633,15 @@ def collect_capture(session_dirs, snapshot=None) -> dict:
             "output_tokens_timed": tok_n}
 
 
-def collect_event_census(t0: float, t1: float) -> dict:
+def harness_sessions(log_path) -> set:
+    """Every Codex session id the harness log printed: the keys of this cell's cria sessions."""
+    try:
+        return set(re.findall(r"(?m)^session id: (\S+)", Path(log_path).read_text(errors="replace")))
+    except OSError:
+        return set()
+
+
+def collect_event_census(t0: float, t1: float, sessions=None) -> dict:
     """Collect row observations from authoritative events in the serial run's window.
 
     Model-visible wire envelopes are disclosed separately, including their original counts,
@@ -645,7 +657,7 @@ def collect_event_census(t0: float, t1: float) -> dict:
                         ev = json.loads(line)
                     except Exception:  # noqa: BLE001
                         continue
-                    if t0 <= ev.get("ts", 0) <= t1:
+                    if t0 <= ev.get("ts", 0) <= t1 and (sessions is None or ev.get("session") in sessions):
                         k = ev.get("kind", "?")
                         kinds[k] = kinds.get(k, 0) + 1
                         if k == 'upstream.history_args_enveloped':
@@ -912,6 +924,7 @@ def main() -> None:
 
 
 def _main(scope) -> None:
+    global CALLS_DIR, EVENTS_DIR
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
     ap.add_argument("--model", required=True)
@@ -923,6 +936,8 @@ def _main(scope) -> None:
                     help="immutable source revision for a fresh campaign cell")
     ap.add_argument("--campaign-id")
     ap.add_argument("--restored-fleet", action="store_true")
+    ap.add_argument("--lane-row", default=None,
+                    help="row.json of the lane row (shared cria instance + lane server) this cell runs in")
     ap.add_argument("--fresh-l5", action="store_true",
                     help="record this as a fresh planner-off L5 cell; requires --campaign-revision")
     # The engagement level this cell ran at, recorded as a FIELD rather than parsed back out of the
@@ -940,14 +955,29 @@ def _main(scope) -> None:
         from sampling_adapter import SamplingAdapter, RateLimitGate
     fleet = None
     live_snapshot = None
+    lane_row = None
+    lane_evidence = None
+    cria_toml = CRIA_TOML
+    if args.lane_row:
+        if not args.restored_fleet:
+            ap.error("--lane-row requires --restored-fleet")
+        try:
+            from . import lanes
+        except ImportError:
+            import lanes
+        lane_row = lanes.load_row(args.lane_row)
+        if (lane_row["model"], lane_row["level"]) != (args.model, args.level):
+            ap.error("--lane-row belongs to a different model/level")
+        # This cell's cria and capture/log directories are the ROW's, not the shared live ones.
+        CALLS_DIR, EVENTS_DIR = Path(lane_row["calls_dir"]), Path(lane_row["logs_dir"])
+        cria_toml = Path(lane_row["config"])
     if args.restored_fleet:
         if args.level not in (0, 5) or args.planner != "off" or args.fresh_l5:
             ap.error("--restored-fleet requires L0 or L5 with planner off")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
             ap.error("restored model/task must belong to the eight by six roster")
-        fleet = l0_campaign.fleet_snapshot(level=args.level) if args.level else l0_campaign.fleet_snapshot()
-        live_snapshot = (l0_campaign.validate_live(CRIA_TOML, level=args.level) if args.level
-                         else l0_campaign.validate_live(CRIA_TOML))
+        fleet = l0_campaign.fleet_snapshot(level=args.level, lanes=bool(lane_row))
+        live_snapshot = l0_campaign.validate_live(CRIA_TOML, level=args.level, lanes=bool(lane_row))
     elif args.model not in set(SERVICES) | set(EXTERNAL):
         ap.error("unknown legacy model; official fleet identities require --restored-fleet")
     if args.campaign_id:
@@ -977,7 +1007,7 @@ def _main(scope) -> None:
         code_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
                                        capture_output=True, text=True, check=True).stdout.strip()
 
-    other_runs = run_guard.other_suite_runners()
+    other_runs = run_guard.other_suite_runners(lane=bool(lane_row))
     if other_runs:
         ap.error("another suite/run.py is active (its checkpoint judgments may still be pending); leaving it untouched: "
                  + "; ".join(f"pid {pid}" for pid, _ in other_runs))
@@ -1004,7 +1034,24 @@ def _main(scope) -> None:
     adapter = None
     harness_provenance = None
     role_config_receipt = None
-    if args.restored_fleet:
+    if lane_row:
+        # The lane driver owns the lane server and the row's cria (own port, config copy with this row's
+        # sampling applied, own capture/log dirs); this cell verifies them and never edits the live config.
+        lane_evidence = {"name": lane_row["lane"], "row_dir": lane_row["dir"], "cria_port": lane_row["port"],
+                         "window": lane_row["window"], "cria_config_sha256": lane_row["config_sha256"],
+                         "server": lanes.verify_server(lanes.server_state(lane_row["lane"])),
+                         "lease": lanes.fleet_gpu.read_lease() if lanes.LANES[lane_row["lane"]].card == "3090" else None}
+        lanes.verify_row(lane_row)
+        role_config_receipt = lane_row["role_receipt"]
+        live_snapshot = (l0_campaign.fingerprint(role_config_receipt["active"]) if role_config_receipt
+                         else l0_campaign.validate_live(CRIA_TOML, level=args.level, lanes=True))
+        spec = fleet["roles"][args.model]
+        env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
+        adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]))
+        harness_argv, harness_provenance = restored_codex_argv(
+            harness_argv, args.model, lane_row["window"], adapter.base_url, Path(env['CODEX_HOME']),
+            cria_config=cria_toml)
+    elif args.restored_fleet:
         if args.level == 5:
             try:
                 from .restored_roles import scoped
@@ -1033,7 +1080,7 @@ def _main(scope) -> None:
     if adapter is None:
         adapter = SamplingAdapter(None, RateLimitGate(l0_campaign.ROOT))
         harness_argv = codex_adapter_argv(harness_argv, adapter.base_url)
-    live_config = tomllib.loads(CRIA_TOML.read_text())
+    live_config = tomllib.loads(cria_toml.read_text())
     planner_enabled_verified = live_config.get("planner", {}).get("enabled", False)
     repo_root = str(SUITE.parent)
     if repo_root not in sys.path:
@@ -1080,7 +1127,9 @@ def _main(scope) -> None:
         # Stop first. A child may still finish a response or create a new session during the grace
         # period, so the wall cutoff and session inventory must be taken only after the group is gone.
         t1, new_sessions, capture_snapshot = shutdown_and_capture(
-            calls_dir=CALLS_DIR, before_sessions=before_sessions, stop=control.stop)
+            calls_dir=CALLS_DIR, before_sessions=before_sessions, stop=control.stop,
+            select=((lambda name: any(name.endswith("-" + sid) for sid in harness_sessions(log_path)))
+                    if lane_row else None))
 
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
@@ -1113,6 +1162,7 @@ def _main(scope) -> None:
         **({"revision": args.campaign_revision, "code_revision": code_revision}
            if args.fresh_l5 or args.campaign_id else {}),
         **({"campaign_id": args.campaign_id} if args.campaign_id else {}),
+        **({"lane": {**lane_evidence, "factor": lanes.wall_factor(args.model, lane_row["lane"])}} if lane_row else {}),
         **({"restored_fleet": True, "fleet_snapshot": fleet, "live_config_snapshot": live_snapshot,
             "source_coder_sampling": spec["coder"], "injected_sampling": adapter.injected,
             "harness_provenance": harness_provenance,
@@ -1129,7 +1179,7 @@ def _main(scope) -> None:
         "checkpoint_mode": "async-live-snapshot",  # coder never paused; active_seconds == wall_seconds
         **capture,
         **({"capture_snapshot": capture_snapshot} if args.fresh_l5 or args.campaign_id or args.restored_fleet else {}),
-        **collect_event_census(t0, t1),
+        **collect_event_census(t0, t1, harness_sessions(log_path) if lane_row else None),
         "workspace": str(ws),
         "archive": str(archive),
         "user_install_leak": sorted(user_install_listing() - installs_before),
@@ -1142,7 +1192,10 @@ def _main(scope) -> None:
         try:
             row["actual_sent_sampling"] = l0_campaign.actual_sampling(
                 capture_snapshot, args.model, spec["coder"], coder_only=args.level == 5)
-            if l0_campaign.validate_live(CRIA_TOML, level=args.level) != live_snapshot:
+            if lane_row:
+                lanes.verify_row(lane_row)
+                lanes.verify_server(lanes.server_state(lane_row["lane"]))
+            elif l0_campaign.validate_live(CRIA_TOML, level=args.level) != live_snapshot:
                 raise ValueError("live config changed during cell")
         except (OSError, ValueError, KeyError) as exc:
             row["aborted"] = "invalid restored sampling/config: " + str(exc)
@@ -1152,7 +1205,9 @@ def _main(scope) -> None:
         print(f"[throttled] {throttled}")
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
     with open(RESULTS, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)   # concurrent lane cells append one whole row at a time
         fh.write(json.dumps(row) + "\n")
+        fh.flush()
     print(json.dumps({k: row[k] for k in
                       ("run_id", "terminal", "wall_seconds", "calls", "avg_tok_s")}, indent=1))
     _freeze_usefulness_evidence(row)

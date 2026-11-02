@@ -43,23 +43,29 @@ def restart():
     subprocess.run(['sudo', '-n', 'systemctl', 'restart', 'cria.service'], check=True)
 
 
-@contextmanager
-def scoped(path, roles, evidence, *, restart_service=restart):
-    path, evidence = Path(path), Path(evidence)
-    original = path.read_bytes()
-    original_stat = path.stat()
+def receipt(original, roles, evidence):
+    """Write the before/active config copies under `evidence`; return (active bytes, receipt)."""
+    evidence = Path(evidence)
     active = render(original.decode(), roles).encode()
     evidence.mkdir(parents=True, exist_ok=True)
     before, during = evidence / 'config-before.toml', evidence / 'config-active.toml'
     before.write_bytes(original)
     during.write_bytes(active)
-    receipt = dict(before=str(before), active=str(during),
-                   before_sha256=hashlib.sha256(original).hexdigest(),
-                   active_sha256=hashlib.sha256(active).hexdigest(), roles=roles)
+    return active, dict(before=str(before), active=str(during),
+                        before_sha256=hashlib.sha256(original).hexdigest(),
+                        active_sha256=hashlib.sha256(active).hexdigest(), roles=roles)
+
+
+@contextmanager
+def scoped(path, roles, evidence, *, restart_service=restart):
+    path = Path(path)
+    original = path.read_bytes()
+    original_stat = path.stat()
+    active, receipt_ = receipt(original, roles, evidence)
     try:
         path.write_bytes(active)
         restart_service()
-        yield receipt
+        yield receipt_
     finally:
         if path.read_bytes() != active:
             raise ValueError('live config changed during cell; refusing to overwrite newer edits; original preserved')

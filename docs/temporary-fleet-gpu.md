@@ -13,3 +13,5 @@ Cleanup stops only the leased model unit, restores byte-identical pre-cell confi
 Operational receipts live with the active campaign, not the workspace. Verify the cleanup receipt, absent lease, stopped temporary backend and `llama-fleet plan ornith1.5_9b` resolving to the RTX3080 before reporting restoration. Hardware variation and any interruption belong in campaign/report evidence, not as a new model identity or an invented coding score.
 
 This lease mechanism is for a single supervised campaign cell. Informal sharing of the RTX3090 (for example a second `ornith1.5_9b` slot on `:18184` while the operator is not using the card) is the operator's decision, is not a lease, and must never touch the RTX3080 profile; see [model settings](model-settings.md).
+
+Parallel battery lanes use the same lease for their RTX3090 lane (published by `suite/lanes.py`, owner = the lane driver process, replaced when the lane switches model); see [Parallel lanes](../suite/README.md#parallel-lanes-one-cell-per-slot-both-gpus).

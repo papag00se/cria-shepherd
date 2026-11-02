@@ -4,8 +4,11 @@ from pathlib import Path
 import os
 
 
-def other_suite_runners(proc_root: Path = Path("/proc"), self_pid: int | None = None) -> list[tuple[int, str]]:
-    """Return other processes executing suite/run.py; never signals, resumes, or kills them."""
+def other_suite_runners(proc_root: Path = Path("/proc"), self_pid: int | None = None,
+                        lane: bool = False) -> list[tuple[int, str]]:
+    """Return other processes executing suite/run.py; never signals, resumes, or kills them.
+
+    A lane cell (`--lane-row`) runs beside other lane cells by design, so it only yields to non-lane runners."""
     self_pid = os.getpid() if self_pid is None else self_pid
     found = []
     try:
@@ -20,5 +23,7 @@ def other_suite_runners(proc_root: Path = Path("/proc"), self_pid: int | None = 
         except OSError:
             continue
         if any(arg == "suite/run.py" or arg.endswith("/suite/run.py") for arg in argv):
+            if lane and "--lane-row" in argv:
+                continue
             found.append((int(entry.name), " ".join(argv)))
     return found

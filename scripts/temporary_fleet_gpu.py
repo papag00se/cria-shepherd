@@ -11,24 +11,13 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from suite import fleet_gpu
+from suite.gpu_lease import publish_lease
 from suite.restored_roles import render
 
 
 def save(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
     path.chmod(0o600)
-
-
-def publish_lease(path, lease):
-    # Exclusive atomic publication: readers can never see a partially written active lease.
-    pending = path.with_name('gpu-lease.' + lease['operation'] + '.pending')
-    try:
-        with pending.open('x') as stream:
-            os.chmod(pending, 0o600); json.dump(lease, stream); stream.flush(); os.fsync(stream.fileno())
-        os.link(pending, path)
-    finally:
-        if pending.exists():
-            pending.unlink()
 
 
 def cleanup(args, *, run=subprocess.run, lease_path=None, config_path=None, roles_path=None):

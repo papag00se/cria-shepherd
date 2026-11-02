@@ -19,9 +19,11 @@ from fractions import Fraction
 try:
     from .model_names import canonical_name
     from .report_labels import TASK_LANGUAGES
+    from .lanes import wall_minutes as _wall_minutes
 except ImportError:  # direct suite/battery_status.py invocation
     from model_names import canonical_name
     from report_labels import TASK_LANGUAGES
+    from lanes import wall_minutes as _wall_minutes
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -195,7 +197,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
                 cells.append(r.get("usefulness_percent")
                              if r and isinstance(r.get("usefulness_percent"), int) else None)
                 if judged(r) and _measurement(r.get("wall_seconds")):
-                    mins.append(r["wall_seconds"] / 60)
+                    mins.append(_wall_minutes(r))
                 if judged(r) and _measurement(r.get("calls")):
                     calls.append(r["calls"])
             if fro:
@@ -342,7 +344,7 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
         cells = [(_dot(selected[(model, t)]['usefulness_percent'])
                   if (model, t) in selected else '') for t in TASKS]
         pct = [r['usefulness_percent'] for r in present]
-        minutes = [r['wall_seconds'] / 60 for r in present if _measurement(r.get('wall_seconds'))]
+        minutes = [_wall_minutes(r) for r in present if _measurement(r.get('wall_seconds'))]
         calls = [r['calls'] for r in present if _measurement(r.get('calls'))]
         means = [str(round(sum(v) / len(v))) + suffix if v else '·'
                  for v, suffix in ((pct, '%'), (minutes, ''), (calls, ''))]
@@ -542,7 +544,7 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
                     continue
             metrics.append(row)
             bindings[task] = row['run_id']
-        minutes = [r['wall_seconds'] / 60 for r in metrics if _measurement(r.get('wall_seconds'))]
+        minutes = [_wall_minutes(r) for r in metrics if _measurement(r.get('wall_seconds'))]
         calls = [r['calls'] for r in metrics if _measurement(r.get('calls'))]
         target[8:10] = [str(round(sum(v) / len(v))) if v else '·' for v in (minutes, calls)]
         timed = [r for r in metrics if _measurement(r.get('avg_tok_s'))]
