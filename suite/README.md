@@ -154,10 +154,18 @@ python3 suite/battery_run.py --level 0 --restored-fleet \
 
 Each ACTIVE ROW (lane × model × level) gets one cria instance on its own port (from 18400) with its own config copy (the row's role sampling applied through the same before/active receipts as the serial path, plus transport-only edits: port, endpoint, logs, captures, engagement level) and its own capture/log directories under `~/.cria/suite/_lanes/<lane>/rows/`. Every concurrent cell of that row shares the instance (cria state is session-scoped); a cell's sessions and events are the Codex session ids its harness log printed. Row instances run the deployed `cria.service` code (same python and release directory); the service itself is not used or edited by lane runs.
 
+Run the driver as its own `systemd --user` unit, never as a child of an agent's shell: a killed parent (an agent
+scope taken by systemd-oomd took 239 lane processes with it) must not take the lanes down, and `ExecStopPost`
+puts the hardware back and releases the RTX3090 lease however the driver ends:
+
 ```bash
-python suite/lane_driver.py --campaign l5-20261102:5 [--campaign l0-20261102:0] \
+systemd-run --user --unit=lanes-ID --collect --working-directory="$PWD" \
+    -p ExecStopPost="/usr/bin/python3 $PWD/suite/lanes.py restore" -p StandardOutput=file:"$HOME/.cria/suite/_lanes/ID.log" \
+    python3 suite/lane_driver.py --campaign l5-20261102:5 [--campaign l0-20261102:0] \
     --campaign-revision "$(git rev-parse HEAD)" [--lanes 3090x4,3080x2] [--models M,..] [--tasks T,..] [--max-cells N]
 ```
+
+`python3 suite/lanes.py restore` is the same recovery by hand.
 
 The driver serves one model at a time (the lease names one model), fills every free slot of its lanes with that model's pending cells across all campaigns/levels, and switches model only when every slot has drained. A cell awaiting its usefulness judgment does not hold a slot; an invalid or failed cell blocks new launches, lets running cells finish and ends the run with no retry. Per-cell provenance, revision, weights, runtime and receipt checks are unchanged; the row additionally records the lane, its served-config evidence and the row config (`l0_campaign.lane_valid`).
 

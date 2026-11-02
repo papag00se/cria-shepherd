@@ -514,7 +514,11 @@ def main(argv=None):
         state = server_state(lane_name)
         if state is not None:
             stop_server(lane_name)
-    print(json.dumps(restore_hardware()))
+    restored = restore_hardware()
+    # The driver that published the RTX3090 lease is gone (this is its recovery), so the lease is stale: a
+    # dead owner's lease otherwise blocks every later launch with "explicit cleanup required".
+    release_lease()
+    print(json.dumps(restored))
     return 0
 
 
