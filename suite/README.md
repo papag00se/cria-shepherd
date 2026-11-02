@@ -6,7 +6,7 @@ One matrix cell per `run.py` invocation. A run receives active working time in m
 
 The first two intervals receive the full 30 active minutes unless the harness finishes earlier (the completion gate where enabled, or the model alone at L0). The minute-15 review cannot stop a still-running task. Continuation decisions begin at minute 30. The campaign agent judges total substantive requirement completion relative to approximate pace: roughly15active minutes per main prompt requirement, not per edit. For five requirements,40% at30minutes is expected,30% may be reasonable, but35% at45minutes warrants stopping and recording. Complexity can justify evidence-based exceptions, not indefinite extensions for small edits. Milestones are finished main requirements; clock ticks are review checkpoints. Holistic usefulness separately credits reusable incomplete work. See [the policy](../docs/task-battery.md#time-budgets). **Checkpoints are asynchronous (2026-10-26):** the coder is never paused for a snapshot or a judgment, so active time is wall time since the harness started. See [Asynchronous checkpoints](#asynchronous-checkpoints).
 
-For each `[milestone]` notice, the campaign agent inspects the frozen current and previous snapshots, records the judgment, and sends the user a report with model/task, elapsed active time, total usefulness percentage, material changes, and the continuation decision/rationale. Scheduled 15/30/… slots are distinct from the actual active elapsed time at which the snapshot was cut. Packets, checkpoint policy metadata, progress lines and result-row milestone judgments carry `actual_active_seconds`; the legacy `at_active_minutes` field identifies the scheduled slot, not a measurement. `progress_reports.py` is retained only for old independent-report packets, not used by current runs. For unattended runs, arrange a supervisor/heartbeat in the controlling agent conversation before launch; the Python runner does not send chat messages or manufacture judgments.
+For each `[milestone]` notice, the campaign agent inspects the current and previous snapshots, records the judgment, and sends the user a report with model/task, elapsed active time, total usefulness percentage, material changes, and the continuation decision/rationale. Scheduled 15/30/… slots are distinct from the actual active elapsed time at which the snapshot was cut. Packets, checkpoint policy metadata, progress lines and result-row milestone judgments carry `actual_active_seconds`; the legacy `at_active_minutes` field identifies the scheduled slot, not a measurement. `progress_reports.py` is retained only for old independent-report packets, not used by current runs. For unattended runs, arrange a supervisor/heartbeat in the controlling agent conversation before launch; the Python runner does not send chat messages or manufacture judgments.
 
 ## Asynchronous checkpoints
 
@@ -16,14 +16,14 @@ Policy change 2026-10-26 (operator): no pausing the coder for judgment or snapsh
 - **Judgment.** The campaign agent answers whenever it can, with the same `pending/emit/record` commands. The monitor polls (`milestones.poll`, non-blocking) for a valid recorded judgment while it keeps observing natural exit and the next intervals. A later packet lists any earlier checkpoint still awaiting judgment (`NOT YET JUDGED`, with its snapshot path) and the judged ones as before.
 - **Result row.** `milestone_judgments` has one record per checkpoint: `status: judged` with the real judgment and `judged_at_active_seconds`, or `status: pending` with no verdict fields. A checkpoint still unanswered at natural exit stays pending; the runner never completes, scores or invents it, and it can still be recorded afterwards in `~/.cria/suite/_milestones/`.
 - **A recorded stop decision ends the run.** `complete`/`stalled` (from minute 30) from the campaign agent's real judgment stops the harness even though files changed since its snapshot and even though a newer checkpoint is still unanswered; no file state, timestamp or newer unanswered copy can veto it. One ordering rule: the judgment of the NEWEST judged checkpoint decides, so an older stop decision recorded after a newer checkpoint was already judged is retained with `terminal_not_applied` ("a newer checkpoint was already judged") and does not stop the run; one recorded after the process ended is also retained, not applied. Minute 15 still cannot stop. There is no task wall cap, retry or numeric threshold.
-- **Measurement change and row identity (disclosed, not hidden).** `active_seconds` now equals `wall_seconds`; earlier rows excluded judge waits and quiesce time from active time and judged a frozen workspace. Rows from this runner carry `judgment_policy = "requirement-pace-15m-protected-30m-v3-async-live-snapshot"` and `checkpoint_mode = "async-live-snapshot"`; these two fields identify the measurement regime. `pacing_policy` (`inferred-progress-15m-protected-30m-v1`) remains only the **cadence** identity (15-minute interval, protected first 30 minutes) that campaign validation pins; its `v1` says nothing about pause semantics and must not be read as the old paused measurement. Historical rows are not relabeled. Compare pre- and post-change rows as measured under different checkpoint regimes. A run already in memory under the old runner keeps the old behavior until relaunched.
-- **Interfaces.** `run.monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop)` no longer takes `pause`/`resume`; `HarnessControl` has only `stop()`; `MilestonePacing` has no pause bookkeeping; `milestones.wait` is replaced by the non-blocking `milestones.poll`. An external driver that passes `pause=`/`resume=` must drop them.
+- **Row identity.** `active_seconds` equals `wall_seconds`. Rows carry `judgment_policy = "requirement-pace-15m-protected-30m-v3-async-live-snapshot"` and `checkpoint_mode = "async-live-snapshot"`; `pacing_policy` (`inferred-progress-15m-protected-30m-v1`) is the cadence: 15-minute interval, protected first 30 minutes.
+- **Interfaces.** `run.monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop)`; `HarnessControl` has `stop()`; `milestones.poll` is the non-blocking judgment check.
 
 ## Run a cell
 
 Planning defaults to **off** in both `run.py` and `battery_run.py`, including L5 and the CRIA arm. It is retained only for explicit experiments (`--planner on`); neither selecting a level nor swapping a model is consent to enable it. Ordinary runs require no planner flag.
 
-Assists are **L5 only**. When the tested server selects `[assists] profile = "rank4-ablation"`, it disables four Rank-4 definitions with `default_level = 5` after the operator's 2026-10-22 restoration of grounded stalled-work, completed-work briefing, shrinking-file protection, plan revision and living-plan (planning-related mechanisms remain explicitly opt-in); level-eligible L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes remain active. The original profile disabled all 48 ranked definitions, including 39 below L5, so those historical runs did not isolate assists. Keep their provenance unchanged and compare deployed revisions/configs and request-event `pilot_assists`; the profile name alone cannot distinguish the historical 48-disabled, nine-disabled, seven-disabled and current four-disabled selections. Planning still requires separate opt-in. See the [profile contract](../README.md#exact-rank-4-ablation).
+Assists are **L5 only**. When the tested server selects `[assists] profile = "rank4-ablation"`, it disables four Rank-4 definitions with `default_level = 5` after the operator's 2026-10-22 restoration of grounded stalled-work, completed-work briefing, shrinking-file protection, plan revision and living-plan (planning-related mechanisms remain explicitly opt-in); level-eligible L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes remain active. The original profile disabled all 48 ranked definitions, including 39 below L5, so those historical runs did not isolate assists. Compare deployed revisions/configs and request-event `pilot_assists`; the profile name alone cannot distinguish the historical 48-disabled, nine-disabled, seven-disabled and current four-disabled selections. Planning still requires separate opt-in. See the [profile contract](../README.md#exact-rank-4-ablation).
 
 ```bash
 python3 suite/run.py \
@@ -33,7 +33,7 @@ python3 suite/run.py \
   --note "experiment label"
 ```
 
-Pacing is fixed in 15-minute intervals, with the first continuation decision at minute 30. `meta.budget_intervals` remains recorded legacy metadata but no longer forces termination; total requirement completion relative to approximate pace is judged at each review. `prompt.txt` is the sole task/judgment contract.
+Pacing is fixed in 15-minute intervals, with the first continuation decision at minute 30. `meta.budget_intervals` is recorded metadata and does not force termination; total requirement completion relative to approximate pace is judged at each review. `prompt.txt` is the sole task/judgment contract.
 
 When a checkpoint appears:
 
@@ -51,15 +51,9 @@ The runner does not wait for the judgment: the coder keeps running and the runne
 
 The percentage assesses **all requested work delivered so far**, not merely the last interval. `material_changes` explains the inspected difference from the previous milestone (or seed at minute 15). At minute 15 select `continue`; the runner protects the half-hour even if the judge mistakenly selects a stop decision. From minute 30 onward, `complete`/`stalled` stops and `continue` grants another interval. The percentage itself never controls the run. Every log report includes the percentage and material changes; the result row retains all milestone judgments and `judgment_policy = "requirement-pace-15m-protected-30m-v3-async-live-snapshot"` plus `checkpoint_mode = "async-live-snapshot"`; the existing `pacing_policy` cadence/provenance identity remains unchanged (historical rows are not relabeled). New checkpoint judgments require evidence-backed `requirements` (main requirement, completed|partial|not_started, evidence) and `pace_reason`; changes-only judgments are rejected. Code validates shape, never counts bullets or applies a numeric stop threshold. An invalid or absent judgment is simply not a judgment: the checkpoint stays pending (and is listed in the result row as `status: pending`), and the runner never invents a verdict or a completion. Review-ended/operator-ended runs are not natural completions; preserve their exact stopped archive and termination before an independent final score. Natural early completion is not artificially restarted to fill the half-hour; judge its final archive.
 
-Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Fresh L5 campaign rows also record an immutable `revision`, the live engagement level read after cria's healthy restart, explicit planner config state, and request phase counts. The worklist credits only explicit L5 rows with live L5 provenance, preserved workspace and matching valid request/response captures, and no abort. Battery cells have no fixed wrapper timeout. Delivered-work quality is absent until an independent usefulness judgment is recorded.
+Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Campaign rows also record the `revision`, the live engagement level, the planner config state, the role sampling applied, and request phase counts. Battery cells have no fixed wrapper timeout. Delivered-work quality is absent until a usefulness judgment is recorded.
 
-The fresh L5 cohort is exactly nine roster models × six tasks. Materialize/resume its manifest at a committed revision:
-
-```bash
-python3 suite/fresh_l5_campaign.py --revision "$(git rev-parse HEAD)"
-```
-
-Run a listed cell through `suite/battery_run.py` with `--level 5 --planner off --fresh-l5 --campaign-revision <same-full-revision>`. The runner rejects a different HEAD. Historical rows are never edited or counted as fresh campaign cells.
+A campaign is the set of (model, task, level) cells that still lack a judged result row. Run any cell through `suite/battery_run.py` with `--level N --planner off`; a cell without a result row is simply run again.
 
 ## Machine-local Codex sandbox policy
 
@@ -91,7 +85,7 @@ its absence stops launch rather than selecting an ambient provider.
 
 Every judged Codex launch also uses the same per-cell HTTP admission adapter. Restored runs retain their existing source-sampling injection; other supported launches use a byte-preserving no-op mode. The isolated provider must speak Responses to local cria, verified before launch; there is no unadapted unsafe-pause path.
 
-The adapter's `quiesce`/`resume` park-and-drain machinery is **no longer used by the runner at a checkpoint** (see below). It remains in `sampling_adapter.py` with its tests; terminal paths still use `cancel()`, which closes admission, answers waiters with retryable HTTP 503 without reaching the producer, and precedes the process-group stop and the capture cutoff. Natural leader exit and surviving-child grace follow the same order.
+Terminal paths use `cancel()`, which closes admission, answers waiters with retryable HTTP 503 without reaching the producer, and precedes the process-group stop and the capture cutoff. Natural leader exit and surviving-child grace follow the same order.
 
 This confines Codex child-tool filesystem writes, not the trusted Python runner,
 ordinary pytest invocations, host-wide reads or network traffic. The middleware
@@ -103,71 +97,51 @@ JVM tools receive cell-local `maven.repo.local` and `java.io.tmpdir` properties 
 
 Cargo's `CARGO_HOME` and `CARGO_INSTALL_ROOT` also point to the cell's `cargo` directory. Install-root isolation alone does not redirect registry/index/download writes from the host's read-only `~/.cargo`. The toolchain remains the existing runtime; neither host write permissions nor task dependencies are changed. Real Cargo/login-shell tests prove isolated home/config use and an offline compiled binary with absent and poisoned ambient home settings.
 
-## Report location and launch readiness
+## Report
 
-The generated standing report is [`docs/battery-report.md`](../docs/battery-report.md). Follow [report etiquette](../docs/battery-report-policy.md): exactly six L0–L5 tables, original descriptive titles with table-average percentages, and a legend only. Chat supervision labels use official model / language via `report_labels.cell_label`, matching Ruby/Go/Python/Java/Node/Rust columns, never task types; internal task/run IDs remain provenance. Coverage, supervision, attempts and limitations go in `docs/battery-report-evidence.md` and external campaign records. The campaign-aware writer overlays independent final judgments without erasing pending standings or other levels' scores/metrics. All six tables reorder together by descending exact L5 average usefulness; equal means use ascending official model identity, unscored L5 identities come last, and historical subsets keep the shared relative order without invented rows. Bare `--write` refuses overwrite. Generation must not recreate `docs/audits/battery-report.md`. Existing historical rows are not fresh rerun results; record final judgments before claiming measured usefulness.
+The standing report is [`docs/battery-report.md`](../docs/battery-report.md): an `Updated: YYYY-MM-DD HH:MM TZ` line under the title, then six L0–L5 tables (original descriptive titles with table-average percentages) and a legend. Cell and chat labels use official model / language via `report_labels.cell_label`, matching the Ruby/Go/Python/Java/Node/Rust columns. All six tables are ordered together by descending L5 average usefulness; equal means use ascending official model identity and unscored L5 identities come last.
 
-For the restored eight-model planner-off L5 run, use the shared serial driver:
-
-```bash
-python suite/l0_campaign.py --level 5 --campaign-id NAME --campaign-revision FULL_HEAD --drive
-```
-
-An explicitly operator-authorized temporary GPU run uses the [owner-bound lease and automatic restoration procedure](../docs/temporary-fleet-gpu.md). It does not edit canonical RTX3080 profiles; the actual device variation is captured in campaign provenance.
-
-The historical script name remains compatible with L0. L5 cell-scoped canonical role sampling is preserved in external config receipts and restored after each cell; newer operator edits are never overwritten. Fleet validation, isolated installs, protected checkpoint pace and independent-final-judgment gating remain shared with the completed L0 campaign.
-
-Refresh a fresh campaign's score table and row averages with:
+Refresh it from the result rows:
 
 ```bash
-python3 suite/battery_status.py --campaign-id l0-restored-20261007 --write
+python3 suite/battery_status.py --write
 ```
 
-The explicit matching manifest selects judged main cells and linked judged replacements/operator dispositions exactly once. Pending/unjudged cells and failed originals do not enter averages. Every row includes average usefulness, wall minutes and model calls; genuine zeros count, unknown/invalid metrics do not, and coverage denominators are generated outside score cells. Wall minutes include judge waits in historical rows; in rows from the asynchronous runner active time equals wall time (see [Asynchronous checkpoints](#asynchronous-checkpoints)). Metrics come only from result rows, never reconstructed calls or capture counts. The writer overlays the selected level's standing cells/metrics, synchronizes all six tables to the retained L5 ranking, and appends coverage to the evidence document. Other levels retain their row contents, not necessarily their row positions; no checkpoint prose or attempt ledger belongs in the scorecard. Ambiguous selections, missing scores and mismatched report/manifest identities fail before writing. Bare `--write` refuses overwrite; the historical ladder generator is only a preview, not a standing-report writer.
+Each judged (model, task, level) cell contributes its latest judged row. Every table row shows average usefulness, wall minutes and model calls; genuine zeros count, unknown metrics do not. Wall minutes include judge waits in older rows; in rows from the asynchronous runner active time equals wall time (see [Asynchronous checkpoints](#asynchronous-checkpoints)). Metrics come only from result rows.
 
-A restored fleet must be launched from its verified current weights, runtimes, libraries and profiles, not obsolete paths or substituted assets. Missing assets block launch, not count as failed coding cells. The restored fleet now has a completed operational readiness receipt at `~/.local/share/cria/fleet/restoration-state.json` and an immutable `verification/restoration-completion.json`. The fresh L0 roster has eight logical models (Defiant-Fable is the selected `qwen3.8_9b_distill` artifact) × the six `battery_status.TASKS`: **48 new cells**. Phi's unconstrained Unicode tool-argument limitation remains recorded; restored readiness does not claim a full protocol pass or delivered-work quality. Historical rows and the fresh-L5 manifest receive no credit.
+## Running cells
 
-The owner must establish live L0, planner off, and call capture before launch. This path reads and verifies that config and its service startup; it never rewrites live role settings. The permanent `~/.local/bin/llama-fleet switch <official-id>` owns guarded model switching and frontend cache synchronization. All four source roles come from canonical `~/.config/llama-fleet/roles.json`. At L0 a per-cell stdlib loopback adapter injects only source numeric coder sampling into complete Responses requests, forwards every response byte, and records both the injected map and actual upstream capture values. A persistent rate-limit gate honors wait signals across calls/cells; there are no adapter retries. Codex uses the tested explicit `0.159.3` binary with the mandatory sandbox and an isolated provider URL override; the row records binary path/version/hash.
-
-Create or inspect a manifest without launching inference:
-
-```bash
-python3 suite/l0_campaign.py --campaign-id l0-restored-20261007 \
-  --campaign-revision "$(git rev-parse HEAD)"
-```
-
-Add `--drive` to run serially. State, driver logs and harness logs live under `~/.cria/suite/_campaigns/<campaign-id>/`. Before every cell the driver rejects changed revision, config, effective units, weights, runtimes, libraries, templates or receipts. It requires completed restored readiness, retains scoped known limitations, and checks only the six task runners without installing dependencies. The manifest uses the existing 15-minute semantic milestone policy, protects the first 30 active minutes and ignores legacy budgets. The controlling agent must answer milestone packets and record final usefulness via `suite/usefulness.py`; the next cell waits for that final judgment. Invalid, duplicate, interrupted or missing runs block the campaign with **no automatic retry**.
-
-A single manifest cell is routed through:
+A campaign is the set of (model, task, level) cells that still lack a judged result row. A single cell runs through `suite/battery_run.py` (which also supports `--restored-fleet`); a cell that ends without a result row is simply run again:
 
 ```bash
 python3 suite/battery_run.py --level 0 --restored-fleet \
-  --model gemma4_12b --task shipping-rates-rb \
-  --campaign-id l0-restored-20261007 --campaign-revision <full-revision>
+  --model gemma4_12b --task shipping-rates-rb --campaign-id NAME
 ```
 
-`--campaign-id` and `--campaign-revision` are also supported by `suite/run.py`. Legacy service and sampling registries remain available only on the existing path without `--restored-fleet`; archived identities are preserved.
+[Parallel lanes](#parallel-lanes-one-cell-per-slot-both-gpus) run the whole set. The controlling agent answers milestone packets and records final usefulness judgments via `suite/usefulness.py`.
+
+The owner establishes the live engagement level, planner off and call capture before launch. `~/.local/bin/llama-fleet switch <official-id>` switches models. All four source roles come from `~/.config/llama-fleet/roles.json`. A per-cell stdlib loopback adapter injects the row's numeric coder sampling into complete Responses requests, forwards every response byte, and records the injected map and the actual upstream capture values. A persistent rate-limit gate honors wait signals across calls and cells; there are no adapter retries. Codex uses the explicit `0.159.3` binary with the mandatory sandbox and an isolated provider URL override; the row records the binary path and version.
 
 ## Parallel lanes (one cell per slot, both GPUs)
 
-[`suite/lanes.py`](lanes.py) serves **one model per card, many slots of that one model, one cell per slot**. The 3090 lane is 4 slots at 49,152 tokens each; the 3080 lane is 2 slots at the largest per-slot window that fits with `MARGIN_MIB` free after a loaded run (49,152 → 45,056 → 40,960 → 36,864; recorded per model in `LANE_WINDOWS`, `None` = 3090 lane only). A model's profile context caps its window (`bonsai2`/`k2_horizon_7b` 40,960, `phi4` 16,384). `--ctx-size` is the TOTAL (slots × per-slot); the window cria and Codex are told is the PER-SLOT one, and the lane is only admitted when `/props` reports exactly the declared slots and per-slot `n_ctx`. The canonical single-slot RTX3080 profiles and `llama-fleet switch` are unchanged: a lane plan is the profile's own plan with only `--parallel`, `--ctx-size`, port and device overridden. The 3090 is taken through the owner-bound lease; `lanes.take_hardware` stops/restores the HyperQwen container, its idle-check timer and any running managed fleet model, and `python suite/lanes.py restore` recovers an interrupted run.
+[`suite/lanes.py`](lanes.py) serves **one model per card, many slots of that one model, one cell per slot**. The 3090 lane is 4 slots at 49,152 tokens each; the 3080 lane is 2 slots at the largest per-slot window that fits with `MARGIN_MIB` free after a loaded run (49,152 → 45,056 → 40,960 → 36,864; recorded per model in `LANE_WINDOWS`, `None` = 3090 lane only). A model's profile context caps its window (`bonsai2`/`k2_horizon_7b` 40,960, `phi4` 16,384). `--ctx-size` is the TOTAL (slots × per-slot); the window cria and Codex are told is the PER-SLOT one. The canonical single-slot RTX3080 profiles and `llama-fleet switch` are unchanged: a lane plan is the profile's own plan with only `--parallel`, `--ctx-size`, port and device overridden. `lanes.take_hardware` stops the HyperQwen container, its idle-check timer and any running managed fleet model, and `python suite/lanes.py restore` puts them back after an interrupted run.
 
-Each ACTIVE ROW (lane × model × level) gets one cria instance on its own port (from 18400) with its own config copy (the row's role sampling applied through the same before/active receipts as the serial path, plus transport-only edits: port, endpoint, logs, captures, engagement level) and its own capture/log directories under `~/.cria/suite/_lanes/<lane>/rows/`. Every concurrent cell of that row shares the instance (cria state is session-scoped); a cell's sessions and events are the Codex session ids its harness log printed. Row instances run the deployed `cria.service` code (same python and release directory); the service itself is not used or edited by lane runs.
+Each ACTIVE ROW (lane × model × level) gets one cria instance on its own port (from 18400) with its own config copy (the row's role sampling, plus transport-only edits: port, endpoint, logs, captures, engagement level) and its own capture/log directories under `~/.cria/suite/_lanes/<lane>/rows/`. Every concurrent cell of that row shares the instance (cria state is session-scoped); a cell's sessions and events are the Codex session ids its harness log printed. Row instances run the deployed `cria.service` code (same python and release directory); the service itself is not used or edited by lane runs.
 
 Run the driver as its own `systemd --user` unit, never as a child of an agent's shell: a killed parent (an agent
 scope taken by systemd-oomd took 239 lane processes with it) must not take the lanes down, and `ExecStopPost`
-puts the hardware back and releases the RTX3090 lease however the driver ends:
+puts the hardware back however the driver ends:
 
 ```bash
 systemd-run --user --unit=lanes-ID --collect --working-directory="$PWD" \
     -p ExecStopPost="/usr/bin/python3 $PWD/suite/lanes.py restore" -p StandardOutput=append:"$HOME/.cria/suite/_lanes/ID.log" -p StandardError=append:"$HOME/.cria/suite/_lanes/ID.log" \
     python3 suite/lane_driver.py --campaign l5-20261102:5 [--campaign l0-20261102:0] \
-    --campaign-revision "$(git rev-parse HEAD)" [--lanes 3090x4,3080x2] [--models M,..] [--tasks T,..] [--max-cells N]
+    [--lanes 3090x4,3080x2] [--models M,..] [--tasks T,..] [--max-cells N]
 ```
 
 `python3 suite/lanes.py restore` is the same recovery by hand.
 
-The driver serves one model at a time (the lease names one model), fills every free slot of its lanes with that model's pending cells across all campaigns/levels, and switches model only when every slot has drained. A cell awaiting its usefulness judgment does not hold a slot; an invalid or failed cell blocks new launches, lets running cells finish and ends the run with no retry. Per-cell provenance, revision, weights, runtime and receipt checks are unchanged; the row additionally records the lane, its served-config evidence and the row config (`l0_campaign.lane_valid`).
+The driver serves one model at a time, fills every free slot of its lanes with that model's pending cells across all campaigns/levels, and switches model only when every slot has drained. A cell awaiting its usefulness judgment does not hold a slot. A cell that fails or ends without a result row is run again.
 
 `suite/lane_measure.py` measures each model × lane with a fixed load (~6K-token code prompt, 600-token outputs: solo, then every slot at once) and reports the fit and the factor. **Reported wall minutes** are solo-equivalent rough estimates: measured minutes × `LANE_FACTORS[model][lane]` (per-stream tok/s at the lane's slot count ÷ solo tok/s on the same card; an unmeasured model uses the `ornith1.5_9b` factor). The factor is applied by `battery_status` from the row's `lane`; `wall_seconds` stays the measured value.
 
@@ -184,68 +158,6 @@ The judge infers usefulness only from the original `prompt.txt` and the archived
 
 ## Replays and walks
 
-`replay.py` re-sends real captured calls under a settings or wording matrix and evaluates protocol behavior with cria's own parsers. `walk.py` materializes a call-by-call transcript for manual causal analysis. With `--segment-bytes` or `--reader-context-tokens`, each assignment section supplies its own initial prompt per phase, then references exact already-read prompt lines within that section. Prepared chunks preserve call order and never cross section boundaries; they do not define analytical reader assignments. New/changed prompt text and every response/reasoning/tool argument remain whole. References explicitly identify source calls and line ranges; context removals/replacements are marked. `--full-prompts` disables line reuse. Section byte budgets include actual emitted UTF-8 text and reference framing; a single oversized call is flagged rather than split.
+`replay.py` re-sends real captured calls under a settings or wording matrix and evaluates protocol behavior with cria's own parsers. `walk.py` prints a call-by-call transcript for manual causal analysis. With `--segment-bytes` or `--reader-context-tokens`, each assignment section supplies its own initial prompt per phase, then references exact already-read prompt lines within that section. Prepared chunks preserve call order and never cross section boundaries. New/changed prompt text and every response/reasoning/tool argument remain whole. References identify source calls and line ranges; context removals/replacements are marked. `--full-prompts` disables line reuse. Section byte budgets include the emitted UTF-8 text and reference framing; a single oversized call is flagged rather than split.
 
-The process has two operator-facing documents: [Walking](../docs/walk-prompt.md) owns preparation and delivery; [Analysis](../docs/walk-analysis.md) owns source challenge, diagnosis and fix evaluation using an operator-selected model. The original operator directives are preserved verbatim across those two homes. Luna still receives only its unchanged short role instruction and the current stage prompt: reasoning-only extraction, then a separate same-Luna whole-list context mapping. `walk.py` chunks are lossless navigation aids, not stage-1 inputs or an exhaustive context-reading requirement. Earlier exhaustive, word-ranking and ledger-repair protocols are revoked. Implementation requires a grounded candidate and separate authorization.
-
-## Closed walk and fix retention
-
-Operator policy (2026-10-13): after all fixes associated with a walk/validation unit settle
-**ACCEPTED or REJECTED**, delete its walk, proof outputs, reviews, scratch copies and supporting
-artifacts. Durable outputs are **repository changes (including genuine regression tests) and
-actual model-call logs**, not permanent bug/score archives or hash/tombstone warehouses.
-Old assistant-authored archival instructions and incidental citations do not extend closed-work
-retention. Keep active owners, unresolved failures, necessary current inputs/deadlines and unique
-unapplied source/tests until disposition/application makes those copies unnecessary. Never infer
-closure from a finished model run, usefulness judgment, missing findings or an empty fix list.
-
-**Prevent accumulation at creation.** Follow [`docs/walk-prompt.md`](../docs/walk-prompt.md) for the single-directory investigation workflow and bounded acceptance standard. Tests and follow-on tools must not depend on disposable review outputs; port necessary inputs into small repository regression fixtures.
-
-`walk.py` writes chunks and `assignments.json`, not a duplicate plan or placeholder findings. Readers create their own findings inside the same directory. An empty file does not establish reading coverage.
-
-The coordinating owner runs cleanup immediately after the last fix disposition and securing necessary changes. There is no separate cleanup review or permanent closure registry. Supply the declaration on stdin so cleanup does not require another file:
-
-```bash
-python -B suite/close_walk.py - <<'JSON'
-{"unit":"walk-example","owner":"coordinator","closure":"final fix dispositions",
- "closed":true,"fixes":[{"id":"fix-1","disposition":"ACCEPTED","changes":[
- {"source":"/tmp/example/test_regression.py",
-  "worktree":"/home/operator/src/cria-shepherd/tests/test_regression.py"}]}],
- "scratch":["/tmp/example"],"protected_paths":[],"call_logs":[]}
-JSON
-```
-
-`--dry-run` is optional, not another approval step. An existing temporary JSON file is still accepted, but is not required and must not become a new permanent record. `milestones.py` records task continuation, not fix acceptance; completing a run alone does not authorize deletion.
-
-Declare every fix; only the exact two settled dispositions qualify. Declare each necessary unique
-source/test copy; identical regular-file bytes must already exist inside this worktree before
-scratch removal. Rejected alternatives that are not needed are disposable, not tests to port.
-Explicit `changes: []` means no necessary unique changes, not an unexamined directory. A genuinely
-closed walk with no findings requires `fixes: []` AND `no_findings: true`. Unknown/ambiguous
-ownership or dispositions deny cleanup. No blanket glob: list only attributable paths strictly
-below `/tmp`, `~/.cria/validation` or `~/.cria/walk-findings`. Root deletion/escape, overlapping
-paths, missing targets, symlinks/special entries and protected intersections are refused before
-any batch deletion. An absent path is not reported as a previously successful deletion.
-
-Declare active dependencies/gates/other-owner inputs in `protected_paths` and ALL misplaced
-experimental captures in `call_logs`; an overlap denies the containing-root deletion. Canonical
-`~/.cria/calls`, `~/.cria/logs`, this repository and `~/Documents` are always protected. Move actual
-experimental call logs to `~/.cria/calls` with explicit original-path provenance and verified full
-byte custody before deleting any otherwise eligible containing root. Never move operative gates.
-Synthetic CPU-fixture captures are not new model calls, but establish that from actual producer
-and transport ownership, never filename resemblance alone. Keep pending runtime candidates,
-unique unapplied tests/code, quarantined workspaces and other projects untouched.
-
-The command validates the supplied declaration; it cannot judge whether the coordinator omitted
-an active dependency or misclassified arbitrary bytes as scratch. It is not a general garbage
-collector, permission sandbox or technical barrier to independent destructive shell commands.
-Deletion uses no-follow parent descriptors and the platform's symlink-safe tree remover; stale
-inode identity denies deletion. Directory traversal errors deny the whole batch, rather than
-silently treating an unreadable subtree as empty. Target directories must belong to the current
-process's Unix user; target parents must already allow removal. After full admission, only owned
-directories INSIDE the admitted targets gain owner-write permission when necessary (for example,
-read-only copied module caches). No file permissions change: a hard-linked original elsewhere
-must retain its mode and bytes. No permissions outside admitted trees change. Filesystem failures
-can still leave a partially removed batch: inspect and report the actual error, never relabel it
-as complete. Temporary closure/cleanup/review records
-are themselves disposable after this unit settles; do not keep another permanent archive.
+The process has two documents: [Walking](../docs/walk-prompt.md) owns preparation and delivery; [Analysis](../docs/walk-analysis.md) owns source challenge, diagnosis and fix evaluation. Luna receives only its short role instruction and the current stage prompt: reasoning-only extraction, then a separate same-Luna whole-list context mapping. `walk.py` writes chunks and `assignments.json`; readers create their own findings inside the same directory.

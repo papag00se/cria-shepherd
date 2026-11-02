@@ -15,7 +15,7 @@ Tests live in `tests/<domain>/test_<domain>_<subject>.py`. Domain directories an
 - `shell_safety`: the shell backstops (bounded backstops, not a parser or sandbox).
 - `research_discovery`: fetch/search, discovery and language checks.
 - `server_config`: HTTP handlers, config, sessions, retention.
-- `suite_tooling`: the evaluation suite's own safety and provenance rules.
+- `suite_tooling`: the evaluation suite's own tooling.
 - `misc_runtime`: system1 runtime, usage reporting, native-protocol and transport pieces.
 - `structure`: the legitimately structural invariants (import graph, bound lints, prompt hygiene, wire keys, the generated assist inventory, walk docs).
 
@@ -34,7 +34,7 @@ File and helper names are prefixed with their domain and must be globally unique
 
 On 2026-10-31 the suite was rewritten at about 10% of its size (from 855 files / 157K lines / 9.2K definitions / ~13.8K collected cases to about 15K lines), then widened with scenario tests aimed at the lines the cut had lost (see below). The old files are preserved unchanged in git as the tag `tests-before-reset-20261031` (pushed to origin); they are no longer in the working tree. Use them as a guide to corner cases we struggled with: `git grep -n <subject> tests-before-reset-20261031 -- tests` before changing it, `git show tests-before-reset-20261031:tests/<file>.py` to read one, and copy the incident into a new table row rather than the test.
 
-Assist declarations in `cria/*.py` list regression tests in `regressions=` and `SourceOwner(...)`. Where a new test covers the assist those entries point at it; where none does they point at the preserved file as `tests-before-reset-20261031:tests/<file>.py`. The assist-inventory builder resolves such a reference through `git show`, so a mistyped one fails loudly, and the report marks it *(archived)*. An archived entry is an assist whose regression is not protected by the live suite: write the new row when you next touch that assist, and repoint the entry.
+Assist declarations in `cria/*.py` list regression tests in `regressions=` and `SourceOwner(...)`. Where a new test covers the assist those entries point at it; where none does they point at the preserved file as `tests-before-reset-20261031:tests/<file>.py`. An archived entry is an assist whose regression is not protected by the live suite: write the new row when you next touch that assist, and repoint the entry.
 
 ## What the reset measured
 

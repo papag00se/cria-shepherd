@@ -2,7 +2,7 @@
 
 ## Scope and interpretation
 
-Assessed revision: **`079116e4c99635722a0f3327246fd9e359586eb5`**. Every source location below refers to that commit, not subsequent fixes or the shared checkout's in-flight changes. Read a cited location with `git show 079116e4:path`. Cited `tests/test_*.py` paths are the pre-reset suite: read them at that commit, or at the tag `tests-before-reset-20261031`; the live regressions are in [the assist inventory](../assist-inventory/REPORT.md).
+Assessed revision: **`079116e4c99635722a0f3327246fd9e359586eb5`**. Every source location below refers to that commit, not subsequent fixes or the shared checkout's in-flight changes. Read a cited location with `git show 079116e4:path`. Cited `tests/test_*.py` paths are the pre-reset suite: read them at that commit, or at the tag `tests-before-reset-20261031`; the live regressions are named in the `regressions=` entries of the assist definitions in `cria/`.
 
 This ranks **all 78 registered atomic definitions** assembled by `cria/assistruntime.py:21–30`, against [the principles](../principles.md). It is not a claim that those definitions exhaust every supporting mechanism: the inventory also contains required foundations, protocol support, providers and external artifacts. Shared foundation qualifications follow the ranking.
 

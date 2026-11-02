@@ -1,6 +1,6 @@
 # Research basis for bounded decision-model training
 
-Status: research recommendation and offline seed design, 2026-10-24. No training, model inference, GPU work, production changes, or deployment approval occurred in this task. The [archive audit](archive-audit.md) owns authoritative corpus counts, joins, cutoff, and real coverage gaps. The [synthetic-data contract](synthetic-data.md) owns proposed examples and annotation policies. Main owns integration and independent admission review.
+Status: research recommendation and offline seed design, 2026-10-24. No training, model inference, GPU work, production changes, or deployment approval occurred in this task. The [synthetic-data contract](synthetic-data.md) owns proposed examples and annotation policies. Main owns integration and independent admission review.
 
 ## Recommendation, not a universal winner
 

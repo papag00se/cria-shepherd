@@ -17,14 +17,14 @@ These are the operator-defined project identities, recorded **2026-09-30**, with
 
 **Gemma4 and Gemma4 QAT are one logical model: `gemma4_12b`.** Quantization, QAT, a service unit name or a historical spelling does not create another battery row. Fresh judgments supersede only the matching cell; unreplaced historical L0–L4 and other cells remain visible.
 
-Dory is an additional registered model, not a replacement or alias for another model. Its [settings](model-settings.md) and [dedicated runtime/tuning guide](dory-runtime.md) retain the requested three-loop configuration. Registration does not activate its service, expand the frozen eight-model campaign roster, or create unmeasured battery standings.
+Dory is an additional registered model, not a replacement or alias for another model. Its [settings](model-settings.md) and [dedicated runtime/tuning guide](dory-runtime.md) retain the requested three-loop configuration. Registration does not activate its service, expand the eight-model campaign roster, or create unmeasured battery standings.
 
-## One owner, immutable provenance
+## One owner
 
 `suite/model_names.py` owns `OFFICIAL_NAMES`, explicit compatibility `ALIASES`, and `canonical_name()`. The battery generator imports that registry, normalizes lookup/display identity and renders one canonical row. Unknown names are preserved rather than guessed. The later owner correction adds `defiant-fable` as a distill alias; restored `nemotron-elastic` retains its existing name.
 
-Executable keys, service units, model filenames, historical `model` fields, run IDs, captures and archives retain their original spellings. In particular, the running fresh L5 campaign continues using its existing executable keys and fixed inference anchor; display naming does not reset its worklist, add cells, alter sampling or require a model reload. When citing an artifact, quote its actual stored ID, identifying the official model separately.
+Executable keys, service units, model filenames, historical `model` fields, run IDs, captures and archives retain their original spellings. Display naming does not add cells, alter sampling or require a model reload. When citing an artifact, quote its actual stored ID, identifying the official model separately.
 
-The official spelling is not automatically a command-line executable alias: consult the existing runner's accepted keys when launching. Do not perform broad search/replace over historical evidence to make names look uniform. Any future executable-key migration must be explicit, preserve alias/provenance compatibility, and independently verify worklist and sampling invariants.
+The official spelling is not automatically a command-line executable alias: consult the existing runner's accepted keys when launching. Do not perform broad search/replace over historical evidence to make names look uniform. An executable-key migration keeps the old keys as aliases.
 
 Do not infer identities from capitalization, punctuation, parameter counts or similar names. In particular, `qwen38` (the separately operated 27B model) is **not** an alias for `qwen3.8_9b_distill`.

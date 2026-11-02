@@ -25,35 +25,35 @@ Install the optional extra in the interpreter used by the service:
 python -m pip install '.[system1]'
 ```
 
-The production bundle is local and self-contained, not a pointer to an experiment's mutable environment. It includes the actual graph/external weights, native tokenizer and frozen policy/configuration metadata. Its manifest binds the exact bytes; admission must reject changes, missing shards and invalid mappings before serving.
+The production bundle is local and self-contained, not a pointer to an experiment's mutable environment. It includes the actual graph/external weights, native tokenizer and policy/configuration metadata, which cria loads directly from the bundle directory.
 
 ```toml
 [system1]
 enabled = true
-bundle_dir = "/absolute/path/to/the/admitted/bundle"
+bundle_dir = "/absolute/path/to/the/bundle"
 threads = 6
 ```
 
 Omit the section or set `enabled = false` to retain existing behavior. Supplying a bundle path alone does not enable the classifier. `threads` must be a positive integer. Unknown keys and wrong types are errors.
 
-## Admission and observability
+## Serving fidelity and observability
 
-Admission compares the production tokenizer's exact complete token IDs and prepared native inputs with saved native SDK packets, then compares actual CPU logits and decisions with the frozen saved INT4 calls. This checks serving fidelity, **not a new semantic evaluation**. Existing TRAIN exposure remains exposure. Resource measurements distinguish cold load, warm inference, process RSS, one/two concurrent callers and complete long inputs; the sub-250 MB weight artifact is not a promise of a sub-250 MB process.
+Serving was checked by comparing the production tokenizer's exact complete token IDs and prepared native inputs with saved native SDK packets, then comparing actual CPU logits and decisions with the saved INT4 calls. This checks serving fidelity, **not a new semantic evaluation**. Existing TRAIN exposure remains exposure. Resource measurements distinguish cold load, warm inference, process RSS, one/two concurrent callers and complete long inputs; the sub-250 MB weight artifact is not a promise of a sub-250 MB process.
 
-HTTP receive receipts (`*.json.receive.json`, written by `cria.receivecapture`) are transport companions, not additional upstream requests. The shared suite capture-file classifier excludes them when producing a shutdown manifest. Historical manifests that included them as pending requests remain byte-for-byte intact: admission verifies each receipt's recorded hash, owned metadata shape and declared primary request, then excludes that artifact from model-call and phase counts. Genuine requests, pending/late-call rules and native classifier namespaces remain independently checked.
+HTTP receive records (`*.json.receive.json`, written by `cria.receivecapture`) are transport companions, not additional upstream requests; they are not counted as model calls or phases.
 
-Actual classifier calls must retain their complete public input, frozen policy/labels, logits and decision through the existing call-capture facility when capture is enabled. Native classifier captures live under `<session>/system1/`, in their own restart-safe sequence, with real native request/response fields—not fabricated chat requests or `choices` responses. They emit no `upstream.dump`, do not shift upstream sequence numbers, and cannot invalidate the suite's generated-LLM capture evidence. Existing suite upstream-call and generation-throughput metrics describe the LLM requests; native CPU classifier calls and timing are recorded separately through `system1.judgment`/`system1.error` and their capture pointers. Structured decision/error events establish which provider actually ran and why an optional directive or briefing was withheld. Runtime evidence must never be reconstructed by counting words in prose.
+Actual classifier calls must retain their complete public input, policy/labels, logits and decision through the existing call-capture facility when capture is enabled. Native classifier captures live under `<session>/system1/`, in their own restart-safe sequence, with real native request/response fields—not fabricated chat requests or `choices` responses. They emit no `upstream.dump`, do not shift upstream sequence numbers, and cannot invalidate the suite's generated-LLM capture evidence. Existing suite upstream-call and generation-throughput metrics describe the LLM requests; native CPU classifier calls and timing are recorded separately through `system1.judgment`/`system1.error` and their capture pointers. Structured decision/error events establish which provider actually ran and why an optional directive or briefing was withheld. Runtime evidence must never be reconstructed by counting words in prose.
 
-### Expanded v2 serving admission (2026-10-25)
+### Expanded v2 serving (2026-10-25)
 
-The admitted standalone bundle is `expanded-v2-live`, manifest SHA-256 `854cb99b7ca61ac618f6065b13c9d768790336dc75968ff9176dd097be6e301a`. Its graph plus external weights occupy **239,829,455 bytes**. Final-source qualification found:
+The standalone bundle is `expanded-v2-live`. Its graph plus external weights occupy **239,829,455 bytes**. Final-source qualification found:
 
 - **194/194** saved INT4 calls reproduced their complete native inputs, token IDs and decisions, with logits checked at `rtol=atol=0.0002`; **836** canonical TRAIN packets matched native rendering/tokenization. This is fidelity, not fresh accuracy; the calls comprise 64 reserved synthetic examples and 130 TRAIN-exposed real examples.
 - On a host also running regression checks: cold load plus startup self-tests **8.22 s**; warm mean **1.11 s**, median **0.93 s**, p95 **2.45 s**; ordinary qualification peak RSS **1.19 GB** (decimal). Two callers serialized. These are observations, not a controlled latency comparison.
 - An exact **16,384-token** constructed resource vector was declined by the bounded allocator in **7.08 s**: one buffer requested **34,359,738,368 bytes**. Peak RSS was **13.09 GB**, and a subsequent short call succeeded, with RSS then **433 MB**. The safety probe also imposed a process-local 32 GiB address-space limit; serving does not impose that process-wide limit. The actual refusal came from the 16 GiB ORT arena, not clipping or a changed window.
-- The optional Python 3.13 environment passed **194** runtime, package, capture, configuration, wiring, annotation and installed-wheel tests, including the real engines. The separate complete-repository release gate passed **11,238 tests**, with **241 skips** and **4,491 subtests**; its before/after source hashes were unchanged.
+- The optional Python 3.13 environment passed **194** runtime, package, capture, configuration, wiring, annotation and installed-wheel tests, including the real engines. The separate complete-repository release gate passed **11,238 tests**, with **241 skips** and **4,491 subtests**.
 
-Complete final qualification calls are retained at `~/.cria/calls/system1-serving-v2-20261025/qualification-003.jsonl`, SHA-256 `e446e4af829aad7fa9c5d2992789db84c372587384c76f31b54353f0c20d1e65`. Training remains as described in [methodology](training/methodology.md); serving uses neither training dependencies nor GPU inference.
+Complete final qualification calls are retained at `~/.cria/calls/system1-serving-v2-20261025/qualification-003.jsonl`. Training remains as described in [methodology](training/methodology.md); serving uses neither training dependencies nor GPU inference.
 
 The two coding cells run with this classifier active (`ornith1.5_9b / Java`, planner OFF; independent terminal judgments 2% and 15% usefulness) are not classifier evidence: neither was an ablation, and the retained run records and call captures live under `~/.cria/suite/_campaigns/system1-v2-ornith-java-20261025` and `~/.cria/calls/`. What they taught is in [the decision log](decision-log.md) ("System1 deployment cells").
 

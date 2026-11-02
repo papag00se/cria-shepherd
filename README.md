@@ -84,7 +84,7 @@ disabled = ["schema-argument-conversion", "historical-argument-recovery"]
 
 These stable IDs come from the actual [argument-conversion](cria/argumentconversion.py) and [historical-recovery](cria/historyarguments.py) definitions. Omitting this section, or using `disabled = []`, adds no opt-outs; existing engagement levels and applicability still apply. This control cannot enable a policy above its existing level.
 
-`disabled` is an array of strings; optional `profile` defaults to `"default"`. Unknown IDs, duplicate IDs, unknown keys, wrong value types and disabling a dependency of a still-selected policy are configuration errors, not ignored requests. Family labels are not selection IDs. See the [generated source map](docs/assist-inventory/REPORT.md) for current registrations and pending coverage; not every legacy family has migrated.
+`disabled` is an array of strings; optional `profile` defaults to `"default"`. Unknown IDs, duplicate IDs, unknown keys, wrong value types and disabling a dependency of a still-selected policy are configuration errors, not ignored requests. Family labels are not selection IDs. See [`cria/assistfamilies.py`](cria/assistfamilies.py) for the family map; not every legacy family has migrated.
 
 Required wire-validity, privacy and fitting contracts retain their existing applicability independently of optional selections. For example, disabling historical recovery still preserves malformed argument bytes in a valid, lossless envelope. Experimental planning remains OFF by default and requires separate explicit `enabled = true` under `[planner]`; assist selection does not enable it. Developer boundaries are documented in the [architecture contract](docs/shephard.md#assist-and-family-boundaries).
 

@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Prepare lossless captured-call material for navigation, not a reader protocol.
+"""Print a capture directory's calls losslessly, in order, for reading.
 
-Official staged walking: docs/walk-prompt.md. Mixed context/response output from this utility
-must not be supplied as stage-1 reasoning-only evidence.
+Official staged walking: docs/walk-prompt.md. Output mixes context and responses.
 
-Why this exists: a walk done through an ad-hoc digest script silently cut reasoning at a few
-hundred characters and tool arguments shorter still, and two real defects (a file the run DID
-create, and the harness's "unsupported call" replies) were invisible in the cut.
-This preparation utility NEVER truncates content; it does not require exhaustive context reading.
+This utility NEVER truncates content.
 
 For each call NNNN-<phase> in the capture directory it prints:
 
@@ -28,9 +24,7 @@ For each call NNNN-<phase> in the capture directory it prints:
   [finish: <reason>]
 
 Output goes to stdout, or to numbered chunk files with --out (default ~64 KB AND ~1800 lines per
-chunk so a reader can take the run in order without any single file being unloadable). Bytes alone
-were not enough: a chunk of many short lines came to 3,318 lines, a reader capped at 2,000 read the
-head and moved on, and 2,406 lines went unwalked without anything saying so.
+chunk so a reader can take the run in order without any single file being unloadable).
 
     python3 suite/walk.py ~/.cria/calls/<session>            # whole run to stdout
     python3 suite/walk.py <session-name> --out ~/.cria/walk-findings/<date>/<cell>   # chunkNN.txt; never /tmp

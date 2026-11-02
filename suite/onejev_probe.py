@@ -16,8 +16,7 @@ import subprocess
 import threading
 
 from cria import prompts
-from suite.training_admit import LABEL_ORDER
-from suite.training_prepare import sha
+from suite.training_updates import LABEL_ORDER, sha
 
 
 def checked_probabilities(answer, family):

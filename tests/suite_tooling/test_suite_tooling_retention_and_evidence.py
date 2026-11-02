@@ -1,9 +1,5 @@
-"""Destructive/closing tools and evidence preservation: walk closure deletes only settled scratch, the usefulness
-packet outlives its workspace, restored role config is restored byte-exact, sampling is injected non-lossily."""
+"""The usefulness worklist, role config restored byte-exact after a cell, and non-lossy sampling injection."""
 import json
-import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -12,156 +8,26 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "suite"))   # usefulness imports siblings by bare name
 import usefulness  # noqa: E402
 from suite.sampling_adapter import RateLimitGate, inject_sampling  # noqa: E402
-from suite import close_walk, restored_roles  # noqa: E402
-
-
-def _restore_permissions(root):
-    """A test (or a failure part-way through one) may leave 0555 directories; pytest's basetemp and copy tools cannot
-    delete those. Owner-only restore of every entry still under ``root``, symlinks and foreign owners untouched."""
-    for dirpath, dirs, files in os.walk(root):
-        for name in (".", *dirs, *files):
-            path = os.path.join(dirpath, name)
-            if not os.path.islink(path) and os.stat(path).st_uid == os.geteuid():
-                os.chmod(path, os.stat(path).st_mode | 0o700)
-
-
-@pytest.fixture
-def area(tmp_path):
-    scratch, repo = tmp_path / "scratch", tmp_path / "repo"
-    (repo / "tests").mkdir(parents=True)
-    unit = scratch / "closed"
-    unit.mkdir(parents=True)
-    (unit / "output").write_bytes(b"old check output")
-    record = dict(unit="walk-1", owner="o", closure="operator final fix dispositions", closed=True,
-                  fixes=[dict(id="f1", disposition="ACCEPTED", changes=[])], scratch=[str(unit)],
-                  protected_paths=[], call_logs=[])
-    yield scratch, unit, repo, record
-    _restore_permissions(tmp_path)
-
-
-def close(area):
-    scratch, _, repo, record = area
-    return close_walk.close(record, repo=repo, scratch_roots=[scratch])
-
-
-def test_closure_removes_only_declared_scratch_and_keeps_secured_work_and_active_neighbours(area):
-    """Settled (ACCEPTED/REJECTED) fixes remove their scratch; secured unique source survives in the repo,
-    and an active neighbour (protected path) is untouched."""
-    scratch, unit, repo, record = area
-    (unit / "fix.py").write_bytes(b"def add(a, b): return a + b\n")
-    (repo / "tests/fix.py").write_bytes((unit / "fix.py").read_bytes())
-    record["fixes"][0]["changes"] = [dict(source=str(unit / "fix.py"), worktree=str(repo / "tests/fix.py"))]
-    record["fixes"].append(dict(id="f2", disposition="REJECTED", changes=[]))
-    active = scratch / "closed-pending"
-    active.mkdir()
-    (active / "call-log").write_bytes(b"keep active bytes")
-    record["protected_paths"] = [str(active)]
-    assert close(area) == [str(unit)] and not unit.exists()
-    assert (repo / "tests/fix.py").is_file() and (active / "call-log").read_bytes() == b"keep active bytes"
-
-
-@pytest.mark.parametrize("damage", [
-    ("status", None), ("status", "PENDING"), ("status", True), ("fixes", []), ("scratch", ["/"]),
-    ("scratch", ["relative"]), ("closed", "true"), ("record", None),
-    ("unsecured", "missing"), ("unsecured", "different"), ("unsecured", "symlink"), ("unsecured", "outside-repo"), ("protected", "outside-roots"),
-    ("protected", "call_log"), ("protected", "repo"), ("protected", "scratch-root"), ("protected", "duplicate"),
-    ("protected", "absent"), ("alias", "symlink-into-calls")])
-def test_closure_denies_before_any_delete_when_anything_is_unsettled_unsecured_or_protected(area, damage):
-    """An unsettled/ambiguous fix, malformed declaration, unsecured unique change, protected/aliased/duplicate/absent
-    path denies the WHOLE batch; the old scratch bytes are still there afterwards."""
-    scratch, unit, repo, record = area
-    kind, value = damage
-    if kind == "status":
-        record["fixes"].append(dict(id="x", disposition=value, changes=[]))
-    elif kind in ("fixes", "scratch", "closed"):
-        record[kind] = value
-    elif kind == "record":
-        record = value
-    elif kind == "unsecured":
-        src = unit / "regression.py"
-        src.write_bytes(b"necessary regression")
-        target = repo / "tests/regression.py"
-        if value == "different":
-            target.write_bytes(b"wrong revision")
-        elif value == "symlink":
-            target.symlink_to(src)
-        elif value == "outside-repo":
-            target = scratch.parent / "copy.py"
-            target.write_bytes(src.read_bytes())
-        record["fixes"][0]["changes"] = [dict(source=str(src), worktree=str(target))]
-    elif kind == "protected":
-        (unit / "keep").write_text("must survive")
-        if value == "call_log":
-            record["call_logs"] = [str(unit / "keep")]
-        else:
-            (scratch.parent / "unrelated").mkdir()
-            record["scratch"].append({"repo": str(repo), "scratch-root": str(scratch), "duplicate": str(unit),
-                                      "absent": str(scratch / "absent"),
-                                      "outside-roots": str(scratch.parent / "unrelated")}[value])
-    else:
-        calls = scratch.parent / "actual-calls"
-        calls.mkdir()
-        (calls / "response.json").write_bytes(b"actual call bytes")
-        (unit / "link").symlink_to(calls, target_is_directory=True)
-    with pytest.raises((ValueError, OSError)):
-        close_walk.close(record, repo=repo, scratch_roots=[scratch])
-    assert (unit / "output").read_bytes() == b"old check output"
-
-
-def test_readonly_scratch_directories_remove_without_chmodding_a_hard_linked_original(area):
-    """Go module caches are 0555 and hard-link outside files; removal must not chmod the linked original."""
-    scratch, unit, repo, record = area
-    original = repo / "frozen"
-    original.write_bytes(b"outside bytes")
-    original.chmod(0o444)
-    package = unit / "gomodcache" / "module"
-    package.mkdir(parents=True)
-    os.link(original, package / "linked")
-    for p in (package, package.parent, unit):
-        p.chmod(0o555)
-    close(area)
-    assert not unit.exists() and original.read_bytes() == b"outside bytes" and original.stat().st_mode & 0o777 == 0o444
+from suite import restored_roles  # noqa: E402
 
 
 @pytest.fixture
 def packets(tmp_path, monkeypatch):
     (tmp_path / "workspace/src").mkdir(parents=True)
     (tmp_path / "workspace/REVIEW.md").write_text("findings, Importer.java:31\n")
-    monkeypatch.setattr(usefulness, "PACKETS", tmp_path / "_packets")
     monkeypatch.setattr(usefulness, "VERDICTS", tmp_path / "_verdicts")
     (tmp_path / "_verdicts").mkdir()
     return tmp_path
 
 
-def test_usefulness_packet_is_frozen_before_the_workspace_is_reaped(packets):
-    """After the archive is deleted the frozen packet (and digest) still serves; without one the evidence says
-    'workspace unavailable'; a packet that cannot be written never fails a finished run."""
-    row = {"run_id": "r1", "task": "feed-pipeline-java", "archive": str(packets), "terminal": "budget-killed",
-           "calls": 44, "wall_seconds": 3685.2}
-    live = usefulness.evidence(row)
-    assert usefulness.save_packet(row) is not None
-    shutil.rmtree(packets / "workspace")
-    assert usefulness.evidence(row) == live and "TASK METADATA" not in live[0]
-    assert "workspace unavailable" in usefulness.evidence({**row, "run_id": "r2"})[0]
-    assert usefulness.save_packet({"run_id": "x", "task": "no-such-task"}) is None
-
-
-def test_worklist_holds_only_judgeable_rows_and_a_rubric_change_reopens_verdicts(packets, monkeypatch):
-    """No packet and no workspace = never judgeable; a verdict with a stale/missing digest (different rubric) is reopened."""
-    usefulness.PACKETS.mkdir()
-    (usefulness.PACKETS / "done.txt").write_text("frozen")
-    done = {"run_id": "done", "archive": "/nowhere"}
+def test_worklist_holds_only_rows_with_a_workspace_and_no_verdict(packets):
+    """A row is judgeable while its archived workspace exists; a recorded verdict or a missing workspace removes it."""
+    row = {"run_id": "done", "task": "feed-pipeline-java", "archive": str(packets)}
     assert usefulness.pending([{"run_id": "lost", "archive": "/nowhere"}]) == []
-    verdict = usefulness.VERDICTS / "done.json"
-    verdict.write_text(json.dumps({"usefulness_percent": 50, "evidence_digest": usefulness.evidence(done)[1]}))
-    assert usefulness.pending([done]) == []
-    rubric = packets / "other-rubric.txt"
-    rubric.write_text("a different rubric entirely\n")
-    with monkeypatch.context() as m:
-        m.setattr(usefulness, "SYSTEM", rubric)
-        assert [r["run_id"] for r in usefulness.pending([done])] == ["done"]
-    verdict.write_text(json.dumps({"usefulness_percent": 50}))
-    assert [r["run_id"] for r in usefulness.pending([done])] == ["done"]
+    assert [r["run_id"] for r in usefulness.pending([row])] == ["done"]
+    assert "REVIEW.md" in usefulness.evidence(row) and "workspace unavailable" in usefulness.evidence({**row, "archive": "/nowhere"})
+    (usefulness.VERDICTS / "done.json").write_text(json.dumps({"usefulness_percent": 50}))
+    assert usefulness.pending([row]) == []
 
 
 def test_scoped_role_config_restores_exact_bytes_even_when_the_cell_raises_and_keeps_operator_edits(tmp_path):
@@ -172,13 +38,13 @@ def test_scoped_role_config_restores_exact_bytes_even_when_the_cell_raises_and_k
     path.write_bytes(original)
     inode, restarts = path.stat().st_ino, []
     with pytest.raises(RuntimeError):
-        with restored_roles.scoped(path, roles, tmp_path / "proof", restart_service=lambda: restarts.append(path.read_bytes())):
+        with restored_roles.scoped(path, roles, restart_service=lambda: restarts.append(path.read_bytes())):
             assert path.read_bytes() != original
             raise RuntimeError("cell failed")
     assert path.read_bytes() == original and path.stat().st_ino == inode
     assert len(restarts) == 2 and restarts[-1] == original
     with pytest.raises(ValueError, match="newer edits"):
-        with restored_roles.scoped(path, roles, tmp_path / "proof2", restart_service=lambda: None):
+        with restored_roles.scoped(path, roles, restart_service=lambda: None):
             path.write_text(path.read_text() + "\n# newer operator edit\n")
     assert path.read_text().endswith("# newer operator edit\n")
 
@@ -202,36 +68,3 @@ def test_rate_limit_gate_is_shared_across_instances_and_never_retries_early(tmp_
     RateLimitGate(tmp_path, now=lambda: clock[0], sleep=sleep).observe(headers, 429, body)
     RateLimitGate(tmp_path, now=lambda: clock[0], sleep=sleep).wait()
     assert clock[0] >= 1000 + delay
-
-
-class _CaptureLog:
-    session, turn = "capture-companions", "turn"
-
-    def emit(self, *args, **kwargs):
-        pass
-
-
-def test_transport_receipts_are_never_listed_as_model_calls_but_dotted_phases_are(tmp_path):
-    """f1df5bd2 / 47530384: every request's `.receive.json` custody companion was walked and admitted as one more model call (a live Java
-    cell's evidence admission failed on it). The companion relation comes from the producer; a REAL phase may itself be dotted or even
-    `custom.json.receive`, so a suffix denylist would drop real calls. Real producers, the library lister and the file entrypoint agree."""
-    from cria import callcapture, receivecapture
-    from suite import capture_paths, walk
-    expected = []
-    for phase in ("coder-s1", "custom.phase.receive", "custom.json.receive"):
-        path = Path(callcapture.capture({"messages": [{"role": "user", "content": "p"}]}, _CaptureLog(), calls_dir=tmp_path,
-                                        phase=phase, rendered="p\n"))
-        expected.append((path.name.split("-", 1)[0], phase, path.with_suffix("")))
-        receipt = receivecapture.Receipt(path, request_sha256="wire-sha")
-        receipt.origin.close()
-        receipt.meta.close()
-        callcapture.capture_response(path, {"choices": [{"message": {"content": "reply"}}]})
-        assert receipt.meta_path.name == path.name + ".receive.json" and receipt.meta_path.is_file()
-    calls = path.parent
-    assert walk.list_calls(calls) == expected
-    assert [p.name for p in capture_paths.request_paths(calls)] == [e[2].name + ".json" for e in expected]
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
-    run = subprocess.run([sys.executable, str(walk.__file__), str(calls), "--out", str(tmp_path / "out")], cwd=tmp_path, env=env,
-                         capture_output=True, text=True)
-    assert run.returncode == 0, run.stderr
-    assert sum(p.read_text().count("CALL ") for p in (tmp_path / "out").glob("chunk*.txt")) == len(expected)

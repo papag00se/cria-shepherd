@@ -85,6 +85,6 @@ ls ~/.cria/calls/<session>/*coder* | sort        # every coder call, in call ord
 cria-tail --kind upstream.dump                    # the pointers + sizes, inline in the log
 ```
 
-Capture metadata may also include `assist_selection` with the caller-supplied selected atomic IDs and engagement level. It is outside `body`, never model-visible, and means selection—not that each policy executed. Missing metadata means unknown, not a default selection. The generated [assist map](assist-inventory/REPORT.md) resolves the source definitions and current family ownership; authoritative intervention events, not selection membership, show what actually happened.
+Capture metadata may also include `assist_selection` with the caller-supplied selected atomic IDs and engagement level. It is outside `body`, never model-visible, and means selection—not that each policy executed. Missing metadata means unknown, not a default selection. Authoritative intervention events, not selection membership, show what actually happened.
 
 The capture is the request body cria sends. With `[logging].capture_rendered = true` (the default) cria also writes the server-rendered prompt (llama.cpp's chat template applied) beside it and records `rendered_prompt_file` and `rendered_tokens_est` in the capture; otherwise it is a deterministic function of the body plus the model's fixed template, available on demand from the server's `POST /apply-template` with the same body. Captures hold prompts, code and tool results: check them for secrets before sharing.

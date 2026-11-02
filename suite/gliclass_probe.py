@@ -9,8 +9,7 @@ from pathlib import Path
 import time
 
 from suite.onejev_probe import append, checked_decision, file_sha, frozen_policy
-from suite.training_admit import LABEL_ORDER
-from suite.training_run import loading_receipt
+from suite.training_updates import LABEL_ORDER, loading_receipt
 
 MAX_TOKENS = 16384
 

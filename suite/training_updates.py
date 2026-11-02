@@ -1,4 +1,16 @@
-"""Shared native-graph accumulation; no model, device, or precision substitutions."""
+"""Helpers shared by the offline classifier experiments (gliclass_*, onejev_*)."""
+import hashlib
+
+LABEL_ORDER = {'retrospective': ['RETROSPECTIVE', 'PLAN'], 'dictation': ['DESCRIBES', 'DICTATES']}
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def loading_receipt(info):
+    """Native Transformers loading facts contain unordered sets in v5."""
+    return {key: sorted(value) if isinstance(value, set) else value for key, value in info.items()}
 
 
 def accumulated_update(torch, model, optimizer, rows, weights, logits_for, loss_for, lr):

@@ -1,34 +1,21 @@
-# Battery report etiquette
+# Battery report
 
-`docs/battery-report.md` is a standing scorecard, not a supervision log.
+`docs/battery-report.md` is a standing scorecard written by `python suite/battery_status.py --write`.
 
-## Chat and progress labels
+## Labels
 
-Every operator-facing chat update (checkpoint, final, progress, blocker or completion) identifies a cell by **official model / language**, matching the scorecard columns, never by task type. For example, write `gemma4_12b / Go`, not `Gemma/cart`, and `gemma4_12b / Python`, not `Gemma/orders`. The shared mapping is `suite/report_labels.py::TASK_LANGUAGES`; use `cell_label(model, task)` when generating labels. Languages are Ruby, Go, Python, Java, Node and Rust (Node matches the existing `node` column). Unknown task identities must not be guessed. Internal task/run IDs, commands, archive paths and exact provenance quotes remain unchanged; these are evidence references, not cell display labels. This rule applies to scheduled supervision as well as manual replies.
+A cell is named by **official model / language**, matching the scorecard columns, never by task type: `gemma4_12b / Go`, not `Gemma/cart`. The shared mapping is `suite/report_labels.py::TASK_LANGUAGES`; use `cell_label(model, task)` when generating labels. Languages are Ruby, Go, Python, Java, Node and Rust. Internal task/run IDs stay as they are in commands and archive paths.
 
-## Standing scorecard
+## Layout
 
-- Exactly six tables, ordered L0–L5. Keep the original descriptive level titles and append each table's rounded average usefulness. No extra “latest run” commentary.
-- Apart from the document title, descriptive level titles, tables and legend, no narrative, timestamps, revision notes, campaign sections, checkpoint prose or attempt ledgers.
-- All six tables share L5's model ranking: highest average usefulness first, lowest last. Rank from the exact mean of known L5 task percentages (zeros count; blanks/unknowns do not), never the rounded displayed mean or a pass-rate threshold. Break equal means by ascending official model identity. Models with no judged L5 score, including historical-only identities absent from L5, follow scored models in that same identity order. Historical subsets keep the shared relative order; never fabricate absent model rows. Every publication recomputes this order from retained L5 standings and moves rows in all six tables simultaneously, even when updating another level.
-- Each model row has the six task scores, average usefulness (column label `avg pct`), average wall minutes, average model calls and average tokens per second. Historical `total` means average usefulness, not a sum; publication normalizes legacy `total` and `avg usefulness` headers to `avg pct` across all six tables without changing measurements. Keep the brief definition in the legend: “Usefulness: share of requested work delivered as useful code.”
-- Publish only independent final judgments of the exact terminal archive. A checkpoint is never a final score. Natural exit is not proof of completion.
-- Keep the latest judged value per logical cell, not its best value. Pending work retains its prior standing until independently judged. Preserve failed originals unscored; select an authorized linked replacement/disposition once only.
-- Compute title and row usefulness averages from the actual task percentages, including judged zeros, excluding blanks/unjudged/failed attempts. Do not average rounded row means to obtain a table mean.
-- Use authoritative result-row metrics. Minutes include judge waits, unlike active-time checkpoint pace. Unknown, boolean, non-finite or negative measurements are not zero. Means with incomplete measurement coverage are partial known-metric means.
-- `avg tok/s` is the arithmetic mean of known per-task `avg_tok_s`, shown to one decimal. Each saved run rate is timed generated output tokens divided by timed generation seconds across all captured phases (coder and internal roles), not wall-time throughput or coder-only speed. Missing historical timing stays `·`; include measured zeros, exclude invalid measurements and disclose known-task coverage separately. Do not reconstruct timing from rounded rates or invent rates for frozen-only history.
-- Coverage, runtime limitations, termination basis and provenance belong in `docs/battery-report-evidence.md`, the campaign's external `SUPERVISION.md`, and validation bundles—not in the scorecard.
+- The document title, then one `Updated: YYYY-MM-DD HH:MM TZ` line (when the tables were last refreshed), then exactly six tables ordered L0–L5, then a legend.
+- Each table keeps its descriptive level title with the table's rounded average usefulness appended.
+- All six tables share L5's model ranking: highest average usefulness first. Rank from the exact mean of the known L5 task percentages (zeros count; blanks do not). Equal means sort by ascending official model identity; models with no judged L5 score follow the scored ones in that same order. Each publication recomputes this order and moves rows in all six tables together.
+- Each model row has the six task scores, average usefulness (`avg pct`), average wall minutes, average model calls and average tokens per second. The legend defines usefulness as: “Usefulness: share of requested work delivered as useful code.”
 
-## Publication
+## Numbers
 
-Use `python suite/battery_status.py --campaign-id NAME --write` with the manifest for the level being updated. The writer validates manifest-selected results, overlays judged cells onto that level's standing table, retains pending standings and every other level's scores/metrics, recomputes averages and synchronizes all six tables to L5's ranking, and records coverage separately in the evidence document. Reordering preserves each existing row's contents, titles, legend and evidence; other levels may move rows but do not change measurements. Ordinary publication refreshes metrics only for model rows with actually selected judged cells; unselected rows keep their published metrics and source bindings. A deliberate column migration adds the field to all levels without altering their existing scores/metrics. For mixed historical/new rows, selected cells use their exact manifest-selected runs and retained cells use their published authoritative source bindings, including explicit unknowns; never reconstruct per-cell metrics from old rounded means. Legacy disclosures without a task binding retain only the existing latest eligible result with the same standing score, never an older matching or best result; the next publication records that source or an explicit unknown.
-
-Bare `--write` refuses overwrite. A legacy narrative-rich report also refuses overwrite: preserve it in the evidence document before explicitly migrating to the six-table shape. Do not discard historical evidence to make a formatting test pass. Inspect the diff before committing; stage only the scorecard, evidence, and intended result records. Documentation-only publication must not restart an active inference cell.
-
-The legacy `report()` function is a historical-data preview, not the standing-report writer. `fresh_table()` is a campaign-only preview with coverage; neither preview may be pasted wholesale into the scorecard. Regression coverage is in `tests/test_battery_report_etiquette.py` and `tests/test_fresh_campaign_report_averages.py`.
-
-## Restored L5 campaign
-
-The same serial restored eight-model driver supports `--level 5`; planner remains OFF. It preserves fleet assets/native contexts, source role sampling, Codex 0.159.3, the sandbox, cell-local install homes, output policy and compaction policy. Only canonical numeric role sampling is applied in a cell-scoped config; the exact original config is restored afterward. New operator edits cause a refusal to overwrite, with both originals and active config preserved externally. Provenance binds all four configured numeric role settings to the fleet and verifies coder sampling from captured requests. Internal judge calls retain cria's existing purposeful per-call overrides; this is not a claim that every judge wire body equals its role's default.
-
-The driver waits for an independent final judgment before launching the next cell. Every 15 active minutes it freezes a checkpoint; protect the first 30 active minutes, exclude judge waits, and judge substantive requirement pace against the task/seed/current/prior frozen sources. No task-code assistance, GPU overlap, blind retries, planner opt-in, or assist/prompt changes during the campaign. Infrastructure failure stops the campaign for preserved evidence and a tested repair; coding defects alone do not authorize reruns. Scheduled supervision must obey newer operator instructions.
+- A cell shows its latest judged usefulness. Cells without a judgment keep their previous value.
+- Averages come from the actual task percentages: judged zeros count, blanks and unjudged cells do not. A table's average is the mean of its task percentages, not of rounded row means.
+- Metrics come from result rows. Minutes include judge waits; unknown or invalid measurements are not zero, and a mean over partial coverage is a mean of the known values.
+- `avg tok/s` is the mean of known per-task `avg_tok_s`, shown to one decimal. Each run's rate is timed generated output tokens divided by timed generation seconds across all captured phases. Missing timing shows `·`.

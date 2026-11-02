@@ -21,14 +21,14 @@ Two isolated `pi/anthropic/claude-sonnet-5-5` reviewers independently read all 2
 
 These are assistant-reviewed labels, **not human gold**. The test set has only 32 paired scenario groups and shared generation/policy/review factors. Perfect performance on it is bounded evidence, not universal reliability.
 
-The data tooling hashes the complete inputs and source captures, checks admission and partition membership, rejects duplicate/cross-partition IDs, scenarios and exact inputs, and binds the frozen cohorts and code to the run contract. The synthetic exclusion inventory included both old qualified and held real/synthetic inputs.
+The data tooling rejects duplicate/cross-partition IDs, scenarios and exact inputs. The synthetic exclusion inventory included both old qualified and held real/synthetic inputs.
 
 ## Training tools
 
 - Publisher model: `knowledgator/gliclass-v4-edge`, pinned revision `885af1af8a07edf4ed34df83ca0d995ed8201283`; Apache-2.0.
 - Publisher GLiClass SDK, pinned to `6a00f8067648f25aa0f4f477d167c5f391cb4165`, plus Hugging Face Transformers and its native tokenizer.
 - PyTorch, on the explicitly approved RTX 3090. The RTX 3080 was not used.
-- Repository orchestration: `suite/gliclass_train.py`, `gliclass_probe.py`, `gliclass_export.py`, `gliclass_quantize.py`, `gliclass_expand.py`, and shared `training_updates.py`.
+- Repository orchestration: `suite/gliclass_train.py`, `gliclass_probe.py`, `gliclass_export.py`, `gliclass_quantize.py`, and shared `training_updates.py`.
 - Independent semantic reviewers ran through **Pi**, not the Claude provider. Earlier Claude-provider authentication failures are preserved; they were not successful reviews.
 
 Inputs were rendered through the native GLiClass pipeline with the complete policy and state, full token IDs and explicit label order. No head/tail clipping, chunk voting or private-reasoning targets were used. Label-order alternation during fitting avoids making an option's position its identity.
@@ -46,7 +46,7 @@ V2 started afresh from the publisher's pretrained weights, **not** from the prev
 
 Before the real fit, an eight-case learning check verified that the training path could learn. The weights were then reset to pretrained before the authorized full fit. Gradient and actual parameter-update witnesses checked the active branches; inactive `logit_scale` was excluded because this configuration does not normalize features. Realized update counts and numerical-finiteness checks come from execution, not merely a loop claiming to have run.
 
-V2 completed 636 optimizer updates in about 93 minutes and agreed with all 836 TRAIN labels. That establishes fitting, not generalization. The successful reset, complete inputs, exact recipe, source hashes and model artifacts are recorded separately.
+V2 completed 636 optimizer updates in about 93 minutes and agreed with all 836 TRAIN labels. That establishes fitting, not generalization. The recipe and model artifacts are recorded separately.
 
 ## Export and quantization tools
 
@@ -80,9 +80,6 @@ Receipts for each step live privately under `~/.cria/training/` and `~/.cria/exp
 
 ### Lessons and process invariants
 
-- **Preflight before any matrix.** A new training run requires a native learning check (optimizer membership, gradients, parameter updates, a tiny subset learned) bound to the recipe and optimizer functions; `suite/training_run.py` rejects a missing, stale, changed or failed receipt (`--integrity-receipt`). `training_run.training_step` is the single accumulated-update implementation shared by fitting and probes. This is a mechanical gate, not a quality or deployment permission.
 - **Fix export failures at the producer.** Quantization lost the shared relative-attention projections behind Identity aliases (a 440 MB partial artifact), raising the opset header alone left older `ReduceMax` attributes illegal (needs semantic conversion), and `Log(Sigmoid(x))` produced NaN at saturation for a trained model (lowered to `-Softplus(-x)`). No tensor, logit or metadata was patched by hand; each has a real-runtime regression, and every external weight shard is hash-checked before conversion. Failed conversion attempts are never counted as scores.
-- **Serialize loading facts with the shared helper** (`training_run.loading_receipt`): Transformers 5 returns sets; two separate trainers stopped before the first update on the same defect.
+- **Serialize loading facts with the shared helper** (`training_updates.loading_receipt`): Transformers 5 returns sets; two separate trainers stopped before the first update on the same defect.
 - **Report the right denominators.** Exposed diagnostics, TRAIN replay and a challenge set are separate quantities; paired synthetic scenarios are not independent samples; an old held set becomes TRAIN exposure the moment it trains a later model.
-- **Frozen machine inputs.** `qualification.json`, `training-recipe.json`, `resource-plan.json`, `fresh-evaluation.json` and `problem-focus.json` are hash-bound inputs of the retired 68M tooling (`suite/training_run.py` verifies them); do not edit them. `archive-audit-metadata.json` is the default input of `suite/training_prepare.py`.
-- **GPU authority is not inherited.** Permission to clear the RTX 3090 for an experiment covered only that experiment (not the RTX 3080, a different dataset or candidate, or deployment); the 3080 and production configuration were never touched.

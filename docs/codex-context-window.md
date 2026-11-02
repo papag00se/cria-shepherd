@@ -184,29 +184,8 @@ outside-workspace patch through an L0 server and fake upstream, without GPU infe
 
 Each suite child now gets a fresh `codex-home` in its isolated cell install directory.
 Only routing `config.toml` is copied; credentials, shared skills, sessions and databases
-are not. Codex may write trust bookkeeping there without modifying the fingerprinted
-canonical template. Each restored row records its catalog digest and cell home.
+are not. Codex may write trust bookkeeping there. Each restored row records its catalog digest and cell home.
 
-`l0_campaign.py --resume-after-launcher-repair OLD_SHA --campaign-revision NEW_SHA`
-is an explicit, locked provenance transition, not a retry. It preserves only completed,
-judged fresh runs from that campaign with their exact original revision and fleet snapshot;
-remaining untouched cells run at the new immutable revision. All fleet assets must remain
-exact, except inode/mtime changes for a byte-identically restored canonical Codex config.
-The original manifest and repair history are retained. Reports must disclose this revision
-boundary; the first result is neither overwritten nor reclassified as a repaired run.
-
-For an operator-authorized infrastructure repair, the same explicit transition accepts
-`--resume-after-infrastructure-repair OLD_SHA --preserve-infrastructure-failure RUN_ID`.
-It validates that exact blocked, fresh `harness-error` attempt against the old inputs,
-preserves its row digest and evidence, and consumes the slot as `infrastructure-failed`.
-It never judges, credits, or retries that cell; the failed row remains rejected by ordinary
-scoreable-row validation. Reconciliation blocks if the retained failure disappears,
-changes, or gains a duplicate. Only untouched pending cells launch under the new revision.
-A second explicit repair also validates and retains every prior failed-row digest unchanged.
-For the current campaign, the operator requires a successful, independently judged replacement
-run (0% is valid) before any subsequent cell proceeds. Supervision launches that replacement
-serially in a distinct linked cohort, waits for its judgment, then resumes the original driver;
-retained failures are historical evidence, never scores or permission to skip a cell.
 New rows also disclose model-visible historical wire envelopes under `wire_translations`,
 including their authoritative event/count data. These are lossless translations, not a
 claim of invisibility or byte-identical history.

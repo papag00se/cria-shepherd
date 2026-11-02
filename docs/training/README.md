@@ -1,14 +1,12 @@
 # Targeted decision-model training
 
-This directory records the offline data/research workstream behind the optional CPU **GLiClass v2** guards (two questions: retrospective briefing versus operative plan; description versus code dictation). Training receipts are not deployment authorization; the separately authorized runtime is documented in [serving and rollout](../system1.md). Private evidence stays under `~/.cria/training/` and `~/.cria/experiments/`.
+This directory records the offline data/research workstream behind the optional CPU **GLiClass v2** guards (two questions: retrospective briefing versus operative plan; description versus code dictation). The runtime is documented in [serving and rollout](../system1.md). Private evidence stays under `~/.cria/training/` and `~/.cria/experiments/`.
 
 ## Where things are
 
-- [Methodology and lineage](methodology.md): data admission, blind Pi reviews, frozen pretrained-reset fitting, native export/INT4 quantization, **how the candidate was reached** (rejected 68M Ettin, OneJev, GLiClass v1) and the process lessons. Start here.
-- [Expanded GLiClass v2 fit](gliclass-expanded-v2.md): 836 training cases (644 real + 192 blind-reviewed synthetic), 64/64 on the reserved synthetic challenge versus v1's 54/64, artifact identities, exposure and serving limits.
-- [Data qualification and grouped evaluation](data-preparation.md): admission, quarantines, task-group partition and the distinction between prepared intake and an actually collected fresh benchmark. **Fresh real evaluation cases: zero.**
-- [Archive availability and label-coverage audit](archive-audit.md) (metadata: [archive-audit-metadata.json](archive-audit-metadata.json)); [synthetic training design](synthetic-data.md) and its [structural-check result](synthetic-validation.json) (recheck with `python -m suite.training_seed`; tests: `tests/suite_tooling/test_suite_tooling_training_guards.py`); [research and backbone comparison](research.md).
-- Frozen machine inputs of the retired 68M tooling, hash-bound and not to be edited: [qualification](qualification.json), [recipe](training-recipe.json), [resource plan](resource-plan.json), [fresh-evaluation contract](fresh-evaluation.json), [problem focus](problem-focus.json).
+- [Methodology and lineage](methodology.md): data admission, blind Pi reviews, pretrained-reset fitting, native export/INT4 quantization, **how the candidate was reached** (rejected 68M Ettin, OneJev, GLiClass v1) and the process lessons. Start here.
+- [Expanded GLiClass v2 fit](gliclass-expanded-v2.md): 836 training cases (644 real + 192 blind-reviewed synthetic), 64/64 on the reserved synthetic challenge versus v1's 54/64, artifact identities, exposure and serving limits. **Fresh real evaluation cases: zero.**
+- [Synthetic training design](synthetic-data.md) and [research and backbone comparison](research.md).
 - Offline synthetic seed: [`suite/training_data/synthetic_seed.jsonl`](../../suite/training_data/synthetic_seed.jsonl); synthetic proposals are not verified real-world labels.
 
 ## Decisions being learned
@@ -38,7 +36,3 @@ Compare supervised native classification/span heads or pretrained decision model
 Train with ordinary training precision, evaluate an unquantized reference, then test CPU INT8 and Q4 only as warranted. Preserve full evidence: record no-fit rather than truncation, selected snippets or chunk-voted decisions. Benchmark tokenizer normalization/special tokens, native class ordering, latency, RSS and deployed quantized errors separately. English-pretrained backbones do not acquire demonstrated multilingual capability just because translated examples were added.
 
 Use learning curves over adjudicated training groups and separate real/synthetic ablations rather than declaring a required sample count. Measure per-class confusion and consequential false approvals, not aggregate accuracy alone. Fit any abstention/calibration policy on validation data and evaluate coverage and errors on untouched real cases; a softmax score is not calibrated confidence. If task sharing is proposed, compare against separate specialists to detect negative transfer. Shadow evaluation must precede admission authority.
-
-## RTX 3090 handover
-
-The operator explicitly granted clearing and training on the RTX 3090 after the frozen provisional experiment was prepared. That permission does not extend to the RTX 3080, production integration, changing datasets or selecting a different serving candidate. Availability alone remains insufficient authority for future GPU handovers. Earlier permission-pending receipts are historical; the operative authorization is recorded separately in the local execution directory.

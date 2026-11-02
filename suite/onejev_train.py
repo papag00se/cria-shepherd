@@ -12,8 +12,7 @@ import random
 import time
 
 from suite.onejev_probe import append, file_sha, native_request
-from suite.training_admit import LABEL_ORDER
-from suite.training_prepare import sha
+from suite.training_updates import LABEL_ORDER, sha
 
 GPU_UUID = 'GPU-907a7f7a-b541-8208-2bce-e1361e3110d6'
 
@@ -86,7 +85,7 @@ def load_model(torch, snapshot):
         raise ValueError('full FP32 master weights required')
     model.config.use_cache = False
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
-    from suite.training_run import loading_receipt
+    from suite.training_updates import loading_receipt
     return model.to('cuda').train(), loading_receipt(info)
 
 
