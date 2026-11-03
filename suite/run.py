@@ -181,7 +181,52 @@ def _opencode_argv(prompt: str, workspace=None):
             str(OPENCODE_BINARY), 'run', '--pure', '--format', 'json', '--dir', str(workspace), prompt]
 
 
-HARNESSES = {"codex": _codex_argv, "opencode": _opencode_argv}
+PI_BINARY = Path.home() / '.local/share/mise/installs/pi/1.4.0/pi/pi'   # the real binary, not the mise shim
+PI_VERSION = '1.4.0'
+PI_PROVIDER = 'cria'
+
+
+def _pi_argv(prompt: str, workspace=None):
+    """bwrap-sandboxed headless `pi --mode json`; provider/model flags are added by restored_pi_argv (before the prompt).
+    No extensions, skills, prompt templates, themes, context files (AGENTS.md/CLAUDE.md) or MCP are loaded."""
+    argv = _opencode_argv(prompt, workspace)   # same sandbox, same refusals
+    cut = argv.index(str(OPENCODE_BINARY))
+    return [*argv[:cut], str(PI_BINARY), '--mode', 'json', '--no-session', '--offline', '--no-extensions', '--no-skills',
+            '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-mcp', prompt]
+
+
+HARNESSES = {"codex": _codex_argv, "opencode": _opencode_argv, "pi": _pi_argv}
+# Harnesses that speak Chat Completions through the adapter, stamped with their own cria session id.
+CHAT_HARNESSES = ("opencode", "pi")
+
+
+def pi_env(base: dict, workspace: Path, model: str, window: int, adapter_url: str) -> dict:
+    """Isolated Pi environment: the agent dir inside the cell's install root, the only provider an
+    OpenAI-compatible Chat endpoint at the adapter with `window` as the model's context window. Nothing of the
+    operator's ~/.pi, ~/.agents, auth, settings, packages or extensions is read."""
+    root = _cell_install_root(workspace) / 'pi'
+    agent = root / 'agent'   # HOME/XDG stay as the cell's other tooling (mise shims) expects them
+    for d in (agent, root / 'sessions'):
+        d.mkdir(parents=True, exist_ok=True)
+    (agent / 'models.json').write_text(json.dumps({'providers': {PI_PROVIDER: {
+        'baseUrl': adapter_url, 'api': 'openai-completions', 'apiKey': 'unused',
+        'models': [{'id': model, 'name': model, 'input': ['text'], 'reasoning': False,
+                    'contextWindow': window, 'maxTokens': OPENCODE_OUTPUT_LIMIT}]}}}))
+    (agent / 'settings.json').write_text(json.dumps({
+        'defaultProvider': PI_PROVIDER, 'defaultModel': model, 'packages': [], 'extensions': [], 'skills': [],
+        'quietStartup': True, 'collapseChangelog': True}))
+    return {**base, 'PI_CODING_AGENT_DIR': str(agent), 'PI_CODING_AGENT_SESSION_DIR': str(root / 'sessions'),
+            'PI_OFFLINE': '1', 'PI_SKIP_VERSION_CHECK': '1', 'PI_TELEMETRY': '0'}
+
+
+def restored_pi_argv(argv, model):
+    """Add the provider/model flag and verify the pinned Pi binary; returns (argv, provenance)."""
+    if not PI_BINARY.is_file() or not os.access(PI_BINARY, os.X_OK):
+        raise ValueError('Pi executable missing')
+    version = sh(str(PI_BINARY), '--version').stdout.strip() or sh(str(PI_BINARY), '--version').stderr.strip()
+    if version != PI_VERSION:
+        raise ValueError('Pi executable version changed')
+    return [*argv[:-1], '--model', f'{PI_PROVIDER}/{model}', argv[-1]], {'binary': str(PI_BINARY), 'version': version}
 
 
 def opencode_env(base: dict, workspace: Path, model: str, window: int, adapter_url: str) -> dict:
@@ -1016,8 +1061,8 @@ def _main(scope) -> None:
         ap.error("another suite/run.py is active (its checkpoint judgments may still be pending); leaving it untouched: "
                  + "; ".join(f"pid {pid}" for pid, _ in other_runs))
 
-    if args.harness == "opencode" and not args.restored_fleet:
-        ap.error("--harness opencode requires --restored-fleet")
+    if args.harness in CHAT_HARNESSES and not args.restored_fleet:
+        ap.error(f"--harness {args.harness} requires --restored-fleet")
     if args.harness == "codex":
         _require_codex_home()   # fail before any model swap if cria routing is not set up
         _codex_adapter_provider()
@@ -1032,7 +1077,7 @@ def _main(scope) -> None:
     _cell_install_root(ws).mkdir(parents=True, exist_ok=True)   # the sandbox binds it, so it must exist first
     harness_argv = HARNESSES[args.harness](prompt, ws)
     suite_scratch = None
-    if args.harness in ('codex', 'opencode'):
+    if args.harness in ('codex', *CHAT_HARNESSES):
         state = _cell_install_root(ws)
         suite_scratch = state / 'tmp'
         suite_scratch.mkdir(parents=True, exist_ok=True)
@@ -1045,8 +1090,11 @@ def _main(scope) -> None:
         # sampling applied, own capture/log dirs); this cell never edits the live config.
         lane_evidence = {"name": lane_row["lane"], "cria_port": lane_row["port"], "window": lane_row["window"]}
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]),
-                                  session_id=_cell_session_id() if args.harness == "opencode" else None)
-        if args.harness == "opencode":
+                                  session_id=_cell_session_id() if args.harness in CHAT_HARNESSES else None)
+        if args.harness == "pi":
+            env = pi_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model, lane_row["window"], adapter.base_url)
+            harness_argv, harness_provenance = restored_pi_argv(harness_argv, args.model)
+        elif args.harness == "opencode":
             env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model, lane_row["window"], adapter.base_url)
             harness_argv, harness_provenance = restored_opencode_argv(harness_argv, args.model)
         else:
@@ -1066,8 +1114,12 @@ def _main(scope) -> None:
         if switched.returncode:
             raise RuntimeError("restored fleet switch failed: " + switched.stderr)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT),
-                                  session_id=_cell_session_id() if args.harness == "opencode" else None)
-        if args.harness == "opencode":
+                                  session_id=_cell_session_id() if args.harness in CHAT_HARNESSES else None)
+        if args.harness == "pi":
+            env = pi_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model,
+                         l0_campaign.context(args.model), adapter.base_url)
+            harness_argv, harness_provenance = restored_pi_argv(harness_argv, args.model)
+        elif args.harness == "opencode":
             env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model,
                                l0_campaign.context(args.model), adapter.base_url)
             harness_argv, harness_provenance = restored_opencode_argv(harness_argv, args.model)

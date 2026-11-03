@@ -107,7 +107,7 @@ def main() -> int:
     ap.add_argument("--campaign-id")
     ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--lane-row", default=None, help="row.json of a lane row (see suite/lanes.py)")
-    ap.add_argument("--harness", default="codex", choices=("codex", "opencode"),
+    ap.add_argument("--harness", default="codex", choices=("codex", "opencode", "pi"),
                     help="coding harness driving the cell; recorded in the result row (restored fleet only)")
     ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
                     help="review every 15 active minutes; continuation decisions start at minute 30")

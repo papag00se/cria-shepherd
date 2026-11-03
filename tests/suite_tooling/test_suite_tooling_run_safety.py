@@ -234,3 +234,33 @@ def test_opencode_launch_is_bwrap_sandboxed_isolated_and_refuses_without_a_cell(
     provider = config["provider"][run.OPENCODE_PROVIDER]
     assert provider["options"]["baseURL"] == "http://127.0.0.1:9/v1" and config["enabled_providers"] == [run.OPENCODE_PROVIDER]
     assert provider["models"]["m"]["limit"]["context"] == 49152 and config["model"] == f"{run.OPENCODE_PROVIDER}/m"
+
+
+def test_pi_launch_is_bwrap_sandboxed_extensionless_and_isolated(tmp_path, monkeypatch):
+    """Pi shares OpenCode's sandbox and refusals; argv is headless JSON with no extensions/skills/context files/MCP/session;
+    the env points the agent dir into the install root and the only provider at the adapter with the cell's window."""
+    ws, state = tmp_path / "ws", tmp_path / "state"
+    ws.mkdir(), state.mkdir()
+    monkeypatch.setattr(run, "_cell_install_root", lambda _ws: state)
+    argv = run._pi_argv("task", ws)
+    assert argv[0] == str(run.BWRAP) and argv[-1] == "task" and str(run.PI_BINARY) in argv
+    assert argv[argv.index("--ro-bind") + 1:argv.index("--ro-bind") + 3] == ["/", "/"]
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"] == [str(ws), str(state)]
+    for flag in ("--no-extensions", "--no-skills", "--no-context-files", "--no-mcp", "--no-session", "--offline"):
+        assert flag in argv
+    assert argv[argv.index(str(run.PI_BINARY)) + 1:argv.index(str(run.PI_BINARY)) + 3] == ["--mode", "json"]
+    for bad in (None, "/", "relative-cell", tmp_path / "missing"):
+        with pytest.raises(ValueError, match="workspace"):
+            run._pi_argv("task", bad)
+    monkeypatch.setattr(run, "BWRAP", tmp_path / "no-bwrap")
+    with pytest.raises(ValueError, match="bwrap"):
+        run._pi_argv("task", ws)
+    monkeypatch.undo()
+    monkeypatch.setattr(run, "_cell_install_root", lambda _ws: state)
+    env = run.pi_env({"KEEP": "1", "PI_CODING_AGENT_DIR": "/home/someone/.pi/agent"}, ws, "m", 49152, "http://127.0.0.1:9/v1")
+    assert env["KEEP"] == "1" and Path(env["PI_CODING_AGENT_DIR"]).is_relative_to(state) and env["PI_OFFLINE"] == "1"
+    models = json.loads((Path(env["PI_CODING_AGENT_DIR"]) / "models.json").read_text())["providers"]
+    assert list(models) == [run.PI_PROVIDER] and models[run.PI_PROVIDER]["baseUrl"] == "http://127.0.0.1:9/v1"
+    assert models[run.PI_PROVIDER]["models"][0]["contextWindow"] == 49152
+    settings = json.loads((Path(env["PI_CODING_AGENT_DIR"]) / "settings.json").read_text())
+    assert settings["packages"] == [] and settings["defaultProvider"] == run.PI_PROVIDER
