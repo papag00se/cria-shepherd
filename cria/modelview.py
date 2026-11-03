@@ -151,6 +151,11 @@ def continuing_usage(completion: dict, input_tokens: int, *, reply_estimate: int
     native = (usage['native_usage'] if usage.get('context_estimate') == CONTEXT_ESTIMATE
               and isinstance(usage.get('native_usage'), dict) else usage)
     output = reply_tokens(completion) if reply_estimate is None else reply_estimate
+    # The server's own prompt count is the measurement; the estimate may only add to it. Reporting less than the
+    # model actually received kept the harness from compacting until a request overflowed the window.
+    measured = native.get('prompt_tokens') if isinstance(native, dict) else None
+    if isinstance(measured, int) and measured > input_tokens:
+        input_tokens = measured
     return {'prompt_tokens': input_tokens, 'completion_tokens': output,
             'total_tokens': input_tokens + output,
             'context_estimate': dict(CONTEXT_ESTIMATE), 'native_usage': copy.deepcopy(native)}

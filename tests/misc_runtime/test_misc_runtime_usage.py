@@ -26,7 +26,7 @@ def test_gate_plumbing_cria_strips_from_the_models_view_does_not_count_but_real_
 
 def test_the_reported_usage_is_a_labelled_estimate_and_native_consumption_survives_untouched_on_both_wires():
     """Private reasoning is not reply context; native usage is preserved verbatim (a second report does not re-wrap it)."""
-    native = {"prompt_tokens": 99999, "completion_tokens": 7000, "completion_tokens_details": {"reasoning_tokens": 6900}}
+    native = {"prompt_tokens": 5000, "completion_tokens": 7000, "completion_tokens_details": {"reasoning_tokens": 6900}}
     completion = {"usage": native, "choices": [{"finish_reason": "stop", "message": {
         "role": "assistant", "content": "x" * 400, "reasoning_content": "think " * 3000}}]}
     server._report_context_usage(completion, 8000, LOG)
