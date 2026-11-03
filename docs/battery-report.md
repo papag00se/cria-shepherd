@@ -1,6 +1,6 @@
 # Battery report
 
-Updated: 2026-11-03 12:01 PST
+Updated: 2026-11-03 12:19 PST
 
 ## L0 — Pure proxy — wire translation only — 45%
 
@@ -28,12 +28,12 @@ Updated: 2026-11-03 12:01 PST
 | bonsai2 | 🔴 0% | 🔴 0% | 🟢 88% | 🔴 0% | 🟢 93% | 🟢 88% | 45% | 14 | 24 | 21.8 |
 | phi4 | 🔴 8% | · | 🔴 0% | 🔴 2% | 🔴 0% | 🔴 25% | 7% | 9 | 45 | 18.1 |
 
-## L2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell — 43%
+## L2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell — 44%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 15% | 🟡 75% | 🔴 0% | 🔴 0% | 🔴 25% | 🟠 50% | 28% | 1 | 12 | 47.4 |
-| k2_horizon_7b | 🟡 78% | 🟡 72% | · | · | · | · | 75% | 11 | 79 | 20.8 |
+| k2_horizon_7b | 🟡 78% | 🟡 72% | · | · | · | 🟡 85% | 78% | 9 | 73 | 21.0 |
 | qwen3.8_9b_distill | 🟠 50% | 🟡 78% | 🟡 75% | 🟡 65% | 🟠 60% | 🟡 85% | 69% | 15 | 178 | 61.1 |
 | ornith1.5_9b | 🟢 92% | 🟡 65% | 🟡 85% | 🔴 0% | 🟡 85% | 🟢 90% | 70% | 13 | 59 | 42.7 |
 | ling3.0_tiny | 🔴 25% | 🟠 45% | 🟡 70% | 🔴 35% | 🟡 75% | 🟡 85% | 56% | 19 | 335 | 112.0 |

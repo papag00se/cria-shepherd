@@ -26,6 +26,10 @@ from pathlib import Path
 
 RETRY_SECONDS = 120
 SECOND_SERVER_RETRY_SECONDS = 300
+# Each cell runs in its own systemd scope so a runaway (one cell forked 13,199 tasks / 50 GB on 2026-11-03 and oomd
+# killed the whole driver) is stopped inside that cell alone. Sized from the measured whole run: 516-607 tasks and
+# 31-42 GB for 6 cells + two model servers (~24 GB) = ~100 tasks and ~2-3 GB per cell; Java builds run higher.
+CELL_LIMITS = ('TasksMax=1500', 'MemoryMax=12G', 'MemorySwapMax=2G')
 OVERFLOW_MARKS = ('ran out of room in the model', 'exceeds the available context size',
                   'reason: generation_limit', 'reason: max_output_tokens')   # the server stopped at a full context window
 
@@ -149,7 +153,11 @@ class Driver:
         command = l0_campaign.cell_command(campaign.id, campaign.level, model, task, Path(row['dir']) / 'row.json')
         campaign.event(event='launch', model=model, task=task, lane=lane, row=row['dir'])
         log = (campaign.dir / f"{model}--{task}.log").open('a')
-        proc = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        scope = ['systemd-run', '--user', '--scope', '--quiet', '--collect',
+                 f'--unit=cell-{campaign.id}-{model}-{task}-{int(time.time())}'.replace('.', '_')]
+        for limit in CELL_LIMITS:
+            scope += ['-p', limit]
+        proc = subprocess.Popen(scope + command, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 start_new_session=True)
         self.running[(campaign.id, model, task)] = dict(proc=proc, lane=lane, row=row, campaign=campaign)
         self.launched += 1
