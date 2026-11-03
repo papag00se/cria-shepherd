@@ -52,7 +52,7 @@ class Driver:
         self.retry_at = {}           # (campaign id, model, task) -> earliest relaunch time
         self.servers = {}          # lane -> server state
         self.rows = {}             # (lane, model, level) -> row dict
-        self.model = None
+        self.lane_model = {}       # lane -> the model its server serves (each card switches on its own)
         self.launched = 0
         self.next_port = lanes.ROW_PORT_BASE
 
@@ -69,16 +69,6 @@ class Driver:
                     out.append((campaign, m, task))
         return out
 
-    def lanes_for(self, model):
-        found = {}
-        for name in self.lane_names:
-            window = lanes.lane_window(model, name)
-            if window is not None:
-                found[name] = window
-        if not found:
-            raise ValueError(f'{model} fits none of the enabled lanes')
-        return found
-
     def used(self, lane):
         return sum(1 for run in self.running.values() if run['lane'] == lane)
 
@@ -89,16 +79,29 @@ class Driver:
                 lanes.stop_row(row)
                 del self.rows[key]
 
-    def switch_model(self, model):
-        self.stop_rows()
-        for lane in list(self.servers):
+    def fits(self, model, lane):
+        return lanes.lane_window(model, lane) is not None
+
+    def switch_lane(self, lane, model):
+        self.stop_rows(keep=lambda key: key[0] != lane)
+        if lane in self.servers:
             lanes.stop_server(lane)
             del self.servers[lane]
-        for lane, window in self.lanes_for(model).items():
-            self.servers[lane] = lanes.start_server(model, lane, window)
-        self.model = model
-        print(json.dumps({'event': 'lanes-up', 'model': model,
-                          'lanes': {k: {'slots': v['slots'], 'window': v['window']} for k, v in self.servers.items()}}), flush=True)
+        self.servers[lane] = lanes.start_server(model, lane, lanes.lane_window(model, lane))
+        self.lane_model[lane] = model
+        print(json.dumps({'event': 'lane-up', 'lane': lane, 'model': model,
+                          'slots': self.servers[lane]['slots'], 'window': self.servers[lane]['window']}), flush=True)
+
+    def next_model(self, lane, pending):
+        """The model this idle card serves next: the other card's model if it fits here and has work, else the
+        first roster model with pending work that fits here and is not already being served elsewhere."""
+        have = {m for _, m, _ in pending if self.fits(m, lane)}
+        others = {self.lane_model.get(n) for n in self.lane_names if n != lane}
+        shared = [m for m in others if m in have]
+        if shared:
+            return shared[0]
+        free = [m for m in l0_campaign.MODELS if m in have and m not in others]
+        return free[0] if free else None
 
     def row_for(self, lane, model, level):
         key = (lane, model, level)
@@ -133,23 +136,23 @@ class Driver:
         for lane in self.servers:
             lanes.check_server(lane)
         self.reap()
-        wanted = self.pending(self.model) if self.model else []
-        if not self.running and not wanted:
-            later = self.pending()
-            if later and not self.capped():
-                order = {m: i for i, m in enumerate(l0_campaign.MODELS)}
-                self.switch_model(min((m for _, m, _ in later), key=order.get))
-                wanted = self.pending(self.model)
-        while wanted and not self.capped():
-            # Fill the least-loaded lane first so a short queue spreads over both cards.
-            free = [n for n in self.servers if self.used(n) < lanes.LANES[n].slots]
-            if not free:
-                break
-            lane = min(free, key=lambda n: self.used(n) / lanes.LANES[n].slots)
-            campaign, model, task = wanted.pop(0)
-            self.launch(lane, campaign, model, task)
-        levels = {c.level for c, _, _ in self.pending(self.model)} if self.model and not self.capped() else set()
-        self.stop_rows(keep=lambda key: key[1] == self.model and key[2] in levels)
+        if not self.capped():
+            for lane in self.lane_names:
+                current = self.lane_model.get(lane)
+                if self.used(lane) == 0 and not self.pending(current) if current else self.used(lane) == 0:
+                    model = self.next_model(lane, self.pending())
+                    if model is not None and model != current:
+                        self.switch_lane(lane, model)
+        for lane in self.lane_names:
+            model = self.lane_model.get(lane)
+            if model is None:
+                continue
+            wanted = self.pending(model)
+            while wanted and not self.capped() and self.used(lane) < lanes.LANES[lane].slots:
+                campaign, m, task = wanted.pop(0)
+                self.launch(lane, campaign, m, task)
+        live = {(lane, c.level) for lane, model in self.lane_model.items() for c, _, _ in self.pending(model)}
+        self.stop_rows(keep=lambda key: self.lane_model.get(key[0]) == key[1] and (key[0], key[2]) in live)
 
     def capped(self):
         return self.max_cells is not None and self.launched >= self.max_cells
