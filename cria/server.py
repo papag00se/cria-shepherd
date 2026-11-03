@@ -365,7 +365,7 @@ def carry_chat_system(body: dict) -> None:
                             if persona else {})}, *rest]
 
 
-def _proxy_body(body: dict) -> dict:
+def _proxy_body(body: dict, own_prompt: bool = False, workspace: str | None = None) -> dict:
     """The proxy (relay) path — used when cria isn't orchestrating (a question, or an aux
     harness call the loop declined, e.g. Codex's UI title-generation) — still DROPS the
     harness's agent system/developer prompt unless it is marked caller instructions (Responses
@@ -377,6 +377,13 @@ def _proxy_body(body: dict) -> dict:
     msgs = body.get("messages")
     if not isinstance(msgs, list):
         return body
+    if own_prompt and any(m.get("role") in ("system", "developer") for m in msgs if isinstance(m, dict)):
+        # From CONTEXT_FIXES up cria owns the prompt on this path too: every system/developer slot the harness
+        # filled (found by slot, never by wording) is replaced by cria's coder prompt and its short harness brief.
+        rest = [m for m in msgs if m.get("role") not in ("system", "developer")]
+        brief = prompts.render("harness_brief", workspace=workspace) if workspace else ""
+        system = prompts.load("coder_system") + (f"\n\n{brief}" if brief else "")
+        return {**body, "messages": [{"role": "system", "content": system}, *rest]}
     kept = [m for m in msgs if m.get("role") not in ("system", "developer")
             or m.get(bodykeys.CALLER_INSTRUCTIONS)]
     if len(kept) == len(msgs):
@@ -2007,7 +2014,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return
             provider, indic = self._route(body, classification, rlog, compaction)
             rlog.phase = "proxy"
-            sbody = _proxy_body(body)
+            sbody = _proxy_body(body, self.server.cfg.routing.context_fixes, getattr(self, "_workspace_root", None))
             if self.server.cfg.routing.context_fixes and compaction and handoff is not None:
                 facts = _handoff_facts(server, sk, body, rlog, owner)
                 sbody = _compaction_body(sbody, definition=handoff, facts=facts,
@@ -2139,7 +2146,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog, compaction)
         rlog.phase = "proxy"
-        pbody = _proxy_body(body)
+        pbody = _proxy_body(body, self.server.cfg.routing.context_fixes, getattr(self, "_workspace_root", None))
         facts = None
         if self.server.cfg.routing.context_fixes and compaction and handoff is not None:
             facts = _handoff_facts(server, sess_key, body, rlog, owner)

@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from cria import responses, server
+from cria import prompts, responses, server
 
 
 def call(cid, name, **args):
@@ -56,6 +56,12 @@ def test_the_proxy_body_drops_the_harness_persona_but_keeps_caller_instructions(
     assert stripped["messages"] == [caller, user] and stripped["model"] == "m"
     clean = {"messages": [user]}
     assert server._proxy_body(clean) is clean and server._proxy_body({"messages": "x"} ) == {"messages": "x"}
+    # From CONTEXT_FIXES up (own_prompt) the relay path carries cria's prompt and brief, not the harness's slots.
+    owned = server._proxy_body({"messages": [persona, caller, user]}, own_prompt=True, workspace="/ws")
+    system, *rest = owned["messages"]
+    assert rest == [user] and "You are Codex" not in system["content"] and "sandbox rules" not in system["content"]
+    assert system["content"].startswith(prompts.load("coder_system"))
+    assert prompts.render("harness_brief", workspace="/ws") in system["content"]
 
 
 def test_responses_session_identity_is_the_prompt_cache_key():
