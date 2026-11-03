@@ -663,6 +663,11 @@ def collect_capture(session_dirs) -> dict:
             "output_tokens_timed": tok_n}
 
 
+def _cell_session_id() -> str:
+    """A cria session id that names its own capture dir: timestamp-first like every capture dir (`2*`), unique per cell."""
+    return time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex
+
+
 def harness_sessions(log_path, adapter=None) -> set:
     """Every session id of this cell's cria sessions: the one the adapter stamps (OpenCode), else the ids Codex's log printed."""
     if adapter is not None and adapter.session_id:
@@ -1040,7 +1045,7 @@ def _main(scope) -> None:
         # sampling applied, own capture/log dirs); this cell never edits the live config.
         lane_evidence = {"name": lane_row["lane"], "cria_port": lane_row["port"], "window": lane_row["window"]}
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]),
-                                  session_id=uuid.uuid4().hex if args.harness == "opencode" else None)
+                                  session_id=_cell_session_id() if args.harness == "opencode" else None)
         if args.harness == "opencode":
             env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model, lane_row["window"], adapter.base_url)
             harness_argv, harness_provenance = restored_opencode_argv(harness_argv, args.model)
@@ -1061,7 +1066,7 @@ def _main(scope) -> None:
         if switched.returncode:
             raise RuntimeError("restored fleet switch failed: " + switched.stderr)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT),
-                                  session_id=uuid.uuid4().hex if args.harness == "opencode" else None)
+                                  session_id=_cell_session_id() if args.harness == "opencode" else None)
         if args.harness == "opencode":
             env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model,
                                l0_campaign.context(args.model), adapter.base_url)
