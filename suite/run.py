@@ -982,7 +982,11 @@ def restored_codex_argv(argv, model, context, adapter_url, home=None, cria_confi
         raise ValueError("pinned Codex executable version changed")
     provenance = {"binary": str(RESTORED_CODEX_BINARY.resolve()), "version": version}
     extra = ["-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
-             "-c", f"model_auto_compact_token_limit={int(context * .85)}"]
+             "-c", f"model_auto_compact_token_limit={int(context * .85)}",
+             # Battery cells see no host skills (the operator's ~/.agents/skills leaked into every prompt) and get
+             # no goal tools (a model set itself a token budget and was then told by Codex to stop working).
+             "-c", "skills.include_instructions=false", "-c", "skills.bundled.enabled=false",
+             "-c", "features.goals=false"]
     if home is not None:
         catalog = local_codex_catalog(
             model, context, home, vision=coder_declares_vision(CRIA_TOML if cria_config is None else cria_config))
