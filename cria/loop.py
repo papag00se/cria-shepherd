@@ -59,6 +59,7 @@ from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, gene
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
+from .config import CONTEXT_FIXES
 from .admission import has_actionable_tools as _has_actionable_tools
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
@@ -6183,7 +6184,8 @@ def _required_coder_base(messages, *, tools=None, prior_work="", workspace_root=
     return steppreparation.assemble_base(steppreparation.BaseInput(
         messages, steppreparation.BaseServices(_strip_cria_file_ops, _msg_text_content,
             _is_serialized_plan_cursor, menu_note=menu_note),
-        tools, prior_work, workspace_root, gate_plan, suspend_cursor))
+        tools, prior_work, workspace_root, gate_plan, suspend_cursor,
+        own_prompt=runtime.engagement_level >= CONTEXT_FIXES))
 
 
 def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False, suppress_plan_cursor: bool = False) -> list[dict]:

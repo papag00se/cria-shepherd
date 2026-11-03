@@ -72,6 +72,9 @@ class BaseInput:
     gate_plan: object = None
     # Caller derives this from remediation OR the permanent coverage reset.
     suspend_cursor: bool = False
+    # From CONTEXT_FIXES up cria owns the system prompt: everything the harness put in its system/developer
+    # slots (found by slot, never by wording) is replaced by cria's short harness brief.
+    own_prompt: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,9 @@ def assemble_base(source: BaseInput) -> BaseFrame:
     texts = [services.message_text({**m, "content": toolmenu.without_cheatsheet(m.get("content"))})
              for m in callers]
     caller = "\n\n".join(texts)
+    if source.own_prompt:
+        callers, texts = [], []
+        caller = prompts.render("harness_brief", workspace=source.workspace_root) if source.workspace_root else ""
     persona_at, persona, run = -1, "", 0
     for message, text in zip(callers, texts):
         candidate = message.get(bodykeys.CALLER_PERSONA)
