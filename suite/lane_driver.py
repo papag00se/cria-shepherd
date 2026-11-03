@@ -26,7 +26,7 @@ from pathlib import Path
 
 RETRY_SECONDS = 120
 OVERFLOW_MARKS = ('ran out of room in the model', 'exceeds the available context size',
-                  'reason: generation_limit')   # the server stopped at a full context window
+                  'reason: generation_limit', 'reason: max_output_tokens')   # the server stopped at a full context window
 
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:

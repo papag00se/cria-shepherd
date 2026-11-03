@@ -65,7 +65,7 @@ def safe_completion(completion: dict) -> dict:
 
 def incomplete_reason(completion: dict) -> str:
     evidence = completion.get(EVIDENCE) or {}
-    return 'generation_aborted' if evidence.get('local_abort') else 'generation_limit'
+    return 'generation_aborted' if evidence.get('local_abort') else 'max_output_tokens'   # OpenAI's reason for a reply stopped at its token limit
 
 
 def _frame(obj: dict) -> bytes:

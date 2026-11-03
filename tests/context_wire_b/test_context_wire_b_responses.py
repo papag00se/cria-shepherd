@@ -67,7 +67,7 @@ def test_the_banner_and_reasoning_ride_without_becoming_a_summarizable_answer():
 
 def test_an_incomplete_turn_releases_no_call_but_keeps_it_as_evidence_and_a_finished_one_executes_once():
     """A length or locally-aborted turn may hold a perfectly valid-looking call; no harness boundary may run it. It is withheld as call_prefixes evidence, the Responses status is incomplete (never response.completed), and a finished turn still emits its call exactly once."""
-    for finish, extra, reason in (("length", {}, "generation_limit"), ("rumination", {"cria_rumination": {"hits": 6}}, "generation_aborted")):
+    for finish, extra, reason in (("length", {}, "max_output_tokens"), ("rumination", {"cria_rumination": {"hits": 6}}, "generation_aborted")):
         comp = {"choices": [{"index": 0, "finish_reason": finish, "message": {"role": "assistant", "content": "Earlier. ", "tool_calls": [dict(CALL)]}}], **extra}
         safe = massage.apply(comp, [{"type": "function", "function": {"name": "write_file", "parameters": {"type": "object"}}}])
         assert not safe["choices"][0]["message"].get("tool_calls") and safe["choices"][0]["finish_reason"] == finish
