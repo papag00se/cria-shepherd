@@ -1,25 +1,26 @@
 # Battery report
 
-Updated: 2026-11-03 07:06 PST
+Updated: 2026-11-03 07:18 PST
 
-## L0 — Pure proxy — wire translation only — 42%
+## L0 — Pure proxy — wire translation only — 43%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 8% | 🟡 70% | 🔴 30% | 🔴 0% | 🟠 60% | 🔴 35% | 34% | 2 | 43 | 69.5 |
 | k2_horizon_7b | 🔴 0% | 🔴 2% | 🟢 90% | 🟠 50% | 🟡 75% | 🟡 85% | 50% | 8 | 81 | 86.9 |
-| qwen3.8_9b_distill | 🟠 55% | 🟡 80% | 🟡 80% | 🟡 75% | 🟡 70% | 🟢 95% | 76% | 5 | 103 | 98.4 |
+| qwen3.8_9b_distill | 🟠 55% | 🟡 80% | 🟡 80% | 🟡 75% | 🟡 85% | 🟢 88% | 77% | 6 | 108 | 82.9 |
 | ornith1.5_9b | 🔴 35% | 🟡 78% | 🟡 78% | 🟠 42% | 🟢 92% | 🟢 92% | 70% | 15 | 138 | 53.9 |
 | ling3.0_tiny | 🔴 22% | 🟡 65% | 🟠 58% | 🟠 50% | 🟡 70% | 🟡 85% | 58% | 14 | 434 | 170.5 |
 | nemotron-elastic | 🔴 15% | 🔴 0% | 🔴 0% | 🔴 8% | 🟠 50% | 🟠 55% | 21% | 6 | 209 | 58.9 |
 | bonsai2 | 🔴 0% | 🟢 90% | 🔴 0% | 🔴 0% | 🔴 0% | 🟢 88% | 30% | 13 | 207 | 23.6 |
 | phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 0 | 1 | 48.1 |
 
-## L1 — TOOL_CALL_FIXES — dialect and template repair — 34%
+## L1 — TOOL_CALL_FIXES — dialect and template repair — 36%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 0% | 🔴 5% | 🟠 45% | 🟠 50% | 🟠 45% | 🔴 30% | 29% | 2 | 12 | 34.0 |
+| qwen3.8_9b_distill | 🟠 50% | 🟡 75% | · | · | · | · | 62% | 3 | 38 | 71.0 |
 | ornith1.5_9b | 🔴 0% | 🔴 3% | 🟡 76% | 🔴 0% | 🟡 85% | 🟢 88% | 42% | 13 | 42 | 49.0 |
 | ling3.0_tiny | 🔴 15% | 🟡 70% | 🟠 50% | 🔴 15% | 🟡 72% | 🟡 85% | 51% | 12 | 195 | 106.0 |
 | nemotron-elastic | 🔴 0% | 🔴 10% | 🔴 12% | 🔴 3% | 🔴 0% | 🔴 3% | 5% | 7 | 18 | 116.3 |

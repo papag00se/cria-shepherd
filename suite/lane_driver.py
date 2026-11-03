@@ -165,7 +165,8 @@ class Driver:
     @staticmethod
     def overflowed(key):
         """The cell's latest run ended because the conversation outgrew the model's context window."""
-        rows = [r for r in l0_campaign.read_rows() if (r.get('campaign_id'), r.get('model'), r.get('task')) == key]
+        rows = [r for r in l0_campaign.read_rows()
+                if (r.get('campaign_id'), r.get('model'), r.get('task')) == key and not r.get('aborted')]
         if not rows or rows[-1].get('terminal') != 'harness-error':
             return False
         try:
