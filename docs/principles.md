@@ -11,273 +11,136 @@ These rules come from failures traced to exact causes. Evidence lives in [`audit
 ## A. Stream interventions
 
 ### 1. Every assist can become a footgun
-A weak model cannot distinguish cria injections from its own reasoning. Every injected string is another possible falsehood. Before adding an assist, ask how it can mislead. Default to removal; additions require strong justification.
+A weak model cannot tell cria's injections from its own reasoning, so every injected string is a possible falsehood. Ask how an assist can mislead before adding it; default to removal.
 
-**An assist outlives its cause.** Each one was built for a defect that was real at the time. Fix the defect upstream — better context shaping, a truer prompt, a floor that catches it earlier — and the assist keeps firing against a world that no longer needs it, where its only remaining effect is to mislead. So an assist is re-measured against the system it runs in NOW, not the one it was born in. The test is not "was this justified when written" but "does removing it today cost anything". Compare the relevant captured boundary with and without it, including legitimate nearby cases and repetitions appropriate to variance. Firing in successful runs does not establish benefit; staying silent does not establish redundancy. Prefer removing a demonstrated harmful intervention to wrapping it in another guard. Reconsider symptom guards when their upstream cause is fixed.
+**An assist outlives its cause.** Once its defect is fixed upstream it keeps firing where only misleading is left. Re-measure assists against today's system: not "was this justified" but "does removing it cost anything now". Compare the captured boundary with and without it, including legitimate nearby cases and enough repetitions for variance. Firing in good runs proves no benefit; silence proves no redundancy. Prefer removing a harmful intervention to guarding it.
 
 ### 2. Interventions are additive, regression-only, and cria never AUTHORS work
-Intervene only to prevent existing progress from regressing. Deletion, redirection, and blocking a first attempt can trap loops.
-
-Additive does not mean safe: cria must not write plans, actions, or code for the coder. Everything cria injects remains subject to re-derivation; nothing becomes an immutable mandate. Surface facts and steer; let the coder act.
+Intervene only to keep existing progress from regressing; deletion, redirection and blocking a first attempt can trap loops. Additive is not safe by itself: cria never writes plans, actions or code for the coder. Everything injected stays open to re-derivation, never an immutable mandate. Surface facts and steer; let the coder act.
 
 ### 3. Silence over noise
-Inject only high-confidence, actionable information. Inject nothing on a passing check. Never attach speculative warnings to green results. State a fact or stay silent.
+Inject only high-confidence, actionable information. Nothing on a passing check, no speculative warnings on green results. State a fact or stay silent.
 
 ### 4. No fallbacks or mitigations; fix upstream
-Do not hide wrong behavior behind a workaround. Fix the cause.
-
-Before declaring an existing behavior forbidden or adding an admission requirement, read its documented decision and code history. Distinguish the operator's actual boundary from a stricter preference invented during the investigation; do not reopen a settled architectural decision or disable a capability to satisfy that preference.
-
-Do not place deterministic fallback logic behind a reasoner. If the trusted reasoner cannot answer, inject nothing.
+Do not hide wrong behavior behind a workaround; fix the cause. Before forbidding an existing behavior or adding an admission requirement, read its documented decision and history, and separate the operator's actual boundary from a stricter preference invented during the investigation. Do not put deterministic fallback logic behind a reasoner: if the trusted reasoner cannot answer, inject nothing.
 
 ---
 
 ## B. Never destroy information the model relies on
 
 ### 5. cria never truncates
-Never blindly clip bytes, characters, lines, prompts, evidence, or model output. Window fitting belongs only at the lossless-first context floor.
-
-Allowed:
-- **De-duplication:** repeated content may appear once with a pointer to the original.
-- **Model-made summary/selection:** a model read the full source and the result is explicitly labeled as a summary.
-
-Everything else that shortens model-visible content is truncation, including head/tail limits, per-line caps, character budgets, and disclosed elisions.
-
-Consequences:
-- cria framing does not consume the evidence budget.
-- Disclosed truncation is still truncation.
-- If cria holds the authoritative object, use it directly instead of shortening a re-rendered copy.
+Never blindly clip bytes, characters, lines, prompts, evidence or model output. Window fitting happens only at the lossless-first context floor. Allowed: de-duplication (repeated content once, with a pointer to the original) and a model-made summary or selection, labelled as such. Everything else that shortens model-visible content is truncation — head/tail limits, per-line caps, character budgets — and disclosing it does not make it not truncation. cria's own framing does not consume the evidence budget; when cria holds the authoritative object, use it instead of shortening a re-rendered copy.
 
 ### 5b. cria never states a FALSE FACT about the world
-Every factual statement cria makes must be true now and backed by a live check.
-
-Use the authoritative source:
-- filesystem for file existence,
-- parsed document for document contents,
-- tool menu for available tools.
-
-Do not turn internal limits, remembered flags, partial matches, or assumptions into world facts.
-
-Refusals must name something the coder can actually change. Validate that a command is well-formed before judging it.
-
-Preserve provenance:
-- tool output is ground truth,
-- model summaries are claims,
-- never label both the same way.
-
-Saying less is allowed. Saying something the world would contradict is not.
+Every factual statement cria makes must be true now and backed by a live check against the authoritative source: the filesystem for existence, the parsed document for contents, the tool menu for available tools. Internal limits, remembered flags, partial matches and assumptions are not world facts. A refusal names something the coder can change; validate a command is well-formed before judging it. Keep provenance: tool output is ground truth, model summaries are claims, never labelled alike. Saying less is allowed; saying what the world would contradict is not.
 
 ### 6. Never cap output for latency
-Do not shorten output for speed. Slow hardware and long waits are acceptable.
-
-Keep answer-window sizing separate from runaway protection. Handle runaways with streaming detection, timeout, and context limits, never a short hard output cap that can cut a file write mid-content.
+Slow hardware and long waits are acceptable. Keep answer-window sizing separate from runaway protection: runaways are handled by streaming detection, timeouts and context limits, never a short hard cap that can cut a file write mid-content.
 
 ### 7. cria never pollutes the user's workspace
-cria writes only inside its own directory. Workspace artifacts become visible to the coder and contaminate its context.
+cria writes only inside its own directory; workspace artifacts reach the coder and contaminate its context. File access stays bounded to the workspace even under `--yolo` (a weak-model backstop, not a sandbox).
 
-File access remains bounded to the workspace even under `--yolo`. This is a weak-model backstop, not a security sandbox.
-
-**Investigation scratch is temporary, not a second product.** One owned working directory, one reading-assignment record and actual findings are enough to coordinate a walk. Reuse the authoritative checks and existing findings instead of adding another approval layer, copied validator or proof registry. A judgment binds the evidence actually reviewed and its reviewer; unrelated source edits do not require reapproval of that judgment. Validate runtime inputs at the operational boundary, and disclose authorized experiment changes without relabeling them as a clean freeze. Keep only necessary unresolved inputs, working changes and test output needed for the current review. Do not generate duplicate reports, recursive proof inventories, source mirrors, hash/approval/preservation warehouses or archives of earlier drafts. Inspect authoritative source, runtime state and captures directly when a check genuinely needs them. Tests and follow-on tools must not depend on disposable investigation outputs; preserve necessary inputs as small repository fixtures or genuine operative state instead. After all associated fixes settle ACCEPTED or REJECTED and necessary changes are secured, remove the scratch without another review or permanent closure receipt. Old citations, bug explanations, score substantiation and hypothetical future investigations do not extend retention. Repository changes and actual model-call logs are the durable outputs; unresolved rate limits, active owners and unique unapplied code remain protected. See `suite/README.md` for the concrete closure command.
+Investigation scratch is temporary: one working directory and the actual findings are enough. Reuse the real checks and findings; do not add approval layers, copied validators, proof registries, duplicate reports, source mirrors or hash/receipt archives. Tests and tools must not depend on disposable investigation output; keep needed inputs as small repository fixtures. Repository changes and real model-call logs are the durable outputs; delete scratch once its fixes are settled.
 
 ---
 
 ## C. Ground truth over judgment
 
 ### 8. Deterministic code gathers facts; a reasoner judges
-Detectors decide **when** to ask and gather objective evidence. A reasoner decides **what** that evidence means.
-
-If a lexical rule needs tuned thresholds or exception lists, semantic judgment has leaked into deterministic code. Ask the reasoner instead.
-
-Judge prompts must prevent the model from doing the work:
-- state that it is a judge,
-- restrict its tools,
-- forbid implementation thinking.
-
-When a judgment is wrong, inspect the reasoning first. Losing a correct answer and never finding it are different failures.
+Detectors decide **when** to ask and gather objective evidence; a reasoner decides **what** it means. A lexical rule that needs tuned thresholds or exception lists is semantic judgment leaking into code — ask the reasoner. Judge prompts state the model is a judge, restrict its tools and forbid implementation thinking. When a judgment is wrong, read the reasoning first: losing a correct answer and never finding it are different failures.
 
 ### 9. Don't fear an extra model call that prevents churn
-Use a reasoner whenever it can ground the next action, including more than once within a step. Optimize total model calls, not reasoner calls.
-
-Use one-shot guards so an unhelpful call does not repeat.
-
-Semantic questions belong to reasoners, not keyword lists or proximity windows.
+Use a reasoner whenever it can ground the next action, even several times in a step. Optimize total model calls, not reasoner calls. Semantic questions belong to reasoners, not keyword lists or proximity windows. One-shot guards keep an unhelpful call from repeating.
 
 ### 10. Verify by doing, not by reading
-When possible, obtain ground truth through execution instead of trusting model claims. Exit 0 and self-reports do not prove behavior.
-
-cria owns no executor; it borrows the harness shell.
+Get ground truth by execution, not by trusting model claims; exit 0 and self-reports do not prove behavior. cria owns no executor; it borrows the harness shell.
 
 ### 11. Files alone are NEVER signal
-Read current disk state, not stale transcript state.
-
-Trigger reasoning on evidence such as repeated no-ops or dirty lint results, not merely because files exist. A clean floor should produce no intervention.
+Read current disk state, not stale transcript state. Trigger reasoning on evidence (repeated no-ops, dirty lint), not on files merely existing. A clean floor produces no intervention.
 
 ### 11b. A mechanism must REACH what it is asked about, or abstain
-Before trusting a mechanism, verify that it can observe the thing it is judging.
-
-If its reach is insufficient, it must say it cannot answer. Never convert lack of visibility into "nothing found" or "done."
-
-Examples:
-- workspace readers cannot judge third-party source,
-- unparsed documents cannot support "no match",
-- code that exits before checking declared runners cannot report "no entry point."
-
-Any positive conclusion that the mechanism could not have observed is invalid.
+Before trusting a mechanism, confirm it can observe its subject; otherwise it must say it cannot answer, never "nothing found" or "done". Workspace readers cannot judge third-party source, unparsed documents cannot support "no match", code that exits before checking declared runners cannot report "no entry point". A positive conclusion the mechanism could not have observed is invalid.
 
 ### 12. Surface every metric from the authoritative EVENT
-Derive metrics from structured events: completion records, intervention sites, exit codes, and tool arguments.
-
-Do not reconstruct metrics from final prose or English-pattern matching.
+Derive metrics from structured events — completion records, intervention sites, exit codes, tool arguments — never from final prose or English pattern matching.
 
 ### 23b. READ IT — a count is not a reading, and a match is not a meaning
-Before making claims about model behavior, read at least one counted example end to end.
-
-Regex counts show string occurrence, not behavior. Do not replace reading with `grep -c` or duplicate checks that cria already owns.
-
-A **WALK** follows the complete selected available recorded reasoning chronologically, then maps the whole thought list to the full searchable same-call context, followed by source-checked challenge and diagnosis using an operator-selected model. A full-run claim requires all calls' available reasoning; selected-call work must be labeled. Context is investigated through targeted searches and neighborhood reads, not an exhaustive context-read gate. Counts, sampling or summaries cannot replace the selected reasoning. The sole operative process is [walk-prompt.md](walk-prompt.md).
+Before any claim about model behavior, read at least one counted example end to end. Regex counts show string occurrence, not behavior; do not replace reading with `grep -c`, or re-implement checks cria already owns. A **walk** follows the selected recorded reasoning chronologically, maps it to the full same-call context, then challenges and diagnoses with an operator-selected model; full-run claims need every call's reasoning, selected-call work is labelled as such. Context is explored by targeted searches and neighborhood reads. The operative process is [walk-prompt.md](walk-prompt.md).
 
 ---
 
 ## D. Fail safe
 
 ### 13. Fail closed on completion; fail open only toward "keep working"
-An undecidable completion judgment means **not done**.
-
-A failed judge must never remove real results or produce a false success. Fail open only toward continuing work or restoring the ability to work.
+An undecidable completion judgment means **not done**. A failed judge never removes real results or produces a false success; fail open only toward continuing work or restoring the ability to work.
 
 This governs ONE question: whether the coder's task is done. It is not a rule for the suite, campaigns, deployment or bookkeeping: a run that fails or is interrupted is simply rerun, and nothing is blocked because its evidence cannot be proven.
 
 ### 14. cria must NEVER end a session by handing back to a human
-Do not escalate to a human, stronger model, or declared capability ceiling.
-
-A cria turn without a tool call is interpreted as completion, so a red session must continue driving. Reintroduce a terminator only with explicit operator permission.
+No escalation to a human, a stronger model or a declared capability ceiling. A cria turn without a tool call reads as completion, so a red session must keep driving. Reintroduce a terminator only with explicit operator permission.
 
 ### 15. Measure prevalence before building a heuristic
-Measure a suspected pattern across real captures before building a detector. One replayed pathological event is not evidence of a systemic problem.
-
-**Local causal evidence is sufficient for a local repair, not a universal claim.** Walks and replays can demonstrate a particular misleading context, harmful refusal or broken transition, and test a correction at that boundary. Repeated whole tasks diverge; they cannot attribute every outcome to individual assists or combinations. State the bounded conclusion and relevant uncertainty. Do not require universal benefit proof, exhaustive interaction accounting, or another evidence registry to accept a demonstrated repair with relevant regression coverage. Aggregate task results describe delivered work, not the necessity of each assist.
+Measure a suspected pattern across real captures before building a detector; one replayed pathological event is not a systemic problem. Local causal evidence suffices for a local repair: a walk or replay can show one misleading context, harmful refusal or broken transition and test a correction at that boundary. Whole tasks diverge and cannot attribute outcomes to single assists, so state the bounded conclusion and its uncertainty, and do not demand universal benefit proof before accepting a demonstrated repair with regression coverage. Aggregate scores describe delivered work, not the need for any one assist.
 
 ### 16. It is always cria's fault. "The model's fault" is not a finding.
+**Never write, say or conclude "the model failed", "a model limitation", "a real model result, not our bug", or any variant.** Not because the model is never the proximate cause, but because naming it ends the investigation exactly where cria's reason to exist begins. A 9B-class model derailing is the problem statement, not an explanation.
 
-**Never write, say, or conclude "the model failed", "that's a model limitation", "a real model result,
-not our bug", or any variant. The phrase is banned.** Not because the model is never the proximate
-cause — often it is — but because naming it ENDS the investigation, and cria's entire reason to exist
-begins exactly there. A 9B-class model derailing IS the problem statement. "The model derailed" is a
-restatement of the mission, not an explanation of anything, and it is never a place to stop.
+The attribution is fixed: **whatever the coder did, cria let it happen**; the only question is which assist was absent, silent, mistimed or wrong. Rumination is the rumination steer failing to land. Twelve refused completion claims are twelve chances to redirect the coder into writing code that cria did not take. A coder reading for 22 minutes without writing is a missing nudge. This makes #19 operational: a model that breaks in a new way specifies the next assist. Score the work honestly (usefulness measures delivered code), but never turn a low score into a verdict on the weights.
 
-So the attribution is fixed in advance: **whatever the coder did, cria let it happen.** The only
-question worth asking is which assist was absent, silent, mistimed, or wrong. Rumination is not
-"this model overthinks" — it is the rumination steer failing to land. Twelve refused completion
-claims are not "this model lies about being done" — they are twelve chances cria had to redirect the
-coder into writing code, and did not take. A coder that reads for 22 minutes without writing is a
-missing nudge, not a character flaw.
+Before concluding: read what the model received, read what it reasoned, compare that with disk state, run the real tool. Do not build machinery to compensate for a failure cria itself introduced, and never close a finding with a cause outside cria's reach.
 
-This is what makes principle 19 (a model that breaks is a requirement) operational rather than
-decorative. A model that breaks in a NEW way is a specification for the next assist. Score the
-WORK — usefulness percentages measure delivered code and are honest measurements — but never let a
-low score become a verdict on the weights. The score says the run produced little. The investigation
-says why cria let it.
-
-Before concluding anything:
-1. read what the model received,
-2. read what it reasoned,
-3. compare that context with disk state,
-4. run the real tool.
-
-Do not build machinery to compensate for a failure cria itself introduced — and do not close a
-finding with a sentence that puts the cause outside cria's reach.
-
-**Incident, 2026-09-18 (the reason this is worded as a ban).** A `shipping-rates-rb` cell scored 5%.
-The first 32 minutes went to the coder fighting a broken Ruby gem path — cria's own suite bug — and
-that was correctly found and fixed. The rerun then scored 5% again, and the campaign agent wrote
-"this time it's a real model result, not our bug" and "not broken, but slow — consistent with the
-heavy reasoning we measured earlier on this model." Both sentences are this principle's violation,
-in a report written hours after reading the principle. The evidence in hand at that moment — one
-write in 30 calls, an 8,240-token rumination abort, twelve blocked completion claims — was a list of
-cria's assists firing and failing to change the outcome. That is the richest possible input for the
-next assist, and it was filed as a fact about the weights instead.
+**Incident, 2026-09-18 (why this is a ban).** A `shipping-rates-rb` cell scored 5%. Its first 32 minutes went to a broken Ruby gem path — cria's own suite bug — which was found and fixed. The rerun also scored 5%, and the campaign agent wrote "this time it's a real model result, not our bug", hours after reading this principle. The evidence in hand — one write in 30 calls, an 8,240-token rumination abort, twelve blocked completion claims — was a list of cria's assists firing without changing the outcome: the best input for the next assist, filed as a fact about the weights.
 
 ---
 
 ## E. Stay invisible and agnostic
 
 ### 17. The model never sees the literal token "cria"
-Use `⟦ctx:…⟧` for model-facing markers. Strip human-facing `⟦cria⟧` notes before the model re-reads them.
-
-Internal tokens and harness idioms can be copied into executable commands, so prevent leakage anywhere cria composes content the model may read or run.
-
-Private artefacts that appear in a command or result (heredoc delimiters, section and frame markers, shell variables, temp directories) carry no product name: they are `ctx`-family names (`___CTX_GATE_`, `__CTX_PY_EOF__`, `.ctx-done-`, ...). A history an earlier release lowered is made clean at the wire, statelessly (`privatenames`: the earlier names are renamed inside cria-composed commands and their results only; a declared lowering without a receipt is re-presented as the tool the model made; a survey cria composed alone leaves with its result). `tests/structure` composes every main lowered command and scans it for the name; `tests/server_config/test_server_config_invis_fixture_session.py` runs a whole session, and its replay through a restarted server, and scans every body sent upstream.
+Model-facing markers use `⟦ctx:…⟧`; human-facing `⟦cria⟧` notes are stripped before the model re-reads them. Internal tokens can be copied into executable commands, so no product name appears anywhere cria composes content the model reads or runs: private artefacts (heredoc delimiters, frame markers, shell variables, temp dirs) use `ctx`-family names (`___CTX_GATE_`, `__CTX_PY_EOF__`, `.ctx-done-`). A history an earlier release lowered is cleaned at the wire, statelessly (`privatenames`: old names renamed inside cria-composed commands and their results only; a declared lowering without a receipt is re-presented as the tool the model made; a survey cria composed alone leaves with its result). `tests/structure` scans every main lowered command, and `tests/server_config/test_server_config_invis_fixture_session.py` scans every upstream body of a whole session and its replay through a restarted server.
 
 ### 18. Harness-agnostic
-Do not depend on, prune, or specialize for harness configuration or rendering.
-
-Match tools by family, not literal name. Speak the wire protocol on both sides so fixes remain inside cria and apply across harnesses.
+Do not depend on, prune or specialize for harness configuration or rendering. Match tools by family, not literal name; speak the wire protocol on both sides so fixes stay inside cria and work across harnesses.
 
 ### 19. Cross-model resilience is the mission — a model that breaks is a requirement
-Do not optimize around one model or recommend a preferred model.
-
-Read reasoning from dedicated channels or inline content, and match dialects broadly. Failures on different small models reveal requirements.
+Do not optimize around one model or recommend a preferred one. Read reasoning from dedicated channels or inline content and match dialects broadly; failures on different small models reveal requirements.
 
 ### 20. Be task and language agnostic
-Do not key prompts, detectors, matchers, or remedies to one task's vocabulary, language, model dialect, or harness tool names.
-
-Run the three-lens audit: **LANG / MODEL / HARNESS**.
+Do not key prompts, detectors, matchers or remedies to one task's vocabulary, language, model dialect or harness tool names. Run the three-lens audit: **LANG / MODEL / HARNESS**.
 
 ### 21. A weak-model sentinel must be a POSITIVE token
-A model-emitted veto must use a positive token such as `ON_TRACK`, never a negated token such as `NOT_STUCK`. Negation can invert the model's own conclusion and cancel a needed rescue.
+A model-emitted veto uses a positive token (`ON_TRACK`), never a negated one (`NOT_STUCK`): negation can invert the model's own conclusion and cancel a needed rescue.
 
 ---
 
 ## F. Hardened conventions
 
 ### 22. Model-facing strings live in prompt files, never inline f-strings
-Put every model-visible string in `cria/prompts/*.txt` so prompts can change without code changes.
+Every model-visible string lives in `cria/prompts/*.txt`, so prompts change without code changes.
 
 ### 23. Architectural boundaries
 Defined fully under `## Principle:` in [`shephard.md`](shephard.md).
-
-- **Lower every MODEL-FACING tool to `shell`.** Rich tools become the common harness primitive and are reconstructed inbound as their original tool.
-- **cria may execute for its own needs.** Tests, syntax checks, linters, exec checks, read-only gathers, and cleanup may run on cria's side. Model-facing execution still goes through the harness.
-- **One owner for workspace-boundary checks.** Keep lexical checks for not-yet-existing write targets separate from resolved-path checks for paths cria will act on.
-- **Own no rendering.** Every exposed tool must reduce to a primitive the harness can execute and display.
-- **Guard state is session-scoped.** Reset guard memory on each user turn; never leak it across sessions, sub-agents, or forks.
+- **Lower every MODEL-FACING tool to `shell`;** rich tools become the harness primitive and are reconstructed inbound as the original tool.
+- **cria may execute for its own needs** (tests, syntax checks, linters, exec checks, read-only gathers, cleanup); model-facing execution still goes through the harness.
+- **One owner for workspace-boundary checks;** lexical checks for not-yet-existing write targets stay separate from resolved-path checks for paths cria acts on.
+- **Own no rendering;** every exposed tool reduces to a primitive the harness can run and display.
+- **Guard state is session-scoped;** reset on each user turn, never leak across sessions, sub-agents or forks.
 
 ### 23c. Reaching the workstation, the environment or the repo goes through the HARNESS
-cria is not necessarily on the machine the coder is on. The likely deployment is cria beside the model server while the harness runs on someone's workstation, and nothing in the protocol says otherwise.
+cria need not be on the coder's machine; the likely deployment is cria beside the model server and the harness on a workstation. `workspace_root` is a path on the HARNESS's filesystem, so `os.path.isdir` on it means something only when co-located.
 
-`workspace_root` is a path the HARNESS announced, about the HARNESS's filesystem. Handing it to `os.path.isdir` only means anything when the two are the same machine.
+**Any access to the workstation, environment or repo goes through a harness tool:** cria composes the call, the harness runs it where the files are, cria reads the result. The completion gate is the worked example: `guard_gate_op` builds a shell call, the harness runs the repo's own checks and spools the full result outside the workspace, later calls return checked pages released to the parser only on an exact byte count and SHA-256, and `probegate.clean_gate_results` replaces that plumbing in the model's view with one `⟦ctx:checks⟧` summary (no orphaned turns, no `___CTX_GATE_` scaffolding).
 
-**Any access to the workstation, the environment or the repo must go through a harness tool.** cria composes the call, the harness runs it where the files actually are, and cria reads the result. The completion gate is the worked example: `guard_gate_op` builds a shell tool call, the harness runs the repo's own checks in the workspace and spools the complete result outside the workspace, and later harness calls return checked pages. cria never opens that path; only an exact byte count and SHA-256 release the stream to the existing parser. `probegate.clean_gate_results` replaces the paged plumbing in the model's view — command scaffolding the coder never wrote is stripped, non-signal turns are dropped along with their calling turn so nothing orphans, and what the model sees is one `⟦ctx:checks⟧` summary. So cria can already act on the repo without the model ever reading cria's plumbing (`___CTX_GATE_`, `selfcompact._ANCHOR_MARKERS`).
+**Three kinds of fact; two travel.** *Message-derived* (tool results, files the coder wrote or read, checks it ran) and *harness-executed* (cria's call, the harness's run) work on any topology — prefer them. *cria-disk* (`os.path.isdir`, `os.walk`, `open()` on a harness path) works only co-located and must be converted.
 
-**Three kinds of fact, and only two of them travel:**
-
-- **Message-derived** — a tool result, a file the coder wrote or read, the check output it ran. Already in the conversation. Works on any topology; prefer it.
-- **Harness-executed** — cria composes a call, the harness runs it, cria reads the result. Works on any topology.
-- **cria-disk** — `os.path.isdir`, `os.walk`, `open()` against a harness-supplied path. Works only when co-located. This is what must be converted.
-
-**A lexical path check is not disk access.** `dirguard`'s containment boundary asks whether one path sits under another; that is a string comparison and it is exactly as valid against a workspace on another machine. Do not blank it for unreachability — doing so removes the bound on a fledgling model's file tools.
-
-**A mechanism that cannot reach its subject must SAY so, not just abstain.** `os.path.isdir` on a foreign path returns False, so every disk-derived guard concludes "nothing there" and goes quiet — correct by #11b, and catastrophic in aggregate: cria degrades to almost nothing while reporting no problem at all. Twenty-nine functions took a workspace path and not one asked whether it could be reached. Silent degradation is the one failure nobody can notice from the outside (#12).
-
-**The conversion, and what it costs.** `cria/wsview.py` is the one owner of "what is in the coder's workspace". It is filled by a bounded `python3` survey the HARNESS runs, riding along on commands cria is already sending (a lowered `write_file`/`edit_file`/`list_dir`, and the completion gate), and stripped back out of the result before anything downstream — including the model — sees it. The seventy-four cria-disk call sites found when it was introduced were converted to read it, and `toolpath` asks the same way: what the CODER's shell resolves, not what cria's process can see. One known exception remains: `depsurface` looks dependency sources up in cria's OWN home caches (`~/.m2`, `~/.cargo`, `~/.gem`, the Go module cache) and any declared cache roots, which is only right where cria and the harness share a machine; elsewhere it finds nothing and abstains, never inventing a surface (#11b).
-
-**Every answer is three-valued, and the third value is the point.** `True`, `False`, `None` — where `None` means nobody has answered yet. Each caller picks its own safe direction and they are NOT the same direction: a probe is KEPT when cria is unsure (a dropped check reads exactly like a check that passed), and a piece of ADVICE is WITHHELD when cria is unsure (naming a command that may not exist is #5b). Never collapse `None` into `False` for convenience — that is precisely how a question becomes a false fact.
-
-**cria has no synchronous channel to the harness.** It is an HTTP server; the harness drives. cria can ask only by putting a command in the reply it is already sending and reading the answer on the NEXT request. So a predicate needed mid-decision cannot get a fresh answer mid-decision — it reads what an earlier turn gathered, and a question it could not answer is REMEMBERED so the next survey carries it. Anything that genuinely needs to run a command inside one request cannot be done at all: the planner's gather shell was removed rather than faked, and its questions are answered by view-backed `list_dir` / `grep_files` / `read_file`.
-
-**cria never DELETES on a filesystem it does not own either.** The harness completes probe-artifact cleanup inside the same gate, before returning evidence and taking the final workspace survey. It cleans only positively owned private auxiliary resources, authenticated by exclusive allocation credentials and descriptor identities, and reports actual removals and failures separately from native checker output. New original-workspace files are not proof of probe ownership: concurrent writers and project-native build outputs survive. Authored compiler scratch is explicitly redirected into private auxiliary storage; original source, cwd and native build argv remain unchanged. Never attach a delayed deletion to a later coder action: even a read or refused edit must not secretly remove artifacts. This is a harness-executed Python program, not an `rm` command rejected by the sandbox or cria's own `os.unlink` against a potentially foreign filesystem. External transport spools remain a distinct, exactly owned cleanup lifecycle.
+- **A lexical path check is not disk access.** `dirguard`'s containment test is a string comparison, valid against a remote workspace; never blank it for unreachability, or the bound on the coder's file tools disappears.
+- **A mechanism that cannot reach its subject must SAY so.** `os.path.isdir` on a foreign path returns False, so disk-derived guards conclude "nothing there" and go quiet: correct by #11b, catastrophic in aggregate, and invisible from outside (#12).
+- **The conversion.** `cria/wsview.py` alone answers "what is in the coder's workspace", filled by a bounded `python3` survey the harness runs, riding on commands cria already sends (lowered `write_file`/`edit_file`/`list_dir`, the completion gate) and stripped from the result before anything, the model included, sees it. `toolpath` likewise asks what the coder's shell resolves. Known exception: `depsurface` reads dependency sources from cria's own caches (`~/.m2`, `~/.cargo`, `~/.gem`, the Go module cache, declared cache roots), right only when co-located; elsewhere it finds nothing and abstains (#11b).
+- **Answers are three-valued.** `True`, `False`, `None` (not yet answered). Each caller picks its safe direction: a probe is KEPT when unsure (a dropped check reads like a pass), advice is WITHHELD when unsure (naming a command that may not exist breaks #5b). Never collapse `None` into `False`.
+- **No synchronous channel.** cria is an HTTP server the harness drives; it can ask only by putting a command in its reply and reading the answer on the next request. A mid-decision predicate reads what an earlier turn gathered, and an unanswered question is remembered for the next survey. Anything that must run a command inside one request cannot be done at all (the planner's gather shell was replaced by view-backed `list_dir` / `grep_files` / `read_file`).
+- **cria never deletes on a filesystem it does not own.** Probe-artifact cleanup is a harness-executed Python program inside the same gate, before evidence and the final survey are returned. It removes only positively owned private auxiliary resources (exclusive allocation credentials, descriptor identities) and reports removals and failures apart from checker output. New workspace files are not proof of probe ownership; concurrent writers and native build outputs survive. Compiler scratch is redirected into private auxiliary storage; source, cwd and build argv are unchanged. Never attach a delayed deletion to a later coder action. External transport spools have their own exactly owned cleanup.
 
 ### 24. An invariant that must hold on the WIRE belongs at the wire
-If a property must be true of the serialized model body, enforce it at the final pre-serialization boundary.
-
-Examples:
-- role alternation,
-- no orphan tool messages,
-- no malformed historical tool calls.
-
-Do not enforce wire invariants independently at call sites. Carry internal intent to the wire, apply it there, strip the hint, and keep the transform opt-in so unaffected models receive byte-identical bodies.
-
-Fix the path that produced the incident. Captured bodies record their phase; identify the actual failing path before changing code, tests, comments, or audits.
+A property that must be true of the serialized body (role alternation, no orphan tool messages, no malformed historical tool calls) is enforced at the final pre-serialization boundary, not at call sites. Carry the intent to the wire as an internal hint, apply it there, strip it, and keep it opt-in so unaffected models get byte-identical bodies. Fix the path that produced the incident: captured bodies record their phase, so identify the failing path before changing code, tests or docs.
 
 ---
 
