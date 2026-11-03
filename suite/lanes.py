@@ -66,6 +66,8 @@ LANE_WINDOWS = {
     'gemma4_12b': 49152, 'ornith1.5_9b': 45056, 'nemotron-elastic': 49152, 'ling3.0_tiny': 49152,
     'qwen3.8_9b_distill': 40960, 'bonsai2': None, 'phi4': None, 'k2_horizon_7b': None,
 }
+# A model whose two 3080 slots do not fit (None above) runs there as the target card runs it: its canonical
+# single-slot profile at the profile's own window.
 
 # Reported wall minutes = measured wall minutes x factor[model][lane], factor = per-stream tok/s at the lane's
 # slot count / solo tok/s on the same card (fixed 600-token outputs over a ~6K-token code prompt).
@@ -84,6 +86,8 @@ LANE_FACTORS = {   # measured 2026-11-02 with suite/lane_measure.py (llama.cpp c
 
 
 def wall_factor(model, lane):
+    if lane_slots(model, lane) == 1:
+        return 1.0   # a single slot is the solo run the factor scales to
     return (LANE_FACTORS.get(model, {}).get(lane) or LANE_FACTORS[REFERENCE_MODEL][lane])
 
 
@@ -106,9 +110,17 @@ def profile_context(model):
     return fleet_cli().records()[model]['config']['ctx']
 
 
-def lane_window(model, lane_name, window=None):
-    """Per-slot window for `model` on `lane_name`, or None when the model does not run there."""
+def lane_slots(model, lane_name):
+    """Slots the lane serves `model` with: the lane's own, or one (the canonical profile) on a 3080 where two do not fit."""
     lane = LANES[lane_name]
+    return 1 if lane.card == '3080' and LANE_WINDOWS.get(model) is None else lane.slots
+
+
+def lane_window(model, lane_name, window=None):
+    """Per-slot window for `model` on `lane_name`."""
+    lane = LANES[lane_name]
+    if window is None and lane_slots(model, lane_name) == 1 and lane.slots > 1:
+        return profile_context(model)
     if window is None:
         window = lane.windows[0] if lane.card == '3090' else LANE_WINDOWS.get(model)
         if window is None:

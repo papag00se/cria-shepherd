@@ -91,7 +91,9 @@ class Driver:
     def card_free(self, lane):
         """Free slots on the lane's card: the card's slot budget (its first lane's slots) less every cell on it."""
         group = self.card_lanes(lane)
-        return lanes.LANES[group[0]].slots - sum(self.used(n) for n in group)
+        budget = min(self.servers[n]['slots'] for n in group if n in self.servers) if any(
+            n in self.servers for n in group) else lanes.LANES[group[0]].slots
+        return budget - sum(self.used(n) for n in group)
 
     # ------------------------------------------------------------------ lifecycle
     def stop_rows(self, keep=lambda key: False):
@@ -113,7 +115,8 @@ class Driver:
 
     def switch_lane(self, lane, model):
         self.stop_lane(lane)
-        self.servers[lane] = lanes.start_server(model, lane, lanes.lane_window(model, lane))
+        self.servers[lane] = lanes.start_server(model, lane, lanes.lane_window(model, lane),
+                                                lanes.lane_slots(model, lane))
         self.lane_model[lane] = model
         print(json.dumps({'event': 'lane-up', 'lane': lane, 'model': model,
                           'slots': self.servers[lane]['slots'], 'window': self.servers[lane]['window']}), flush=True)
@@ -199,7 +202,7 @@ class Driver:
             if model is None:
                 continue
             wanted = self.queue(model)
-            while wanted and not self.capped() and self.card_free(lane) > 0 and self.used(lane) < lanes.LANES[lane].slots:
+            while wanted and not self.capped() and self.card_free(lane) > 0 and self.used(lane) < self.servers[lane]['slots']:
                 campaign, m, task = wanted.pop(0)
                 self.launch(lane, campaign, m, task)
         live = {(lane, c.level) for lane, model in self.lane_model.items() for c, _, _ in self.queue(model)}
