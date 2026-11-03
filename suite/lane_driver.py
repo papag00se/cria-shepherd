@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 RETRY_SECONDS = 120
+SECOND_SERVER_RETRY_SECONDS = 300
 OVERFLOW_MARKS = ('ran out of room in the model', 'exceeds the available context size',
                   'reason: generation_limit', 'reason: max_output_tokens')   # the server stopped at a full context window
 
@@ -56,6 +57,7 @@ class Driver:
         self.running = {}          # (campaign id, model, task) -> dict(proc, lane, row, campaign)
         self.retry_at = {}           # (campaign id, model, task) -> earliest relaunch time
         self.deferred = set()        # cells whose last run overflowed the context: rerun only when nothing else is pending
+        self.second_wait = {}        # lane -> earliest time to try a second server on its (busy) card again
         self.servers = {}          # lane -> server state
         self.rows = {}             # (lane, model, level) -> row dict
         self.lane_model = {}       # lane -> the model its server serves (each card switches on its own)
@@ -196,7 +198,20 @@ class Driver:
                     continue   # the card's current model still has cells for its free slots: prefer it
                 model = self.next_model(lane, self.queue())
                 if model is not None and model != current:
-                    self.switch_lane(lane, model)
+                    busy = any(n in self.servers for n in self.card_lanes(lane) if n != lane)
+                    if busy and time.time() < self.second_wait.get(lane, 0):
+                        continue
+                    try:
+                        self.switch_lane(lane, model)
+                    except (RuntimeError, ValueError, OSError) as exc:
+                        if not busy:
+                            raise
+                        # A second model beside the card's current one did not fit: the current model keeps
+                        # the card; try again once its cells have released memory.
+                        self.stop_lane(lane)
+                        self.second_wait[lane] = time.time() + SECOND_SERVER_RETRY_SECONDS
+                        print(json.dumps({'event': 'second-server-wait', 'lane': lane, 'model': model,
+                                          'error': str(exc)[:200]}), flush=True)
         for lane in self.lane_names:
             model = self.lane_model.get(lane)
             if model is None:
