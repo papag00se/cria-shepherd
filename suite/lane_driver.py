@@ -232,7 +232,7 @@ class Driver:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--campaign', action='append', required=True, metavar='ID:LEVEL')
-    ap.add_argument('--lanes', default=','.join(lanes.LANES))
+    ap.add_argument('--lanes', default='3090x4,3090x4b,3080x2')   # 3080x2b is a side lane for one-off cells, never the driver's
     ap.add_argument('--models', default=None, help='comma-separated subset (default: the campaign roster)')
     ap.add_argument('--tasks', default=None, help='comma-separated subset (default: all six)')
     ap.add_argument('--max-cells', type=int, default=None, help='launch at most this many cells (smoke runs)')

@@ -1,6 +1,6 @@
 # Battery report
 
-Updated: 2026-11-03 11:02 PST
+Updated: 2026-11-03 11:21 PST
 
 ## L0 — Pure proxy — wire translation only — 45%
 
@@ -15,12 +15,12 @@ Updated: 2026-11-03 11:02 PST
 | bonsai2 | 🔴 0% | 🟢 90% | 🔴 0% | 🔴 0% | 🔴 0% | 🟢 88% | 30% | 13 | 207 | 23.6 |
 | phi4 | 🔴 5% | 🔴 12% | 🔴 4% | 🔴 0% | 🔴 0% | 🔴 20% | 7% | 11 | 69 | 25.7 |
 
-## L1 — TOOL_CALL_FIXES — dialect and template repair — 37%
+## L1 — TOOL_CALL_FIXES — dialect and template repair — 40%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 0% | 🔴 5% | 🟠 45% | 🟠 50% | 🟠 45% | 🔴 30% | 29% | 2 | 12 | 34.0 |
-| k2_horizon_7b | · | 🟡 75% | · | · | · | · | 75% | 11 | 62 | 18.8 |
+| k2_horizon_7b | 🟡 78% | 🟡 75% | · | · | 🟡 85% | 🟡 85% | 81% | 11 | 109 | 29.9 |
 | qwen3.8_9b_distill | 🟠 50% | 🟡 75% | 🟡 80% | 🟠 52% | 🟡 78% | 🟡 85% | 70% | 12 | 133 | 70.1 |
 | ornith1.5_9b | 🔴 0% | 🔴 3% | 🟡 76% | 🔴 0% | 🟡 85% | 🟢 88% | 42% | 13 | 42 | 49.0 |
 | ling3.0_tiny | 🔴 15% | 🟡 70% | 🟠 50% | 🔴 15% | 🟡 72% | 🟡 85% | 51% | 12 | 195 | 106.0 |
