@@ -124,9 +124,9 @@ class RateLimitGate:
 
 class SamplingAdapter:
     """Single-forward HTTP adapter. Responses and SSE bytes are relayed without rewriting."""
-    def __init__(self, knobs, gate, target=('127.0.0.1',18085)):
+    def __init__(self, knobs, gate, target=('127.0.0.1',18085), session_id=None):
         self.knobs = validate_knobs(knobs) if knobs is not None else None
-        self.gate, self.target = gate, target
+        self.gate, self.target, self.session_id = gate, target, session_id
         self.injected = []
         self.forward_lock = threading.Lock()
         self._admission = threading.Condition()
@@ -177,6 +177,9 @@ class SamplingAdapter:
                         connection = http.client.HTTPConnection(*adapter.target,timeout=7200)
                         headers = {k:v for k,v in self.headers.items() if k.lower() not in HOP}
                         headers['Content-Length'] = str(len(raw))
+                        # A harness with no session identity of its own (OpenCode, Chat wire) gets this cell's, so the
+                        # shared cria row keys and captures the cell apart from every other cell.
+                        if adapter.session_id: headers['X-Cria-Session-Id'] = adapter.session_id
                         connection.request(self.command,self.path,body=raw,headers=headers)
                         reply = connection.getresponse()
                         error_body = reply.read() if reply.status >= 400 else None

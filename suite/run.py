@@ -663,8 +663,10 @@ def collect_capture(session_dirs) -> dict:
             "output_tokens_timed": tok_n}
 
 
-def harness_sessions(log_path) -> set:
-    """Every Codex session id the harness log printed: the keys of this cell's cria sessions."""
+def harness_sessions(log_path, adapter=None) -> set:
+    """Every session id of this cell's cria sessions: the one the adapter stamps (OpenCode), else the ids Codex's log printed."""
+    if adapter is not None and adapter.session_id:
+        return {adapter.session_id}
     try:
         return set(re.findall(r"(?m)^session id: (\S+)", Path(log_path).read_text(errors="replace")))
     except OSError:
@@ -1022,6 +1024,7 @@ def _main(scope) -> None:
     log_root = l0_campaign.campaign_dir(args.campaign_id) if args.campaign_id else SUITE / "results"
     log_root.mkdir(parents=True, exist_ok=True)
     log_path = log_root / f"{run_id}.log"
+    _cell_install_root(ws).mkdir(parents=True, exist_ok=True)   # the sandbox binds it, so it must exist first
     harness_argv = HARNESSES[args.harness](prompt, ws)
     suite_scratch = None
     if args.harness in ('codex', 'opencode'):
@@ -1036,7 +1039,8 @@ def _main(scope) -> None:
         # The lane driver owns the lane server and the row's cria (own port, config copy with this row's
         # sampling applied, own capture/log dirs); this cell never edits the live config.
         lane_evidence = {"name": lane_row["lane"], "cria_port": lane_row["port"], "window": lane_row["window"]}
-        adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]))
+        adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]),
+                                  session_id=uuid.uuid4().hex if args.harness == "opencode" else None)
         if args.harness == "opencode":
             env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model, lane_row["window"], adapter.base_url)
             harness_argv, harness_provenance = restored_opencode_argv(harness_argv, args.model)
@@ -1056,7 +1060,8 @@ def _main(scope) -> None:
         switched = sh(str(l0_campaign.LAUNCHER), "switch", args.model, timeout=180)
         if switched.returncode:
             raise RuntimeError("restored fleet switch failed: " + switched.stderr)
-        adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT))
+        adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT),
+                                  session_id=uuid.uuid4().hex if args.harness == "opencode" else None)
         if args.harness == "opencode":
             env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model,
                                l0_campaign.context(args.model), adapter.base_url)
@@ -1121,8 +1126,8 @@ def _main(scope) -> None:
         # period, so the wall cutoff and session inventory must be taken only after the group is gone.
         t1, new_sessions = shutdown_and_capture(
             calls_dir=CALLS_DIR, before_sessions=before_sessions, stop=control.stop,
-            select=((lambda name: any(name.endswith("-" + sid) for sid in harness_sessions(log_path)))
-                    if lane_row and args.harness == "codex" else None))
+            select=((lambda name: any(name == sid or name.endswith("-" + sid) for sid in harness_sessions(log_path, adapter)))
+                    if lane_row else None))
 
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
@@ -1167,7 +1172,7 @@ def _main(scope) -> None:
         "judgment_policy": milestones.JUDGMENT_POLICY,
         "checkpoint_mode": "async-live-snapshot",  # coder never paused; active_seconds == wall_seconds
         **capture,
-        **collect_event_census(t0, t1, harness_sessions(log_path) if lane_row and args.harness == "codex" else None),
+        **collect_event_census(t0, t1, harness_sessions(log_path, adapter) if lane_row else None),
         "workspace": str(ws),
         "archive": str(archive),
         "user_install_leak": sorted(user_install_listing() - installs_before),
