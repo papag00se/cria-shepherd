@@ -56,6 +56,8 @@ class Lane:
 LANES = {
     '3090x4': Lane('3090x4', '3090', GPU_3090, 4, 18194, (49152,)),
     '3080x2': Lane('3080x2', '3080', GPU_3080, 2, 18294, (49152, 45056, 40960, 36864)),
+    # A second server on the 3090 for the next model while the first model's last cells finish (shares the card's slots).
+    '3090x4b': Lane('3090x4b', '3090', GPU_3090, 4, 18195, (49152,)),
 }
 
 # 3080 lane per-slot window, MEASURED by `python suite/lane_measure.py` (largest candidate that loads with
@@ -123,14 +125,15 @@ def unit_server_options(unit):
     return dict(t.split('=', 1) for t in out.split() if t.startswith('LLAMA_ARG_') and t != 'LLAMA_ARG_OFFLINE=1')
 
 
-def lane_plan(model, lane_name, window):
+def lane_plan(model, lane_name, window, slots=None):
     """The model's own profile plan with only parallel/ctx/port/device overridden for the lane."""
     import copy
     lane = LANES[lane_name]
     cli = fleet_cli()
     record = copy.deepcopy(cli.records()[model])
-    record['config']['parallel'] = lane.slots
-    record['config']['ctx'] = lane.slots * window
+    slots = slots or lane.slots
+    record['config']['parallel'] = slots
+    record['config']['ctx'] = slots * window
     plan = cli.make_plan(record, port=lane.port)
     plan['env']['CUDA_VISIBLE_DEVICES'] = lane.gpu
     plan['env'].update(unit_server_options(record['unit']))
@@ -306,12 +309,13 @@ def check_server(lane_name):
         raise RuntimeError(f'{lane_name} server exited with status {code}')
 
 
-def start_server(model, lane_name, window):
+def start_server(model, lane_name, window, slots=None):
     """Launch the model on the lane's card with the lane's slots; wait until it is healthy; return its state."""
     lane = LANES[lane_name]
     if server_state(lane_name) is not None:
         raise ValueError(f'{lane_name} already has a recorded server')
-    plan = lane_plan(model, lane_name, window)
+    slots = slots or lane.slots
+    plan = lane_plan(model, lane_name, window, slots)
     directory = lane_dir(lane_name)
     directory.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -322,7 +326,7 @@ def start_server(model, lane_name, window):
         proc = subprocess.Popen(plan['argv'], cwd=plan['cwd'], env=env, stdin=subprocess.DEVNULL,
                                 stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
     SERVERS[lane_name] = proc
-    state = dict(lane=lane_name, model=model, window=window, slots=lane.slots, port=lane.port, gpu=lane.gpu,
+    state = dict(lane=lane_name, model=model, window=window, slots=slots, port=lane.port, gpu=lane.gpu,
                  pid=proc.pid, start_ticks=start_ticks(proc.pid), argv=plan['argv'], log=str(log),
                  started=time.time())
     (directory / 'server.json').write_text(json.dumps(state, indent=2) + '\n')
