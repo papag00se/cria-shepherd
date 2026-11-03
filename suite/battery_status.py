@@ -80,8 +80,8 @@ def cell(rs: list[dict], arm: str, model: str, task: str) -> dict | None:
 def level_cell(rs: list[dict], level: int, model: str, task: str) -> dict | None:
     """Standing row for one configured engagement rung; the rung is not a grade."""
     for row in reversed(rs):
-        if row.get("superseded") or row.get("level") is None:
-            continue
+        if row.get("superseded") or row.get("level") is None or row.get("harness", "codex") != "codex":
+            continue   # another harness's rows are a different measurement and never stand in for a Codex cell
         try:
             same_level = int(row["level"]) == level
         except (TypeError, ValueError):

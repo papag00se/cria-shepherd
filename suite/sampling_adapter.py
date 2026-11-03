@@ -139,14 +139,14 @@ class SamplingAdapter:
             def do_GET(self): self.forward()
             def do_POST(self): self.forward()
             def forward(self):
-                if self.path not in ('/v1/responses','/v1/responses/compact','/v1/models','/health'):
+                if self.path not in ('/v1/responses','/v1/responses/compact','/v1/chat/completions','/v1/models','/health'):
                     self.send_error(404); return
                 if self.headers.get('Transfer-Encoding'):
                     self.send_error(400,'chunked request bodies unsupported'); return
                 # A checkpoint parks a NEW request before it can advance the producer.
                 # Existing responses finish while the client is still running. GETs do
                 # not represent the client's next model turn and cannot establish idle.
-                inference = self.command == 'POST' and self.path in ('/v1/responses','/v1/responses/compact')
+                inference = self.command == 'POST' and self.path in ('/v1/responses','/v1/responses/compact','/v1/chat/completions')
                 admission = adapter.admit() if inference else nullcontext(True)
                 with admission as admitted:
                     if not admitted:

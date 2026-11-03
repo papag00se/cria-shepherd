@@ -201,3 +201,36 @@ _ROLES = {
     "no roles": 'x = 1\n',
 }
 
+
+
+def test_opencode_launch_is_bwrap_sandboxed_isolated_and_refuses_without_a_cell(tmp_path, monkeypatch):
+    """OpenCode has no sandbox of its own: argv is bwrap with `/` read-only and only the cell + install root
+    writable; missing bwrap, a relative/root/missing workspace, or a missing install root refuse; the env points
+    every OpenCode directory into the install root and the provider at the adapter with the cell's window."""
+    ws, state = tmp_path / "ws", tmp_path / "state"
+    ws.mkdir(), state.mkdir()
+    monkeypatch.setattr(run, "_cell_install_root", lambda _ws: state)
+    argv = run._opencode_argv("task", ws)
+    assert argv[0] == str(run.BWRAP) and argv[-1] == "task" and "--pure" in argv and "--auto" not in argv
+    assert argv[argv.index("--ro-bind") + 1:argv.index("--ro-bind") + 3] == ["/", "/"]
+    binds = [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
+    assert binds == [str(ws), str(state)] and "--unshare-net" not in argv
+    for bad in (None, "/", "relative-cell", tmp_path / "missing"):
+        with pytest.raises(ValueError, match="workspace"):
+            run._opencode_argv("task", bad)
+    monkeypatch.setattr(run, "BWRAP", tmp_path / "no-bwrap")
+    with pytest.raises(ValueError, match="bwrap"):
+        run._opencode_argv("task", ws)
+    monkeypatch.undo()
+    monkeypatch.setattr(run, "_cell_install_root", lambda _ws: tmp_path / "no-state")
+    with pytest.raises(ValueError, match="install root"):
+        run._opencode_argv("task", ws)
+    monkeypatch.undo()
+    monkeypatch.setattr(run, "_cell_install_root", lambda _ws: state)
+    env = run.opencode_env({"KEEP": "1", "XDG_CONFIG_HOME": "/home/someone/.config"}, ws, "m", 49152, "http://127.0.0.1:9/v1")
+    assert env["KEEP"] == "1" and all(Path(env[k]).is_relative_to(state) for k in
+                                      ("OPENCODE_TEST_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"))
+    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+    provider = config["provider"][run.OPENCODE_PROVIDER]
+    assert provider["options"]["baseURL"] == "http://127.0.0.1:9/v1" and config["enabled_providers"] == [run.OPENCODE_PROVIDER]
+    assert provider["models"]["m"]["limit"]["context"] == 49152 and config["model"] == f"{run.OPENCODE_PROVIDER}/m"

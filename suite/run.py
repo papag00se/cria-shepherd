@@ -154,7 +154,69 @@ def _codex_argv(prompt: str, workspace=None):
             '-c', permissions, '-c', 'approval_policy="never"',
             '-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', prompt]
 
-HARNESSES = {"codex": _codex_argv}
+# OpenCode has no sandbox of its own, so every launch is wrapped in bubblewrap: `/` read-only, only the cell
+# workspace and its install root writable, a private /tmp, network allowed (the model endpoint is on loopback).
+BWRAP = Path('/usr/bin/bwrap')
+OPENCODE_BINARY = Path.home() / '.local/share/mise/installs/opencode/latest/opencode'   # the real binary, not the mise shim
+OPENCODE_VERSION = '1.18.34'
+OPENCODE_OUTPUT_LIMIT = 8192   # OpenCode requires an output cap per model (sent as max_tokens); Codex sends none
+OPENCODE_PROVIDER = 'cria'
+
+
+def _opencode_argv(prompt: str, workspace=None):
+    """bwrap-sandboxed `opencode run`; the model flag is added by restored_opencode_argv (it is the last-but-one pair)."""
+    if not BWRAP.is_file() or not os.access(BWRAP, os.X_OK):
+        raise ValueError(f'{BWRAP} missing: OpenCode has no sandbox of its own; refusing to launch')
+    if workspace is None or not Path(workspace).is_absolute():
+        raise ValueError('an explicit absolute cell workspace is required; refusing to launch')
+    workspace = Path(workspace).resolve()
+    if workspace == Path(workspace.anchor) or not workspace.is_dir():
+        raise ValueError('an existing non-root cell workspace is required; refusing to launch')
+    state = _cell_install_root(workspace).resolve()
+    if not state.is_dir():
+        raise ValueError('the cell install root must exist before launch; refusing to launch')
+    return [str(BWRAP), '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp',
+            '--bind', str(workspace), str(workspace), '--bind', str(state), str(state),
+            '--die-with-parent', '--new-session', '--chdir', str(workspace), '--',
+            str(OPENCODE_BINARY), 'run', '--pure', '--format', 'json', '--dir', str(workspace), prompt]
+
+
+HARNESSES = {"codex": _codex_argv, "opencode": _opencode_argv}
+
+
+def opencode_env(base: dict, workspace: Path, model: str, window: int, adapter_url: str) -> dict:
+    """Isolated OpenCode environment: config/data/state/cache/home all inside the cell's install root, the only
+    provider an OpenAI-compatible Chat endpoint at the adapter, `window` as the model's context limit. Nothing of
+    the operator's OpenCode config, auth, plugins or Claude-Code-compatible files is read."""
+    root = _cell_install_root(workspace) / 'opencode'
+    dirs = {name: root / name for name in ('home', 'config', 'data', 'state', 'cache')}
+    for d in dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+    config = {
+        '$schema': 'https://opencode.ai/config.json', 'autoupdate': False, 'share': 'disabled',
+        'model': f'{OPENCODE_PROVIDER}/{model}', 'enabled_providers': [OPENCODE_PROVIDER],
+        'permission': {'*': 'allow'},   # the bwrap sandbox, not a prompt, is the boundary
+        'provider': {OPENCODE_PROVIDER: {
+            'npm': '@ai-sdk/openai-compatible', 'name': OPENCODE_PROVIDER,
+            'options': {'baseURL': adapter_url, 'apiKey': 'unused'},
+            'models': {model: {'name': model, 'tool_call': True, 'limit': {'context': window, 'output': OPENCODE_OUTPUT_LIMIT}}}}},
+    }
+    return {**base, 'OPENCODE_TEST_HOME': str(dirs['home']), 'XDG_CONFIG_HOME': str(dirs['config']),
+            'XDG_DATA_HOME': str(dirs['data']), 'XDG_STATE_HOME': str(dirs['state']), 'XDG_CACHE_HOME': str(dirs['cache']),
+            'OPENCODE_CONFIG_CONTENT': json.dumps(config), 'OPENCODE_DISABLE_AUTOUPDATE': '1',
+            'OPENCODE_DISABLE_MODELS_FETCH': '1', 'OPENCODE_DISABLE_CLAUDE_CODE': '1',
+            'OPENCODE_DISABLE_EXTERNAL_SKILLS': '1', 'OPENCODE_DISABLE_PROJECT_CONFIG': '1',
+            'OPENCODE_DISABLE_LSP_DOWNLOAD': '1', 'OPENCODE_PURE': '1'}
+
+
+def restored_opencode_argv(argv, model):
+    """Add the model flag and verify the pinned OpenCode binary; returns (argv, provenance)."""
+    if not OPENCODE_BINARY.is_file() or not os.access(OPENCODE_BINARY, os.X_OK):
+        raise ValueError('OpenCode executable missing')
+    version = sh(str(OPENCODE_BINARY), '--version').stdout.strip()
+    if version != OPENCODE_VERSION:
+        raise ValueError('OpenCode executable version changed')
+    return [*argv[:-1], '-m', f'{OPENCODE_PROVIDER}/{model}', argv[-1]], {'binary': str(OPENCODE_BINARY), 'version': version}
 
 
 def cell_codex_home(workspace: Path) -> Path:
@@ -947,6 +1009,8 @@ def _main(scope) -> None:
         ap.error("another suite/run.py is active (its checkpoint judgments may still be pending); leaving it untouched: "
                  + "; ".join(f"pid {pid}" for pid, _ in other_runs))
 
+    if args.harness == "opencode" and not args.restored_fleet:
+        ap.error("--harness opencode requires --restored-fleet")
     if args.harness == "codex":
         _require_codex_home()   # fail before any model swap if cria routing is not set up
         _codex_adapter_provider()
@@ -960,7 +1024,7 @@ def _main(scope) -> None:
     log_path = log_root / f"{run_id}.log"
     harness_argv = HARNESSES[args.harness](prompt, ws)
     suite_scratch = None
-    if args.harness == 'codex':
+    if args.harness in ('codex', 'opencode'):
         state = _cell_install_root(ws)
         suite_scratch = state / 'tmp'
         suite_scratch.mkdir(parents=True, exist_ok=True)
@@ -972,11 +1036,15 @@ def _main(scope) -> None:
         # The lane driver owns the lane server and the row's cria (own port, config copy with this row's
         # sampling applied, own capture/log dirs); this cell never edits the live config.
         lane_evidence = {"name": lane_row["lane"], "cria_port": lane_row["port"], "window": lane_row["window"]}
-        env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT), target=("127.0.0.1", lane_row["port"]))
-        harness_argv, harness_provenance = restored_codex_argv(
-            harness_argv, args.model, lane_row["window"], adapter.base_url, Path(env['CODEX_HOME']),
-            cria_config=cria_toml)
+        if args.harness == "opencode":
+            env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model, lane_row["window"], adapter.base_url)
+            harness_argv, harness_provenance = restored_opencode_argv(harness_argv, args.model)
+        else:
+            env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
+            harness_argv, harness_provenance = restored_codex_argv(
+                harness_argv, args.model, lane_row["window"], adapter.base_url, Path(env['CODEX_HOME']),
+                cria_config=cria_toml)
     elif args.restored_fleet:
         if args.level >= 1:   # L1-L5 make role calls: scope the role sampling
             try:
@@ -988,11 +1056,16 @@ def _main(scope) -> None:
         switched = sh(str(l0_campaign.LAUNCHER), "switch", args.model, timeout=180)
         if switched.returncode:
             raise RuntimeError("restored fleet switch failed: " + switched.stderr)
-        env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT))
-        harness_argv, harness_provenance = restored_codex_argv(
-            harness_argv, args.model, l0_campaign.context(args.model), adapter.base_url,
-            Path(env['CODEX_HOME']))
+        if args.harness == "opencode":
+            env = opencode_env(dict(os.environ, **_isolated_installs(ws)), ws, args.model,
+                               l0_campaign.context(args.model), adapter.base_url)
+            harness_argv, harness_provenance = restored_opencode_argv(harness_argv, args.model)
+        else:
+            env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
+            harness_argv, harness_provenance = restored_codex_argv(
+                harness_argv, args.model, l0_campaign.context(args.model), adapter.base_url,
+                Path(env['CODEX_HOME']))
     else:
         swap_model(args.model)
         spec = configure_cria(args.model, args.planner == "on")
@@ -1049,7 +1122,7 @@ def _main(scope) -> None:
         t1, new_sessions = shutdown_and_capture(
             calls_dir=CALLS_DIR, before_sessions=before_sessions, stop=control.stop,
             select=((lambda name: any(name.endswith("-" + sid) for sid in harness_sessions(log_path)))
-                    if lane_row else None))
+                    if lane_row and args.harness == "codex" else None))
 
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
@@ -1094,7 +1167,7 @@ def _main(scope) -> None:
         "judgment_policy": milestones.JUDGMENT_POLICY,
         "checkpoint_mode": "async-live-snapshot",  # coder never paused; active_seconds == wall_seconds
         **capture,
-        **collect_event_census(t0, t1, harness_sessions(log_path) if lane_row else None),
+        **collect_event_census(t0, t1, harness_sessions(log_path) if lane_row and args.harness == "codex" else None),
         "workspace": str(ws),
         "archive": str(archive),
         "user_install_leak": sorted(user_install_listing() - installs_before),

@@ -67,7 +67,9 @@ def cells(campaign_id, level, rows):
     return out
 
 
-def cell_command(campaign_id, level, model, task, lane_row=None):
+def cell_command(campaign_id, level, model, task, lane_row=None, harness=None):
     command = [sys.executable,str(SUITE/'battery_run.py'),'--level',str(level),'--model',model,
                '--task',task,'--restored-fleet','--campaign-id',campaign_id]
+    if harness:
+        command += ['--harness', harness]
     return command + ['--lane-row', str(lane_row)] if lane_row else command

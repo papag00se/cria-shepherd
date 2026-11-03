@@ -58,6 +58,8 @@ LANES = {
     '3080x2': Lane('3080x2', '3080', GPU_3080, 2, 18294, (49152, 45056, 40960, 36864)),
     # A second server on the 3090 for the next model while the first model's last cells finish (shares the card's slots).
     '3090x4b': Lane('3090x4b', '3090', GPU_3090, 4, 18195, (49152,)),
+    # A side lane on the 3080 for one-off comparison cells (other harness) beside the driver's own 3080x2 lane dir.
+    '3080x2b': Lane('3080x2b', '3080', GPU_3080, 2, 18295, (49152, 45056, 40960, 36864)),
 }
 
 # 3080 lane per-slot window, MEASURED by `python suite/lane_measure.py` (largest candidate that loads with
@@ -83,6 +85,9 @@ LANE_FACTORS = {   # measured 2026-11-02 with suite/lane_measure.py (llama.cpp c
     'k2_horizon_7b': {'3090x4': 0.494},
     'qwen3.8_9b_distill': {'3090x4': 0.548, '3080x2': 0.724},
 }
+for _factors in LANE_FACTORS.values():   # the side lane is the same card, slots and window as 3080x2
+    if '3080x2' in _factors:
+        _factors['3080x2b'] = _factors['3080x2']
 
 
 def wall_factor(model, lane):
