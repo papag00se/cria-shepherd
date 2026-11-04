@@ -1,0 +1,26 @@
+# Fragments of the package-quality fact, assembled by cria/packagequality.py (prompts.load_map: `key = value`).
+# Every figure in a card is one a package registry (deps.dev, OSV, the registry's own API) reported; a source that did
+# not answer leaves its fragment out. The note states facts and, when a reviewer judged the choice poor, its finding.
+
+note = ⟦ctx:facts⟧ Package check for `{{PACKAGE}}` ({{REGISTRY}}), which the coder committed to. Figures are from the package registries:\n{{BODY}}
+card = - `{{PACKAGE}}`: {{FACTS}}
+no_data = no registry data could be read
+none_found = none were found
+others_header = Other real packages the registry reports for the same name:
+downloads_total = {{COUNT}} downloads in total
+downloads_month = {{COUNT}} downloads in the last month
+releases = {{COUNT}} releases
+releases_one = 1 release
+latest = latest
+first = first release
+size = package size {{SIZE}}
+repo = source repository {{URL}}
+description = described as "{{WORDS}}"
+reason = ({{WORDS}})
+flag_deprecated = `{{PACKAGE}}` {{VERSION}} is marked deprecated by its registry{{REASON}}.
+flag_yanked = `{{PACKAGE}}` {{VERSION}} has been yanked (withdrawn) by its publisher.
+flag_abandoned = `{{PACKAGE}}` is marked abandoned on its registry{{REPLACEMENT}}.
+flag_abandoned_for = , which names {{NAME}} instead
+flag_advisories = `{{PACKAGE}}` {{VERSION}} has {{COUNT}} known security advisories: {{IDS}}.
+finding_pick = A reviewer who read the requirement and these figures judged `{{PACKAGE}}` a poor fit{{REASON}} and named `{{BETTER}}` from the list above as the better candidate.
+finding_poor = A reviewer who read the requirement and these figures judged `{{PACKAGE}}` a poor fit{{REASON}}; none of the candidates above was named as better.

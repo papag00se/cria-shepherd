@@ -35,7 +35,7 @@ from . import bodykeys, dirguard, handoffdistill, handoffmemo, memoryhandoff, pr
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify, loweringoptions
-from .classify import Classifier
+from .classify import JUDGE_MAX_TOKENS, Classifier
 from . import content_reduce
 from .content_reduce import est_tokens
 from . import config, assistruntime
@@ -1550,6 +1550,17 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._retain_external_output(completion, sess_key)
         return self._retain_pasted_output(completion)
 
+    def _reasoner_question(self, rlog):
+        """The one closed-question seat a returned-history assist may use: reasoning off, temperature 0, one reply. None
+        when no reasoner role is configured (`reasoner_upstream` alone is not proof of one: it falls back to the coder)."""
+        server = self.server
+        if server.reasoner_role is None:
+            return None
+        def chat(call, log):
+            return server.reasoner_upstream.chat(call, log)
+        return lambda question: ask_closed(chat, server.reasoner_role, question, rlog, phase="package-quality",
+                                           max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
+
     def _bind_workspace_view(self, body: dict, sess_key: str) -> None:
         """THE WORKSPACE VIEW FOR THIS REQUEST. cria answers every question about the coder's files
         from facts the HARNESS gathered — never from its own disk, which is the same machine only by
@@ -1671,7 +1682,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             represent_inbound(body.get("messages", []), rlog,
                               workspace_root=getattr(self, "_workspace_root", None),
                               sess_key=sess_key, tools_present=_c40_active,
-                              window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog)),
+                              window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog),
+                              ask=self._reasoner_question(rlog)),
             self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness

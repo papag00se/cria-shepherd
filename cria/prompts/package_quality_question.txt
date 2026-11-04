@@ -1,0 +1,19 @@
+You are judging ONE thing: is a package a reasonable choice for a stated requirement?
+
+A coder is building software and has just committed to a third-party package. Below are the requirement it is working on, the package it chose, and a few real candidates the package registry reports for the same name. Every figure comes from the package registries, not from the coder.
+
+Judge the choice on fit: does the package do what the requirement needs, is it the established and maintained way to do that, and is it a real library rather than an empty, abandoned or look-alike placeholder? Do not mark a package down merely for being small or new when it clearly fits the requirement.
+
+THE REQUIREMENT:
+{{TASK}}
+
+THE CHOSEN PACKAGE:
+{{CHOSEN}}
+
+OTHER REAL CANDIDATES THE REGISTRY REPORTS:
+{{ALTERNATIVES}}
+
+Reply with ONLY this JSON, nothing else:
+{"reasonable": true|false, "better": "<one name copied from the candidates above, or empty>", "reason": "<one short line>"}
+
+"better" may only be a name copied from the candidates above. If you cannot tell, answer true.

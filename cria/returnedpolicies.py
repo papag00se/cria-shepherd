@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import denial, dependencyexistence, depsurface, dirguard, probeparse, proberun, prompts, windowcaps
+from . import denial, dependencyexistence, depsurface, dirguard, packagequality, probeparse, proberun, prompts, selfcompact, windowcaps
 from .resultnotes import (append_note, probegate_marker_in, _strip_exec_envelope,
                           _workspace_ecosystem, _noted, exec_envelope)
 from .toolargs import parse_args as _parse
@@ -307,6 +307,9 @@ def _note_missing_dependency(source: ReturnedHistory) -> None:
     eco, name = probeparse.dependency_missing(last["content"])
     if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
         return
+    registry = packagequality.LOAD_REGISTRY.get(eco)
+    if registry and packagequality.judged_poor(source.session, registry, name):
+        return    # the package-quality fact already says this package is a poor choice; coaching how to LOAD it would amplify it
     note = prompts.fill(proberun.dependency_line(eco, workspace_root or ""), name=name)
     if note in last["content"]:
         return
@@ -471,6 +474,30 @@ def _note_running_session(source: ReturnedHistory) -> None:
         source.log.emit("writeproxy.running_session_note", level="info", exec_session=envelope.session)   # `session` is the request log's own field
 
 
+def _replay_kept(kept: dict[str, str], messages: list[dict]) -> dict[str, dict]:
+    """Re-attach, to the tool results still in history, the notes an earlier request attached (the harness resends its own
+    transcript, which has none of them). Returns the string-content tool results by call id."""
+    by_call_id = {m["tool_call_id"]: m for m in messages
+                  if m.get("role") == "tool" and isinstance(m.get("content"), str) and m.get("tool_call_id")}
+    for call_id, text in list(kept.items()):
+        target = by_call_id.get(call_id)
+        if target is not None and text not in target["content"]:
+            append_note(target, text)
+    return by_call_id
+
+
+def _attach_new(kept: dict[str, str], newest: dict, text: str) -> None:
+    """Put a freshly gathered note beside the newest tool result and remember it for replay."""
+    call_id = newest["tool_call_id"]
+    kept[call_id] = (kept[call_id] + "\n" if call_id in kept else "") + text
+    append_note(newest, text)
+
+
+def _newest_result(messages: list[dict]) -> dict | None:
+    return next((m for m in reversed(messages) if m.get("role") == "tool"
+                 and isinstance(m.get("content"), str) and m.get("tool_call_id")), None)
+
+
 def _note_dependency_existence(source: ReturnedHistory) -> None:
     """Say, beside a tool result, that a package or version the coder DECLARED (a manifest now on disk) or that a failed
     install NAMED does not exist on the ecosystem's official registry, with the registry's real names/versions.
@@ -481,26 +508,40 @@ def _note_dependency_existence(source: ReturnedHistory) -> None:
     same tool result while it stays in history (the harness resends its own transcript every request)."""
     if not source.tools_present or not source.workspace_root or not source.session:
         return
-    by_call_id = {m["tool_call_id"]: m for m in source.messages
-                  if m.get("role") == "tool" and isinstance(m.get("content"), str) and m.get("tool_call_id")}
-    kept = dependencyexistence.NOTES.setdefault(source.session, {})
-    for call_id, text in list(kept.items()):
-        target = by_call_id.get(call_id)
-        if target is not None and text not in target["content"]:
-            append_note(target, text)
-    newest = next((m for m in reversed(source.messages) if m.get("role") == "tool"
-                   and isinstance(m.get("content"), str) and m.get("tool_call_id")), None)
+    _replay_kept(dependencyexistence.NOTES.setdefault(source.session, {}), source.messages)
+    newest = _newest_result(source.messages)
     if newest is None:
         return
     wanted = dependencyexistence.from_failure(newest["content"]) + dependencyexistence.declared(source.workspace_root)
     facts = dependencyexistence.notes_for(source.session, wanted)
     if not facts:
         return
-    text = "\n".join(facts)
-    kept[newest["tool_call_id"]] = (kept.get(newest["tool_call_id"]) or "") + ("\n" if newest["tool_call_id"] in kept else "") + text
-    append_note(newest, text)
+    _attach_new(dependencyexistence.NOTES[source.session], newest, "\n".join(facts))
     if source.log is not None:
         source.log.emit("writeproxy.dependency_existence_note", level="info", facts=len(facts))
+
+
+def _note_package_quality(source: ReturnedHistory) -> None:
+    """Say, beside a tool result, how the package the coder just committed to compares with real alternatives.
+
+    L5 ornith1.5_9b / Ruby shipping-rates, 2026-11-04 (75% the day before, 1% this day): asked for a gem that knows EU
+    membership, the coder guessed `country` (6,150 downloads, one release in 2010, an empty placeholder) instead of
+    `countries` (135 million downloads, 103 releases, current), and spent an hour on its load path while the existence
+    note stayed silent, correctly: the gem exists. The cards (packagequality) are facts from the registries; one closed
+    question judges fit against the task; deprecated / yanked / abandoned / advisory-bearing choices need no judge. Silent
+    when the reviewer says the choice is reasonable and nothing is flagged, or when nothing could be read or asked. Once per
+    package per session; a package judged poor is remembered so the missing-dependency note stops coaching how to LOAD it."""
+    if not source.tools_present or not source.workspace_root or not source.session:
+        return
+    kept = packagequality.NOTES.setdefault(source.session, {})
+    _replay_kept(kept, source.messages)
+    newest = _newest_result(source.messages)
+    if newest is None:
+        return
+    wanted = packagequality.coordinates(source.messages, source.own_commands, newest["content"], source.workspace_root)
+    notes = packagequality.notes_for(source.session, wanted, selfcompact.root_text(source.messages) or "", source.ask, log=source.log)
+    if notes:
+        _attach_new(kept, newest, "\n".join(notes))
 
 
 RESULTS = (
@@ -520,6 +561,13 @@ RESULTS = (
         regressions=(Reference('tests/write_edit/test_write_edit_notes.py', 'test_an_empty_filtered_failure_and_an_empty_search_say_what_they_measured_and_nothing_else_does'),), migrated=False), filtered_failure),
 )
 HISTORY = (
+    HistoryDefinition(Policy('package-quality-note', 'returned-history', 5, family_id='F20',
+        state='per-session sets of packages already checked and of packages judged poor, and the notes replayed on their tool results',
+        services=('declared-coordinates', 'reasoner-question'),
+        prompts=('package_quality_question', 'package_quality_text'),
+        hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
+        regressions=(Reference('tests/test_package_quality.py', 'test_a_one_release_placeholder_gem_is_compared_with_the_real_one_and_its_load_failure_stops_being_coached'),),
+        migrated=False), _note_package_quality),
     HistoryDefinition(Policy('missing-dependency-note', 'returned-history', 2, family_id='F20',
         services=('workspace-view',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
         regressions=(Reference('tests/research_discovery/test_research_discovery_dependencies.py',

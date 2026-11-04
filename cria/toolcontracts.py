@@ -146,6 +146,7 @@ class ReturnedHistory:
     tools_present: bool
     log: EventLog | None = None
     window: int | None = None   # the coder's measured window; None = unknown (the reference budgets)
+    ask: Callable[[str], str] | None = None   # one closed question to the reasoner -> its reply text; None = no reasoner
 
 
 @dataclass(frozen=True)

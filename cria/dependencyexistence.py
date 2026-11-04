@@ -81,10 +81,14 @@ class _Budget:
     def __init__(self, deadline: float = DEADLINE):
         self.end = time.monotonic() + deadline
 
-    def fetch(self, url: str) -> tuple[int, str]:
+    def fetch(self, url: str, data: bytes | None = None) -> tuple[int, str]:
+        """A GET, or a JSON POST when ``data`` is given (OSV's query API)."""
         if time.monotonic() > self.end:
             raise OSError("registry time budget spent")
-        request = urllib.request.Request(url, headers={"User-Agent": registries.USER_AGENT, "Accept": "*/*"})
+        headers = {"User-Agent": registries.USER_AGENT, "Accept": "*/*"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=data, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:
                 return response.status, response.read().decode("utf-8", "replace")

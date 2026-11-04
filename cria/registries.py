@@ -53,6 +53,7 @@ class Result:
     versions: list[str] = field(default_factory=list)
     url: str = ""
     error: str = ""
+    body: str = ""                  # the registry's raw 200 reply, kept so a fact card never re-fetches what the lookup read
 
     def has_version(self, version: str) -> bool | None:
         """Whether `version` is a published version (Go's leading `v` optional). None when existence is unknown."""
@@ -155,7 +156,7 @@ def lookup(registry: str, package: str, fetch=_get) -> Result:
         versions = [v for v in reg.versions(body, package) if v]
     except (ValueError, TypeError, AttributeError) as error:
         return Result(registry, package, None, url=url, error=f"unreadable reply: {error}")
-    return Result(registry, package, True, versions, url=url)
+    return Result(registry, package, True, versions, url=url, body=body)
 
 
 # ----------------------------------------------------------------------------------------------- miss path

@@ -1907,7 +1907,8 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
-                      sess_key: str = "", tools_present: bool = True, window: int | None = None) -> list[dict]:
+                      sess_key: str = "", tools_present: bool = True, window: int | None = None,
+                      ask=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1920,7 +1921,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     ``sess_key`` is the session identity Candidate C40's delivered-state remembers against; without
     it that mechanism never fires (no identity to remember delivery against). ``tools_present=False``
     marks a harness compaction/summarize turn (empty tool menu) -- C40 skips those entirely.
-    ``window`` is the coder's measured window (None = unknown): the dependency-note budgets are shares of it."""
+    ``window`` is the coder's measured window (None = unknown): the dependency-note budgets are shares of it.
+    ``ask`` is the one closed-question seat to the reasoner (None = no reasoner), for the history assists that judge."""
     # Retired client-supplied hint spellings are never provenance, regardless
     # of message role. Only the typed current owner marker can withhold proof.
     messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
@@ -2198,7 +2200,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         rlog.emit("writeproxy.represented", calls=swapped)
     _adopt_marks(messages, out, sess_key, workspace_root)
     toolstages.current().returned_history(
-        ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog, window))
+        ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog, window, ask))
     return out
 
 
