@@ -126,12 +126,7 @@ def sha() -> str:
 
 _HIST_PATH = SUITE / "historical_ladder.json"
 REPORT_PATH = SUITE.parent / "docs" / "battery-report.md"
-LEGEND = ("Legend: \U0001F7E2 \u226588% \u00b7 \U0001F7E1 \u226563% \u00b7 \U0001F7E0 \u226538% \u00b7 \U0001F534 <38%; blank = pending/unjudged. "
-          "Usefulness: share of requested work delivered as useful code. Percentages are independently judged "
-          "usefulness; averages include judged zeros, exclude failed/unjudged attempts, and use known metrics only. "
-          "Average minutes are wall time (including judge waits); partially filled rows have partial coverage. "
-          "Avg tok/s is the mean of known per-task all-phase generation rates, not wall-time throughput; "
-          "`\u00b7` = unknown timing. Ruby/Go/Python/Java/Node/Rust are the six task columns.")
+LEGEND = 'Legend: 🟢 ≥85% · 🟡 ≥65% · 🟠 ≥35% · 🔴 <35%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently inference-judged usefulness; averages include judged zeros, exclude failed/unjudged attempts.'
 
 
 def _historical() -> dict:
@@ -144,9 +139,9 @@ def _historical() -> dict:
 
 
 def _badge(pct: float) -> str:
-    """Quarter bands off the midpoints: green at/above 87.5, yellow 62.5, orange 37.5, red below."""
-    return ("\U0001F7E2" if pct >= 87.5 else "\U0001F7E1" if pct >= 62.5
-            else "\U0001F7E0" if pct >= 37.5 else "\U0001F534")
+    """Operator bands: green at/above 85, yellow 65, orange 35, red below."""
+    return ("\U0001F7E2" if pct >= 85 else "\U0001F7E1" if pct >= 65
+            else "\U0001F7E0" if pct >= 35 else "\U0001F534")
 
 
 def _dot(pct) -> str:
