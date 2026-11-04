@@ -316,6 +316,10 @@ class GuardState:
     # only when the check executes, so a drive where it was skipped is retried at the next
     # opportunity rather than costing a whole interval. -1 means it has never run.
     satisfaction_last_drive: int = -1
+    # cria's OWN running measure of the coder's pace: wall seconds spent inside coder requests and how
+    # many were timed. Never includes cria's check/judge time (only the coder call is bracketed).
+    coder_seconds: float = 0.0
+    coder_timed_turns: int = 0
     # The newest authoritative whole-task verdict. A false result is a completion barrier, not just
     # a steer: no completion-shaped output may cross it until a later current verdict is true.
     # Keep its exact accepted evidence separately; it is the ground truth that caused the barrier,
@@ -630,8 +634,30 @@ _COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this befor
 # no-tool-call done-detection never triggers. Starting at drive `start`, every `every` drives, the
 # reasoner judges the WHOLE user task against the real work; if satisfied cria verifies against the
 # repo's checks (the same objective backstop the done-gate uses) and ends the turn. The cadence is
-# operator-tunable ([context] satisfaction_check_start / satisfaction_check_every) — different models
-# spiral at different rates; either set to 0 DISABLES it.
+# operator-tunable in MINUTES of coder work ([context] satisfaction_check_start_minutes /
+# satisfaction_check_every_minutes), converted to turns by cria's own measured seconds per coder turn
+# (`cadence_turns`); either minutes value set to 0 DISABLES it.
+
+_now = time.monotonic        # the one clock the pace is read off (tests swap it)
+
+
+def cadence_turns(minutes: float, seconds_per_turn: float | None, min_turns: int, max_turns: int) -> int:
+    """How many coder turns `minutes` of coder work is, at the measured pace, clamped to
+    [min_turns, max_turns]. 0 minutes = disabled (0). Unmeasured (no timed turn yet) = the low end:
+    fail toward looking."""
+    if minutes <= 0:
+        return 0
+    if not seconds_per_turn or seconds_per_turn <= 0:
+        return min_turns
+    return max(min_turns, min(max_turns, round(minutes * 60 / seconds_per_turn)))
+
+
+def session_cadence(sess, ctx) -> tuple[int, int]:
+    """(start, every) in TURNS for this session, from its measured seconds per acting coder turn."""
+    spt = sess.coder_seconds / sess.coder_timed_turns if sess.coder_timed_turns else None
+    lo, hi = ctx.satisfaction_check_min_turns, ctx.satisfaction_check_max_turns
+    return (cadence_turns(ctx.satisfaction_check_start_minutes, spt, lo, hi),
+            cadence_turns(ctx.satisfaction_check_every_minutes, spt, lo, hi))
 
 
 # HOW LONG A RED GATE MAY HOLD THE WHOLE-TASK QUESTION BACK. Two gates with the same finding-set is
@@ -2508,10 +2534,12 @@ class LoopContext:
     # it did, on 2026-08-14.
     # The planner object above is then dormant (plan_for is never called on the synthetic path).
     planner_enabled: bool = False
-    # Periodic SATISFACTION check cadence for the single-item path — start at drive `start`, then every
-    # `every` drives (operator-tunable [context]; 0 disables). Only the single-item off-ramps use these.
-    satisfaction_check_start: int = 100
-    satisfaction_check_every: int = 25
+    # Periodic SATISFACTION check cadence: minutes of coder work, converted to turns by the session's
+    # measured seconds per coder turn and clamped to [min_turns, max_turns] (0 minutes disables).
+    satisfaction_check_start_minutes: float = 8.0
+    satisfaction_check_every_minutes: float = 4.0
+    satisfaction_check_min_turns: int = 5
+    satisfaction_check_max_turns: int = 60
     # The COMPACTOR endpoint's chat for the single-item self-compaction summary — rides the compactor
     # box (compactor_upstream.chat) like the plan-off _summarize did, so a compactor on its own base_url
     # is honored. None → fall back to reasoner_chat (the summarize sampling still uses compactor_role).
@@ -3604,8 +3632,7 @@ class Loop:
         diagnosis = assistruntime.current().completion_diagnosis
         if self._ctx.assists and diagnosis is not None:
             observed = diagnosis.observe_scheduled(completiondiagnosis.ScheduledObservationInput(
-                sess.plan.task, sess.drive_count, self._ctx.satisfaction_check_start,
-                self._ctx.satisfaction_check_every,
+                sess.plan.task, sess.drive_count, *session_cadence(sess, self._ctx),
                 bool(sess.workspace_root and self._ctx.reasoner_chat is not None)), sess,
                 _diagnosis_lifecycle_services(diagnosis, sess.workspace_root or "",
                     self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog))
@@ -4854,8 +4881,7 @@ class Loop:
             return None            # BEFORE anything else — see test_blocked_short_circuits
         if not assistruntime.current().review_applies(ReviewTrigger.SCHEDULED):
             return None
-        if not periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
-                                      self._ctx.satisfaction_check_every,
+        if not periodic_check_due(sess.drive_count, *session_cadence(sess, self._ctx),
                                       sess.satisfaction_last_drive):
             return None
         # Stamped BEFORE the work, so a negative still spaces the next judgment.
@@ -10761,8 +10787,11 @@ class _CoderReplyReceipts:
         rlog.restored_on_wire = {}
         subject = body.get(bodykeys.COMPLETION_REMEDIATION, "")
         rlog.guidance_on_wire = []
+        began = _now()
         raw = self._chat(body, rlog)
         if self._session is not None:
+            self._session.coder_seconds += max(0.0, _now() - began)
+            self._session.coder_timed_turns += 1
             for note in getattr(rlog, 'guidance_on_wire', ()):
                 if note not in self._session.guidance_history:
                     self._session.guidance_history.append(note)

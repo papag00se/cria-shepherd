@@ -621,11 +621,13 @@ class ContextConfig:
     self_compact: bool = True
     # Periodic SATISFACTION check (plan-off): the reasoner judges whether the WHOLE task is done, and
     # if so ends the session (objectively gated by the repo's checks). Starts at drive
-    # `satisfaction_check_start`, then re-runs every `satisfaction_check_every` drives. Operator-tunable
-    # because different models spiral at different rates (a weaker model may need an earlier/tighter
-    # cadence). Set either to 0 to DISABLE the check.
-    satisfaction_check_start: int = 100
-    satisfaction_check_every: int = 25
+    # `satisfaction_check_start_minutes` of coder work, then every `satisfaction_check_every_minutes`.
+    # cria converts minutes to turns itself (measured seconds per acting coder turn this session),
+    # clamped to [min_turns, max_turns]; unmeasured = min_turns. 0 minutes DISABLES that part.
+    satisfaction_check_start_minutes: float = 8.0
+    satisfaction_check_every_minutes: float = 4.0
+    satisfaction_check_min_turns: int = 5
+    satisfaction_check_max_turns: int = 60
 
 
 @dataclass(frozen=True)
@@ -820,6 +822,10 @@ class Config:
 #: Keys that were once accepted under [context] and are now REMOVED. Named, never aliased or ignored:
 #: a config still carrying one fails at startup (docs/decision-log.md D3: zero aliases).
 _REMOVED_CONTEXT_KEYS = {
+    "satisfaction_check_start": "the off-ramp cadence is minutes of coder work now, converted to turns from cria's own "
+                                "measured pace; use satisfaction_check_start_minutes (and _min_turns/_max_turns)",
+    "satisfaction_check_every": "the off-ramp cadence is minutes of coder work now, converted to turns from cria's own "
+                                "measured pace; use satisfaction_check_every_minutes (and _min_turns/_max_turns)",
     "trigger_compaction": "when to compact is derived from the coder's measured window, reserves and recent "
                           "turn growth (selfcompact.view_room / expected_growth), not configured; delete the line",
 }

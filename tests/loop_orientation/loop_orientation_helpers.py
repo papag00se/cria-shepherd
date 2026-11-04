@@ -38,7 +38,7 @@ def driver():
     """A real Loop over a fake-URL Upstream with one synthetic plan-off session stored at KEY."""
     up = Upstream("http://fixture", context_window=16384, capture_dir=None, capture_rendered=False)
     loop = Loop(LoopContext(planner=None, coder_chat=up.chat, planner_enabled=False, reasoner_chat=None, runs_dir="",
-                            workspace_root="", self_compact=False, focus_trim=False, assists=False, satisfaction_check_start=0))
+                            workspace_root="", self_compact=False, focus_trim=False, assists=False, satisfaction_check_start_minutes=0))
     session = PlanSession(plan=Plan(id="t", task=TASK, created="now", items=[PlanItem(TASK)]), synthetic=True, plan_off=True)
     loop._store.put(KEY, session)
     return loop, session, {"model": "fixture", "messages": [{"role": "user", "content": TASK}], "tools": [WRITE]}

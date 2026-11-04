@@ -134,6 +134,7 @@ def test_both_drivers_offer_the_periodic_satisfaction_off_ramp_with_their_own_fl
 
 class Sess:
     drive_count, satisfaction_last_drive = 80, -1
+    coder_seconds, coder_timed_turns = 7.5, 1          # 7.5 s/turn: 10 min = 80 turns, 2.5 min = 20
     nudge_reason = last_gap_named = steer_source = last_gate_flag = workspace_root = ""
     done_probe = last_gate_red = False
     gate_plan = plan = None
@@ -141,7 +142,8 @@ class Sess:
 
 def run_satisfaction(monkeypatch, sess, verdict, *, blocked=False):
     ctx = type("Ctx", (), dict(reasoner_chat=object(), reasoner_role=None,
-                               satisfaction_check_start=80, satisfaction_check_every=20))()
+                               satisfaction_check_start_minutes=10, satisfaction_check_every_minutes=2.5,
+                               satisfaction_check_min_turns=5, satisfaction_check_max_turns=100))()
     driver, rlog = Loop.__new__(Loop), Rlog()
     driver._ctx = ctx
     monkeypatch.setattr(loop, "judge_satisfaction", lambda *a, **k: verdict)
@@ -238,7 +240,7 @@ def test_a_no_shell_done_claim_is_checked_by_the_task_critic_and_not_forwarded_w
     store.put("sid:r", sess)
     driver = Loop(LoopContext(planner=None, coder_chat=coder, reasoner_chat=lambda *a: b"{}",
                               reasoner_role=Role(name="reasoner", backend="local"), runs_dir="", self_compact=False,
-                              focus_trim=False, satisfaction_check_start=0), store)
+                              focus_trim=False, satisfaction_check_start_minutes=0), store)
     out = driver.drive({"messages": [{"role": "user", "content": TASK}], "tools": [write]}, "sid:r", None, Rlog())
     assert out["choices"][0]["message"].get("tool_calls") and len(frames) == 2
     assert "README.md still needed" in frames[1] and "Prioritize this step" not in frames[1]

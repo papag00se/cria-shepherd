@@ -55,8 +55,11 @@ focus_trim = true                  # collapse duplicate tool calls
 self_compact = true                # summarize the old history middle. WHEN is a predicate over the coder's measured
                                    # window, reserves and recent turn growth (selfcompact.view_room): there is no
                                    # size knob, and the old `trigger_compaction` key is a startup error.
-satisfaction_check_start = 100     # plan-off: first "whole task done?" check at drive N (engagement level 5)
-satisfaction_check_every = 25      # then re-check every N (0 disables either one)
+satisfaction_check_start_minutes = 8    # level 5: first "whole task done?" check after N minutes of coder work
+satisfaction_check_every_minutes = 4    # then every N minutes (0 disables). cria turns minutes into turns from its
+                                        # own measured seconds per coder turn, clamped to the range below
+satisfaction_check_min_turns = 5        # before any measurement the check is this many turns out
+satisfaction_check_max_turns = 60
 
 [planner]
 enabled = false                    # opt-in experiment only; never enabled by L5

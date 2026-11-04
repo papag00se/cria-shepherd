@@ -976,8 +976,10 @@ class CriaServer(ThreadingHTTPServer):
                     # The compactor ENDPOINT's chat for the single-item self-compaction (rides the
                     # compactor box like the plan-off _summarize did); None-safe (falls back to reasoner).
                     compactor_chat=self.compactor_upstream.chat,
-                    satisfaction_check_start=cfg.context.satisfaction_check_start,
-                    satisfaction_check_every=cfg.context.satisfaction_check_every,
+                    satisfaction_check_start_minutes=cfg.context.satisfaction_check_start_minutes,
+                    satisfaction_check_every_minutes=cfg.context.satisfaction_check_every_minutes,
+                    satisfaction_check_min_turns=cfg.context.satisfaction_check_min_turns,
+                    satisfaction_check_max_turns=cfg.context.satisfaction_check_max_turns,
                     # ONE folder per run: plan mirror + verify dumps join the call captures
                     # under <capture_dir>/<session>/ — a single place per session.
                     runs_dir=cfg.logging.capture_dir,

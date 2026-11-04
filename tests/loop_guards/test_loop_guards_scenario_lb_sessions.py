@@ -108,7 +108,7 @@ def test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge(tmp_
     asked = []
     coder = Chat(reply("All done."), reply("Fixed the name."), reply("Added the README."), reply("Added more."),
                  reply("Now complete."))
-    run = Run(tmp_path, coder, judge([GAP, SILENT, {**OK, "by_tool": True}, OK], asked), satisfaction_check_start=0)
+    run = Run(tmp_path, coder, judge([GAP, SILENT, {**OK, "by_tool": True}, OK], asked), satisfaction_check_start_minutes=0)
     read = {"id": "r0", "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"path": str(tmp_path / "app.py")})}}
     run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [read]},
                              {"role": "tool", "tool_call_id": "r0", "content": "x = 1"}]
@@ -164,7 +164,8 @@ def test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_re
         "name": "write_file", "arguments": json.dumps({"path": f"notes{next(notes)}.txt", "content": "x"})}}])
     bodies = []
     run = Run(tmp_path, lambda b, r: (bodies.append(b), coder(b, r))[1], judge([GAP, OK, OK], asked),
-              tools=(SHELL, WRITE), satisfaction_check_start=1, satisfaction_check_every=1)
+              tools=(SHELL, WRITE), satisfaction_check_start_minutes=1, satisfaction_check_every_minutes=1,
+              satisfaction_check_min_turns=1, satisfaction_check_max_turns=1)
     step = run.turn()
     assert step["tool_calls"][0]["function"]["name"] == "write_file"       # the coder still acts; the verdict rode along
     heard = bodies[0]["messages"][-1]["content"]

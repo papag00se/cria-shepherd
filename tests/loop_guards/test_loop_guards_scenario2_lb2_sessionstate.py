@@ -42,7 +42,7 @@ def test_the_runner_signature_lives_on_the_guard_state_not_on_the_view():
 
 
 def test_each_coder_reply_keeps_the_receipt_and_remediation_of_the_call_that_produced_it():
-    sess = SimpleNamespace(guidance_history=[], guidance_delivered_seq={}, action_seq=4)
+    sess = SimpleNamespace(guidance_history=[], guidance_delivered_seq={}, action_seq=4, coder_seconds=0.0, coder_timed_turns=0)
     rlog = SimpleNamespace(guidance_on_wire=[])
 
     def chat(body, rlog_):
