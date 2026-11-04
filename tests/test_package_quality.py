@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from cria import dependencyexistence as de, packagequality as pq, registries, returnedpolicies as rp, wsview
+from cria import dependencyexistence as de, packagequality as pq, registries, repohealth, returnedpolicies as rp, wsview
 from cria.toolcontracts import ReturnedHistory
 
 TASK = "Do not hardcode EU membership. Add a third-party Ruby gem that determines whether a country is in the EU, add it to the project dependencies, and use it for the lookup."
@@ -118,3 +118,52 @@ def test_a_hard_red_flag_is_stated_as_a_fact_without_a_reasoner(tmp_path):
 ])
 def test_direct_installs_name_the_packages_the_coder_committed_to(command, expected):
     assert pq.install_coordinates(command) == expected
+
+
+PROJECT = "https://api.deps.dev/v3/projects/github.com%2Fcountries%2Fcountries"
+
+
+def project_sources(url, data=None):
+    project_sources.calls.append(url)
+    if url == PROJECT:
+        return 200, json.dumps({"starsCount": 1500, "forksCount": 700, "openIssuesCount": 12, "license": "MIT"})
+    return 404, ""     # a small repo deps.dev does not know: unknown, not a claim
+
+
+def test_repo_health_uses_deps_dev_first_honours_githubs_budget_caches_a_day_and_flags_an_archived_repo(monkeypatch):
+    project_sources.calls, github, now = [], [], [1_000_000.0]
+    def http(url, headers):
+        github.append((url, headers))
+        if len(github) == 1:
+            return 200, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1000600"}, json.dumps({"archived": True, "pushed_at": "2023-04-05T06:07:08Z"})
+        return 403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1000600"}, ""
+    url = "git+ssh://git@github.com/countries/countries.git"
+    got = repohealth.facts(url, project_sources, github=True, http=http, now=lambda: now[0])
+    assert (got.stars, got.forks, got.open_issues, got.license, got.archived, got.pushed_at) == (1500, 700, 12, "MIT", True, "2023-04-05T06:07:08Z")
+    assert github[0][0] == "https://api.github.com/repos/countries/countries" and "Authorization" not in github[0][1]
+    # the next cell, a few hours later: everything is a cache hit, no request to anyone
+    now[0] += 6 * 3600
+    project_sources.calls.clear()
+    assert repohealth.facts(url, project_sources, github=True, http=http, now=lambda: now[0]).archived is True
+    assert project_sources.calls == [] and len(github) == 1
+    # a repo not yet cached while the budget is spent (0 remaining until 1000600): GitHub is not called, archived is unknown
+    now[0] = 1_000_100.0
+    other = repohealth.facts("https://github.com/tiny/repo", project_sources, github=True, http=http, now=lambda: now[0])
+    assert (other.archived, other.stars) == (None, None) and len(github) == 1
+    # after the reset the call is made again, now answered 403 (refused): still unknown, and the token rides along unlogged
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    now[0] = 1_000_700.0
+    assert repohealth.facts("https://github.com/tiny/repo", project_sources, github=True, http=http, now=lambda: now[0]).archived is None
+    assert len(github) == 2 and github[1][1]["Authorization"] == "Bearer ghp_secret"
+
+    # the card says so, and an archived repo is a hard red flag that needs no reasoner
+    def fetch(u, data=None):
+        if u == "https://registry.npmjs.org/old-lib":
+            return 200, json.dumps({"dist-tags": {"latest": "1.0.0"}, "versions": {"1.0.0": {}}, "repository": {"url": url},
+                                    "time": {"1.0.0": "2020-01-01T00:00:00Z"}})
+        return project_sources(u)
+    now[0] = 1_000_000.0
+    monkeypatch.setattr(repohealth, "CACHE_DIR", repohealth.CACHE_DIR + "-fresh")
+    note, poor = pq.assess("npm", "old-lib", None, TASK, None, fetch, lambda argv: "", http=lambda u, h: (200, {}, json.dumps({"archived": True, "pushed_at": "2023-04-05T00:00:00Z"})))
+    assert poor and "source repository git+ssh://git@github.com/countries/countries.git is archived" in note
+    assert "repository: 1,500 stars, 700 forks, 12 open issues, license MIT, last push 2023-04-05, archived (read-only)" in note

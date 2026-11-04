@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import tomllib
 import typing
 from collections.abc import Mapping
@@ -593,8 +594,13 @@ class ToolsConfig:
     focus: bool = True  # curate the tool menu to coding essentials (ToolSubset::Focused port)
     # Operator-owned native harness contract; a client-offered schema cannot bind it.
     workspace_image_tool: str | None = None
+    # NAMES the env var holding an optional GitHub token (never the token): raises the repo-health lookup's budget from
+    # 60 to 5000 requests/hour. Loaded only from ~/.cria/.env like every other key.
+    github_token_env: str = "GITHUB_TOKEN"
 
     def __post_init__(self):
+        if type(self.github_token_env) is not str or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.github_token_env):
+            raise ValueError('tools.github_token_env must name an environment variable')
         if self.workspace_image_tool is not None and (
                 type(self.workspace_image_tool) is not str or self.workspace_image_tool != 'view_image'):
             raise ValueError('tools.workspace_image_tool must be omitted or the supported native view_image contract')
@@ -764,7 +770,7 @@ class Config:
         """The names of the environment variables holding cria's own credentials: the search key plus every
         configured provider key. The ONE list behind the env-file allowlist and every secret redaction."""
         from . import brave
-        return {brave.API_KEY_ENV} | {b.api_key_env for b in self.routing.backends.values() if b.api_key_env}
+        return {brave.API_KEY_ENV, self.tools.github_token_env} | {b.api_key_env for b in self.routing.backends.values() if b.api_key_env}
 
     def __post_init__(self):
         from .assistruntime import AssistRuntime

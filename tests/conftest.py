@@ -103,6 +103,18 @@ def _no_test_talks_to_a_package_registry(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_test_talks_to_github_or_writes_the_repo_cache(monkeypatch, tmp_path):
+    """Repo-health lookups reach GitHub and cache under cria's home: a test that does not pin its own `http` gets an unreachable
+    network (unknown facts), and every test caches into its own scratch dir, never `~/.cria`."""
+    from cria import repohealth
+    def _refused(url, headers):
+        raise OSError("no network in tests")
+    monkeypatch.setattr(repohealth, "_http", _refused)
+    monkeypatch.setattr(repohealth, "CACHE_DIR", str(tmp_path / "repo-health"))
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_test_talks_to_brave(monkeypatch):
     """The coder's web_search is made in-process while a call is lowered: a test that lowers one and pins no transport must reach a
     refused local port (a transport failure), never the real search API with a fake key. A test that exercises the search points

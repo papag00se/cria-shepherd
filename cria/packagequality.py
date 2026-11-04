@@ -25,7 +25,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from . import dependencyexistence as de, prompts, registries
+from . import dependencyexistence as de, prompts, registries, repohealth
 from .jsontext import extract_json_object, strip_think
 
 ALTERNATIVES = 3                  # real candidates shown beside the chosen package
@@ -83,6 +83,12 @@ class Card:
     size: str = ""
     repo: str = ""
     description: str = ""
+    stars: int | None = None
+    forks: int | None = None
+    open_issues: int | None = None
+    license: str = ""
+    archived: bool | None = None   # None = unknown (GitHub budget spent, repo unknown to GitHub, not a GitHub repo)
+    pushed_at: str = ""
 
 
 def _json(fetch, url: str, data: dict | None = None):
@@ -238,6 +244,12 @@ def _deps_dev_repo(card: Card, fetch) -> None:
     card.repo = next((l.get("url", "") for l in links if l.get("label") == "SOURCE_REPO"), "")
 
 
+def _repo_health(card: Card, fetch, http, github: bool) -> None:
+    got = repohealth.facts(card.repo, fetch, github=github, http=http)
+    card.stars, card.forks, card.open_issues = got.stars, got.forks, got.open_issues
+    card.license, card.archived, card.pushed_at = got.license, got.archived, _day(got.pushed_at)
+
+
 def _osv(card: Card, fetch) -> None:
     """Known advisories for the card's version, as OSV reports them (withdrawn ones excluded)."""
     eco = OSV.get(card.registry)
@@ -251,8 +263,9 @@ _FILL = {"npm": _npm, "pypi": _pypi, "crates": _crates, "rubygems": _rubygems, "
          "vcpkg": _vcpkg}
 
 
-def gather(registry: str, package: str, version: str | None, fetch, deep: bool = False) -> Card:
-    """One package's fact card. ``deep`` (the chosen package only) adds its source repository and advisories."""
+def gather(registry: str, package: str, version: str | None, fetch, deep: bool = False, http=None) -> Card:
+    """One package's fact card. ``deep`` (the chosen package only) adds its source repository, advisories and the
+    repository's archived/last-push facts (a GitHub request); every card gets the unlimited deps.dev repo facts."""
     card = Card(registry, package, version=(version or ""))
     result = registries.lookup(registry, package, fetch)
     card.exists = result.exists
@@ -272,6 +285,8 @@ def gather(registry: str, package: str, version: str | None, fetch, deep: bool =
     if deep:
         _deps_dev_repo(card, fetch)
         _osv(card, fetch)
+    if card.repo:
+        _repo_health(card, fetch, http, github=deep)
     return card
 
 
@@ -326,6 +341,12 @@ def card_line(card: Card) -> str:
         parts.append(prompts.fill(w["size"], size=card.size))
     if card.repo:
         parts.append(prompts.fill(w["repo"], url=card.repo))
+    health = [prompts.fill(w[k], count=_count(v)) for k, v in (("stars", card.stars), ("forks", card.forks), ("issues", card.open_issues)) if v is not None]
+    health += [prompts.fill(w["license"], name=card.license)] if card.license else []
+    health += [prompts.fill(w["pushed"], date=card.pushed_at)] if card.pushed_at else []
+    health += [w["archived_yes" if card.archived else "archived_no"]] if card.archived is not None else []
+    if health:
+        parts.append(prompts.fill(w["repo_health"], facts=", ".join(health)))
     if card.description:
         parts.append(prompts.fill(w["description"], words=" ".join(card.description.split())))
     return prompts.fill(w["card"], package=card.package, facts="; ".join(parts) if parts else w["no_data"])
@@ -343,6 +364,8 @@ def hard_flags(card: Card) -> list[str]:
     if card.abandoned is not None:
         reason = prompts.fill(w["flag_abandoned_for"], name=card.abandoned) if card.abandoned else ""
         out.append(prompts.fill(w["flag_abandoned"], package=card.package, replacement=reason))
+    if card.archived:
+        out.append(prompts.fill(w["flag_archived"], package=card.package, url=card.repo))
     if card.advisories:
         out.append(prompts.fill(w["flag_advisories"], package=card.package, version=version, count=len(card.advisories),
                                 ids=prompts.named_list(card.advisories)))
@@ -388,10 +411,10 @@ def render_note(chosen: Card, others: list[Card], flags: list[str], verdict: Ver
     return prompts.fill(w["note"], package=chosen.package, registry=de.LABEL.get(chosen.registry, chosen.registry), body="\n".join(lines))
 
 
-def assess(registry: str, package: str, version: str | None, task: str, ask, fetch, run) -> tuple[str, bool]:
+def assess(registry: str, package: str, version: str | None, task: str, ask, fetch, run, http=None) -> tuple[str, bool]:
     """``(note, poor)`` for one package: '' when it is a reasonable choice with no hard flag, or nothing could be read."""
     with ThreadPoolExecutor(max_workers=2 + ALTERNATIVES) as pool:   # the chosen card and the search for alternatives overlap
-        chosen_card = pool.submit(gather, registry, package, version, fetch, True)
+        chosen_card = pool.submit(gather, registry, package, version, fetch, True, http)
         names = alternatives(registry, package, fetch, run)
         cards = [c for c in pool.map(lambda n: gather(registry, n, None, fetch), names) if c.exists is True]
         chosen = chosen_card.result()
@@ -403,7 +426,7 @@ def assess(registry: str, package: str, version: str | None, task: str, ask, fet
     return (render_note(chosen, cards, flags, verdict) if poor else ""), poor
 
 
-def notes_for(session: str, coordinates: list[_Coord], task: str, ask, fetch=None, run=None, log=None) -> list[str]:
+def notes_for(session: str, coordinates: list[_Coord], task: str, ask, fetch=None, run=None, log=None, http=None) -> list[str]:
     """Quality notes for the coordinates not yet checked in ``session`` (at most MAX_PACKAGES_PER_REQUEST), each once."""
     seen = _CHECKED.setdefault(session, set())
     _bounded(_CHECKED)
@@ -417,7 +440,7 @@ def notes_for(session: str, coordinates: list[_Coord], task: str, ask, fetch=Non
             break
         started += 1
         seen.add(_key(registry, package))
-        note, poor = assess(registry, package, version, task, ask, fetch, run)
+        note, poor = assess(registry, package, version, task, ask, fetch, run, http)
         if poor:
             _POOR.setdefault(session, set()).add(_key(registry, package))
             _bounded(_POOR)

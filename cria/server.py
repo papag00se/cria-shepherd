@@ -31,7 +31,7 @@ from . import imageassembly
 from . import upstream as _image_wire
 from .imageprotocol import ImageUnavailable
 
-from . import bodykeys, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
+from . import bodykeys, repohealth, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify, loweringoptions
@@ -895,6 +895,7 @@ class CriaServer(ThreadingHTTPServer):
         # loop's reasoner calls (satisfaction judge, redirect author) and self-compaction summaries,
         # so they hit the reasoner/compactor box, not always the shared upstream.
         self.reasoner_upstream = _ep("reasoner")
+        repohealth.configure(cfg.tools.github_token_env)
         self.compactor_upstream = _ep("compactor") if "compactor" in roles else self.reasoner_upstream
         # Compaction/summarization sampling. The [roles.compactor] role exists precisely for
         # folding transcript spans into briefings (temp 0.6, reasoning on) — NOT the coder role
