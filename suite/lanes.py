@@ -85,9 +85,11 @@ LANE_FACTORS = {   # measured 2026-11-02 with suite/lane_measure.py (llama.cpp c
     'k2_horizon_7b': {'3090x4': 0.494},
     'qwen3.8_9b_distill': {'3090x4': 0.548, '3080x2': 0.724},
 }
-for _factors in LANE_FACTORS.values():   # the side lane is the same card, slots and window as 3080x2
+for _factors in LANE_FACTORS.values():   # a second lane on a card has that card's slots and window
     if '3080x2' in _factors:
         _factors['3080x2b'] = _factors['3080x2']
+    if '3090x4' in _factors:
+        _factors['3090x4b'] = _factors['3090x4']
 
 
 def wall_factor(model, lane):
