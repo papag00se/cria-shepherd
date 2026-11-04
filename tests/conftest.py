@@ -91,6 +91,18 @@ def _fresh_rate_limit_state():
 
 
 @pytest.fixture(autouse=True)
+def _no_test_talks_to_a_package_registry(monkeypatch):
+    """The dependency-existence assist looks coordinates up on the real registries; a test that does not pin its own fetch gets an
+    unreachable network (an unknown lookup, which is silent), never the internet."""
+    from cria import dependencyexistence as de
+    de._CHECKED.clear(); de.NOTES.clear()
+    def _refused(self, url):
+        raise OSError("no network in tests")
+    monkeypatch.setattr(de._Budget, "fetch", _refused)
+    monkeypatch.setattr(de._Budget, "run", lambda self, argv: "")
+
+
+@pytest.fixture(autouse=True)
 def _no_test_talks_to_brave(monkeypatch):
     """The coder's web_search is made in-process while a call is lowered: a test that lowers one and pins no transport must reach a
     refused local port (a transport failure), never the real search API with a fake key. A test that exercises the search points

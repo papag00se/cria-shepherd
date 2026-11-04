@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import denial, depsurface, dirguard, probeparse, proberun, prompts, windowcaps
+from . import denial, dependencyexistence, depsurface, dirguard, probeparse, proberun, prompts, windowcaps
 from .resultnotes import (append_note, probegate_marker_in, _strip_exec_envelope,
                           _workspace_ecosystem, _noted, exec_envelope)
 from .toolargs import parse_args as _parse
@@ -470,6 +470,38 @@ def _note_running_session(source: ReturnedHistory) -> None:
         source.log.emit("writeproxy.running_session_note", level="info", exec_session=envelope.session)   # `session` is the request log's own field
 
 
+def _note_dependency_existence(source: ReturnedHistory) -> None:
+    """Say, beside a tool result, that a package or version the coder DECLARED (a manifest now on disk) or that a failed
+    install NAMED does not exist on the ecosystem's official registry, with the registry's real names/versions.
+
+    Battery evidence: Ruby coders guessing `eu_*` gems that do not exist, Go `github.com/shopspring/dec` and a
+    `v0.38.0` that was never published, pom.xml coordinates. A fact only: silent when everything exists at its declared
+    version or the lookup is unknown (network); each coordinate is looked up once per session; the note replays on the
+    same tool result while it stays in history (the harness resends its own transcript every request)."""
+    if not source.tools_present or not source.workspace_root or not source.session:
+        return
+    by_call_id = {m["tool_call_id"]: m for m in source.messages
+                  if m.get("role") == "tool" and isinstance(m.get("content"), str) and m.get("tool_call_id")}
+    kept = dependencyexistence.NOTES.setdefault(source.session, {})
+    for call_id, text in list(kept.items()):
+        target = by_call_id.get(call_id)
+        if target is not None and text not in target["content"]:
+            append_note(target, text)
+    newest = next((m for m in reversed(source.messages) if m.get("role") == "tool"
+                   and isinstance(m.get("content"), str) and m.get("tool_call_id")), None)
+    if newest is None:
+        return
+    wanted = dependencyexistence.from_failure(newest["content"]) + dependencyexistence.declared(source.workspace_root)
+    facts = dependencyexistence.notes_for(source.session, wanted)
+    if not facts:
+        return
+    text = "\n".join(facts)
+    kept[newest["tool_call_id"]] = (kept.get(newest["tool_call_id"]) or "") + ("\n" if newest["tool_call_id"] in kept else "") + text
+    append_note(newest, text)
+    if source.log is not None:
+        source.log.emit("writeproxy.dependency_existence_note", level="info", facts=len(facts))
+
+
 RESULTS = (
     ReturnedDefinition(Policy('edit-failure-recovery', 'returned-result', 2, family_id='F17',
         services=('prior-edit-results',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
@@ -503,6 +535,13 @@ HISTORY = (
         regressions=(Reference('tests/write_edit/test_write_edit_notes.py', 'test_the_dependency_surface_note_is_grounded_on_the_declared_version_stable_and_withdrawn_on_a_bump'),
                      ),
         migrated=False), _note_dependency_surface),
+    HistoryDefinition(Policy('dependency-existence-note', 'returned-history', 5, family_id='F20',
+        state='per-session set of coordinates already checked and the notes replayed on their tool results',
+        services=('declared-coordinates',),
+        prompts=('dependency_existence_missing_version', 'dependency_existence_missing_package', 'dependency_existence_similar'),
+        hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
+        regressions=(Reference('tests/test_dependency_existence.py', 'test_a_missing_package_and_a_missing_version_are_stated_once_from_the_registry'),),
+        migrated=False), _note_dependency_existence),
     HistoryDefinition(Policy('running-session-note', 'returned-history', 2, family_id='F14',
         prompts=('running_command_note',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
         regressions=(),
