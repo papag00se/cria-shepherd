@@ -201,6 +201,10 @@ def main() -> int:
         print((checkpoint / "packet.txt").read_text())
         return 0
 
+    if verdict_path(checkpoint).is_file():
+        # The run acts on the first verdict it polls (it may already have stopped the cell on it). A later record
+        # would silently diverge from the result row; correct the row instead.
+        raise SystemExit(f"{checkpoint.name} is already judged; the run acted on that verdict. Correct the result row, not the checkpoint.")
     verdict = parse_for_checkpoint(checkpoint, sys.stdin.read())
     if verdict is None:
         raise SystemExit("expected usefulness_percent, decision complete|continue|stalled, reason, evidence, material_changes; new checkpoints also require requirements and pace_reason")
