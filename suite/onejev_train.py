@@ -29,7 +29,7 @@ def balanced_weights(rows):
 def loss_at_slots(torch, logits, target, weight):
     # Same restricted-slot CE + Brier objective as the official trainer, with
     # explicitly declared task/head/label balancing for this new experiment.
-    target_vector = torch.nn.functional.one_hot(torch.tensor(target, device=logits.device), 2).float()
+    target_vector = torch.nn.functional.one_hot(torch.tensor(target, device=logits.device), logits.shape[-1]).float()
     logp = torch.log_softmax(logits.float(), dim=-1)
     probabilities = logp.exp()
     return weight * (-(target_vector * logp).sum() + ((probabilities - target_vector) ** 2).sum())

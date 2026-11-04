@@ -10,13 +10,13 @@ from suite.gliclass_quantize import quantize
 from suite.onejev_probe import file_sha
 
 
-def export_native_graph(torch, model, inputs, source):
+def export_native_graph(torch, model, inputs, source, classes=2):
     class NativeGraph(torch.nn.Module):
         def __init__(self, native):
             super().__init__()
             self.native = native
         def forward(self, input_ids, attention_mask):
-            return self.native(input_ids=input_ids, attention_mask=attention_mask, max_num_classes=2).logits
+            return self.native(input_ids=input_ids, attention_mask=attention_mask, max_num_classes=classes).logits
 
     def stable_log_sigmoid(graph, value):
         # The legacy exporter's Log(Sigmoid(x)) loses the native operator's
