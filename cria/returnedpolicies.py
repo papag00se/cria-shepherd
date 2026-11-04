@@ -129,7 +129,8 @@ def _note_dependency_surface(source: ReturnedHistory) -> None:
                 by_call_id[cid] = m
     if newest_tool is None:
         return
-    declared = depsurface.declared_coordinates(workspace_root)
+    # the real-surface read needs an exact version and a surface ecosystem; the other manifests feed the existence fact only
+    declared = [c for c in depsurface.declared_coordinates(workspace_root) if c[0] in depsurface.SURFACE_ECOSYSTEMS and c[2]]
     build_roots = dirguard.dependency_roots(messages, workspace_root)   # where THIS run's build keeps its dependencies
     declared_keys = {(eco, package, version) for eco, package, version in declared}
 

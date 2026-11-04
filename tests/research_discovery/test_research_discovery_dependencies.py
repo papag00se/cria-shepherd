@@ -102,6 +102,7 @@ def test_only_direct_dependencies_are_declared(tmp_path):
            "<dependency><groupId>g</groupId><artifactId>a</artifactId><version>${a.version}</version></dependency></dependencies></project>")
     write(tmp_path, "pom.xml", pom)
     assert depsurface.declared_coordinates(str(tmp_path)) == [("go", "github.com/a/direct", "v1.4.0"), ("go", "github.com/b/direct", "v2.0.0"),
+                                                              ("rust", "serde_json", ""), ("rust", "toml", ""),   # Cargo.toml alone: names, no pinned version
                                                               ("ruby", "countries", "3.1.0"), ("jvm", "org.apache.commons:commons-csv", "1.10.0")]
     write(tmp_path, "Cargo.lock", '[[package]]\nname = "toml"\nversion = "0.8.23"\n\n[[package]]\nname = "serde"\nversion = "1.0.1"\n')
     assert ("rust", "toml", "0.8.23") in depsurface.declared_coordinates(str(tmp_path))   # needs Cargo.toml AND the lock...

@@ -73,6 +73,7 @@ never remembers what has already been delivered.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 import shutil
@@ -535,6 +536,9 @@ _PROBES = {
     "ruby": _gather_ruby,
     "jvm": _gather_jvm,
 }
+# The ecosystems the real-surface read (gather) can serve; a manifest coordinate of another ecosystem is an existence
+# fact only (cria.dependencyexistence), never a surface read.
+SURFACE_ECOSYSTEMS = frozenset(_PROBES)
 
 
 def _jvm_jar(coordinate: str, version: str, _ws, cache_roots=()):
@@ -661,6 +665,15 @@ def _cargo_toml_direct_names(text: str) -> set[str]:
     return names
 
 
+def _cargo_toml_exact_pins(text: str) -> dict[str, str]:
+    """``name = "=1.2.3"`` and ``name = { version = "=1.2.3", ... }``: the only Cargo.toml requirements that state one
+    exact version (a bare ``"1.2"`` is a caret range)."""
+    pins: dict[str, str] = {}
+    for m in re.finditer(r'^([A-Za-z0-9_-]+)\s*=\s*(?:"=(\d[\w.+-]*)"|\{[^}\n]*?version\s*=\s*"=(\d[\w.+-]*)")', text, re.M):
+        pins[m.group(1)] = m.group(2) or m.group(3)
+    return pins
+
+
 def _cargo_direct_coordinates(toml_text: str, lock_text: str) -> list[tuple[str, str]]:
     """(crate, version) for DIRECT dependencies only -- Cargo.toml's own declared names, resolved to
     Cargo.lock's exact locked version. A crate Cargo.lock lists but Cargo.toml never names is
@@ -733,10 +746,156 @@ def parse_manifest(ecosystem: str, text: str) -> list[tuple[str, str]]:
     return parser(text) if parser and text else []
 
 
+# Ecosystems whose manifests are read for the registry-existence fact (cria.dependencyexistence) in addition to the
+# surface ecosystems above. An entry with version "" is a NAME-ONLY claim: the manifest names the package but states no
+# exact version cria can check (a range, a git/path source, a minimum-version requirement).
+_NAME_ONLY = ""
+
+
+def _npm_exact(spec: str) -> str:
+    return spec if re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][\w.+-]*)?", spec) else _NAME_ONLY
+
+
+def _parse_package_json(text: str) -> list[tuple[str, str]]:
+    """(name, version) for ``dependencies`` and ``devDependencies``. Registry specs only: a ``file:``/``git``/URL/
+    workspace source is not a registry package and is skipped."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    out: list[tuple[str, str]] = []
+    for section in ("dependencies", "devDependencies"):
+        deps = data.get(section)
+        if not isinstance(deps, dict):
+            continue
+        for name, spec in deps.items():
+            if not isinstance(spec, str) or not re.fullmatch(r"(@[\w.~-]+/)?[\w.~-]+", name):
+                continue
+            if spec and not re.match(r"^[\d^~<>=*x]|^latest$", spec):
+                continue   # file:, link:, git+, http(s):, github:, workspace:, npm: aliases are not registry names
+            out.append((name, _npm_exact(spec)))
+    return out
+
+
+def _parse_requirement_line(line: str) -> tuple[str, str] | None:
+    """One PEP 508 requirement: ``name[extra] ==1.2.3 ; marker`` -> (name, "1.2.3"); ranges -> (name, "")."""
+    line = line.split("#", 1)[0].split(";", 1)[0].strip()
+    if not line or line.startswith("-") or "://" in line or " @ " in line:
+        return None
+    m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(.*)$", line)
+    if not m:
+        return None
+    rest = m.group(2).strip()
+    exact = re.fullmatch(r"==\s*([\w.!+-]+)", rest)
+    return (m.group(1), exact.group(1) if exact else _NAME_ONLY)
+
+
+def _parse_requirements_txt(text: str) -> list[tuple[str, str]]:
+    return [r for r in (_parse_requirement_line(line) for line in text.splitlines()) if r]
+
+
+def _parse_pyproject_toml(text: str) -> list[tuple[str, str]]:
+    """``[project] dependencies`` (PEP 508 strings) and ``[tool.poetry.dependencies]`` names. Poetry's caret/tilde
+    specs are ranges, so a poetry dependency is always name-only."""
+    out: list[tuple[str, str]] = []
+    project = re.search(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    if project:
+        array = re.search(r"^dependencies\s*=\s*\[(.*?)\](?=[ \t]*(?:\n|\Z))", project.group(1), re.M | re.S)
+        if array:
+            for dq, sq in re.findall(r"\"([^\"]*)\"|'([^']*)'", array.group(1)):
+                req = _parse_requirement_line(dq or sq)
+                if req:
+                    out.append(req)
+    poetry = re.search(r"^\[tool\.poetry\.dependencies\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    if poetry:
+        for name in re.findall(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=", poetry.group(1), re.M):
+            if name.lower() != "python":
+                out.append((name, _NAME_ONLY))
+    return out
+
+
+def _parse_csproj(text: str) -> list[tuple[str, str]]:
+    """``<PackageReference Include="X" Version="1.2.3"/>`` (attribute or child element). ``[1.2.3]`` is an exact pin;
+    a bare ``1.2.3`` is NuGet's minimum-version form, read here as the version the coder meant to pin; ranges and
+    ``$(Property)`` versions are name-only or skipped."""
+    out: list[tuple[str, str]] = []
+    for m in re.finditer(r"<PackageReference\b([^>]*?)(?:/>|>(.*?)</PackageReference>)", text, re.S):
+        include = re.search(r'Include="([^"]+)"', m.group(1))
+        if not include or "$(" in include.group(1) or ";" in include.group(1):
+            continue
+        version = re.search(r'Version="([^"]+)"', m.group(1)) or re.search(r"<Version>([^<]+)</Version>", m.group(2) or "")
+        literal = re.fullmatch(r"\[?(\d[\w.+-]*)\]?", version.group(1).strip()) if version else None
+        out.append((include.group(1), literal.group(1) if literal else _NAME_ONLY))
+    return out
+
+
+def _parse_vcpkg_json(text: str) -> list[tuple[str, str]]:
+    """Names in ``dependencies`` (a string, or an object with ``name``). vcpkg's ``version>=`` is a minimum, so
+    name-only."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    deps = data.get("dependencies") if isinstance(data, dict) else None
+    out: list[tuple[str, str]] = []
+    for dep in deps if isinstance(deps, list) else []:
+        name = dep if isinstance(dep, str) else (dep.get("name") if isinstance(dep, dict) else None)
+        if isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+            out.append((name, _NAME_ONLY))
+    return out
+
+
+def _parse_conanfile_txt(text: str) -> list[tuple[str, str]]:
+    """``[requires]`` lines ``name/1.2.3[@user/channel]``; a range such as ``[>=1.0]`` is name-only."""
+    m = re.search(r"^\[requires\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    out: list[tuple[str, str]] = []
+    for line in (m.group(1).splitlines() if m else []):
+        line = line.split("#", 1)[0].strip()
+        ref = re.fullmatch(r"([a-z0-9_][a-z0-9_.+-]*)/([^@\s]+)(?:@\S*)?", line)
+        if ref:
+            exact = re.fullmatch(r"[\w.+-]+", ref.group(2))
+            out.append((ref.group(1), ref.group(2) if exact else _NAME_ONLY))
+    return out
+
+
+def _parse_conanfile_py(text: str) -> list[tuple[str, str]]:
+    """References inside ``requires = (...)`` / ``self.requires(...)`` only -- never any other ``x/y`` string."""
+    out: list[tuple[str, str]] = []
+    for block in re.findall(r"(?:self\.requires\(|\brequires\s*=)\s*([\(\[]?(?:\s*[\"'][^\"']*[\"']\s*,?)+\s*[\)\]]?)", text):
+        for ref in re.findall(r"[\"']([a-z0-9_][a-z0-9_.+-]*)/([^@\"'\s\[]+)(?:@[^\"']*)?[\"']", block):
+            out.append((ref[0], ref[1] if re.fullmatch(r"[\w.+-]+", ref[1]) else _NAME_ONLY))
+    return out
+
+
+_SKIP_DIRS = {"node_modules", "bin", "obj", "target", "vendor", "build", "dist", "packages"}
+
+
+def _project_files(view, root: str, depth: int = 2) -> list[str]:
+    """`*.csproj`/`*.fsproj` at the root and up to `depth` directory levels below (the usual src/App/App.csproj), found
+    through the view's own listing; build output, dependency and hidden directories are not walked."""
+    found, level = [], [root]
+    for _ in range(depth + 1):
+        below = []
+        for directory in level:
+            for entry in view.scandir(directory) or []:
+                if entry.is_dir():
+                    if entry.name not in _SKIP_DIRS and not entry.name.startswith("."):
+                        below.append(entry.path)
+                elif entry.name.endswith((".csproj", ".fsproj")):
+                    found.append(entry.path)
+        level = below
+    return sorted(found)
+
+
 def declared_coordinates(workspace_root: str | None) -> list[tuple[str, str, str]]:
-    """(ecosystem, package, version) for every DIRECT coordinate a resolver-written manifest/lockfile
-    on disk currently declares -- read through wsview's own body-knowledge seam
-    (``wsview.current().read(path)``), never the coder's transcript.
+    """(ecosystem, package, version) for every DIRECT coordinate a manifest/lockfile on disk currently declares --
+    read through wsview's own body-knowledge seam (``wsview.current().read(path)``), never the coder's transcript.
+
+    The surface ecosystems (go, rust, ruby, jvm) and the registry-existence ecosystems (npm, pypi, nuget, vcpkg, conan)
+    share this one parser. ``version`` is ``""`` for a name-only claim (see ``_NAME_ONLY``); callers that need an
+    exact version (the surface reads) filter those out.
 
     DIRECT ONLY (independent review B2): a lockfile enumerates the whole transitive graph; every
     ecosystem here is filtered down to what the coder's own manifest names, not what the resolver
@@ -757,12 +916,32 @@ def declared_coordinates(workspace_root: str | None) -> list[tuple[str, str, str
     lock_body = view.read(os.path.join(workspace_root, "Cargo.lock"))
     if toml_body and lock_body:
         out.extend(("rust", pkg, ver) for pkg, ver in _cargo_direct_coordinates(toml_body, lock_body))
+    elif toml_body:
+        pins = _cargo_toml_exact_pins(toml_body)   # no lock: only an explicit `=x.y.z` is a version claim
+        local = set(re.findall(r'^([A-Za-z0-9_-]+)\s*=\s*\{[^}\n]*\b(?:path|git)\s*=', toml_body, re.M))   # not registry crates
+        out.extend(("rust", pkg, pins.get(pkg, _NAME_ONLY)) for pkg in sorted(_cargo_toml_direct_names(toml_body) - local))
     gemfile_lock = view.read(os.path.join(workspace_root, "Gemfile.lock"))
     if gemfile_lock:
         out.extend(("ruby", pkg, ver) for pkg, ver in _gemfile_lock_direct_coordinates(gemfile_lock))
+    else:   # nothing resolved yet: the Gemfile's own `gem` lines (a plain version is the only exact claim)
+        gemfile = view.read(os.path.join(workspace_root, "Gemfile")) or ""
+        out.extend(("ruby", m.group(1), m.group(2) or _NAME_ONLY) for m in re.finditer(
+            r"""^\s*gem\s+['"]([^'"]+)['"](?:\s*,\s*['"]=?\s*(\d[\w.]*)['"])?""", gemfile, re.M))
     pom_body = view.read(os.path.join(workspace_root, "pom.xml"))
     if pom_body:
         out.extend(("jvm", pkg, ver) for pkg, ver in parse_manifest("jvm", pom_body))
+    for name, parser in (("package.json", _parse_package_json), ("requirements.txt", _parse_requirements_txt),
+                         ("pyproject.toml", _parse_pyproject_toml), ("vcpkg.json", _parse_vcpkg_json),
+                         ("conanfile.txt", _parse_conanfile_txt), ("conanfile.py", _parse_conanfile_py)):
+        body = view.read(os.path.join(workspace_root, name))
+        if body:
+            eco = {"package.json": "npm", "requirements.txt": "pypi", "pyproject.toml": "pypi",
+                   "vcpkg.json": "vcpkg", "conanfile.txt": "conan", "conanfile.py": "conan"}[name]
+            out.extend((eco, pkg, ver) for pkg, ver in parser(body))
+    for path in _project_files(view, workspace_root):
+        body = view.read(path)
+        if body:
+            out.extend(("nuget", pkg, ver) for pkg, ver in _parse_csproj(body))
     return out
 
 

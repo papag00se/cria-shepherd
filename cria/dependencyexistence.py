@@ -23,29 +23,21 @@ _MAX_SESSIONS = 256
 
 LABEL = {"pypi": "PyPI", "npm": "npm", "crates": "crates.io", "go": "the Go module proxy", "rubygems": "RubyGems",
          "maven": "Maven Central", "nuget": "NuGet", "vcpkg": "vcpkg", "conan": "Conan Center", "packagist": "Packagist"}
-_ECOSYSTEM_REGISTRY = {"go": "go", "rust": "crates", "ruby": "rubygems", "jvm": "maven"}   # depsurface's names
+_ECOSYSTEM_REGISTRY = {"go": "go", "rust": "crates", "ruby": "rubygems", "jvm": "maven",   # depsurface's names
+                       "npm": "npm", "pypi": "pypi", "nuget": "nuget", "vcpkg": "vcpkg", "conan": "conan"}
 
 _Coord = tuple[str, str, str | None]   # (registry, package, version)
 _CHECKED: dict[str, set[_Coord]] = {}
 NOTES: dict[str, dict[str, str]] = {}   # session -> {tool_call_id: note text}, replayed while the result is in history
 
 
-def _declared_gemfile(root: str) -> list[_Coord]:
-    from . import wsview
-    body = wsview.current().read(os.path.join(root, "Gemfile"))
-    out: list[_Coord] = []
-    for m in re.finditer(r"""^\s*gem\s+['"]([^'"]+)['"](?:\s*,\s*['"]=?\s*(\d[\w.]*)['"])?""", body or "", re.M):
-        out.append(("rubygems", m.group(1), m.group(2)))   # only a plain exact version is a version claim
-    return out
-
-
 def declared(root: str) -> list[_Coord]:
-    """Direct coordinates the manifests on disk declare now."""
+    """Direct coordinates the manifests on disk declare now: cria's one dependency-manifest reader
+    (depsurface.declared_coordinates), mapped onto registries. Its "" version is a name-only claim (a range, a minimum,
+    a git/path source); only an exact version is checked as a version."""
     from . import depsurface
-    out: list[_Coord] = [(_ECOSYSTEM_REGISTRY[eco], pkg, ver) for eco, pkg, ver in depsurface.declared_coordinates(root)
-                         if eco in _ECOSYSTEM_REGISTRY]
-    out += _declared_gemfile(root)
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys((_ECOSYSTEM_REGISTRY[eco], pkg, ver or None)
+                              for eco, pkg, ver in depsurface.declared_coordinates(root) if eco in _ECOSYSTEM_REGISTRY))
 
 
 # A failed install/build that says a package/module/version was not found: (registry, regex with groups package[, version]).

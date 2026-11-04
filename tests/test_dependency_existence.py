@@ -64,3 +64,30 @@ def test_the_assist_is_selected_only_at_level_5():
     from cria import assistruntime, toolstages
     levels = {d.policy.id: d.policy.default_level for d in toolstages.defaults().history}
     assert levels["dependency-existence-note"] == 5
+
+
+def test_declared_dependency_files_beyond_lockfiles_are_read_with_only_exact_pins_as_version_claims(tmp_path):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"left-pad": "1.3.0", "lodash": "^4.17.0",
+                                                                          "local": "file:../x", "gh": "user/repo"}}))
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\nflask>=2\n-e .\n# comment\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = ["httpx[http2]==0.27.0 ; python_version>\'3.8\'"]\n')
+    (tmp_path / "Cargo.toml").write_text('[dependencies]\ntoml = "0.8"\nserde = { version = "=1.0.200" }\nmine = { path = "../m" }\n')
+    (tmp_path / "src" / "App").mkdir(parents=True)
+    (tmp_path / "Gemfile").write_text("source 'https://rubygems.org'\ngem 'eu'\ngem 'rake', '13.2.1'\n")
+    (tmp_path / "src" / "App" / "App.csproj").write_text('<Project><ItemGroup><PackageReference Include="Newtonsoft.Json" Version="13.0.3" />'
+                                         '</ItemGroup></Project>')
+    (tmp_path / "vcpkg.json").write_text(json.dumps({"dependencies": ["fmt", {"name": "spdlog"}]}))
+    (tmp_path / "conanfile.txt").write_text("[requires]\nzlib/1.3.1\n[generators]\nCMakeDeps\n")
+    got = set(de.declared(str(tmp_path)))
+    assert {("npm", "left-pad", "1.3.0"), ("npm", "lodash", None), ("pypi", "requests", "2.31.0"), ("pypi", "flask", None),
+            ("pypi", "httpx", "0.27.0"), ("crates", "toml", None), ("crates", "serde", "1.0.200"),
+            ("nuget", "Newtonsoft.Json", "13.0.3"), ("vcpkg", "fmt", None), ("vcpkg", "spdlog", None),
+            ("conan", "zlib", "1.3.1"), ("rubygems", "eu", None), ("rubygems", "rake", "13.2.1")} <= got
+    assert not {c for c in got if c[1] in ("local", "gh", "mine", "CMakeDeps")}
+
+
+def test_a_declared_npm_package_that_does_not_exist_is_stated_from_the_registry(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies": {"no-such-pkg-cria": "1.0.0"}}')
+    out = request(tmp_path, "n1")
+    assert "No package named `no-such-pkg-cria` exists on npm." in out
+    assert "https://registry.npmjs.org/no-such-pkg-cria" in fake_fetch.calls
