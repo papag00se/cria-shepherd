@@ -1,6 +1,6 @@
 # Battery report
 
-Updated: 2026-11-03 22:15 PST
+Updated: 2026-11-03 23:22 PST
 
 ## L0 — Pure proxy — wire translation only — 44%
 
@@ -14,6 +14,7 @@ Updated: 2026-11-03 22:15 PST
 | ling3.0_tiny | 🔴 22% | 🟡 65% | 🟠 58% | 🟠 50% | 🟡 70% | 🟢 85% | 58% | 14 | 434 | 170.5 |
 | nemotron-elastic | 🔴 15% | 🔴 0% | 🔴 0% | 🔴 8% | 🟠 50% | 🟠 55% | 21% | 6 | 209 | 58.9 |
 | phi4 | 🔴 5% | 🔴 0% | 🔴 0% | 🔴 2% | 🔴 0% | 🔴 20% | 4% | 12 | 106 | 36.0 |
+| **average** | 🔴 28% | 🟠 58% | 🟠 40% | 🔴 27% | 🟠 45% | 🟡 68% | 44% | 10 | 165 | 63.6 |
 
 ## L1 — TOOL_CALL_FIXES — dialect and template repair — 41%
 
@@ -27,6 +28,7 @@ Updated: 2026-11-03 22:15 PST
 | ling3.0_tiny | 🔴 15% | 🟡 70% | 🟠 50% | 🔴 15% | 🟡 72% | 🟢 85% | 51% | 12 | 195 | 106.0 |
 | nemotron-elastic | 🔴 0% | 🔴 10% | 🔴 12% | 🔴 3% | 🔴 0% | 🔴 3% | 5% | 7 | 18 | 116.3 |
 | phi4 | 🔴 8% | · | 🔴 0% | 🔴 2% | 🔴 0% | 🔴 25% | 7% | 9 | 45 | 18.1 |
+| **average** | 🔴 19% | 🔴 34% | 🟠 53% | 🔴 22% | 🟠 57% | 🟠 61% | 41% | 10 | 71 | 55.2 |
 
 ## L2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell — 45%
 
@@ -40,8 +42,9 @@ Updated: 2026-11-03 22:15 PST
 | ling3.0_tiny | 🔴 25% | 🟠 45% | 🟡 70% | 🟠 35% | 🟡 75% | 🟢 85% | 56% | 19 | 335 | 112.0 |
 | nemotron-elastic | 🔴 5% | 🔴 12% | 🔴 25% | 🔴 0% | 🔴 20% | 🟠 60% | 20% | 5 | 14 | 78.0 |
 | phi4 | 🔴 6% | 🔴 6% | · | 🔴 0% | 🔴 18% | 🟠 45% | 15% | 10 | 49 | 18.5 |
+| **average** | 🟠 45% | 🟠 44% | 🟠 59% | 🔴 18% | 🟠 45% | 🟠 62% | 45% | 12 | 99 | 52.1 |
 
-## L3 — CONTEXT_FIXES — floor, trims, dedups, compaction reframing — 43%
+## L3 — CONTEXT_FIXES — floor, trims, dedups, compaction reframing — 44%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
@@ -49,10 +52,11 @@ Updated: 2026-11-03 22:15 PST
 | gemma4_12b | 🔴 20% | 🟡 72% | 🟠 62% | 🟠 52% | 🟡 68% | 🟡 70% | 57% | 8 | 41 | 27.8 |
 | bonsai2 | 🔴 3% | 🔴 3% | 🟡 75% | 🔴 0% | 🟠 55% | 🟢 85% | 37% | 15 | 42 | 31.8 |
 | ling3.0_tiny | 🟠 55% | 🔴 28% | 🟡 65% | 🟠 38% | 🟡 75% | 🟢 88% | 58% | 13 | 174 | 156.6 |
-| nemotron-elastic | 🔴 3% | 🔴 25% | 🔴 0% | 🔴 15% | 🔴 0% | 🟡 78% | 20% | 10 | 23 | 82.4 |
+| nemotron-elastic | 🔴 15% | 🔴 25% | 🔴 0% | 🔴 15% | 🔴 15% | 🟡 78% | 25% | 10 | 21 | 69.0 |
 | phi4 | · | 🔴 5% | 🔴 0% | · | · | · | 2% | 11 | 26 | · |
+| **average** | 🔴 20% | 🟠 36% | 🟠 47% | 🔴 21% | 🟠 60% | 🟡 82% | 44% | 12 | 62 | 66.1 |
 
-## L4 — DONE_REFUSALS_ENABLED — refusing a completion CLAIM — 55%
+## L4 — DONE_REFUSALS_ENABLED — refusing a completion CLAIM — 52%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
@@ -60,9 +64,10 @@ Updated: 2026-11-03 22:15 PST
 | gemma4_12b | 🟠 40% | 🟡 82% | 🟡 72% | 🟠 60% | 🟡 68% | 🟢 85% | 68% | 24 | 77 | 25.2 |
 | bonsai2 | 🟢 88% | 🔴 3% | 🟡 78% | 🔴 0% | 🟡 80% | 🟢 87% | 56% | 21 | 41 | 34.4 |
 | ling3.0_tiny | 🔴 12% | 🟠 40% | 🟠 55% | 🔴 30% | 🟡 75% | 🟢 85% | 50% | 22 | 199 | 105.4 |
-| nemotron-elastic | 🟠 40% | 🔴 18% | 🔴 28% | 🔴 22% | 🟠 55% | 🟠 60% | 37% | 23 | 62 | 65.8 |
+| nemotron-elastic | 🔴 3% | 🔴 25% | 🔴 10% | 🔴 0% | 🟠 35% | 🟠 55% | 21% | 16 | 36 | 37.8 |
+| **average** | 🟠 46% | 🟠 46% | 🟠 54% | 🔴 18% | 🟡 69% | 🟡 80% | 52% | 21 | 89 | 49.8 |
 
-## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 50%
+## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 49%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
@@ -72,7 +77,8 @@ Updated: 2026-11-03 22:15 PST
 | gemma4_12b | 🔴 22% | 🟢 85% | 🟡 78% | 🟠 62% | 🟡 70% | 🟢 85% | 67% | 18 | 45 | 25.6 |
 | bonsai2 | 🔴 4% | 🔴 3% | 🟡 78% | 🔴 4% | 🟡 80% | 🟢 87% | 43% | 18 | 36 | 26.8 |
 | ling3.0_tiny | 🔴 20% | 🔴 20% | 🟡 70% | 🔴 6% | 🟡 70% | 🟡 70% | 43% | 18 | 115 | 131.4 |
-| nemotron-elastic | 🔴 20% | 🔴 28% | 🟡 72% | 🔴 28% | 🟠 45% | 🔴 20% | 36% | 17 | 82 | 76.7 |
+| nemotron-elastic | 🔴 8% | 🔴 8% | 🟡 72% | 🔴 28% | 🟠 45% | 🔴 20% | 30% | 15 | 70 | 69.5 |
 | phi4 | 🔴 5% | 🔴 5% | 🔴 0% | 🔴 4% | 🔴 0% | 🔴 0% | 2% | 37 | 188 | 56.5 |
+| **average** | 🟠 37% | 🟠 40% | 🟠 62% | 🔴 28% | 🟠 60% | 🟡 67% | 49% | 26 | 108 | 66.9 |
 
 Legend: 🟢 ≥85% · 🟡 ≥65% · 🟠 ≥35% · 🔴 <35%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently inference-judged usefulness; averages include judged zeros, exclude failed/unjudged attempts.

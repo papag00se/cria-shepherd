@@ -16,7 +16,7 @@ def result(model, level, scores, **extra):
 
 
 def tables(text):
-    return [[l.split("|")[1].strip() for l in s.splitlines() if l.startswith("| ") and not l.startswith("| model |")]
+    return [[l.split("|")[1].strip() for l in s.splitlines() if l.startswith("| ") and not l.startswith(("| model |", "| **average** |"))]
             for s in re.split(r"(?=^## L[0-5] \u2014 )", text, flags=re.M)[1:]]
 
 

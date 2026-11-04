@@ -211,6 +211,15 @@ def report(rs: list[dict], now: float | None = None) -> str:
             known = [p for p in cells if p is not None]
             out.append("| " + " | ".join([model, *map(_dot, cells), f"{_mean(known)}%",
                        *("\u00b7" if v is None else str(v) for v in (minutes, calls, rate))]) + " |")
+        if table:
+            # Column averages: each task over the models scored on it; avg pct over every scored cell (the
+            # level figure in the heading); the metric columns over the models that have them.
+            values = list(table.values())
+            columns = [_mean([v[0][i] for v in values if v[0][i] is not None]) for i in range(len(tasks))]
+            metrics = [_mean([v[k] for v in values if v[k] is not None], digits=1 if k == 3 else None)
+                       for k in (1, 2, 3)]
+            out.append("| **average** | " + " | ".join([*map(_dot, columns), f"{_mean(scores) or 0}%",
+                       *("\u00b7" if v is None else str(v) for v in metrics)]) + " |")
         out.append("")
     return "\n".join(out) + "\n" + LEGEND + "\n"
 
