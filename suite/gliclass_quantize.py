@@ -22,21 +22,52 @@ def inventory(model):
 
 
 def normalize_linear_layers(model):
-    import onnxoptimizer
-    from onnxruntime.quantization.onnx_model import ONNXModel
-    # The published graph shares relative-attention projections through Identity
-    # aliases. Static MatMul quantization otherwise retains their FP32 originals.
-    model = onnxoptimizer.optimize(model, ['eliminate_identity'])
-    normalized = ONNXModel(model)
-    normalized.replace_gemm_with_matmul()
-    normalized.clean_initializers()
-    if any(n.op_type == 'Gemm' for n in model.graph.node):
-        raise ValueError('Gemm normalization incomplete')
+    import copy
+    import tempfile
     import onnx
-    # GatherBlockQuantized requires opset 21. The quantizer raises the header
-    # without migrating older operators (e.g. ReduceMax's axes attribute).
-    # Run the standard semantic version conversion before that wire change.
-    return onnx.version_converter.convert_version(normalized.model, 21)
+    import onnxoptimizer
+    from onnx.external_data_helper import load_external_data_for_model, load_external_data_for_tensor, uses_external_data
+    from onnxruntime.quantization.onnx_model import ONNXModel
+
+    def materialize_gemm_weights(graph, parents):
+        scope = {**parents, **{tensor.name: tensor for tensor in graph.initializer}}
+        for node in graph.node:
+            # ORT's Gemm normalization transposes constant B in place. Only
+            # those matrices need their values during the graph-only passes.
+            if node.op_type == 'Gemm' and node.input[1] in scope:
+                tensor = scope[node.input[1]]
+                if uses_external_data(tensor):
+                    load_external_data_for_tensor(tensor, folder)
+            for attr in node.attribute:
+                if attr.type == onnx.AttributeProto.GRAPH:
+                    materialize_gemm_weights(attr.g, scope)
+                elif attr.type == onnx.AttributeProto.GRAPHS:
+                    for subgraph in attr.graphs:
+                        materialize_gemm_weights(subgraph, scope)
+
+    # The optimizer and version converter each serialize/copy the whole proto.
+    # Carry external weight references through those graph-only transformations
+    # instead of making several simultaneous copies of a multi-GB checkpoint.
+    # Externalization mutates TensorProtos. Keep the caller's source usable;
+    # one private copy is bounded, unlike every C++ pass copying all weights.
+    model = copy.deepcopy(model)
+    with tempfile.TemporaryDirectory(prefix='gliclass-normalize-', dir=os.environ.get('TMPDIR', '/var/tmp')) as folder:
+        onnx.save_model(model, Path(folder) / 'graph.onnx', save_as_external_data=True,
+                        all_tensors_to_one_file=True, location='weights.data', size_threshold=0)
+        # Eliminate aliases of shared relative-attention projections, or their
+        # FP32 originals survive static MatMul quantization.
+        model = onnxoptimizer.optimize(model, ['eliminate_identity'])
+        materialize_gemm_weights(model.graph, {})
+        normalized = ONNXModel(model)
+        normalized.replace_gemm_with_matmul()
+        normalized.clean_initializers()
+        if any(n.op_type == 'Gemm' for n in model.graph.node):
+            raise ValueError('Gemm normalization incomplete')
+        # GatherBlockQuantized needs opset 21; migrate operator semantics rather
+        # than merely changing the header (e.g. ReduceMax's axes attribute).
+        converted = onnx.version_converter.convert_version(normalized.model, 21)
+        load_external_data_for_model(converted, folder)
+        return converted
 
 
 def validate_native_manifest(root):
