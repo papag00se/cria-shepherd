@@ -109,7 +109,8 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
                 current[slot] = {'slot':slot, 'id':identifier, 'split':split, 'family':group['family'],
                                  'group':group['group'], 'language':language, 'label':label,
                                  'defect':group.get('defect', 'unspecified'),
-                                 'source':'synthetic-hand-authored', 'state':state,
+                                 'source':'synthetic-hand-authored', 'origin':old.get('origin', 'unrecorded') if old else origin,
+                                 'state':state,
                                  'seed_files':group['seed_files'], 'snapshot':snapshot,
                                  'rationale':group['rationale'], 'verifiers':group['checks'], 'results':results}
             # Periodically retain completed checks without rewriting the whole dataset for every group.
@@ -124,7 +125,7 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
     write_jsonl(out / 'evidence.jsonl', records)
     write_jsonl(out / 'quarantine-evidence.jsonl', quarantined_records)
     rows = [{'id':r['id'], 'split':r['split'], 'family':r['family'], 'group':r['group'],
-             'language':r['language'], 'label':r['label'], 'source':r['source'], 'defect':r['defect'],
+             'language':r['language'], 'label':r['label'], 'source':r['source'], 'origin':r.get('origin', 'unrecorded'), 'defect':r['defect'],
              'requirement':r['state']['requirement'], 'evidence':r['state']['workspace_changes']}
             for r in records]
     write_jsonl(out / 'dataset.jsonl', rows)
@@ -173,7 +174,7 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
     report = {'rows_by_split':dict(Counter(r['split'] for r in records)),
               'fixture_outcomes_by_split_label':{split:{label:dict(fixture_outcomes[(split, label)])
                   for label in LABELS} for split in sorted({r['split'] for r in records})},
-              'groups_by_split':{s:len({r['group'] for r in records if r['split']==s}) for s in sorted({r['split'] for r in records})},
+              'groups_by_split':{s:len({(r['family'], r['group']) for r in records if r['split']==s}) for s in sorted({r['split'] for r in records})},
               'families_by_split':{s:len({r['family'] for r in records if r['split']==s}) for s in sorted({r['split'] for r in records})},
               'family_inventory':{split:{family:{'rows':family_rows[(split, family)], 'groups':len(groups)}
                   for (s, family), groups in sorted(family_groups.items()) if s == split}
@@ -181,6 +182,7 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
               'labels_by_split':{s:dict(Counter(r['label'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
               'languages_by_split':{s:dict(Counter(r['language'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
               'sources_by_split':{s:dict(Counter(r['source'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
+              'origins_by_split':{s:dict(Counter(r.get('origin', 'unrecorded') for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
               'defects_by_split':{s:dict(Counter(r['defect'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
               'rendered_character_medians':{s:{label:statistics.median([len(render_text(r['state'])) for r in records if r['split']==s and r['label']==label]) for label in LABELS if any(r['split']==s and r['label']==label for r in records)} for s in sorted({r['split'] for r in records})},
               'checks_executed_this_run':run_checks, 'checks_reused_this_run':reused_checks,
