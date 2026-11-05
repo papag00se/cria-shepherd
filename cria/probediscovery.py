@@ -1372,7 +1372,9 @@ def _node_dependency_tool(p: ProjectDir) -> tuple[str, list[str]] | None:
             # npm and yarn parse flags placed after the tool as their own (verified: knip received no
             # `--dependencies`); `--` hands them to the tool. pnpm passes them through unchanged.
             sep = ["--"] if flags and pm in ("npm", "yarn") else []
-            return tool, [pm, "exec", tool, *sep, *flags]
+            # npm exec otherwise downloads a declared but missing checker at gate time.
+            no_install = ["--no"] if pm == "npm" else []
+            return tool, [pm, "exec", *no_install, tool, *sep, *flags]
         if toolpath.resolved(tool):
             return tool, [toolpath.resolved(tool), *flags]
     return None
