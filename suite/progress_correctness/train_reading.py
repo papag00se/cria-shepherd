@@ -5,8 +5,8 @@ GROUPS = []
 FAMILY = 'train-research-reading-queue'
 
 
-def add(name, requirement, seed, done, partial, ns, checks, rationale):
-    GROUPS.append({'split':'train','family':FAMILY,'group':FAMILY+'/'+name,'language':'Python',
+def add(name, requirement, seed, done, partial, ns, checks, rationale, defect):
+    GROUPS.append({'split':'train','family':FAMILY,'group':FAMILY+'/'+name,'language':'Python','defect':defect,
                    'requirement':requirement,'seed_files':seed,
                    'snapshots':{'DONE':done,'PARTIAL':partial,'NOT_STARTED':ns},
                    'checks':[{'name':n,'argv':[sys.executable,'-c',program],'files':{},'timeout_seconds':20} for n,program in checks],
@@ -67,7 +67,7 @@ else: raise AssertionError('missing title')
 from pathlib import Path
 from library import mark_read
 p=Path('q.json');p.write_text(json.dumps({'queue':['A'],'read':['A']})); assert mark_read(p,'A')=={'queue':[],'read':['A']}; assert json.loads(p.read_text())=={'queue':[],'read':['A']}
-''')], 'The partial persists the queue transition and rejects unknown titles but duplicates a title already in reading history.')
+''')], 'The partial persists the queue transition and rejects unknown titles but duplicates a title already in reading history.', 'persistence')
 
 seed = '''def citations(entries):
     return []
@@ -96,4 +96,4 @@ add('citation-list', 'Implement citations(entries) in citation.py. entries is a 
 a=[{'author':'Ada','title':'Proof','year':2024},{'author':'Ada','title':'Proof','year':2024}]; assert citations(a)==['Ada. Proof (2024)','Ada. Proof (2024)'] and len(a)==2 and citations([])==[]
 '''), ('trim-boundaries', '''from citation import citations
 a=[{'author':' Ada ','title':' Deep  Study ','year':2024}]; assert citations(a)==['Ada. Deep  Study (2024)'] and a[0]['title']==' Deep  Study '
-''')], 'The partial preserves order and duplicates but does not trim the requested fields.')
+''')], 'The partial preserves order and duplicates but does not trim the requested fields.', 'normalization')

@@ -157,9 +157,27 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
         if options:
             score, candidate = max(options)
             near.append({'dev_id':r['id'], 'train_candidate_id':candidate, 'score':score})
+    fixture_outcomes = defaultdict(Counter)
+    family_rows = Counter()
+    family_groups = defaultdict(set)
+    for r in records:
+        key = (r['split'], r['family'])
+        family_rows[key] += 1
+        family_groups[key].add(r['group'])
+        for result in r['results'].values():
+            status = ('timeout' if result.get('timeout') else
+                      'unavailable' if result.get('unavailable') else
+                      'missing-returncode' if result['returncode'] is None else
+                      'passed' if result['returncode'] == 0 else 'nonzero')
+            fixture_outcomes[(r['split'], r['label'])][status] += 1
     report = {'rows_by_split':dict(Counter(r['split'] for r in records)),
+              'fixture_outcomes_by_split_label':{split:{label:dict(fixture_outcomes[(split, label)])
+                  for label in LABELS} for split in sorted({r['split'] for r in records})},
               'groups_by_split':{s:len({r['group'] for r in records if r['split']==s}) for s in sorted({r['split'] for r in records})},
               'families_by_split':{s:len({r['family'] for r in records if r['split']==s}) for s in sorted({r['split'] for r in records})},
+              'family_inventory':{split:{family:{'rows':family_rows[(split, family)], 'groups':len(groups)}
+                  for (s, family), groups in sorted(family_groups.items()) if s == split}
+                  for split in sorted({r['split'] for r in records})},
               'labels_by_split':{s:dict(Counter(r['label'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
               'languages_by_split':{s:dict(Counter(r['language'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
               'sources_by_split':{s:dict(Counter(r['source'] for r in records if r['split']==s)) for s in sorted({r['split'] for r in records})},
