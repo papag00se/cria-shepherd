@@ -39,7 +39,8 @@ def load_jsonl(path: Path) -> list[dict]:
 def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: list[Path], pilot_path: Path | None,
              spec_paths: list[Path], author_evidence_paths: list[Path], similarity: bool) -> dict:
     out.mkdir(parents=True, exist_ok=True)
-    existing = {r['slot']: r for r in load_jsonl(out / 'evidence.jsonl')}
+    existing = {r['slot']: r for r in load_jsonl(out / 'quarantine-evidence.jsonl')}
+    existing.update({r['slot']: r for r in load_jsonl(out / 'evidence.jsonl')})
     for batch in import_batches:
         source_rows = {r['id']: r for r in load_jsonl(batch / 'dataset.jsonl')}
         counts = Counter()
@@ -117,9 +118,11 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
                 checkpoint = {**existing, **current}
                 write_jsonl(out / 'evidence.jsonl', list(checkpoint.values()))
     # Omitted sources are retained; explicit exclusions remove them from this view.
-    records = [r for r in {**existing, **current}.values()
-               if f"{r['split']}/{r['group']}" not in exclude]
+    merged = list({**existing, **current}.values())
+    records = [r for r in merged if f"{r['split']}/{r['group']}" not in exclude]
+    quarantined_records = [r for r in merged if f"{r['split']}/{r['group']}" in exclude]
     write_jsonl(out / 'evidence.jsonl', records)
+    write_jsonl(out / 'quarantine-evidence.jsonl', quarantined_records)
     rows = [{'id':r['id'], 'split':r['split'], 'family':r['family'], 'group':r['group'],
              'language':r['language'], 'label':r['label'], 'source':r['source'], 'defect':r['defect'],
              'requirement':r['state']['requirement'], 'evidence':r['state']['workspace_changes']}
@@ -182,11 +185,15 @@ if __name__ == '__main__':
     p.add_argument('--module', action='append', default=[])
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--exclude', action='append', default=[])
+    p.add_argument('--include', action='append', default=[], help='restore a previously quarantined group')
     p.add_argument('--import-batch', action='append', default=[], type=Path, help='reuse prior fixture outputs when initializing')
     p.add_argument('--compare-pilot', type=Path, help='reviewed TRAIN pilot JSONL only')
     p.add_argument('--similarity', action='store_true', help='measure cross-split lexical review candidates')
     p.add_argument('--spec', action='append', default=[], type=Path, help='author-private non-TEST group JSON')
     p.add_argument('--author-evidence', action='append', default=[], type=Path, help='matching previously executed author evidence JSONL')
     a = p.parse_args()
-    print(json.dumps(maintain(a.module, a.out, set(a.exclude), a.import_batch, a.compare_pilot,
+    prior_report = a.out / 'report.json'
+    quarantined = set(json.loads(prior_report.read_text(encoding='utf-8')).get('quarantined_group_ids', [])) if prior_report.exists() else set()
+    quarantined = (quarantined | set(a.exclude)) - set(a.include)
+    print(json.dumps(maintain(a.module, a.out, quarantined, a.import_batch, a.compare_pilot,
                               a.spec, a.author_evidence, a.similarity), indent=2))
