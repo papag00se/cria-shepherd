@@ -160,7 +160,10 @@ GROUPS.extend([
 
 def case(family, group, requirement, seed, done, partial, unchanged, rationale, probes):
     """A separate complete workspace per snapshot; probes are independently authored."""
-    return {'family': 'community-' + family + '-v1', 'group': group,
+    family_ids = {'foodbank-expiry': 'food-bank-expiry',
+                  'bike-maintenance': 'train-bicycle-maintenance',
+                  'specimen-custody': 'train-lab-custody'}
+    return {'family': family_ids.get(family, 'community-' + family + '-v1'), 'group': group,
             'requirement': requirement, 'seed_files': seed,
             'snapshots': {'DONE': done, 'PARTIAL': partial, 'NOT_STARTED': unchanged},
             'rationale': rationale, 'checks': [check(name, source) for name, source in probes]}
@@ -678,6 +681,202 @@ def inaccessible(route):
              ('describe', "from routes import describe\na=[{'name':'A','step_free':False},{'name':'B','step_free':True}]; assert describe(a)=='A -> B' and describe([])=='' and a[0]['name']=='A'"),
              ('inaccessible-duplicates', "from routes import inaccessible\na=[{'name':'A','step_free':False},{'name':'B','step_free':True},{'name':'A','step_free':False}]; assert inaccessible(a)==['A','A'] and inaccessible([])==[]"),
          ]),
+])
+
+
+GROUPS.extend([
+    case('roomledger', 'room-monthly-quota',
+        "In quotas.py implement count_month(bookings, member, month): bookings is a list of dictionaries with string member and month keys. Return the number for the exact member and month, counting duplicate entries. Implement may_book(bookings, member, month, limit), where limit is a nonnegative integer: return true precisely when that count is less than limit. Do not change the bookings or their dictionaries.",
+        {'quotas.py': 'def count_month(bookings, member, month):\n    return 0\n\ndef may_book(bookings, member, month, limit):\n    return False\n'},
+        {'quotas.py': "def count_month(bookings, member, month):\n    return sum(1 for b in bookings if b['member'] == member and b['month'] == month)\n\ndef may_book(bookings, member, month, limit):\n    return count_month(bookings, member, month) < limit\n"},
+        {'quotas.py': "def count_month(bookings, member, month):\n    matches = [b for b in bookings if b['member'] == member and b['month'] == month]\n    return len(matches)\n\ndef may_book(bookings, member, month, limit):\n    return count_month(bookings, member, month) <= limit\n"},
+        {'quotas.py': 'def count_month(bookings, member, month):\n    return 0\n\ndef may_book(bookings, member, month, limit):\n    return False\n\ndef members(bookings):\n    return sorted({b["member"] for b in bookings})\n'},
+        'The partial counts exact monthly usage and permits bookings below the limit, but incorrectly permits one at the limit.', [
+            ('count-and-below-limit', "from quotas import count_month,may_book\nb=[{'member':'A','month':'May'},{'member':'A','month':'May'},{'member':'B','month':'May'},{'member':'A','month':'June'}]\nassert count_month(b,'A','May')==2 and may_book(b,'A','May',3) and count_month(b,'B','June')==0\nassert len(b)==4"),
+            ('at-limit', "from quotas import may_book\nb=[{'member':'A','month':'May'}]\nassert not may_book(b,'A','May',1) and not may_book([], 'A','May',0)"),
+        ]),
+    case('rosterboard', 'roster-checkin-ruby',
+        "In checkin.rb define check_in(roster, name) and present(roster). roster maps volunteer names to booleans. check_in returns a fresh hash setting an existing name to true; raise ArgumentError when absent and do not mutate roster. present returns names whose values are true in alphabetical order. Names are strings and comparisons are case-sensitive.",
+        {'checkin.rb': "def check_in(roster, name)\n  roster.dup\nend\ndef present(roster)\n  []\nend\n"},
+        {'checkin.rb': "def check_in(roster, name)\n  raise ArgumentError unless roster.key?(name)\n  roster.merge(name => true)\nend\ndef present(roster)\n  roster.keys.select { |n| roster[n] }.sort\nend\n"},
+        {'checkin.rb': "def check_in(roster, name)\n  roster.merge(name => true)\nend\ndef present(roster)\n  roster.keys.select { |n| roster[n] }.sort\nend\n"},
+        {'checkin.rb': "def check_in(roster, name)\n  roster.dup\nend\ndef present(roster)\n  []\nend\n"},
+        'Partial checks in known volunteers and correctly reports sorted attendance, but silently adds unknown names.', [
+            ('checkin-and-report', "import subprocess,sys\ncode=\"r={'Z'=>true,'A'=>false}; n=check_in(r,'A'); abort unless n=={'Z'=>true,'A'=>true} && r['A']==false && present(n)==['A','Z']\"\np=subprocess.run(['ruby','-r','./checkin','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('unknown-rejected', "import subprocess,sys\ncode=\"begin; check_in({'A'=>false},'B'); abort; rescue ArgumentError; end\"\np=subprocess.run(['ruby','-r','./checkin','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
+    case('toolcrib', 'tool-kit-return-audit',
+        "In kits.py implement missing(expected, returned) and verify(expected, returned). Each input is a list of component-name strings, with repeated names representing separate items. missing returns a list containing each shortfall in expected order: consume one returned occurrence per expected occurrence and include unmatched expected occurrences. Extra returned items are ignored. verify returns true exactly when there are no missing components. Do not mutate the inputs.",
+        {'kits.py': 'def missing(expected, returned):\n    return []\n\ndef verify(expected, returned):\n    return False\n'},
+        {'kits.py': "from collections import Counter\ndef missing(expected, returned):\n    available = Counter(returned)\n    result = []\n    for item in expected:\n        if available[item]:\n            available[item] -= 1\n        else:\n            result.append(item)\n    return result\n\ndef verify(expected, returned):\n    return not missing(expected, returned)\n"},
+        {'kits.py': "def missing(expected, returned):\n    return [item for item in expected if item not in returned]\n\ndef verify(expected, returned):\n    return not missing(expected, returned)\n"},
+        {'kits.py': 'def missing(expected, returned):\n    return []\n\ndef verify(expected, returned):\n    return False\n'},
+        'Partial handles distinct missing components, ignores extras and provides verification, but treats a single returned component as satisfying all duplicate expected components.', [
+            ('distinct-parts', "from kits import missing,verify\ne=['saw','key','case']; r=['case','saw','extra']\nassert missing(e,r)==['key'] and not verify(e,r) and verify(['saw'],['saw','extra']) and e==['saw','key','case']"),
+            ('duplicate-parts', "from kits import missing,verify\ne=['bit','bit','case','bit']; r=['bit','case']; assert missing(e,r)==['bit','bit'] and not verify(e,r) and r==['bit','case']"),
+        ]),
+    case('gardenplots', 'garden-dues-receivable',
+        "In dues.py implement balances(charges, payments): both are dictionaries mapping member names to nonnegative integer cents. Return a new dictionary with every name from either input and the amount owed, max(0, charge minus payment), treating a missing entry as zero. Implement overdue(charges, payments) returning sorted names with a positive balance. Do not mutate the inputs.",
+        {'dues.py': 'def balances(charges, payments):\n    return {}\n\ndef overdue(charges, payments):\n    return []\n'},
+        {'dues.py': "def balances(charges, payments):\n    return {name: max(0, charges.get(name, 0) - payments.get(name, 0)) for name in charges.keys() | payments.keys()}\n\ndef overdue(charges, payments):\n    return sorted(name for name, balance in balances(charges, payments).items() if balance > 0)\n"},
+        {'dues.py': "def balances(charges, payments):\n    result = {}\n    for name in charges.keys() | payments.keys():\n        result[name] = max(0, charges.get(name, 0) - payments.get(name, 0))\n    return result\n\ndef overdue(charges, payments):\n    return sorted(name for name, balance in balances(charges, payments).items() if balance >= 0)\n"},
+        {'dues.py': 'def balances(charges, payments):\n    return {}\n\ndef overdue(charges, payments):\n    return []\n\ndef total_charges(charges):\n    return sum(charges.values())\n'},
+        'Partial computes the entire balance map, including payment-only names, but the overdue report also includes zero balances.', [
+            ('balances', "from dues import balances\nc={'A':100,'B':20}; p={'A':30,'B':25,'C':7}\nassert balances(c,p)=={'A':70,'B':0,'C':0} and c=={'A':100,'B':20} and p['C']==7"),
+            ('overdue', "from dues import overdue\nassert overdue({'Z':100,'A':0,'B':10},{'B':10})==['Z'] and overdue({}, {})==[]"),
+        ]),
+    case('accessmap', 'access-hours-js',
+        "In opening.js export isOpen(venue, minute) and openNames(venues, minute). Each venue has string name and integer open and close values with open <= close; minute is an integer. A venue is open exactly within the half-open interval [open, close). openNames returns matching names in input order, including duplicates. Do not mutate the inputs. Use CommonJS module.exports.",
+        {'opening.js': 'exports.isOpen = () => false;\nexports.openNames = () => [];\n'},
+        {'opening.js': "function isOpen(venue, minute) { return venue.open <= minute && minute < venue.close; }\nfunction openNames(venues, minute) { return venues.filter(v => isOpen(v, minute)).map(v => v.name); }\nmodule.exports = {isOpen, openNames};\n"},
+        {'opening.js': "function isOpen(venue, minute) { return venue.open <= minute && minute <= venue.close; }\nfunction openNames(venues, minute) { return venues.filter(v => isOpen(v, minute)).map(v => v.name); }\nmodule.exports = {isOpen, openNames};\n"},
+        {'opening.js': 'exports.isOpen = () => false;\nexports.openNames = () => [];\n'},
+        'Partial returns ordinary open venues in input order, but treats the closing endpoint as inclusive.', [
+            ('ordinary-open', "import subprocess,sys\ncode=\"const a=require('assert'),m=require('./opening'); let vs=[{name:'A',open:1,close:5},{name:'A',open:2,close:4},{name:'B',open:5,close:8}]; a.equal(m.isOpen(vs[0],1),true); a.deepEqual(m.openNames(vs,3),['A','A']); a.equal(vs[0].open,1);\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('closing-endpoint', "import subprocess,sys\ncode=\"const a=require('assert'),m=require('./opening'); a.equal(m.isOpen({name:'A',open:1,close:5},5),false); a.equal(m.isOpen({name:'E',open:2,close:2},2),false);\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
+])
+
+
+def tagged(defect, *args):
+    group = case(*args)
+    group['defect'] = defect
+    return group
+
+
+GROUPS.extend([
+    tagged('boundary', 'roomledger', 'room-calendar-closures',
+        "In calendar_days.py implement open_days(start, end, closed): start and end are ISO YYYY-MM-DD strings with start <= end, and closed is a collection of ISO date strings. Return ISO dates from start through end inclusive, in order, excluding Saturday, Sunday, and dates in closed. Also implement next_open(start, end, closed), returning the first open date in that range or None. Use the Gregorian calendar and do not mutate closed.",
+        {'calendar_days.py': 'def open_days(start, end, closed):\n    return []\n\ndef next_open(start, end, closed):\n    return None\n'},
+        {'calendar_days.py': "from datetime import date, timedelta\ndef open_days(start, end, closed):\n    day, last = date.fromisoformat(start), date.fromisoformat(end)\n    result = []\n    while day <= last:\n        text = day.isoformat()\n        if day.weekday() < 5 and text not in closed:\n            result.append(text)\n        day += timedelta(days=1)\n    return result\n\ndef next_open(start, end, closed):\n    days = open_days(start, end, closed)\n    return days[0] if days else None\n"},
+        {'calendar_days.py': "from datetime import date, timedelta\ndef open_days(start, end, closed):\n    day, last = date.fromisoformat(start), date.fromisoformat(end)\n    result = []\n    while day < last:\n        text = day.isoformat()\n        if day.weekday() < 5 and text not in closed:\n            result.append(text)\n        day += timedelta(days=1)\n    return result\n\ndef next_open(start, end, closed):\n    days = open_days(start, end, closed)\n    return days[0] if days else None\n"},
+        {'calendar_days.py': 'def open_days(start, end, closed):\n    return []\n\ndef next_open(start, end, closed):\n    return None\n'},
+        'Partial generates dates and excludes weekends and closures, but omits the inclusive end date.', [
+            ('weekends-and-closures', "from calendar_days import open_days,next_open\nc=['2025-03-03']; assert open_days('2025-02-28','2025-03-09',c)==['2025-02-28','2025-03-04','2025-03-05','2025-03-06','2025-03-07']\nassert next_open('2025-03-01','2025-03-09',c)=='2025-03-04' and c==['2025-03-03']"),
+            ('single-day-end', "from calendar_days import open_days,next_open\nassert open_days('2024-02-29','2024-02-29',[])==['2024-02-29'] and next_open('2024-02-29','2024-02-29',[])=='2024-02-29'"),
+        ]),
+    tagged('validation', 'rosterboard', 'roster-training-credentials',
+        "In credentials.py implement valid_on(records, person, day) and qualified(records, people, day). Records is a list of dictionaries with person and integer expires keys; a person is valid when any of their records expires on or after integer day. qualified returns the valid names from people, preserving order and duplicates. Names compare case-sensitively. Do not modify either input.",
+        {'credentials.py': 'def valid_on(records, person, day):\n    return False\n\ndef qualified(records, people, day):\n    return []\n'},
+        {'credentials.py': "def valid_on(records, person, day):\n    return any(r['person'] == person and r['expires'] >= day for r in records)\n\ndef qualified(records, people, day):\n    return [person for person in people if valid_on(records, person, day)]\n"},
+        {'credentials.py': "def valid_on(records, person, day):\n    for record in records:\n        if record['person'] == person:\n            return record['expires'] >= day\n    return False\n\ndef qualified(records, people, day):\n    return [name for name in people if valid_on(records, name, day)]\n"},
+        {'credentials.py': 'def valid_on(records, person, day):\n    return False\n\ndef qualified(records, people, day):\n    return []\n\ndef credential_count(records):\n    return len(records)\n'},
+        'Partial correctly evaluates single credentials and filters people, but returns the first matching expiry even if a later credential is valid.', [
+            ('ordinary', "from credentials import valid_on,qualified\nr=[{'person':'Lee','expires':7},{'person':'Bo','expires':3}]\nassert valid_on(r,'Lee',7) and not valid_on(r,'Bo',7) and qualified(r,['Lee','Bo','Lee'],7)==['Lee','Lee']"),
+            ('multiple-records', "from credentials import valid_on,qualified\nr=[{'person':'Lee','expires':3},{'person':'Lee','expires':9}]\nassert valid_on(r,'Lee',7) and qualified(r,['Lee'],7)==['Lee']"),
+        ]),
+    tagged('persistence', 'toolcrib', 'tool-loss-writeoff',
+        "In loss.py implement write_off(path, tool, count): path names an existing UTF-8 JSON object mapping tool names to nonnegative integer stock counts. count is a positive integer. If tool is absent or count exceeds its stock, raise ValueError without writing the file; otherwise subtract count, persist the updated object to path and return it. Keep zero-count tools in the object. Also implement total_stock(path), returning the sum of all counts in the file.",
+        {'loss.py': 'def write_off(path, tool, count):\n    return {}\n\ndef total_stock(path):\n    return 0\n'},
+        {'loss.py': "import json\ndef write_off(path, tool, count):\n    with open(path, encoding='utf-8') as f:\n        stock = json.load(f)\n    if tool not in stock or count > stock[tool]:\n        raise ValueError('unavailable')\n    stock[tool] -= count\n    with open(path, 'w', encoding='utf-8') as f:\n        json.dump(stock, f)\n    return stock\n\ndef total_stock(path):\n    with open(path, encoding='utf-8') as f:\n        return sum(json.load(f).values())\n"},
+        {'loss.py': "import json\ndef write_off(path, tool, count):\n    with open(path, encoding='utf-8') as f:\n        stock = json.load(f)\n    if tool not in stock or count > stock[tool]:\n        raise ValueError('unavailable')\n    stock[tool] -= count\n    if stock[tool] == 0:\n        del stock[tool]\n    with open(path, 'w', encoding='utf-8') as f:\n        json.dump(stock, f)\n    return stock\n\ndef total_stock(path):\n    with open(path, encoding='utf-8') as f:\n        return sum(json.load(f).values())\n"},
+        {'loss.py': 'def write_off(path, tool, count):\n    return {}\n\ndef total_stock(path):\n    return 0\n'},
+        'Partial validates and persists ordinary stock reductions and reads the total, but deletes the key when the remaining count reaches zero.', [
+            ('ordinary-and-errors', "import json\nfrom pathlib import Path\nfrom loss import write_off,total_stock\np=Path('stock.json'); p.write_text('{\"saw\":3,\"drill\":1}')\nassert write_off(p,'saw',1)=={'saw':2,'drill':1} and total_stock(p)==3\nbefore=p.read_text()\nfor tool,count in [('saw',3),('missing',1)]:\n try: write_off(p,tool,count)\n except ValueError: pass\n else: raise AssertionError(tool)\n assert p.read_text()==before"),
+            ('keep-zero', "import json\nfrom pathlib import Path\nfrom loss import write_off\np=Path('stock.json'); p.write_text('{\"saw\":1}')\nassert write_off(p,'saw',1)=={'saw':0} and json.loads(p.read_text())=={'saw':0}"),
+        ]),
+    tagged('boundary', 'gardenplots', 'garden-compost-alert-ruby',
+        "In compost.rb define alert(readings, threshold) and latest(readings). readings is an array of hashes with string keys 'day' and 'temperature'; day and temperature are integers, and days are unique. latest returns the reading with the greatest day, or nil for an empty array. alert returns true exactly when a latest reading exists and its temperature is strictly greater than threshold. Neither function modifies readings.",
+        {'compost.rb': "def latest(readings)\n  nil\nend\ndef alert(readings, threshold)\n  false\nend\n"},
+        {'compost.rb': "def latest(readings)\n  readings.max_by { |r| r['day'] }\nend\ndef alert(readings, threshold)\n  r = latest(readings)\n  !r.nil? && r['temperature'] > threshold\nend\n"},
+        {'compost.rb': "def latest(readings)\n  readings.max_by { |r| r['day'] }\nend\ndef alert(readings, threshold)\n  r = latest(readings)\n  !r.nil? && r['temperature'] >= threshold\nend\n"},
+        {'compost.rb': "def latest(readings)\n  nil\nend\ndef alert(readings, threshold)\n  false\nend\n"},
+        'Partial selects the latest day and reports ordinary threshold exceedance, but alerts when temperature equals the threshold.', [
+            ('latest-and-alert', "import subprocess,sys\ncode=\"a=[{'day'=>4,'temperature'=>65},{'day'=>1,'temperature'=>90}]; abort unless latest(a)==a[0] && alert(a,60) && !alert([],60) && a[1]['temperature']==90\"\np=subprocess.run(['ruby','-r','./compost','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('equal-threshold', "import subprocess,sys\ncode=\"abort if alert([{'day'=>1,'temperature'=>60}],60)\"\np=subprocess.run(['ruby','-r','./compost','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
+    tagged('integration', 'accessmap', 'access-feature-intersection',
+        "In common.py implement common_features(venues): venues is a list of dictionaries with a features list of strings. Return features present in every venue, without duplicates, in the order of their first occurrence in the first venue; return an empty list for no venues. In common_cli.py read a JSON array of venues from the first command line argument, a file path, and print one common feature per line; print nothing when there are none. Do not mutate venues.",
+        {'common.py': 'def common_features(venues):\n    return []\n', 'common_cli.py': "print('No features')\n"},
+        {'common.py': "def common_features(venues):\n    if not venues:\n        return []\n    result = []\n    for feature in venues[0]['features']:\n        if feature not in result and all(feature in v['features'] for v in venues[1:]):\n            result.append(feature)\n    return result\n", 'common_cli.py': "import json\nimport sys\nfrom common import common_features\nwith open(sys.argv[1], encoding='utf-8') as f:\n    venues = json.load(f)\nfor feature in common_features(venues):\n    print(feature)\n"},
+        {'common.py': "def common_features(venues):\n    if not venues:\n        return []\n    result = []\n    for feature in venues[0]['features']:\n        if feature not in result and all(feature in v['features'] for v in venues[1:]):\n            result.append(feature)\n    return result\n", 'common_cli.py': "import json\nimport sys\nfrom common import common_features\nwith open(sys.argv[1], encoding='utf-8') as f:\n    venues = json.load(f)\nprint(', '.join(common_features(venues)))\n"},
+        {'common.py': 'def common_features(venues):\n    return []\n', 'common_cli.py': "print('No features')\n"},
+        'Partial computes the correct ordered intersection and reads JSON, but joins features onto one line and emits a blank line for none.', [
+            ('ordered-intersection', "from common import common_features\nv=[{'features':['loop','ramp','loop','lift']},{'features':['ramp','loop']}]; assert common_features(v)==['loop','ramp'] and v[0]['features']==['loop','ramp','loop','lift'] and common_features([])==[]"),
+            ('cli-lines', "import json,subprocess,sys\nfrom pathlib import Path\np=Path('venues.json'); p.write_text(json.dumps([{'features':['loop','ramp']},{'features':['ramp','loop']}]))\nr=subprocess.run([sys.executable,'common_cli.py',str(p)],capture_output=True,text=True); sys.stdout.write(r.stdout); sys.stderr.write(r.stderr); assert r.returncode==0 and r.stdout=='loop\\nramp\\n'\np.write_text('[]'); r=subprocess.run([sys.executable,'common_cli.py',str(p)],capture_output=True,text=True); sys.stdout.write(r.stdout); sys.stderr.write(r.stderr); assert r.returncode==0 and r.stdout==''"),
+        ]),
+])
+
+
+GROUPS.extend([
+    tagged('integration', 'foodbank-expiry', 'foodbank-expiring-inventory',
+        "In lots.py implement expiring(lots, today, through): lots is a list of dictionaries with string id and ISO YYYY-MM-DD expiry keys. today and through are ISO dates with today <= through. Return the IDs of lots whose expiry falls in the inclusive date interval, in input order. In list_lots.py read a JSON array of lots from the first command-line argument (a file path), and today and through from the second and third arguments. Print one selected ID per line, and nothing for no results. Do not mutate lots.",
+        {'lots.py': 'def expiring(lots, today, through):\n    return []\n', 'list_lots.py': "print('No lots')\n"},
+        {'lots.py': "def expiring(lots, today, through):\n    return [lot['id'] for lot in lots if today <= lot['expiry'] <= through]\n", 'list_lots.py': "import json\nimport sys\nfrom lots import expiring\nwith open(sys.argv[1], encoding='utf-8') as f:\n    lots = json.load(f)\nfor lot_id in expiring(lots, sys.argv[2], sys.argv[3]):\n    print(lot_id)\n"},
+        {'lots.py': "def expiring(lots, today, through):\n    return [lot['id'] for lot in lots if today <= lot['expiry'] <= through]\n", 'list_lots.py': "import json\nimport sys\nfrom lots import expiring\nwith open(sys.argv[1], encoding='utf-8') as f:\n    lots = json.load(f)\nprint(', '.join(expiring(lots, sys.argv[2], sys.argv[3])))\n"},
+        {'lots.py': 'def expiring(lots, today, through):\n    return []\n', 'list_lots.py': "print('No lots')\n", 'readme.txt': 'Record every donation lot with its expiry date.\n'},
+        'Partial filters inclusively and reads the lot data, but joins IDs on one line and emits a newline when no lots match.', [
+            ('expiry-bounds', "from lots import expiring\na=[{'id':'a','expiry':'2025-01-01'},{'id':'b','expiry':'2025-01-03'},{'id':'c','expiry':'2025-01-04'}]\nassert expiring(a,'2025-01-01','2025-01-03')==['a','b'] and a[0]['id']=='a'"),
+            ('cli-output', "import json,subprocess,sys\nfrom pathlib import Path\np=Path('lots.json'); p.write_text(json.dumps([{'id':'a','expiry':'2025-01-01'},{'id':'b','expiry':'2025-01-03'}]))\nfor lo,hi,expected in [('2025-01-01','2025-01-03','a\\nb\\n'),('2026-01-01','2026-01-02','')]:\n r=subprocess.run([sys.executable,'list_lots.py',str(p),lo,hi],capture_output=True,text=True); sys.stdout.write(r.stdout); sys.stderr.write(r.stderr); assert r.returncode==0 and r.stdout==expected"),
+        ]),
+    tagged('state-transition', 'bike-maintenance', 'bike-parts-workorder-js',
+        "In workshop.js export useParts(stock, required) and complete(stock, required, log, bike) with CommonJS. stock and required are plain objects with own part-name keys and nonnegative integer counts. useParts returns a fresh stock object subtracting required counts; absent stock counts as zero. Reject any insufficient part by throwing Error without changing stock or required; do not add absent zero-count keys. complete returns {stock, log} with useParts' result and a new log array appending bike, leaving stock, required and log unchanged. Part names are nonempty alphanumeric strings.",
+        {'workshop.js': "exports.useParts = stock => ({...stock});\nexports.complete = (stock, required, log, bike) => ({stock: {...stock}, log: [...log]});\n"},
+        {'workshop.js': "function useParts(stock, required) {\n  const result = {...stock};\n  for (const [part, count] of Object.entries(required)) {\n    if (count > (Object.hasOwn(stock, part) ? stock[part] : 0)) throw new Error('insufficient');\n    if (Object.hasOwn(result, part)) result[part] -= count;\n  }\n  return result;\n}\nfunction complete(stock, required, log, bike) {\n  return {stock: useParts(stock, required), log: [...log, bike]};\n}\nmodule.exports = {useParts, complete};\n"},
+        {'workshop.js': "function useParts(stock, required) {\n  const result = {...stock};\n  for (const [part, count] of Object.entries(required)) {\n    if (count > (Object.hasOwn(stock, part) ? stock[part] : 0)) throw new Error('insufficient');\n    if (Object.hasOwn(result, part)) result[part] -= count;\n  }\n  return result;\n}\nfunction complete(stock, required, log, bike) {\n  const updated = useParts(stock, required);\n  return {stock: updated, log: [...log]};\n}\nmodule.exports = {useParts, complete};\n"},
+        {'workshop.js': "exports.useParts = stock => ({...stock});\nexports.complete = (stock, required, log, bike) => ({stock: {...stock}, log: [...log]});\n"},
+        'Partial validates and subtracts parts, wiring them into work-order completion, but fails to append the bicycle to the completed-work log.', [
+            ('parts-and-errors', "import subprocess,sys\ncode=\"const a=require('assert'), w=require('./workshop'); let s={tube:2,chain:1},r={tube:1,spoke:0}; a.deepEqual(w.useParts(s,r),{tube:1,chain:1}); a.deepEqual(s,{tube:2,chain:1}); a.throws(()=>w.useParts(s,{tube:3})); a.throws(()=>w.useParts(s,{spoke:1})); a.throws(()=>w.useParts(s,{constructor:1}));\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('completion-log', "import subprocess,sys\ncode=\"const a=require('assert'),w=require('./workshop'); let s={tube:2},l=['B']; a.deepEqual(w.complete(s,{tube:1},l,'A'),{stock:{tube:1},log:['B','A']}); a.deepEqual(l,['B']); a.deepEqual(s,{tube:2});\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
+    tagged('validation', 'film-screenings', 'film-ticket-admission-ruby',
+        "In admission.rb define admit(tickets, ticket_id) and admitted_count(tickets). tickets is an array of hashes with unique string id and boolean admitted keys. admit returns an array of fresh hashes with the requested ticket's admitted value set to true; raise ArgumentError if the ID is missing or already admitted. Preserve other fields and order, and do not mutate the input. admitted_count returns the number of tickets with admitted true.",
+        {'admission.rb': "def admit(tickets, ticket_id)\n  tickets.dup\nend\ndef admitted_count(tickets)\n  0\nend\n"},
+        {'admission.rb': "def admit(tickets, ticket_id)\n  ticket = tickets.find { |t| t['id'] == ticket_id }\n  raise ArgumentError if ticket.nil? || ticket['admitted']\n  tickets.map { |t| t['id'] == ticket_id ? t.merge('admitted' => true) : t.dup }\nend\ndef admitted_count(tickets)\n  tickets.count { |t| t['admitted'] }\nend\n"},
+        {'admission.rb': "def admit(tickets, ticket_id)\n  ticket = tickets.find { |t| t['id'] == ticket_id }\n  raise ArgumentError if ticket.nil?\n  tickets.map { |t| t['id'] == ticket_id ? t.merge('admitted' => true) : t.dup }\nend\ndef admitted_count(tickets)\n  tickets.count { |t| t['admitted'] }\nend\n"},
+        {'admission.rb': "def admit(tickets, ticket_id)\n  tickets.dup\nend\ndef admitted_count(tickets)\n  0\nend\n"},
+        'Partial admits valid tickets, counts admissions, makes independent copies and rejects absent IDs, but allows a ticket to be admitted twice.', [
+            ('admit-and-count', "import subprocess,sys\ncode=\"t=[{'id'=>'A','admitted'=>false,'seat'=>'1'},{'id'=>'B','admitted'=>true}]; n=admit(t,'A'); abort unless n[0]['admitted'] && admitted_count(n)==2 && !t[0]['admitted']; n[1]['seat']='2'; abort if t[1].key?('seat'); begin; admit(t,'X'); abort; rescue ArgumentError; end\"\np=subprocess.run(['ruby','-r','./admission','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('duplicate-admission', "import subprocess,sys\ncode=\"begin; admit([{'id'=>'A','admitted'=>true}],'A'); abort; rescue ArgumentError; end\"\np=subprocess.run(['ruby','-r','./admission','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
+    tagged('persistence', 'specimen-custody', 'specimen-transfer-log',
+        "In custody.py implement transfer(path, specimen, source, destination), where path is an existing UTF-8 JSON object mapping specimen IDs to current custodian strings. Require that specimen exists and its current custodian exactly equals source; otherwise raise ValueError without writing. On success persist a new mapping with specimen assigned destination and return that mapping. Implement holders(path), returning sorted unique custodian names read from the file. IDs and names are case-sensitive.",
+        {'custody.py': 'def transfer(path, specimen, source, destination):\n    return {}\n\ndef holders(path):\n    return []\n'},
+        {'custody.py': "import json\ndef transfer(path, specimen, source, destination):\n    with open(path, encoding='utf-8') as f:\n        custody = json.load(f)\n    if specimen not in custody or custody[specimen] != source:\n        raise ValueError('wrong source')\n    custody[specimen] = destination\n    with open(path, 'w', encoding='utf-8') as f:\n        json.dump(custody, f)\n    return custody\n\ndef holders(path):\n    with open(path, encoding='utf-8') as f:\n        return sorted(set(json.load(f).values()))\n"},
+        {'custody.py': "import json\ndef transfer(path, specimen, source, destination):\n    with open(path, encoding='utf-8') as f:\n        custody = json.load(f)\n    if specimen not in custody:\n        raise ValueError('missing specimen')\n    custody[specimen] = destination\n    with open(path, 'w', encoding='utf-8') as f:\n        json.dump(custody, f)\n    return custody\n\ndef holders(path):\n    with open(path, encoding='utf-8') as f:\n        return sorted(set(json.load(f).values()))\n"},
+        {'custody.py': 'def transfer(path, specimen, source, destination):\n    return {}\n\ndef holders(path):\n    return []\n'},
+        'Partial persists transfers and reports sorted unique holders, but permits a transfer from a person who is not the current custodian.', [
+            ('transfer-and-report', "import json\nfrom pathlib import Path\nfrom custody import transfer,holders\np=Path('custody.json'); p.write_text('{\"X\":\"Ana\",\"Y\":\"Bo\",\"Z\":\"Bo\"}')\nassert transfer(p,'X','Ana','Cy')=={'X':'Cy','Y':'Bo','Z':'Bo'}\nassert json.loads(p.read_text())=={'X':'Cy','Y':'Bo','Z':'Bo'} and holders(p)==['Bo','Cy']"),
+            ('wrong-source-no-write', "from pathlib import Path\nfrom custody import transfer\np=Path('custody.json'); original='{\"X\":\"Ana\"}'; p.write_text(original)\nfor specimen,source in [('X','Bo'),('missing','Ana')]:\n try: transfer(p,specimen,source,'Cy')\n except ValueError: pass\n else: raise AssertionError((specimen,source))\n assert p.read_text()==original"),
+        ]),
+])
+
+
+GROUPS.extend([
+    tagged('state-transition', 'film-screenings', 'film-seat-booking-js',
+        "In seats.js export book(occupied, requested, capacity) and release(occupied, seats) with CommonJS. occupied and requested are arrays of integer seat numbers, each seat is in 1 through the nonnegative integer capacity, and occupied has no duplicates. book returns a new array containing occupied followed by requested, but throws Error if requested contains a duplicate or overlaps occupied. release returns a new array excluding seats listed in seats, preserving the original order. Neither function mutates its inputs. Empty requested and seats lists are allowed.",
+        {'seats.js': "exports.book = occupied => [...occupied];\nexports.release = occupied => [...occupied];\n"},
+        {'seats.js': "function book(occupied, requested, capacity) {\n  const taken = new Set(occupied);\n  for (const seat of requested) {\n    if (taken.has(seat)) throw new Error('unavailable');\n    taken.add(seat);\n  }\n  return [...occupied, ...requested];\n}\nfunction release(occupied, seats) {\n  const removed = new Set(seats);\n  return occupied.filter(seat => !removed.has(seat));\n}\nmodule.exports = {book, release};\n"},
+        {'seats.js': "function book(occupied, requested, capacity) {\n  for (const seat of requested) {\n    if (occupied.includes(seat)) throw new Error('unavailable');\n  }\n  return [...occupied, ...requested];\n}\nfunction release(occupied, seats) {\n  const removed = new Set(seats);\n  return occupied.filter(seat => !removed.has(seat));\n}\nmodule.exports = {book, release};\n"},
+        {'seats.js': "exports.book = occupied => [...occupied];\nexports.release = occupied => [...occupied];\nexports.capacityLabel = n => `${n} seats`;\n"},
+        'Partial books unoccupied seats, rejects overlap with the existing list and releases seats correctly, but accepts duplicates within a requested booking.', [
+            ('book-and-release', "import subprocess,sys\ncode=\"const a=require('assert'),m=require('./seats'); let o=[2,4],r=[1,3]; a.deepEqual(m.book(o,r,5),[2,4,1,3]); a.throws(()=>m.book(o,[4],5)); a.deepEqual(m.release(o,[2]),[4]); a.deepEqual(o,[2,4]); a.deepEqual(r,[1,3]);\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('duplicate-request', "import subprocess,sys\ncode=\"const a=require('assert'),m=require('./seats'); a.throws(()=>m.book([1],[2,2],3));\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
+])
+
+
+GROUPS.extend([
+    tagged('persistence', 'film-screenings', 'film-ticket-cancellation',
+        "In cancellation.py implement cancel(path, ticket_id, days_before): path is an existing UTF-8 JSON object mapping ticket IDs to objects with integer nonnegative price and string status. days_before is a nonnegative integer. For an existing ticket whose status is exactly 'active', change its status to 'cancelled', persist the entire updated object at path, and return the refund in cents: full price when days_before >= 2, otherwise half price rounded down. If the ID is absent or status is not 'active', raise ValueError without writing. Preserve all other ticket fields and entries.",
+        {'cancellation.py': 'def cancel(path, ticket_id, days_before):\n    return 0\n'},
+        {'cancellation.py': "import json\ndef cancel(path, ticket_id, days_before):\n    with open(path, encoding='utf-8') as f:\n        tickets = json.load(f)\n    ticket = tickets.get(ticket_id)\n    if ticket is None or ticket['status'] != 'active':\n        raise ValueError('not cancellable')\n    refund = ticket['price'] if days_before >= 2 else ticket['price'] // 2\n    ticket['status'] = 'cancelled'\n    with open(path, 'w', encoding='utf-8') as f:\n        json.dump(tickets, f)\n    return refund\n"},
+        {'cancellation.py': "import json\ndef cancel(path, ticket_id, days_before):\n    with open(path, encoding='utf-8') as f:\n        tickets = json.load(f)\n    ticket = tickets.get(ticket_id)\n    if ticket is None or ticket['status'] != 'active':\n        raise ValueError('not cancellable')\n    refund = ticket['price'] if days_before > 2 else ticket['price'] // 2\n    ticket['status'] = 'cancelled'\n    with open(path, 'w', encoding='utf-8') as f:\n        json.dump(tickets, f)\n    return refund\n"},
+        {'cancellation.py': 'def cancel(path, ticket_id, days_before):\n    return 0\n\ndef policy_name():\n    return "standard"\n'},
+        'Partial validates and persists cancellations, including same-day partial refunds, but incorrectly treats exactly two days as a half refund.', [
+            ('state-and-rejection', "import json\nfrom pathlib import Path\nfrom cancellation import cancel\np=Path('tickets.json'); p.write_text('{\"A\":{\"price\":101,\"status\":\"active\",\"seat\":\"4\"},\"B\":{\"price\":50,\"status\":\"active\"}}')\nassert cancel(p,'A',1)==50\nd=json.loads(p.read_text()); assert d=={'A':{'price':101,'status':'cancelled','seat':'4'},'B':{'price':50,'status':'active'}}\nbefore=p.read_text()\nfor key in ['A','X']:\n try: cancel(p,key,3)\n except ValueError: pass\n else: raise AssertionError(key)\n assert p.read_text()==before"),
+            ('two-day-boundary', "import json\nfrom pathlib import Path\nfrom cancellation import cancel\np=Path('tickets.json'); p.write_text('{\"A\":{\"price\":101,\"status\":\"active\"}}')\nassert cancel(p,'A',2)==101 and json.loads(p.read_text())['A']['status']=='cancelled'"),
+        ]),
+    tagged('selection', 'film-screenings', 'film-caption-selection-js',
+        "In captions.js export choose(tracks, language, captionsRequired) and languages(tracks) with CommonJS. tracks is a list of objects with string language and boolean captions keys; language comparison is case-sensitive. choose returns the first track with the requested language and, when captionsRequired is true, captions true; return null if none match. languages returns sorted unique language strings from all tracks. Neither function modifies tracks.",
+        {'captions.js': 'exports.choose = () => null;\nexports.languages = () => [];\n'},
+        {'captions.js': "function choose(tracks, language, captionsRequired) {\n  return tracks.find(t => t.language === language && (!captionsRequired || t.captions)) ?? null;\n}\nfunction languages(tracks) {\n  return [...new Set(tracks.map(t => t.language))].sort();\n}\nmodule.exports = {choose, languages};\n"},
+        {'captions.js': "function choose(tracks, language, captionsRequired) {\n  return tracks.find(t => t.language === language) ?? null;\n}\nfunction languages(tracks) {\n  return [...new Set(tracks.map(t => t.language))].sort();\n}\nmodule.exports = {choose, languages};\n"},
+        {'captions.js': 'exports.choose = () => null;\nexports.languages = () => [];\nexports.count = tracks => tracks.length;\n'},
+        'Partial finds the first requested language and produces sorted unique language names, but ignores the captionsRequired constraint.', [
+            ('language-order-and-list', "import subprocess,sys\ncode=\"const a=require('assert'),m=require('./captions'); const tracks=[{language:'fr',captions:false},{language:'en',captions:true},{language:'en',captions:false}]; a.strictEqual(m.choose(tracks,'en',false),tracks[1]); a.equal(m.choose(tracks,'de',false),null); a.deepEqual(m.languages(tracks),['en','fr']); a.equal(tracks.length,3);\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+            ('required-captions', "import subprocess,sys\ncode=\"const a=require('assert'),m=require('./captions'); const tracks=[{language:'en',captions:false},{language:'en',captions:true}]; a.strictEqual(m.choose(tracks,'en',true),tracks[1]); a.equal(m.choose([tracks[0]],'en',true),null);\"\np=subprocess.run(['node','-e',code],capture_output=True,text=True); sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); assert p.returncode==0"),
+        ]),
 ])
 
 

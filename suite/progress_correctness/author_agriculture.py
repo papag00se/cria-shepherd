@@ -14,6 +14,17 @@ FAMILY_SPLITS = {
     'train-museum-loans': 'TRAIN',
     'theater-lighting-cues': 'TRAIN',
     'train-recycling-routes': 'TRAIN',
+    'train-utility-meters': 'TRAIN',
+    'community-film-screenings-v1': 'TRAIN',
+    'train-lab-custody': 'TRAIN',
+    'recurring-subscription-ledger': 'TRAIN',
+    'ceramics-kiln-controller': 'TRAIN',
+    'solar-inverter-monitoring': 'TRAIN',
+    'flashcard-spaced-repetition': 'TRAIN',
+    'digital-artwork-licensing': 'TRAIN',
+    'engineering-backup-catalog-v1': 'TRAIN',
+    'music-rehearsal-setlist': 'TRAIN',
+    'nonogram-puzzle-solver': 'TRAIN',
 }
 
 
