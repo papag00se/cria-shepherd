@@ -152,8 +152,8 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
     for r in records:
         if not similarity or r['split'] != 'dev' or r['label'] != 'DONE':
             continue
-        options = [(difflib.SequenceMatcher(None, render_text(r['state']), render_text(t['state']), autojunk=False).ratio(), t['id']) for t in train]
-        options += [(difflib.SequenceMatcher(None, render_text(r['state']), render_text(render_state(t['requirement'], t['evidence'])), autojunk=False).ratio(), t['id']) for t in pilot if t['label'] == 'DONE']
+        options = [(difflib.SequenceMatcher(None, render_text(r['state']), render_text(t['state']), autojunk=True).ratio(), t['id']) for t in train]
+        options += [(difflib.SequenceMatcher(None, render_text(r['state']), render_text(render_state(t['requirement'], t['evidence'])), autojunk=True).ratio(), t['id']) for t in pilot if t['label'] == 'DONE']
         if options:
             score, candidate = max(options)
             near.append({'dev_id':r['id'], 'train_candidate_id':candidate, 'score':score})
@@ -170,7 +170,7 @@ def maintain(modules: list[str], out: Path, exclude: set[str], import_batches: l
               'quarantined_group_ids':sorted(exclude), 'repeated_group_slots':repeated_slots, 'exact_matches_to_pilot':pilot_exact,
               'families_in_multiple_splits':{k:sorted(v) for k,v in family_splits.items() if len(v)>1},
               'dev_near_train_candidates':near, 'similarity_measured_this_run':similarity,
-              'similarity_note':'Candidates may be from an earlier update when not measured this run; semantic review is required.',
+              'similarity_note':'SequenceMatcher autojunk=True candidates may be from an earlier update when not measured this run; semantic review is required.',
               'status':'author-labelled synthetic; fixture outcomes and lexical similarity do not certify semantic correctness'}
     (out / 'report.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
     if changes:
