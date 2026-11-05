@@ -704,6 +704,9 @@ class PlannerConfig:
 SYSTEM1_DEFAULT_THREADS = 6  # intra-op CPU threads the trained artifact was assessed with
 
 
+SYSTEM1_DEFAULT_BUNDLE = "~/.cria/models/system1/expanded-v2-live"
+
+
 @dataclass(frozen=True)
 class System1Config:
     """The trained CPU classifier for briefing and directive judgments.
@@ -713,7 +716,7 @@ class System1Config:
     """
 
     enabled: bool = True
-    bundle_dir: str | None = "~/.cria/models/system1/expanded-v2-live"
+    bundle_dir: str | None = SYSTEM1_DEFAULT_BUNDLE
     threads: int = SYSTEM1_DEFAULT_THREADS
 
     def __post_init__(self):
@@ -729,6 +732,10 @@ class System1Config:
     @property
     def bundle_path(self) -> Path | None:
         return Path(self.bundle_dir).expanduser() if self.bundle_dir is not None else None
+
+    @property
+    def uses_default_bundle(self) -> bool:
+        return self.bundle_path == Path(SYSTEM1_DEFAULT_BUNDLE).expanduser()
 
 
 @dataclass(frozen=True)

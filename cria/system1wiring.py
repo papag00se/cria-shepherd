@@ -51,13 +51,16 @@ def build(cfg, log: Log | None = None, *, capture_dir=None):
     if not cfg.enabled:
         return None
     bundle = cfg.bundle_path
-    if not bundle.is_dir():
-        raise StartupError(f"[system1] bundle_dir is not a directory: {bundle}")
     try:
         from .system1 import System1Runtime
     except ImportError as exc:
         raise StartupError(f"[system1] enabled but the runtime dependencies are unavailable: {exc}") from exc
     try:
+        if not bundle.is_dir() and cfg.uses_default_bundle:
+            from .system1download import install
+            install(bundle, lambda staged: System1Runtime(staged, cfg.threads, capture_dir=capture_dir))
+        if not bundle.is_dir():
+            raise FileNotFoundError(f"[system1] bundle_dir is not a directory: {bundle}")
         runtime = System1Runtime(bundle, cfg.threads, capture_dir=capture_dir)
     except Exception as exc:  # noqa: BLE001 — whatever stops the artifact loading stops the service
         raise StartupError(f"[system1] bundle {bundle} cannot be loaded: {type(exc).__name__}: {exc}") from exc

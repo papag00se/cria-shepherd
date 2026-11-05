@@ -19,7 +19,7 @@ The original root task, completion gate, workspace survey, harness sandbox, samp
 
 ## Configuration
 
-Install cria normally (`python -m pip install -e .`); the CPU runtime dependencies are included. The qualified bundle is not publicly distributed yet. Place an existing qualified bundle at `~/.cria/models/system1/expanded-v2-live`, or configure a compatible replacement.
+Install cria normally (`python -m pip install -e .`); the CPU runtime dependencies are included. On first start cria downloads, validates and installs the standard bundle to `~/.cria/models/system1/expanded-v2-live`. Publication of the release asset is pending approval, so that download is not yet available. A compatible replacement can be configured without downloading the standard bundle.
 
 The production bundle is local and self-contained, not a pointer to an experiment's mutable environment. It includes the actual graph/external weights, native tokenizer and policy/configuration metadata, which cria loads directly from the bundle directory.
 
