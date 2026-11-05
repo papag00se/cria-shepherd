@@ -1,34 +1,34 @@
 {
  "report": {
-  "count": 72,
-  "accuracy": 0.6388888888888888,
-  "macro_f1": 0.5312348197804333,
+  "count": 193,
+  "accuracy": 0.538860103626943,
+  "macro_f1": 0.4957555178268251,
   "per_label_f1": {
    "DONE": 0.0,
-   "PARTIAL": 0.6575342465753424,
-   "NOT_STARTED": 0.9361702127659575
+   "PARTIAL": 0.6451612903225806,
+   "NOT_STARTED": 0.8421052631578947
   },
   "confusion": [
    [
     0,
-    23,
+    80,
     1
    ],
    [
     0,
-    24,
-    0
+    80,
+    1
    ],
    [
     0,
-    2,
-    22
+    7,
+    24
    ]
   ],
   "recall": {
    "DONE": 0.0,
-   "PARTIAL": 1.0,
-   "NOT_STARTED": 0.9166666666666666
+   "PARTIAL": 0.9876543209876543,
+   "NOT_STARTED": 0.7741935483870968
   },
   "model": "/home/jesse/.cria/training/progress-v1/final/reference",
   "split": "test",
@@ -40,10 +40,99 @@
  },
  "predictions": [
   {
+   "id": "cart-scala/merge-sku/PARTIAL",
+   "task": "cart-scala",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.5251572132110596,
+    1.2816085815429688,
+    -1.4683873653411865
+   ],
+   "tokens": 386
+  },
+  {
+   "id": "cart-scala/merge-sku/DONE",
+   "task": "cart-scala",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.5424442291259766,
+    1.2690739631652832,
+    -1.4171512126922607
+   ],
+   "tokens": 386
+  },
+  {
+   "id": "cart-scala/discount/NOT_STARTED",
+   "task": "cart-scala",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "logits": [
+    -2.1762969493865967,
+    1.0932292938232422,
+    -0.6262460350990295
+   ],
+   "tokens": 269
+  },
+  {
+   "id": "cart-scala/discount/PARTIAL",
+   "task": "cart-scala",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.3452993929386139,
+    1.0618958473205566,
+    -2.1484575271606445
+   ],
+   "tokens": 421
+  },
+  {
+   "id": "cart-scala/discount/DONE",
+   "task": "cart-scala",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.47752678394317627,
+    0.7883290648460388,
+    -2.5997226238250732
+   ],
+   "tokens": 530
+  },
+  {
+   "id": "cart-scala/remove-docs/PARTIAL",
+   "task": "cart-scala",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.20256629586219788,
+    0.9536159038543701,
+    -2.9019312858581543
+   ],
+   "tokens": 449
+  },
+  {
+   "id": "cart-scala/remove-docs/DONE",
+   "task": "cart-scala",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.4958062767982483,
+    0.8908208608627319,
+    -3.343284845352173
+   ],
+   "tokens": 532
+  },
+  {
    "id": "csvstats-rs/median-even/NOT_STARTED",
    "task": "csvstats-rs",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.817971706390381,
+    -3.8063907623291016,
+    2.0801141262054443
+   ],
    "tokens": 224
   },
   {
@@ -51,6 +140,11 @@
    "task": "csvstats-rs",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.33921298384666443,
+    1.1676100492477417,
+    -2.665977716445923
+   ],
    "tokens": 374
   },
   {
@@ -58,6 +152,11 @@
    "task": "csvstats-rs",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.29069721698760986,
+    0.8668614029884338,
+    -2.9071052074432373
+   ],
    "tokens": 618
   },
   {
@@ -65,6 +164,11 @@
    "task": "csvstats-rs",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -2.3438384532928467,
+    0.4283779561519623,
+    0.46791425347328186
+   ],
    "tokens": 291
   },
   {
@@ -72,6 +176,11 @@
    "task": "csvstats-rs",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.175152063369751,
+    1.3507752418518066,
+    -1.8400553464889526
+   ],
    "tokens": 348
   },
   {
@@ -79,6 +188,11 @@
    "task": "csvstats-rs",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.13564389944076538,
+    0.9242626428604126,
+    -2.7571187019348145
+   ],
    "tokens": 535
   },
   {
@@ -86,6 +200,11 @@
    "task": "csvstats-rs",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.955568790435791,
+    -4.4972734451293945,
+    2.2988739013671875
+   ],
    "tokens": 217
   },
   {
@@ -93,6 +212,11 @@
    "task": "csvstats-rs",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.7941228151321411,
+    1.2871105670928955,
+    -1.2888514995574951
+   ],
    "tokens": 374
   },
   {
@@ -100,13 +224,167 @@
    "task": "csvstats-rs",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.41479820013046265,
+    1.0176221132278442,
+    -2.164268732070923
+   ],
    "tokens": 560
+  },
+  {
+   "id": "dedup-zig/non-adjacent/PARTIAL",
+   "task": "dedup-zig",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.15133413672447205,
+    1.1223475933074951,
+    -2.7318625450134277
+   ],
+   "tokens": 388
+  },
+  {
+   "id": "dedup-zig/non-adjacent/DONE",
+   "task": "dedup-zig",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.4506041705608368,
+    0.8206415176391602,
+    -2.9915542602539062
+   ],
+   "tokens": 476
+  },
+  {
+   "id": "dedup-zig/binary-search/PARTIAL",
+   "task": "dedup-zig",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.5323007106781006,
+    1.080439805984497,
+    -2.3896431922912598
+   ],
+   "tokens": 444
+  },
+  {
+   "id": "dedup-zig/binary-search/DONE",
+   "task": "dedup-zig",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.029663115739822388,
+    0.8829690217971802,
+    -2.584550380706787
+   ],
+   "tokens": 529
+  },
+  {
+   "id": "dedup-zig/cli-use/PARTIAL",
+   "task": "dedup-zig",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.36542263627052307,
+    1.1225334405899048,
+    -2.5973637104034424
+   ],
+   "tokens": 544
+  },
+  {
+   "id": "dedup-zig/cli-use/DONE",
+   "task": "dedup-zig",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.2947700321674347,
+    1.090930700302124,
+    -2.6459522247314453
+   ],
+   "tokens": 551
+  },
+  {
+   "id": "fqueue-ml/fifo-fix/PARTIAL",
+   "task": "fqueue-ml",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.1600706577301025,
+    1.5132662057876587,
+    -2.5077950954437256
+   ],
+   "tokens": 330
+  },
+  {
+   "id": "fqueue-ml/fifo-fix/DONE",
+   "task": "fqueue-ml",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.1468620300292969,
+    1.4982448816299438,
+    -2.46248722076416
+   ],
+   "tokens": 329
+  },
+  {
+   "id": "fqueue-ml/length-peek/PARTIAL",
+   "task": "fqueue-ml",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.12608560919761658,
+    1.0383096933364868,
+    -2.8238909244537354
+   ],
+   "tokens": 517
+  },
+  {
+   "id": "fqueue-ml/length-peek/DONE",
+   "task": "fqueue-ml",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.34676042199134827,
+    0.8670215606689453,
+    -3.0104167461395264
+   ],
+   "tokens": 637
+  },
+  {
+   "id": "fqueue-ml/of-list/PARTIAL",
+   "task": "fqueue-ml",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.8126940727233887,
+    1.234924554824829,
+    -2.3130762577056885
+   ],
+   "tokens": 500
+  },
+  {
+   "id": "fqueue-ml/of-list/DONE",
+   "task": "fqueue-ml",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.834861159324646,
+    1.196302056312561,
+    -2.1611390113830566
+   ],
+   "tokens": 540
   },
   {
    "id": "guestbook-php/escape-output/NOT_STARTED",
    "task": "guestbook-php",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -5.050825119018555,
+    -4.612670421600342,
+    2.365180253982544
+   ],
    "tokens": 207
   },
   {
@@ -114,6 +392,11 @@
    "task": "guestbook-php",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.843597650527954,
+    1.5051994323730469,
+    -1.7773830890655518
+   ],
    "tokens": 336
   },
   {
@@ -121,6 +404,11 @@
    "task": "guestbook-php",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.5514990091323853,
+    1.3429945707321167,
+    -1.5431840419769287
+   ],
    "tokens": 492
   },
   {
@@ -128,6 +416,11 @@
    "task": "guestbook-php",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -3.1648104190826416,
+    0.34806370735168457,
+    0.6737933158874512
+   ],
    "tokens": 306
   },
   {
@@ -135,6 +428,11 @@
    "task": "guestbook-php",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.2164528369903564,
+    1.4053819179534912,
+    -1.6155645847320557
+   ],
    "tokens": 366
   },
   {
@@ -142,6 +440,11 @@
    "task": "guestbook-php",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.6253775358200073,
+    1.2332652807235718,
+    -1.8609154224395752
+   ],
    "tokens": 440
   },
   {
@@ -149,6 +452,11 @@
    "task": "guestbook-php",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.79823112487793,
+    -3.341857433319092,
+    1.9762942790985107
+   ],
    "tokens": 229
   },
   {
@@ -156,6 +464,11 @@
    "task": "guestbook-php",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.0738310813903809,
+    1.395594835281372,
+    -2.261275053024292
+   ],
    "tokens": 296
   },
   {
@@ -163,6 +476,11 @@
    "task": "guestbook-php",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.018910318613052368,
+    1.0332036018371582,
+    -2.83890438079834
+   ],
    "tokens": 477
   },
   {
@@ -170,6 +488,11 @@
    "task": "inventory-py",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.888918876647949,
+    -4.086216449737549,
+    2.1435904502868652
+   ],
    "tokens": 220
   },
   {
@@ -177,6 +500,11 @@
    "task": "inventory-py",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.5414727926254272,
+    1.1942099332809448,
+    -1.425586223602295
+   ],
    "tokens": 309
   },
   {
@@ -184,6 +512,11 @@
    "task": "inventory-py",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.23913460969924927,
+    0.7897701263427734,
+    -2.2846269607543945
+   ],
    "tokens": 556
   },
   {
@@ -191,6 +524,11 @@
    "task": "inventory-py",
    "label": "NOT_STARTED",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.7795977592468262,
+    1.1974154710769653,
+    -1.2008626461029053
+   ],
    "tokens": 296
   },
   {
@@ -198,6 +536,11 @@
    "task": "inventory-py",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    0.034714579582214355,
+    1.0600289106369019,
+    -2.9837732315063477
+   ],
    "tokens": 406
   },
   {
@@ -205,6 +548,11 @@
    "task": "inventory-py",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.36144837737083435,
+    0.8892337083816528,
+    -3.1874582767486572
+   ],
    "tokens": 481
   },
   {
@@ -212,6 +560,11 @@
    "task": "inventory-py",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.959755897521973,
+    -4.433459281921387,
+    2.18076753616333
+   ],
    "tokens": 218
   },
   {
@@ -219,6 +572,11 @@
    "task": "inventory-py",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.9200000762939453,
+    0.824704647064209,
+    -0.48550280928611755
+   ],
    "tokens": 361
   },
   {
@@ -226,13 +584,107 @@
    "task": "inventory-py",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.19760912656784058,
+    1.038893699645996,
+    -2.6818742752075195
+   ],
    "tokens": 443
+  },
+  {
+   "id": "kvparse-ex/tolerant/PARTIAL",
+   "task": "kvparse-ex",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.1815969944000244,
+    1.3211556673049927,
+    -2.2720518112182617
+   ],
+   "tokens": 354
+  },
+  {
+   "id": "kvparse-ex/tolerant/DONE",
+   "task": "kvparse-ex",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.0082080364227295,
+    1.2440394163131714,
+    -2.2823486328125
+   ],
+   "tokens": 385
+  },
+  {
+   "id": "kvparse-ex/errors/NOT_STARTED",
+   "task": "kvparse-ex",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "logits": [
+    -3.3070292472839355,
+    0.5874059796333313,
+    0.13550978899002075
+   ],
+   "tokens": 266
+  },
+  {
+   "id": "kvparse-ex/errors/PARTIAL",
+   "task": "kvparse-ex",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.041611701250076294,
+    0.8896611928939819,
+    -2.513510227203369
+   ],
+   "tokens": 520
+  },
+  {
+   "id": "kvparse-ex/errors/DONE",
+   "task": "kvparse-ex",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.537655770778656,
+    0.7292482852935791,
+    -2.9981584548950195
+   ],
+   "tokens": 694
+  },
+  {
+   "id": "kvparse-ex/typed-get/PARTIAL",
+   "task": "kvparse-ex",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.11265245079994202,
+    0.9775608777999878,
+    -2.464416980743408
+   ],
+   "tokens": 449
+  },
+  {
+   "id": "kvparse-ex/typed-get/DONE",
+   "task": "kvparse-ex",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5080146789550781,
+    0.8328227996826172,
+    -3.1184823513031006
+   ],
+   "tokens": 525
   },
   {
    "id": "ledger-cs/reject-negative/NOT_STARTED",
    "task": "ledger-cs",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.914944648742676,
+    -4.434117317199707,
+    2.261718511581421
+   ],
    "tokens": 206
   },
   {
@@ -240,6 +692,11 @@
    "task": "ledger-cs",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.9320703744888306,
+    1.460890531539917,
+    -2.5831830501556396
+   ],
    "tokens": 327
   },
   {
@@ -247,6 +704,11 @@
    "task": "ledger-cs",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.7506025433540344,
+    1.4251792430877686,
+    -2.6707358360290527
+   ],
    "tokens": 335
   },
   {
@@ -254,6 +716,11 @@
    "task": "ledger-cs",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -3.329211473464966,
+    -0.81795334815979,
+    1.2427496910095215
+   ],
    "tokens": 288
   },
   {
@@ -261,6 +728,11 @@
    "task": "ledger-cs",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.2550238370895386,
+    1.3796916007995605,
+    -1.8411612510681152
+   ],
    "tokens": 386
   },
   {
@@ -268,6 +740,11 @@
    "task": "ledger-cs",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.09872454404830933,
+    0.8972470760345459,
+    -2.623850107192993
+   ],
    "tokens": 570
   },
   {
@@ -275,6 +752,11 @@
    "task": "ledger-cs",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -5.005394458770752,
+    -4.5628662109375,
+    2.242830991744995
+   ],
    "tokens": 238
   },
   {
@@ -282,6 +764,11 @@
    "task": "ledger-cs",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.114048957824707,
+    1.2605230808258057,
+    -1.7592427730560303
+   ],
    "tokens": 396
   },
   {
@@ -289,6 +776,11 @@
    "task": "ledger-cs",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.08544626832008362,
+    0.9038851857185364,
+    -2.2227389812469482
+   ],
    "tokens": 502
   },
   {
@@ -296,6 +788,11 @@
    "task": "library-java",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.746542930603027,
+    -3.987805128097534,
+    2.1930763721466064
+   ],
    "tokens": 206
   },
   {
@@ -303,6 +800,11 @@
    "task": "library-java",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.7292593717575073,
+    1.3137825727462769,
+    -2.251439094543457
+   ],
    "tokens": 310
   },
   {
@@ -310,6 +812,11 @@
    "task": "library-java",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.3997873365879059,
+    1.2202966213226318,
+    -2.2356772422790527
+   ],
    "tokens": 322
   },
   {
@@ -317,6 +824,11 @@
    "task": "library-java",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -3.570434093475342,
+    -0.8090258836746216,
+    1.2624435424804688
+   ],
    "tokens": 290
   },
   {
@@ -324,6 +836,11 @@
    "task": "library-java",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -2.0197622776031494,
+    0.9931923151016235,
+    -0.6415958404541016
+   ],
    "tokens": 290
   },
   {
@@ -331,6 +848,11 @@
    "task": "library-java",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.825186550617218,
+    1.1111974716186523,
+    -1.5799399614334106
+   ],
    "tokens": 423
   },
   {
@@ -338,6 +860,11 @@
    "task": "library-java",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.9192938804626465,
+    -4.552497386932373,
+    2.3159241676330566
+   ],
    "tokens": 221
   },
   {
@@ -345,6 +872,11 @@
    "task": "library-java",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.0919169187545776,
+    1.3159401416778564,
+    -1.9285551309585571
+   ],
    "tokens": 370
   },
   {
@@ -352,13 +884,383 @@
    "task": "library-java",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.12438419461250305,
+    0.9262943267822266,
+    -2.5887486934661865
+   ],
    "tokens": 510
+  },
+  {
+   "id": "lrucache-go/get-refreshes/PARTIAL",
+   "task": "lrucache-go",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.6900103688240051,
+    1.1647058725357056,
+    -2.39557147026062
+   ],
+   "tokens": 453
+  },
+  {
+   "id": "lrucache-go/get-refreshes/DONE",
+   "task": "lrucache-go",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.3294670581817627,
+    1.1435790061950684,
+    -2.8760712146759033
+   ],
+   "tokens": 502
+  },
+  {
+   "id": "lrucache-go/put-overwrite/PARTIAL",
+   "task": "lrucache-go",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.02993568778038025,
+    0.8680402636528015,
+    -2.4002883434295654
+   ],
+   "tokens": 512
+  },
+  {
+   "id": "lrucache-go/put-overwrite/DONE",
+   "task": "lrucache-go",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.0076093971729278564,
+    0.825934648513794,
+    -2.3033595085144043
+   ],
+   "tokens": 547
+  },
+  {
+   "id": "lrucache-go/zero-cap/PARTIAL",
+   "task": "lrucache-go",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.4935194253921509,
+    0.8050795793533325,
+    -3.0946319103240967
+   ],
+   "tokens": 513
+  },
+  {
+   "id": "lrucache-go/zero-cap/DONE",
+   "task": "lrucache-go",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5076517462730408,
+    0.7740978002548218,
+    -3.144785165786743
+   ],
+   "tokens": 586
+  },
+  {
+   "id": "minimd-rb/levels/PARTIAL",
+   "task": "minimd-rb",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.7148256897926331,
+    1.1747914552688599,
+    -2.0920915603637695
+   ],
+   "tokens": 490
+  },
+  {
+   "id": "minimd-rb/levels/DONE",
+   "task": "minimd-rb",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.0074318647384643555,
+    0.9034296870231628,
+    -2.4964771270751953
+   ],
+   "tokens": 570
+  },
+  {
+   "id": "minimd-rb/inline/PARTIAL",
+   "task": "minimd-rb",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.5640568733215332,
+    1.0568199157714844,
+    -2.144519567489624
+   ],
+   "tokens": 535
+  },
+  {
+   "id": "minimd-rb/inline/DONE",
+   "task": "minimd-rb",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.2778511643409729,
+    0.7986475229263306,
+    -2.7430641651153564
+   ],
+   "tokens": 676
+  },
+  {
+   "id": "minimd-rb/escape-docs/PARTIAL",
+   "task": "minimd-rb",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.8766579031944275,
+    1.1906120777130127,
+    -2.165344715118408
+   ],
+   "tokens": 460
+  },
+  {
+   "id": "minimd-rb/escape-docs/DONE",
+   "task": "minimd-rb",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5309206247329712,
+    0.7948693037033081,
+    -3.2858822345733643
+   ],
+   "tokens": 568
+  },
+  {
+   "id": "money-java/to-string/PARTIAL",
+   "task": "money-java",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.0358937978744507,
+    1.1876912117004395,
+    -1.8115428686141968
+   ],
+   "tokens": 456
+  },
+  {
+   "id": "money-java/to-string/DONE",
+   "task": "money-java",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.49655207991600037,
+    1.0009071826934814,
+    -2.0945355892181396
+   ],
+   "tokens": 552
+  },
+  {
+   "id": "money-java/equals-hash/PARTIAL",
+   "task": "money-java",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.7645477652549744,
+    1.1560792922973633,
+    -2.149301052093506
+   ],
+   "tokens": 430
+  },
+  {
+   "id": "money-java/equals-hash/DONE",
+   "task": "money-java",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.12571758031845093,
+    0.8907806277275085,
+    -2.636617660522461
+   ],
+   "tokens": 606
+  },
+  {
+   "id": "money-java/overflow-guard/PARTIAL",
+   "task": "money-java",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5103006362915039,
+    0.8441991806030273,
+    -3.0760915279388428
+   ],
+   "tokens": 557
+  },
+  {
+   "id": "money-java/overflow-guard/DONE",
+   "task": "money-java",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5414298176765442,
+    0.790481686592102,
+    -3.1337547302246094
+   ],
+   "tokens": 601
+  },
+  {
+   "id": "orders-sql/include-zero/PARTIAL",
+   "task": "orders-sql",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -2.5894434452056885,
+    1.1250211000442505,
+    -0.9046491980552673
+   ],
+   "tokens": 301
+  },
+  {
+   "id": "orders-sql/include-zero/DONE",
+   "task": "orders-sql",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.8732508420944214,
+    1.3691996335983276,
+    -1.506306767463684
+   ],
+   "tokens": 341
+  },
+  {
+   "id": "orders-sql/email-unique/PARTIAL",
+   "task": "orders-sql",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.5389031171798706,
+    1.6329230070114136,
+    -2.2761404514312744
+   ],
+   "tokens": 264
+  },
+  {
+   "id": "orders-sql/email-unique/DONE",
+   "task": "orders-sql",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.9377726316452026,
+    1.3913931846618652,
+    -2.708252191543579
+   ],
+   "tokens": 269
+  },
+  {
+   "id": "orders-sql/monthly-view/PARTIAL",
+   "task": "orders-sql",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.8966182470321655,
+    1.4178158044815063,
+    -1.5829161405563354
+   ],
+   "tokens": 297
+  },
+  {
+   "id": "orders-sql/monthly-view/DONE",
+   "task": "orders-sql",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.486108660697937,
+    1.4199777841567993,
+    -1.948886752128601
+   ],
+   "tokens": 371
+  },
+  {
+   "id": "retry-js/backoff/PARTIAL",
+   "task": "retry-js",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.1225287914276123,
+    0.864937424659729,
+    -2.1980717182159424
+   ],
+   "tokens": 631
+  },
+  {
+   "id": "retry-js/backoff/DONE",
+   "task": "retry-js",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.32968640327453613,
+    0.8344784379005432,
+    -3.138833999633789
+   ],
+   "tokens": 661
+  },
+  {
+   "id": "retry-js/should-retry/PARTIAL",
+   "task": "retry-js",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.18904846906661987,
+    0.9085416793823242,
+    -3.0454654693603516
+   ],
+   "tokens": 483
+  },
+  {
+   "id": "retry-js/should-retry/DONE",
+   "task": "retry-js",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.3877049684524536,
+    0.8980162739753723,
+    -3.328152894973755
+   ],
+   "tokens": 476
+  },
+  {
+   "id": "retry-js/timeout/PARTIAL",
+   "task": "retry-js",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.29033607244491577,
+    0.8708702325820923,
+    -1.966596007347107
+   ],
+   "tokens": 570
+  },
+  {
+   "id": "retry-js/timeout/DONE",
+   "task": "retry-js",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.02737167477607727,
+    0.7885453701019287,
+    -2.1713974475860596
+   ],
+   "tokens": 653
   },
   {
    "id": "ringbuf-cpp/pop-empty/NOT_STARTED",
    "task": "ringbuf-cpp",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.835512638092041,
+    -3.8177833557128906,
+    2.138617753982544
+   ],
    "tokens": 216
   },
   {
@@ -366,6 +1268,11 @@
    "task": "ringbuf-cpp",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    0.06281840801239014,
+    1.131885290145874,
+    -2.6844253540039062
+   ],
    "tokens": 334
   },
   {
@@ -373,6 +1280,11 @@
    "task": "ringbuf-cpp",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.5120068192481995,
+    0.9091522693634033,
+    -2.852642297744751
+   ],
    "tokens": 496
   },
   {
@@ -380,6 +1292,11 @@
    "task": "ringbuf-cpp",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -2.5019898414611816,
+    0.48256298899650574,
+    0.5389081835746765
+   ],
    "tokens": 275
   },
   {
@@ -387,6 +1304,11 @@
    "task": "ringbuf-cpp",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -2.380314350128174,
+    1.1424893140792847,
+    -0.798058271408081
+   ],
    "tokens": 292
   },
   {
@@ -394,6 +1316,11 @@
    "task": "ringbuf-cpp",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.001442641019821167,
+    1.1107580661773682,
+    -3.0004656314849854
+   ],
    "tokens": 386
   },
   {
@@ -401,6 +1328,11 @@
    "task": "ringbuf-cpp",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.953540325164795,
+    -3.9647016525268555,
+    2.1069867610931396
+   ],
    "tokens": 233
   },
   {
@@ -408,6 +1340,11 @@
    "task": "ringbuf-cpp",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.5753731727600098,
+    1.5215647220611572,
+    -1.8116164207458496
+   ],
    "tokens": 304
   },
   {
@@ -415,13 +1352,575 @@
    "task": "ringbuf-cpp",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.14947649836540222,
+    1.0835728645324707,
+    -2.6036410331726074
+   ],
    "tokens": 441
+  },
+  {
+   "id": "roster-cs/no-duplicates/PARTIAL",
+   "task": "roster-cs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.1877821981906891,
+    0.9319941997528076,
+    -2.879957675933838
+   ],
+   "tokens": 489
+  },
+  {
+   "id": "roster-cs/no-duplicates/DONE",
+   "task": "roster-cs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.28674301505088806,
+    0.8662205338478088,
+    -2.8463222980499268
+   ],
+   "tokens": 553
+  },
+  {
+   "id": "roster-cs/remove/PARTIAL",
+   "task": "roster-cs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.027808398008346558,
+    1.096156120300293,
+    -2.9725382328033447
+   ],
+   "tokens": 428
+  },
+  {
+   "id": "roster-cs/remove/DONE",
+   "task": "roster-cs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.07770416140556335,
+    1.0542428493499756,
+    -2.9504075050354004
+   ],
+   "tokens": 447
+  },
+  {
+   "id": "roster-cs/oldest/PARTIAL",
+   "task": "roster-cs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.682442307472229,
+    1.3504726886749268,
+    -1.4305671453475952
+   ],
+   "tokens": 340
+  },
+  {
+   "id": "roster-cs/oldest/DONE",
+   "task": "roster-cs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.4065803289413452,
+    1.049742341041565,
+    -2.485257625579834
+   ],
+   "tokens": 423
+  },
+  {
+   "id": "rpn-hs/divide/PARTIAL",
+   "task": "rpn-hs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.12280580401420593,
+    1.0547823905944824,
+    -2.7476449012756348
+   ],
+   "tokens": 525
+  },
+  {
+   "id": "rpn-hs/divide/DONE",
+   "task": "rpn-hs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.479692280292511,
+    0.8238378763198853,
+    -3.2529520988464355
+   ],
+   "tokens": 773
+  },
+  {
+   "id": "rpn-hs/malformed/NOT_STARTED",
+   "task": "rpn-hs",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "logits": [
+    -3.029147148132324,
+    0.6014627814292908,
+    0.5118944644927979
+   ],
+   "tokens": 265
+  },
+  {
+   "id": "rpn-hs/malformed/PARTIAL",
+   "task": "rpn-hs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.03484341502189636,
+    0.9851119518280029,
+    -2.601844072341919
+   ],
+   "tokens": 465
+  },
+  {
+   "id": "rpn-hs/malformed/DONE",
+   "task": "rpn-hs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5080040693283081,
+    0.8177961111068726,
+    -2.883958101272583
+   ],
+   "tokens": 785
+  },
+  {
+   "id": "rpn-hs/power/PARTIAL",
+   "task": "rpn-hs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.8467124700546265,
+    1.64094078540802,
+    -2.298952341079712
+   ],
+   "tokens": 319
+  },
+  {
+   "id": "rpn-hs/power/DONE",
+   "task": "rpn-hs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.6034835577011108,
+    1.2605526447296143,
+    -2.716752529144287
+   ],
+   "tokens": 419
+  },
+  {
+   "id": "slug-ts/trim-edges/PARTIAL",
+   "task": "slug-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.3376359939575195,
+    1.3073679208755493,
+    -2.0177204608917236
+   ],
+   "tokens": 430
+  },
+  {
+   "id": "slug-ts/trim-edges/DONE",
+   "task": "slug-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.5034383535385132,
+    1.0632941722869873,
+    -2.407620668411255
+   ],
+   "tokens": 485
+  },
+  {
+   "id": "slug-ts/accents/PARTIAL",
+   "task": "slug-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.8312520980834961,
+    1.287550687789917,
+    -2.543365716934204
+   ],
+   "tokens": 422
+  },
+  {
+   "id": "slug-ts/accents/DONE",
+   "task": "slug-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.12003645300865173,
+    1.107288122177124,
+    -3.172271966934204
+   ],
+   "tokens": 427
+  },
+  {
+   "id": "slug-ts/unique-slugs/PARTIAL",
+   "task": "slug-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.04913330078125,
+    1.199597954750061,
+    -1.9302504062652588
+   ],
+   "tokens": 443
+  },
+  {
+   "id": "slug-ts/unique-slugs/DONE",
+   "task": "slug-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.4911658763885498,
+    1.0041216611862183,
+    -2.1073453426361084
+   ],
+   "tokens": 516
+  },
+  {
+   "id": "stack-swift/safe-pop/PARTIAL",
+   "task": "stack-swift",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.717225432395935,
+    1.5586637258529663,
+    -1.9053422212600708
+   ],
+   "tokens": 279
+  },
+  {
+   "id": "stack-swift/safe-pop/DONE",
+   "task": "stack-swift",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.3712810277938843,
+    1.4206092357635498,
+    -1.9508689641952515
+   ],
+   "tokens": 371
+  },
+  {
+   "id": "stack-swift/peek/NOT_STARTED",
+   "task": "stack-swift",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "logits": [
+    -4.043307304382324,
+    -1.846631407737732,
+    1.6056503057479858
+   ],
+   "tokens": 266
+  },
+  {
+   "id": "stack-swift/peek/PARTIAL",
+   "task": "stack-swift",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.9786146879196167,
+    1.2242770195007324,
+    -1.9081900119781494
+   ],
+   "tokens": 377
+  },
+  {
+   "id": "stack-swift/peek/DONE",
+   "task": "stack-swift",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.48502689599990845,
+    1.1466097831726074,
+    -2.428101062774658
+   ],
+   "tokens": 417
+  },
+  {
+   "id": "stack-swift/sequence/PARTIAL",
+   "task": "stack-swift",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.0607900619506836,
+    1.381022334098816,
+    -2.217897653579712
+   ],
+   "tokens": 400
+  },
+  {
+   "id": "stack-swift/sequence/DONE",
+   "task": "stack-swift",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.9896030426025391,
+    1.366962194442749,
+    -2.2804315090179443
+   ],
+   "tokens": 430
+  },
+  {
+   "id": "stats-jl/empty/PARTIAL",
+   "task": "stats-jl",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.2343679666519165,
+    1.1558747291564941,
+    -2.530625820159912
+   ],
+   "tokens": 307
+  },
+  {
+   "id": "stats-jl/empty/DONE",
+   "task": "stats-jl",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.30917221307754517,
+    0.9690735936164856,
+    -2.8891773223876953
+   ],
+   "tokens": 395
+  },
+  {
+   "id": "stats-jl/sample-variance/PARTIAL",
+   "task": "stats-jl",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.308909296989441,
+    1.4060933589935303,
+    -1.9629913568496704
+   ],
+   "tokens": 350
+  },
+  {
+   "id": "stats-jl/sample-variance/DONE",
+   "task": "stats-jl",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.4214150607585907,
+    0.8311643600463867,
+    -2.711139440536499
+   ],
+   "tokens": 473
+  },
+  {
+   "id": "stats-jl/median/PARTIAL",
+   "task": "stats-jl",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.5559174418449402,
+    1.1977441310882568,
+    -2.3806538581848145
+   ],
+   "tokens": 429
+  },
+  {
+   "id": "stats-jl/median/DONE",
+   "task": "stats-jl",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.38691088557243347,
+    1.1204429864883423,
+    -2.4090399742126465
+   ],
+   "tokens": 477
+  },
+  {
+   "id": "strbuf-c/grow-check/PARTIAL",
+   "task": "strbuf-c",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.7888683080673218,
+    0.9577063322067261,
+    -0.6733622550964355
+   ],
+   "tokens": 392
+  },
+  {
+   "id": "strbuf-c/grow-check/DONE",
+   "task": "strbuf-c",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.1752351522445679,
+    1.1052800416946411,
+    -1.2679150104522705
+   ],
+   "tokens": 409
+  },
+  {
+   "id": "strbuf-c/appendf/NOT_STARTED",
+   "task": "strbuf-c",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "logits": [
+    -2.2303383350372314,
+    0.9433190226554871,
+    -0.7114060521125793
+   ],
+   "tokens": 300
+  },
+  {
+   "id": "strbuf-c/appendf/PARTIAL",
+   "task": "strbuf-c",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.10773971676826477,
+    1.0348964929580688,
+    -2.691502571105957
+   ],
+   "tokens": 525
+  },
+  {
+   "id": "strbuf-c/appendf/DONE",
+   "task": "strbuf-c",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5128769874572754,
+    0.793485164642334,
+    -2.9578235149383545
+   ],
+   "tokens": 773
+  },
+  {
+   "id": "strbuf-c/clear-reserve/PARTIAL",
+   "task": "strbuf-c",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.2693195939064026,
+    1.0560685396194458,
+    -2.5046656131744385
+   ],
+   "tokens": 496
+  },
+  {
+   "id": "strbuf-c/clear-reserve/DONE",
+   "task": "strbuf-c",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.05450424551963806,
+    0.9569380283355713,
+    -2.5581979751586914
+   ],
+   "tokens": 548
+  },
+  {
+   "id": "temperature-dart/kelvin/PARTIAL",
+   "task": "temperature-dart",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.874832034111023,
+    1.1157974004745483,
+    -2.049814462661743
+   ],
+   "tokens": 434
+  },
+  {
+   "id": "temperature-dart/kelvin/DONE",
+   "task": "temperature-dart",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.09676766395568848,
+    0.8488007187843323,
+    -2.127772331237793
+   ],
+   "tokens": 496
+  },
+  {
+   "id": "temperature-dart/describe-edges/NOT_STARTED",
+   "task": "temperature-dart",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "logits": [
+    -4.310342311859131,
+    -2.529386281967163,
+    1.916317105293274
+   ],
+   "tokens": 279
+  },
+  {
+   "id": "temperature-dart/describe-edges/PARTIAL",
+   "task": "temperature-dart",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.8889799118041992,
+    1.3701016902923584,
+    -1.4066780805587769
+   ],
+   "tokens": 290
+  },
+  {
+   "id": "temperature-dart/describe-edges/DONE",
+   "task": "temperature-dart",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.9234075546264648,
+    1.3213720321655273,
+    -2.034745693206787
+   ],
+   "tokens": 310
+  },
+  {
+   "id": "temperature-dart/cli-unit/PARTIAL",
+   "task": "temperature-dart",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.7004259824752808,
+    1.2210378646850586,
+    -2.4007935523986816
+   ],
+   "tokens": 346
+  },
+  {
+   "id": "temperature-dart/cli-unit/DONE",
+   "task": "temperature-dart",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.17607241868972778,
+    0.9772186279296875,
+    -2.5593135356903076
+   ],
+   "tokens": 452
   },
   {
    "id": "todo-ts/list-copy/NOT_STARTED",
    "task": "todo-ts",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -5.073613166809082,
+    -4.457159042358398,
+    2.325577974319458
+   ],
    "tokens": 216
   },
   {
@@ -429,6 +1928,11 @@
    "task": "todo-ts",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -3.275573492050171,
+    0.514293909072876,
+    0.49669456481933594
+   ],
    "tokens": 269
   },
   {
@@ -436,6 +1940,11 @@
    "task": "todo-ts",
    "label": "DONE",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -3.4091639518737793,
+    0.4944359362125397,
+    0.5888917446136475
+   ],
    "tokens": 338
   },
   {
@@ -443,6 +1952,11 @@
    "task": "todo-ts",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -3.1179494857788086,
+    -0.33135688304901123,
+    0.9090480804443359
+   ],
    "tokens": 317
   },
   {
@@ -450,6 +1964,11 @@
    "task": "todo-ts",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    0.25200673937797546,
+    0.9439334273338318,
+    -2.9990463256835938
+   ],
    "tokens": 468
   },
   {
@@ -457,6 +1976,11 @@
    "task": "todo-ts",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.4961044490337372,
+    0.7973296642303467,
+    -3.1771438121795654
+   ],
    "tokens": 589
   },
   {
@@ -464,6 +1988,11 @@
    "task": "todo-ts",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.413898944854736,
+    -2.127133846282959,
+    1.687178611755371
+   ],
    "tokens": 237
   },
   {
@@ -471,6 +2000,11 @@
    "task": "todo-ts",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.1787354052066803,
+    1.1557334661483765,
+    -3.0392181873321533
+   ],
    "tokens": 377
   },
   {
@@ -478,13 +2012,95 @@
    "task": "todo-ts",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.0745212733745575,
+    0.9071210622787476,
+    -2.0741655826568604
+   ],
    "tokens": 619
+  },
+  {
+   "id": "tokenizer-rs/decimals/PARTIAL",
+   "task": "tokenizer-rs",
+   "label": "PARTIAL",
+   "prediction": "NOT_STARTED",
+   "logits": [
+    -2.4813621044158936,
+    0.4727395176887512,
+    0.5951975584030151
+   ],
+   "tokens": 346
+  },
+  {
+   "id": "tokenizer-rs/decimals/DONE",
+   "task": "tokenizer-rs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.3229058086872101,
+    0.933285117149353,
+    -2.210073947906494
+   ],
+   "tokens": 468
+  },
+  {
+   "id": "tokenizer-rs/result-errors/PARTIAL",
+   "task": "tokenizer-rs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.29434734582901,
+    0.8761487007141113,
+    -2.925813913345337
+   ],
+   "tokens": 584
+  },
+  {
+   "id": "tokenizer-rs/result-errors/DONE",
+   "task": "tokenizer-rs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.5626593828201294,
+    0.7258763313293457,
+    -3.4648444652557373
+   ],
+   "tokens": 918
+  },
+  {
+   "id": "tokenizer-rs/slash-parens/PARTIAL",
+   "task": "tokenizer-rs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -2.2382259368896484,
+    1.3879733085632324,
+    -1.4946763515472412
+   ],
+   "tokens": 337
+  },
+  {
+   "id": "tokenizer-rs/slash-parens/DONE",
+   "task": "tokenizer-rs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.6789133548736572,
+    1.1756081581115723,
+    -2.3615033626556396
+   ],
+   "tokens": 496
   },
   {
    "id": "urlshort-go/validate-url/NOT_STARTED",
    "task": "urlshort-go",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -4.712643623352051,
+    -3.7082152366638184,
+    2.1439008712768555
+   ],
    "tokens": 216
   },
   {
@@ -492,6 +2108,11 @@
    "task": "urlshort-go",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.0607820749282837,
+    1.1672970056533813,
+    -1.442909836769104
+   ],
    "tokens": 328
   },
   {
@@ -499,6 +2120,11 @@
    "task": "urlshort-go",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.4005342721939087,
+    0.9338893890380859,
+    -1.7254276275634766
+   ],
    "tokens": 444
   },
   {
@@ -506,6 +2132,11 @@
    "task": "urlshort-go",
    "label": "NOT_STARTED",
    "prediction": "PARTIAL",
+   "logits": [
+    -3.0117228031158447,
+    0.5601094961166382,
+    0.3129130005836487
+   ],
    "tokens": 265
   },
   {
@@ -513,6 +2144,11 @@
    "task": "urlshort-go",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -1.794990062713623,
+    0.5198076367378235,
+    0.5067362189292908
+   ],
    "tokens": 438
   },
   {
@@ -520,6 +2156,11 @@
    "task": "urlshort-go",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.4729992151260376,
+    0.7537707090377808,
+    -2.7059502601623535
+   ],
    "tokens": 754
   },
   {
@@ -527,6 +2168,11 @@
    "task": "urlshort-go",
    "label": "NOT_STARTED",
    "prediction": "NOT_STARTED",
+   "logits": [
+    -5.002527236938477,
+    -4.5072102546691895,
+    2.1924610137939453
+   ],
    "tokens": 224
   },
   {
@@ -534,6 +2180,11 @@
    "task": "urlshort-go",
    "label": "PARTIAL",
    "prediction": "PARTIAL",
+   "logits": [
+    -0.8169748783111572,
+    1.1894785165786743,
+    -2.1298985481262207
+   ],
    "tokens": 418
   },
   {
@@ -541,7 +2192,168 @@
    "task": "urlshort-go",
    "label": "DONE",
    "prediction": "PARTIAL",
+   "logits": [
+    0.5094331502914429,
+    0.7588424682617188,
+    -2.9552175998687744
+   ],
    "tokens": 639
+  },
+  {
+   "id": "validate-ts/age-rule/PARTIAL",
+   "task": "validate-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.18326279520988464,
+    0.9396501779556274,
+    -1.9210690259933472
+   ],
+   "tokens": 462
+  },
+  {
+   "id": "validate-ts/age-rule/DONE",
+   "task": "validate-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    0.4405115246772766,
+    0.7736149430274963,
+    -2.3994140625
+   ],
+   "tokens": 562
+  },
+  {
+   "id": "validate-ts/email-rule/PARTIAL",
+   "task": "validate-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.7413164973258972,
+    0.9625536799430847,
+    -1.554687261581421
+   ],
+   "tokens": 540
+  },
+  {
+   "id": "validate-ts/email-rule/DONE",
+   "task": "validate-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.6283813118934631,
+    0.9240900278091431,
+    -1.495365023612976
+   ],
+   "tokens": 563
+  },
+  {
+   "id": "validate-ts/field-errors/PARTIAL",
+   "task": "validate-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.616690993309021,
+    1.2718493938446045,
+    -1.8095264434814453
+   ],
+   "tokens": 441
+  },
+  {
+   "id": "validate-ts/field-errors/DONE",
+   "task": "validate-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.4417993724346161,
+    1.0302720069885254,
+    -2.5557851791381836
+   ],
+   "tokens": 662
+  },
+  {
+   "id": "wordfreq-kt/normalize/PARTIAL",
+   "task": "wordfreq-kt",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.768062710762024,
+    1.3704555034637451,
+    -1.639120101928711
+   ],
+   "tokens": 327
+  },
+  {
+   "id": "wordfreq-kt/normalize/DONE",
+   "task": "wordfreq-kt",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.4483482837677002,
+    1.3752120733261108,
+    -1.8500971794128418
+   ],
+   "tokens": 346
+  },
+  {
+   "id": "wordfreq-kt/top-n/NOT_STARTED",
+   "task": "wordfreq-kt",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.9363164901733398,
+    1.3482859134674072,
+    -1.5005069971084595
+   ],
+   "tokens": 279
+  },
+  {
+   "id": "wordfreq-kt/top-n/PARTIAL",
+   "task": "wordfreq-kt",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.9561122059822083,
+    1.14210045337677,
+    -1.6096105575561523
+   ],
+   "tokens": 483
+  },
+  {
+   "id": "wordfreq-kt/top-n/DONE",
+   "task": "wordfreq-kt",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.661228358745575,
+    1.0251423120498657,
+    -1.6420273780822754
+   ],
+   "tokens": 568
+  },
+  {
+   "id": "wordfreq-kt/stopwords/PARTIAL",
+   "task": "wordfreq-kt",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "logits": [
+    -1.5507071018218994,
+    1.525575876235962,
+    -2.116184949874878
+   ],
+   "tokens": 345
+  },
+  {
+   "id": "wordfreq-kt/stopwords/DONE",
+   "task": "wordfreq-kt",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "logits": [
+    -0.22067773342132568,
+    1.0019662380218506,
+    -2.514676094055176
+   ],
+   "tokens": 466
   }
  ]
 }

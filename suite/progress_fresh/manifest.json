@@ -2,18 +2,41 @@
   "labels_are": "author-known by construction, not model-judged; never add to any training set",
   "splits": {
     "dev": {
-      "rows": 18,
-      "sha256": "8195fa8ffc273620c7661c2ec930a80460403a6e27beec910c8f63076cb7b108",
+      "rows": 51,
+      "sha256": "e686f6cbd8343916617201b35233eb31f80963b99139fdf224478d5f29590512",
       "by_label": {
-        "NOT_STARTED": 6,
-        "PARTIAL": 6,
-        "DONE": 6
+        "PARTIAL": 21,
+        "DONE": 21,
+        "NOT_STARTED": 9
       },
       "by_language": {
+        "Bash": 7,
+        "Clojure": 6,
+        "Perl": 7,
+        "Python": 6,
         "Ruby": 9,
-        "JavaScript": 9
+        "JavaScript": 9,
+        "Lua": 7
       },
       "by_task": {
+        "backup-sh": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
+        "interval-clj": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "logparse-pl": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
+        "ratelimit-py": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
         "recipes-rb": {
           "NOT_STARTED": 3,
           "PARTIAL": 3,
@@ -23,6 +46,11 @@
           "NOT_STARTED": 3,
           "PARTIAL": 3,
           "DONE": 3
+        },
+        "wordtrim-lua": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
         }
       },
       "evidence_chars": {
@@ -31,26 +59,52 @@
       }
     },
     "test": {
-      "rows": 72,
-      "sha256": "5d9068a35e891f3d5f7289e60c4fdf5b2646003608a683829cf72d5461c7604d",
+      "rows": 193,
+      "sha256": "8ea4714241deb69ab7904e22edad16406908af417fa5755c24c38162f219bccd",
       "by_label": {
-        "NOT_STARTED": 24,
-        "PARTIAL": 24,
-        "DONE": 24
+        "PARTIAL": 81,
+        "DONE": 81,
+        "NOT_STARTED": 31
       },
       "by_language": {
-        "Rust": 9,
+        "Scala": 7,
+        "Rust": 15,
+        "Zig": 6,
+        "OCaml": 6,
         "PHP": 9,
         "Python": 9,
-        "C#": 9,
-        "Java": 9,
+        "Elixir": 7,
+        "C#": 15,
+        "Java": 15,
+        "Go": 15,
+        "Ruby": 6,
+        "SQL": 6,
+        "JavaScript": 6,
         "C++": 9,
-        "TypeScript": 9,
-        "Go": 9
+        "Haskell": 7,
+        "TypeScript": 21,
+        "Swift": 7,
+        "Julia": 6,
+        "C": 7,
+        "Dart": 7,
+        "Kotlin": 7
       },
       "by_task": {
+        "cart-scala": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
         "csvstats-rs": {
           "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "dedup-zig": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "fqueue-ml": {
           "PARTIAL": 3,
           "DONE": 3
         },
@@ -64,6 +118,11 @@
           "PARTIAL": 3,
           "DONE": 3
         },
+        "kvparse-ex": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
         "ledger-cs": {
           "NOT_STARTED": 3,
           "PARTIAL": 3,
@@ -74,13 +133,69 @@
           "PARTIAL": 3,
           "DONE": 3
         },
+        "lrucache-go": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "minimd-rb": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "money-java": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "orders-sql": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "retry-js": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
         "ringbuf-cpp": {
           "NOT_STARTED": 3,
           "PARTIAL": 3,
           "DONE": 3
         },
+        "roster-cs": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "rpn-hs": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
+        "slug-ts": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "stack-swift": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
+        "stats-jl": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "strbuf-c": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
+        "temperature-dart": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
+        },
         "todo-ts": {
           "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "tokenizer-rs": {
           "PARTIAL": 3,
           "DONE": 3
         },
@@ -88,11 +203,20 @@
           "NOT_STARTED": 3,
           "PARTIAL": 3,
           "DONE": 3
+        },
+        "validate-ts": {
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "wordfreq-kt": {
+          "PARTIAL": 3,
+          "DONE": 3,
+          "NOT_STARTED": 1
         }
       },
       "evidence_chars": {
         "min": 0,
-        "max": 1254
+        "max": 1651
       }
     }
   }

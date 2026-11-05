@@ -21,7 +21,7 @@ from suite.progress_dataset import seed_diff
 
 HERE = Path(__file__).resolve().parent
 OUT = Path.home() / ".cria" / "training" / "progress-v1" / "fresh"
-DEV_TASKS = ("recipes-rb", "weather-js")
+DEV_TASKS = ("recipes-rb", "weather-js", "wordtrim-lua", "backup-sh", "logparse-pl", "interval-clj", "ratelimit-py")
 
 
 def _write(root: Path, files: dict[str, str]) -> None:
@@ -45,11 +45,13 @@ def build(out: Path = OUT) -> dict:
         _write(seed_dir, t["seed"])
         for k, req in enumerate(t["reqs"]):
             snaps = {
-                "NOT_STARTED": t["unrelated"] if k % 2 else {},
+                "NOT_STARTED": t.get("unrelated", {}) if k % 2 else {},
                 "PARTIAL": req["partial"],
                 "DONE": req["done"],
             }
             for label, overlay in snaps.items():
+                if label == "NOT_STARTED" and not req.get("ns", not t.get("extension", False)):
+                    continue  # extension tasks emit NOT_STARTED only as a small control (ns=True opts in)
                 ws = tasks_dir / t["name"] / req["id"] / label.lower()
                 _write(ws, {**t["seed"], **overlay})
                 evidence = seed_diff(seed_dir, ws)
