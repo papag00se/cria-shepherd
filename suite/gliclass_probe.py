@@ -72,12 +72,15 @@ def load_native(snapshot, device='cpu'):
     return model, pipe, loading_receipt(info)
 
 
-def session(path):
+def session(path, gpu=False):
+    """An ONNX Runtime session: CPU (6 threads, the deployment shape, used for timing) or, for checks that only need the
+    numbers, CUDA on whatever card CUDA_VISIBLE_DEVICES names."""
     import onnxruntime as ort
     options = ort.SessionOptions()
     options.intra_op_num_threads = 6
     options.inter_op_num_threads = 1
-    return ort.InferenceSession(str(path), sess_options=options, providers=['CPUExecutionProvider'])
+    providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if gpu else ['CPUExecutionProvider']
+    return ort.InferenceSession(str(path), sess_options=options, providers=providers)
 
 
 def ort_logits(engine, inputs):

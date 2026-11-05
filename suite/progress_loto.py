@@ -385,7 +385,8 @@ def cmd_export(args):
 
 
 def cmd_eval_onnx(args):
-    """CPU INT4 graph: regression on the old families' held-out cases, plus progress fidelity and latency."""
+    """INT4 graph: regression on the old families' held-out cases and progress fidelity on the GPU; latency on the CPU
+    (the deployment shape), the only measurement that must run there."""
     import statistics
     import numpy as np
     import torch
@@ -395,8 +396,11 @@ def cmd_eval_onnx(args):
     _contract, hashes = common_setup(args)
     manifest = json.loads((export / "download.json").read_text())
     model, pipe, _ = load_native(manifest["snapshot"])
-    engine = session(export / "int4" / "model.onnx")
-    fp32 = session(export / "normalized-fp32.onnx")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device)
+    engine = session(export / "int4" / "model.onnx", gpu=True)          # regression + fidelity
+    timed = session(export / "int4" / "model.onnx")                     # CPU: latency only
+    fp32 = session(export / "normalized-fp32.onnx", gpu=True)
     old = {(r["evaluation_scope"], r["id"]): r
            for r in map(json.loads, (BASE.parent / "assessment/v2/results.jsonl").read_text().splitlines())}
     _c, _t, test = load_frozen_cohorts(BASE)
@@ -427,10 +431,12 @@ def cmd_eval_onnx(args):
         started = time.monotonic()
         x = encode(pipe, r, hashes, PROGRESS_LABELS)
         prepared = time.monotonic()
-        logits = ort_logits_n(engine, x, CLASSES)
+        ort_logits_n(timed, x, CLASSES)
         ended = time.monotonic()
+        logits = ort_logits_n(engine, x, CLASSES)
         with torch.no_grad():
-            native = model(**x, max_num_classes=CLASSES).logits[0, :CLASSES].float().numpy()
+            native = model(**{k: v.to(device) for k, v in x.items()},
+                           max_num_classes=CLASSES).logits[0, :CLASSES].float().cpu().numpy()
         reference = ort_logits_n(fp32, x, CLASSES)
         timings.append({"tokens": int(x["input_ids"].shape[1]), "prepare_s": prepared - started, "ort_s": ended - prepared,
                         "label": r["label"], "int4": PROGRESS_LABELS[int(np.argmax(logits))],
