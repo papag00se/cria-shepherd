@@ -127,7 +127,7 @@ class EvidenceServices:
     read: Callable[[probegate.GatePlan | None, str, Log], probegate.GateOutcome]
     error: Callable[[probegate.GateOutcome], str]
     # Shared factual progress/write bookkeeping, not F44's author/admit/vet policy.
-    progress: Callable[[str, list[dict] | None], None]
+    progress: Callable[..., None]   # (finding, messages, *, count_stall=True)
 
 
 @dataclass(frozen=True)
@@ -351,7 +351,7 @@ def record(source: Input, state: State, outcome: probegate.GateOutcome, findings
         state.gate_fresh = False
         if outcome.ran and findings:                  # a replan must not erase what the checks that DID run found
             state.last_gate_red = True
-            evidence.progress(findings, source.body.get("messages"))
+            evidence.progress(findings, source.body.get("messages"), count_stall=False)   # the replan counts the round, once
         source.log.emit("loop.gate_survey_only", level="info")
         return
     if not outcome.ran:

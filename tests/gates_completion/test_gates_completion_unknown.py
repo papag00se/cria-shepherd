@@ -19,7 +19,7 @@ def completion_check(state, plan, raw, log, read=None):
     state.gate_plan, state.probe_call_id = plan, "probe"
     src = checks.Input({"messages": [{"role": "tool", "tool_call_id": "probe", "content": raw}]}, log, engagement=5)
     ev = checks.EvidenceServices(loop._read_tool_result, read or loop.read_gate, loop.gate_error_text,
-                                 lambda findings, messages: loop.track_gate_progress(state, findings, messages))
+                                 lambda findings, messages, **kw: loop.track_gate_progress(state, findings, messages, **kw))
     return checks.completion_result(src, state, ev)
 
 

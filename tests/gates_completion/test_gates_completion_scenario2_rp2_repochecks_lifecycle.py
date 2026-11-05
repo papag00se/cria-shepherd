@@ -128,3 +128,17 @@ def test_the_runner_and_module_judgments_speak_before_the_checker_and_a_survey_o
     red = loop.GuardState(gate_plan=survey)
     rc.record(d.source(), red, probegate.GateOutcome(ran=True, replan_after_survey=True), "syntax error in a.py", d.evidence)
     assert red.gate_replan_required and not red.gate_fresh and red.last_gate_red
+
+
+def test_a_survey_replan_of_the_same_red_is_one_stall_round_not_two_and_keeps_the_findings(tmp_path, monkeypatch):
+    harness(tmp_path, monkeypatch, "print('ok')")
+    d = Driver(tmp_path)
+    first = rc.probegate.GateOutcome(ran=True, replan_after_survey=True)
+    d.state.last_gate_flag = ""
+    rc.record(d.source(), d.state, first, "a.py:1: SyntaxError", d.evidence)
+    assert d.state.last_gate_red and d.state.last_gate_flag == "a.py:1: SyntaxError"   # red findings preserved
+    assert d.state.gate_stall == 0                                                    # no coder round has passed yet
+    rc.record(d.source(), d.state, rc.probegate.GateOutcome(ran=True), "a.py:1: SyntaxError", d.evidence)
+    assert d.state.gate_stall == 1                                                    # the replan is the one counted round
+    rc.record(d.source(), d.state, rc.probegate.GateOutcome(ran=True), "a.py:1: SyntaxError", d.evidence)
+    assert d.state.gate_stall == 2                                                    # a genuine unchanged re-run still stalls

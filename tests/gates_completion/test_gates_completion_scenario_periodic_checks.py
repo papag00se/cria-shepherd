@@ -31,7 +31,7 @@ class Driver:
         self.state = loop.GuardState(**state)
         self.probes = rc.ProbeServices(lambda m: str(tmp_path), probegate.plan_gate, iter(f"call_{i}" for i in range(99)).__next__)
         self.evidence = rc.EvidenceServices(loop._read_tool_result, loop.read_gate, loop.gate_error_text,
-                                            lambda f, m: loop.track_gate_progress(self.state, f, m))
+                                            lambda f, m, **kw: loop.track_gate_progress(self.state, f, m, **kw))
 
     def source(self, **kw):
         return rc.Input({"tools": TOOLS, "messages": self.messages}, self.log, 5, workspace_root=str(self.tmp), **kw)

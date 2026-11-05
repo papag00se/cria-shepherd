@@ -783,7 +783,7 @@ def _note_write_results(gs: GuardState, messages) -> None:
                               | denial.witnessed_completed_ids(messages or [], getattr(gs, "gate_marks", None)))
 
 
-def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
+def track_gate_progress(gs: GuardState, finding: str, messages=None, *, count_stall: bool = True) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
     a FALSY value on a GREEN/clean gate. Maintains the identical-finding stall (same error unchanged
     across gates = no progress → the reasoned thrash-assist). A COULDN'T-RUN gate must NOT call this
@@ -802,6 +802,9 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     docstring claimed it fed the steer author. One field, written at the one funnel every gate path
     reaches (#23: one owner).
 
+    ``count_stall=False`` persists the finding-set but leaves the identical-finding streak alone: the
+    survey-only gate that precedes a replan is not a coder round, and the replan re-reads the same tree.
+
     ``messages`` is the request history AT MARK TIME: the authoritative results of every write sent
     before this round are in it, so the edits-between-rounds fact is settled from them here (a
     running count taken before a refusal/failed edit was recorded read an edit that never landed as
@@ -819,6 +822,8 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     gs.gate_pending_write_ids = (
         {c for c in (gs.write_call_ids or [])[:gs.gate_write_mark] if c not in answered}
         if gs.gate_write_mark is not None else None)
+    if not count_stall:
+        return      # findings persisted above; a survey-only gate is cria's own re-ask, not a coder round
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
@@ -7005,7 +7010,7 @@ def _repository_probes():
 
 def _repository_evidence(gs):
     return repositorychecks.EvidenceServices(_read_tool_result, read_gate, gate_error_text,
-        lambda findings, messages: track_gate_progress(gs, findings, messages))
+        lambda findings, messages, **kw: track_gate_progress(gs, findings, messages, **kw))
 
 
 def _repository_outcome(outcome, *, consumed=False):

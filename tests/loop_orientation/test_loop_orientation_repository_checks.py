@@ -24,7 +24,7 @@ def probes(plan=None):
 
 def evidence(state):
     return rcheck.EvidenceServices(loop._read_tool_result, loop.read_gate, loop.gate_error_text,
-                                   lambda findings, messages: loop.track_gate_progress(state, findings, messages))
+                                   lambda findings, messages, **kw: loop.track_gate_progress(state, findings, messages, **kw))
 
 def resume(raw, plan, **state_kw):
     state = loop.GuardState(periodic_probe=True, awaiting_probe=True, probe_call_id="probe", gate_plan=plan, **state_kw)
