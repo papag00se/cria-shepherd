@@ -26,4 +26,4 @@ cria can ask the harness to run relevant checks and use their actual output in c
 
 The harness runs commands, edits files, and enforces workspace permissions. cria is a separate OpenAI-compatible layer between that harness and the model; it doesn't replace either one.
 
-**Choose the amount of help.** L5 enables eligible assists by default. Lower engagement levels are useful for comparison; experimental planning is separately opt-in. See [configuration](../README.md#configuration) and the [full assist catalog](heuristic-assists.md).
+**Meet System 1.** cria's small trained CPU model handles two focused decisions about summaries and guidance. [See what it does and how we trained it](system1-guide.md). Experimental planning remains separately opt-in.

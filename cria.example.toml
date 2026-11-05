@@ -65,16 +65,13 @@ satisfaction_check_max_turns = 60
 enabled = false                    # opt-in experiment only; never enabled by L5
 max_gather_rounds = 12             # cap the planner investigate loop
 
-# Optional trained CPU classifier (needs `pip install cria-shepherd[system1]`: onnxruntime + tokenizers).
-# When enabled it answers ONLY two closed questions in-process, with no reasoner call: whether a compaction
-# briefing is retrospective (PLAN vs RETROSPECTIVE) and whether an authored directive dictates code
-# (DICTATES vs DESCRIBES). Every other judgment stays with the reasoner. If it is enabled and the bundle or
-# dependencies cannot load, cria refuses to start; if one call cannot be answered the optional steer or
-# briefing is withheld — nothing substitutes for it.
+# System 1 is enabled by default. It runs on CPU and answers two narrow guard questions.
+# The qualified bundle must be installed separately until public distribution is available.
+# Override bundle_dir to use a compatible replacement; missing or invalid bundles prevent startup.
 [system1]
-enabled = false
-# bundle_dir = "~/.cria/models/system1/expanded-v2"   # REQUIRED when enabled; never searched for
-# threads = 6                                          # CPU intra-op threads (positive integer)
+enabled = true
+# bundle_dir = "~/.cria/models/system1/expanded-v2-live"
+# threads = 6  # CPU intra-op threads (positive integer)
 
 [engagement]
 bias = "task"                      # unsure classifier → task | simple | question

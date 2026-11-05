@@ -20,7 +20,7 @@ exact policy bytes + the producer's self-test cases), loaded directly, and nothi
 
 Failure is loud and typed (:class:`System1Error`): a bundle that does not load, a state that is not
 the trained key set, an input that does not fit, a runtime failure, or a non-finite output.
-There is no fallback and no reasoner behind it — the caller declines its guidance (principle 4/13).
+If it cannot answer, the caller can ask the reasoner to judge the complete input.
 
 Import discipline: importing this module costs only the standard library. ``onnxruntime`` and
 ``tokenizers`` (and ORT's own ``numpy``) are imported inside :class:`System1Runtime` construction,
@@ -287,7 +287,7 @@ def _import(name: str):
         return importlib.import_module(name)
     except ImportError as exc:
         raise System1DependencyError(
-            f"System 1 is enabled but {name!r} is not installed (optional extra required): {exc}") from exc
+            f"System 1 is enabled but {name!r} is not installed; install cria's runtime dependencies: {exc}") from exc
 
 
 def _register_arena(ort, budget: int) -> None:

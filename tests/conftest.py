@@ -18,6 +18,23 @@ _violations: list[tuple[str, int, str]] = []
 _lock = threading.Lock()
 
 
+@pytest.fixture(autouse=True)
+def _fake_wire_servers_do_not_load_system1(request, monkeypatch):
+    """Wire and planner scenarios exercise fake upstreams, not a machine-local model bundle.
+
+    System 1 startup and routing have their own tests; these unrelated server scenarios must not
+    depend on a developer's private bundle or CPU runtime installation.
+    """
+    path = request.node.path
+    if path.parent.name == "read_multipart" or path.name in {
+        "test_loop_planner_off_by_default.py", "test_server_config_http.py",
+        "test_server_config_scenario2_sv2_http_edges.py", "test_server_config_scenario_cli.py",
+        "test_server_config_scenario_routing.py", "test_server_config_scenario_wire_tools.py",
+    }:
+        from cria import system1wiring
+        monkeypatch.setattr(system1wiring, "build", lambda *args, **kwargs: None)
+
+
 def _code_of(fn):
     if isinstance(fn, functools.partial):
         return _code_of(fn.func)

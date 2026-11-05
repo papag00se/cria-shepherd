@@ -5,7 +5,7 @@ import pytest
 
 from cria import failover as fo
 from cria import loop, system1, system1wiring
-from cria.config import System1Config
+from cria.config import Role, System1Config
 from cria.envfile import env_secret, load_env_file
 
 
@@ -42,8 +42,9 @@ class Log:
 
 
 @pytest.mark.parametrize("fault", ["raises", "unexpected-label", "typed-error"])
-def test_a_classifier_that_cannot_answer_declines_and_the_briefing_is_rejected_without_asking_a_reasoner(fault):
-    """System1 fails SAFE: any runtime error or off-menu label is 'no answer' (logged with the real error); the compaction briefing is rejected and no reasoner stands in."""
+@pytest.mark.parametrize("verdict,expected", [("RETROSPECTIVE", True), ("PLAN", False), ("", False)])
+def test_classifier_failure_asks_the_reasoner_for_the_complete_briefing(fault, verdict, expected, monkeypatch):
+    """A failed classifier asks the reasoner; an unreadable or negative reasoner verdict declines."""
     class Runtime:
         def judge(self, family, state, *, rlog=None):
             if fault == "raises":
@@ -56,10 +57,14 @@ def test_a_classifier_that_cannot_answer_declines_and_the_briefing_is_rejected_w
     with pytest.raises(system1wiring.Unjudged):
         system1wiring.classify(Runtime(), "retrospective", "The briefing.", log, seat="t")
     assert [k for k, _ in log.events] == ["system1.declined"] and log.events[0][1]["family"] == "retrospective"
-    role = type("R", (), {"reasoning": "off"})()
-    ok = loop.validate_compaction_briefing(lambda *a, **k: asked.append(a), role, "We built X.", files="", checks="",
+    def summarize(*args, **kwargs):
+        asked.append(kwargs)
+        return verdict
+    monkeypatch.setattr(loop, "summarize", summarize)
+    ok = loop.validate_compaction_briefing(lambda *a, **k: None, Role("reasoner", "local"), "We built X.", files="", checks="",
                                            transcript_blocks=[], rlog=log, system1=Runtime())
-    assert ok is False and asked == []
+    assert ok is expected and len(asked) == 1
+    assert "We built X." in str(asked[0]["evidence_blocks"])
 
 
 def test_a_classifier_failure_never_swallows_an_interrupt():
@@ -74,7 +79,7 @@ def test_a_classifier_failure_never_swallows_an_interrupt():
 
 def test_an_enabled_classifier_that_cannot_load_refuses_startup_and_disabled_loads_nothing(tmp_path, monkeypatch):
     """No silent run without the classifier: missing dir, unverified bundle, or any load error is a StartupError naming the real cause."""
-    assert system1wiring.build(System1Config()) is None
+    assert system1wiring.build(System1Config(enabled=False)) is None
     with pytest.raises(system1wiring.StartupError, match="not a directory"):
         system1wiring.build(System1Config(enabled=True, bundle_dir=str(tmp_path / "absent")))
     with pytest.raises(system1wiring.StartupError, match="cannot be loaded"):
@@ -87,6 +92,17 @@ def test_an_enabled_classifier_that_cannot_load_refuses_startup_and_disabled_loa
     monkeypatch.setattr(system1, "System1Runtime", Broken)
     with pytest.raises(system1wiring.StartupError, match="ValueError: bad manifest"):
         system1wiring.build(System1Config(enabled=True, bundle_dir=str(tmp_path)))
+
+
+def test_configured_replacement_bundle_is_loaded(tmp_path, monkeypatch):
+    calls = []
+    class Runtime:
+        def __init__(self, path, threads, *, capture_dir):
+            calls.append((path, threads, capture_dir))
+    monkeypatch.setattr(system1, "System1Runtime", Runtime)
+    cfg = System1Config(bundle_dir=str(tmp_path), threads=3)
+    assert isinstance(system1wiring.build(cfg, capture_dir=tmp_path / "captures"), Runtime)
+    assert calls == [(tmp_path, 3, tmp_path / "captures")]
 
 
 CHAIN = ["light", "light_backup", "cloud_reasoner", "cloud_coder"]

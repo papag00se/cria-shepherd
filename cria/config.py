@@ -706,17 +706,14 @@ SYSTEM1_DEFAULT_THREADS = 6  # intra-op CPU threads the trained artifact was ass
 
 @dataclass(frozen=True)
 class System1Config:
-    """The optional trained CPU classifier (``[system1]``) that answers two closed questions
-    in-process: whether a compaction briefing is retrospective, and whether an authored directive
-    dictates code. Disabled by default; when disabled nothing here is imported or loaded.
+    """The trained CPU classifier for briefing and directive judgments.
 
-    ``bundle_dir`` is explicit and required once enabled — cria never searches for an artifact.
-    Config only validates shape; the artifact itself is loaded when the service starts
-    (:func:`cria.system1wiring.build`), which refuses to start on a broken bundle or missing
-    dependencies rather than silently running without the classifier."""
+    The default bundle lives in cria's own model directory; a compatible replacement can be
+    selected explicitly. The service refuses to start if the selected bundle cannot be loaded.
+    """
 
-    enabled: bool = False
-    bundle_dir: str | None = None
+    enabled: bool = True
+    bundle_dir: str | None = "~/.cria/models/system1/expanded-v2-live"
     threads: int = SYSTEM1_DEFAULT_THREADS
 
     def __post_init__(self):

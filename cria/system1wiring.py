@@ -1,4 +1,4 @@
-"""The seam between the optional trained CPU classifier (``cria.system1``) and the guards that ask it.
+"""The seam between the trained CPU classifier (``cria.system1``) and the guards that ask it.
 
 Two closed questions — a briefing's PLAN/RETROSPECTIVE and a directive's DICTATES/DESCRIBES — can be
 answered by the trained artifact instead of a reasoner call. This module owns the three things every
@@ -13,11 +13,9 @@ caller must do identically and no caller should re-derive:
 * **An answer that cannot be trusted is no answer.** Any runtime error — typed (a no-fit input, never
   truncated; a non-finite output) or an ordinary unexpected exception — and any unexpected label
   raises :class:`Unjudged`, with the real error class and message logged. The caller then
-  takes its EXISTING fail-closed exit (a withheld optional steer; a rejected briefing). There is no
-  lexical substitute and no reasoner fallback here, by design (#4).
+  asks the reasoner to judge the complete input. If it too cannot answer, the action is withheld.
 
-Nothing in this module imports ``cria.system1`` at import time: the default core stays free of the
-runtime and its third-party dependencies until a service actually enables it.
+Nothing in this module imports ``cria.system1`` at import time; the runtime loads during startup.
 """
 from __future__ import annotations
 
@@ -37,7 +35,7 @@ class StartupError(RuntimeError):
 
 
 class Unjudged(Exception):
-    """The classifier gave no usable answer. The caller declines its optional action."""
+    """The classifier gave no usable answer; the caller can ask the reasoner."""
 
     def __init__(self, family: str, reason: str):
         super().__init__(f"{family}: {reason}")
@@ -76,7 +74,7 @@ def classify(runtime: Judge, family: str, text: str, rlog: Log | None, *, seat: 
     the CALLER does about a failure, with the real error class and message. The runtime's contract is
     typed errors (``System1Error``), but a guard must decline rather than 500 on any ordinary
     ``Exception`` a runtime raises, so all of them decline; ``BaseException`` (interrupts, exit) is
-    never swallowed. Declining is the whole response: no lexical shape and no reasoner stands in."""
+    never swallowed. Callers may ask the reasoner about the complete input."""
     from .system1 import FAMILIES
     spec = FAMILIES[family]
     try:

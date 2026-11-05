@@ -38,7 +38,7 @@ L0 retains proxy/wire and transport-recovery contracts without higher-level codi
 
 ## Getting started
 
-You need Python 3.11+, an OpenAI-compatible model server and a coding harness. PyYAML is installed with the package.
+You need Python 3.11+, an OpenAI-compatible model server, a coding harness, and a local System 1 model bundle. The standard installation includes the CPU runtime. The qualified bundle is not yet publicly distributed; see the [System 1 guide](docs/system1-guide.md) for its local path.
 
 ```bash
 git clone https://github.com/papag00se/cria-shepherd.git
@@ -64,14 +64,14 @@ Large files are read through successive shell calls the harness runs ("multipart
 `cria.example.toml` is the annotated reference; every key below is validated at startup (unknown values are errors, not ignored). Layers: with no `--config`, `~/.cria/cria.toml` and then `./cria.toml` are deep-merged (the working-directory file wins); with no file at all, defaults target a llama.cpp server on `:18084`.
 
 - **`[backends.*]`** say WHERE a model runs (`transport = "http"` with an OpenAI-compatible `base_url`, optional `api_key_env`/`model`/`reasoning_style`, or `transport = "cli"` for Claude Code). **`[roles.coder|reasoner|classifier|compactor]`** say HOW cria uses one: backend, sampling, `reasoning = on|off|auto`, and the portability switches `think_protocol`, `collapse_system_prompt` and `merge_consecutive_turns` ([model settings](docs/model-settings.md)). `[failover]` maps a task type to an ordered role chain; a role needing a missing key or binary is skipped.
-- **`[engagement] level = 0..5`** is the one control for how much cria does, each rung implying the ones below: 0 pure Responses/Chat wire translation, 1 tool-call fixes, 2 cria's tool menu lowered to shell, 3 context fixes (the floor, focus-trim, dedup), 4 refusing a completion claim, 5 assists. Omitted means 5; out of range is an error; the legacy `drive = true|false` still reads as 5/0. `bias` decides what an unsure classifier picks.
+- **`[engagement]`** defaults to full engagement. Levels 0–5 are internal evaluation controls for comparing mechanisms, not separate products; `bias` determines how an unsure classifier routes a request.
 - **Context.** The window is discovered from the server (`[defaults].context_window` pins it only where `/props` cannot be read). Compaction (`[context] self_compact`) has no size knob: *when* it runs is a predicate over the coder's measured window, reserves and recent turn growth, and the removed `trigger_compaction` key is a startup error. Size bounds (caps) are defined at the 49,152-token reference window and scale with the window of the model that answers; an unknown window means the reference value, not a small one. A role's explicit `output_reserve` or `max_tokens` is never rescaled. A caller's own instructions (Responses `instructions`/developer items, Chat `system`/`developer` messages) are carried behind cria's coder prompt (except at level 0, which forwards them as sent).
 - **`[retention]`, `[safety] external_dir_permission`** (`none|read|write`, file access outside the workspace, enforced even under `--yolo`), **`[indicators]`** (what cria writes into the visible stream; see [indicators](docs/indicators.md)), **`[tools]`**, **`[logging]`**, **`[system1]`** and **`[planner]`** (OFF; see below) complete the file.
 - **`[context]` also carries** `focus_trim`, and for plan-off sessions the periodic whole-task check (`satisfaction_check_start_minutes`, `satisfaction_check_every_minutes`, clamped by `satisfaction_check_min_turns`/`_max_turns`; level 5).
 
-### Optional CPU decision classifier
+### System 1: our trained decision model
 
-The optional `system1` extra serves a trained GLiClass artifact in-process on CPU for two existing guard questions: whether a briefing contains a forward plan, and whether a directive dictates code or a verbatim command. Other reasoner checks remain independent. It is disabled by default and needs an admitted local model bundle. See [serving and configuration](docs/system1.md) and [training tools and methodology](docs/training/methodology.md).
+System 1 runs on CPU and helps judge briefings and guidance. It is enabled by default; a compatible model bundle is required at startup and can be replaced through configuration. Public distribution of the qualified bundle is not yet available. [What it does and how we trained it](docs/system1-guide.md) · [Technical configuration](docs/system1.md).
 
 ### Disable individual registered assists
 
@@ -118,7 +118,7 @@ python -m pytest -q tests/shell_safety         # one domain
 python -m pytest tests/structure -q            # structural lints, incl. the generated assist inventory and doc links
 ```
 
-Stdlib-only, with a fake model server and no GPU or network. Tests are organised by domain under `tests/<domain>/`; run one process at a time. [docs/testing.md](docs/testing.md) covers what a test here must be, how the pre-reset suite is preserved as the git tag `tests-before-reset-20261031`, and how to add a test.
+The ordinary suite uses a fake model server and no GPU or network. Tests are organised by domain under `tests/<domain>/`; run one process at a time. [docs/testing.md](docs/testing.md) covers what a test here must be, how the pre-reset suite is preserved as the git tag `tests-before-reset-20261031`, and how to add a test.
 
 ## Documentation
 

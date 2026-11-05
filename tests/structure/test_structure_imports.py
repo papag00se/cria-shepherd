@@ -91,7 +91,7 @@ def test_built_wheel_ships_runtime_and_prompts_not_suite_data_and_loads_installe
     assert not any(n.startswith(("suite/", "tests/", "runs/", "walkdata/")) for n in names)
     assert {p.relative_to(ROOT).as_posix() for p in (CRIA / "prompts").glob("*.txt")} <= names
     probe = ("import sys; from cria import prompts; from cria.config import Config; "
-             "assert prompts.load('compaction_validate_retrospective') and not Config().system1.enabled; "
+             "assert prompts.load('compaction_validate_retrospective') and Config().system1.enabled; "
              "assert 'onnxruntime' not in sys.modules")
     run = subprocess.run([sys.executable, "-c", probe], cwd=tmp_path / "installed", capture_output=True, text=True,
                          env={**os.environ, "PYTHONPATH": str(tmp_path / "installed")})

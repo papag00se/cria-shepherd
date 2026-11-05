@@ -10,6 +10,7 @@
 
 - 🧭 [What cria does](features.md) — the practical help it offers, with examples.
 - 🔄 [How it works](how-it-works.md) — how requests, tools and checks fit together.
+- 🧠 [System 1](system1-guide.md) — the small model we trained for focused decisions.
 - 🔬 [How we learn](methodology.md) — the task battery, usefulness judgments and capture-driven investigation.
 - 🚀 [Get started](../README.md#getting-started) — connect a model server and a coding harness.
 

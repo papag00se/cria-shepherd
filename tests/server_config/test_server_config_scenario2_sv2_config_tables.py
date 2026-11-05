@@ -44,7 +44,7 @@ def test_the_documented_defaults_are_what_an_empty_config_gives():
     assert (log.level, log.dir, log.console, log.jsonl, log.capture_calls, log.capture_dir, log.capture_rendered) == ("info", "~/.cria/logs", True, True, False, "~/.cria/calls", True)
     assert cfg.routing.engagement_level == MAX_ENGAGEMENT_LEVEL == 5 and cfg.routing.engagement_bias == "task" and cfg.routing.roles == {}
     assert cfg.safety.external_dir_permission == "none" and cfg.assists.disabled == () and cfg.assists.profile == "default"
-    assert cfg.system1.enabled is False and cfg.system1.bundle_path is None and cfg.system1.threads >= 1
+    assert cfg.system1.enabled is True and str(cfg.system1.bundle_path).endswith('/.cria/models/system1/expanded-v2-live') and cfg.system1.threads >= 1
     assert cfg.indicators.enabled and cfg.indicators.reasoning_transcript and cfg.tools.workspace_image_tool is None
 
 

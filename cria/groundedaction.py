@@ -619,13 +619,16 @@ class GroundedActions:
         that is not one of the two words) the pre-filter's verdict stands — which is exactly today's
         behaviour, so this can only move steers from dropped to delivered, never the other way."""
         if self.providers.system1 is not None:
-            # The trained classifier reads the WHOLE directive. The code-shape prefilter exists only
-            # to decide whether a reasoner call is worth making; it also misses the inline
-            # prescription ("call x.y('z') here"), which is exactly what this question is about. A
-            # runtime that cannot answer raises Unjudged: the caller declines the steer. No reasoner
-            # is asked and no lexical shape stands in for the verdict.
-            return system1wiring.classify(self.providers.system1, 'dictation', directive, rlog,
-                                          seat='dictation') == _DICTATES
+            try:
+                return system1wiring.classify(self.providers.system1, 'dictation', directive, rlog,
+                                              seat='dictation') == _DICTATES
+            except system1wiring.Unjudged:
+                # Ask about the complete directive, including prose the shape prefilter misses.
+                if ask is None:
+                    return True
+                ans = strip_think(ask(prompts.render('steer_dictates_code', directive=directive), '') or '').strip()
+                head = ans.upper().split()[0].strip('.,:;`*') if ans.split() else ''
+                return head != _DESCRIBES
         if not _CODE_SHAPED.search(directive):
             return False
         if ask is None:

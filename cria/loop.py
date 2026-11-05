@@ -7600,9 +7600,8 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 
     ``system1`` (the service's trained classifier, when ``[system1]`` is enabled) answers ONLY the
     first lens — PLAN versus RETROSPECTIVE over the whole briefing. Scope and fidelity still go to the
-    reasoner, whose evidence blocks the classifier cannot read. A classifier that cannot answer
-    rejects the briefing: the same fail-closed exit an unreadable reasoner verdict takes, with no
-    reasoner asked in its place.
+    reasoner, whose evidence blocks the classifier cannot read. If the classifier cannot answer,
+    the reasoner judges the complete briefing; an unreadable verdict rejects it.
 
     ``messages`` (opt-in) are the typed messages the briefing summarizes; with them, a file the briefing
     says was created or edited that the session's write record cannot have touched is refused
@@ -7655,8 +7654,10 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
             answers["retrospective"] = system1wiring.classify(
                 system1, "retrospective", briefing.strip(), rlog, seat=phase)
         except system1wiring.Unjudged:
-            answers["retrospective"] = "UNJUDGED"
-        accepted = answers["retrospective"] == "RETROSPECTIVE"
+            accepted = judge("retrospective", prompts.load("compaction_validate_retrospective"),
+                             [candidate], "RETROSPECTIVE")
+        else:
+            accepted = answers["retrospective"] == "RETROSPECTIVE"
     # No task-scope lens (operator decision 2026-11-01, docs/decision-log.md): the original task always travels with
     # a briefing, so a requirement the briefing omits is not lost, and refusing a briefing for omitting one withheld
     # the whole progress summary (59% of the small-window refusals).

@@ -1,5 +1,6 @@
 """Config loading: sane defaults, loud rejection of removed/unknown keys, role/backend semantics."""
 import copy
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,7 +28,7 @@ def test_defaults_are_sane_planner_off_and_env_file_confined_to_the_cria_dir(tmp
     with patch.object(cfgmod, "HOME_CONFIG", str(tmp_path / "none-h.toml")), patch.object(cfgmod, "CWD_CONFIG", str(tmp_path / "none-c.toml")):
         nothing = Config.load()
     for cfg in (Config(), nothing, load(tmp_path, "[planner]\nmax_gather_rounds = 3\n"), Config.load(EXAMPLE)):
-        assert not cfg.planner.enabled and cfg.system1.enabled is False and cfg.retention.auto_prune_after is None and cfg.retention.after_seconds is None
+        assert not cfg.planner.enabled and cfg.system1.enabled is True and cfg.retention.auto_prune_after is None and cfg.retention.after_seconds is None
         assert cfg.env_file in (None, "~/.cria/.env")
     assert (Config().server.port, Config().upstream.base_url) == (18085, "http://127.0.0.1:18084")
     assert load(tmp_path, "[planner]\nenabled = true\n").planner.enabled  # explicit opt-in survives
@@ -55,7 +56,7 @@ def test_toml_layers_merge_cwd_over_home_and_defaults_normalize(tmp_path):
     ('[assists]\nunknown = 1\n', "supports only profile and disabled"),
     ('[assists]\ndisabled = ["no-such-assist"]\n', "no-such-assist"),
     ('[system1]\nenabled = true\nbundle_dir = "/b"\nunknown = 1\n', "system1"),
-    ('[system1]\nenabled = true\n', "bundle_dir is required"),
+    ('[system1]\nbundle_dir = ""\n', "bundle_dir must be"),
     ('[system1]\nthreads = 0\n', "threads must be"),
     ('[retention]\nauto_prune_after = 14\n', "auto_prune_after must be an age string"),
     ('[retention]\nauto_prune_after = "soon"\n', "age must look like"),
@@ -217,6 +218,7 @@ def test_a_configured_context_window_pins_every_upstream_the_server_builds(tmp_p
                '[server]\nport = 0\n[backends.other]\ntransport = "http"\nbase_url = "http://otherhost:1"\n'
                '[roles.reasoner]\nbackend = "other"\n')
     log = EventLog(dir=str(tmp_path), console=False)
+    cfg = replace(cfg, system1=cfgmod.System1Config(enabled=False))
     srv = CriaServer(cfg, log, Upstream(cfg.upstream.base_url))
     try:
         ep = srv.router.endpoint_for("reasoner")

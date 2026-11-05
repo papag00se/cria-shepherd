@@ -37,7 +37,7 @@ def test_the_service_boots_from_a_config_file_serves_one_turn_and_stops_cleanly_
     (tmp_path / ".cria").mkdir()   # the service runs with HOME=tmp_path; its one permitted env file is ~/.cria/.env
     (tmp_path / ".cria" / ".env").write_text(f"{brave.API_KEY_ENV}=brave-from-file\nUNRELATED_SECRET=nope\n")
     cfg = tmp_path / "cria.toml"
-    cfg.write_text(f'env_file = "{tmp_path / ".cria" / ".env"}"\n[defaults]\nbase_url = "http://127.0.0.1:{fake.server_address[1]}"\n[engagement]\nlevel = 3\n'
+    cfg.write_text(f'env_file = "{tmp_path / ".cria" / ".env"}"\n[system1]\nenabled = false\n[defaults]\nbase_url = "http://127.0.0.1:{fake.server_address[1]}"\n[engagement]\nlevel = 3\n'
                    f'[logging]\ndir = "{tmp_path / "logs"}"\nconsole = false\ncapture_calls = true\ncapture_dir = "{tmp_path / "calls"}"\n')
     env = {k: v for k, v in os.environ.items() if k != brave.API_KEY_ENV} | {"HOME": str(tmp_path), "PYTHONPATH": str(Path(__file__).parents[2])}
     proc = subprocess.Popen([sys.executable, "-m", "cria", "--config", str(cfg), "--port", str(port)], cwd=tmp_path, env=env,
