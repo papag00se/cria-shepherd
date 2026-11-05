@@ -1,6 +1,6 @@
 # Battery report
 
-Updated: 2026-11-04 11:25 PST
+Updated: 2026-11-05 00:05 PST
 
 ## L0 — Pure proxy — wire translation only — 44%
 
@@ -72,11 +72,11 @@ Updated: 2026-11-04 11:25 PST
 | phi4 | 🔴 6% | 🔴 12% | 🔴 12% | 🔴 12% | 🔴 25% | 🟠 55% | 20% | 18 | 72 | 30.6 |
 | **average** | 🟠 44% | 🟠 54% | 🟠 55% | 🔴 25% | 🟠 59% | 🟡 74% | 52% | 20 | 99 | 45.7 |
 
-## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 49%
+## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 48%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| qwen3.8_9b_distill | 🟢 85% | 🟢 85% | 🟡 72% | 🟠 45% | 🟡 70% | 🟡 75% | 72% | 20 | 190 | 64.6 |
+| qwen3.8_9b_distill | 🟠 35% | 🟢 85% | 🟡 72% | 🟠 45% | 🟡 70% | 🟡 75% | 64% | 22 | 192 | 68.9 |
 | gemma4_12b | 🔴 20% | 🟠 58% | 🟡 78% | 🟠 50% | 🟡 70% | 🟢 85% | 60% | 28 | 45 | 21.6 |
 | k2_horizon_7b | 🟠 40% | 🟡 78% | 🟡 78% | 🔴 20% | 🟡 68% | 🟡 72% | 59% | 22 | 78 | 30.6 |
 | ornith1.5_9b | 🔴 1% | 🟡 72% | 🟡 80% | 🔴 20% | 🟡 82% | 🟢 88% | 57% | 28 | 103 | 51.0 |
@@ -84,6 +84,6 @@ Updated: 2026-11-04 11:25 PST
 | ling3.0_tiny | 🔴 33% | 🔴 25% | 🟡 68% | 🟠 40% | 🟠 50% | 🟢 85% | 50% | 20 | 140 | 130.8 |
 | nemotron-elastic | 🟠 50% | 🔴 20% | 🔴 10% | 🔴 12% | 🔴 20% | 🟠 35% | 24% | 16 | 32 | 36.2 |
 | phi4 | 🔴 2% | 🔴 3% | 🔴 3% | 🔴 2% | 🔴 25% | 🟠 62% | 16% | 15 | 77 | 28.8 |
-| **average** | 🔴 30% | 🟠 53% | 🟠 58% | 🔴 24% | 🟠 58% | 🟡 74% | 49% | 21 | 89 | 48.4 |
+| **average** | 🔴 23% | 🟠 53% | 🟠 58% | 🔴 24% | 🟠 58% | 🟡 74% | 48% | 21 | 89 | 49.0 |
 
 Legend: 🟢 ≥85% · 🟡 ≥65% · 🟠 ≥35% · 🔴 <35%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently inference-judged usefulness; averages include judged zeros, exclude failed/unjudged attempts.
