@@ -349,6 +349,9 @@ def record(source: Input, state: State, outcome: probegate.GateOutcome, findings
         return
     if state.gate_replan_required:
         state.gate_fresh = False
+        if outcome.ran and findings:                  # a replan must not erase what the checks that DID run found
+            state.last_gate_red = True
+            evidence.progress(findings, source.body.get("messages"))
         source.log.emit("loop.gate_survey_only", level="info")
         return
     if not outcome.ran:

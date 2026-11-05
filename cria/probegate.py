@@ -406,6 +406,10 @@ class GatePlan:
     # useful result is the survey appended below.  The reader needs to retain that provenance: once
     # the survey lands, this plan is obsolete and a newly discovered gate must run before completion.
     surveyed_before: bool = False
+    # Manifest/config reads the view could not answer while this plan was composed. A non-empty set
+    # means the candidates below were chosen blind to those files; the survey riding with this gate
+    # delivers them, and `interpret_gate` re-selects against it.
+    unanswered_reads: frozenset = frozenset()
     script: str = ""
     candidates: list = field(default_factory=list)  # selected ProbeCandidates, in section order
     # Authored default-discovery observations (probediscovery.undiscoverable_tests), not checker output.
@@ -964,8 +968,10 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         helpers_ready=helpers_ready,
     )
     if workspace:
+        wsview.take_unanswered_reads(session)        # only the reads THIS plan makes
         plan.candidates = proberun.select_completion_probes(workspace)
         plan.untested = probediscovery.undiscoverable_tests(workspace)
+        plan.unanswered_reads = wsview.take_unanswered_reads(session)
         # …and the other half of the same question. `undiscoverable_tests` reports test files a
         # default conventions do not select; this reports matching test files where no test
         # command was composed at all. Both end in the same clean-branch qualifier, because the coder
@@ -1068,6 +1074,10 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     plan.script = compose()
     plan.transport_compose = compose
     return plan
+
+
+def _plan_signature(candidates) -> tuple:
+    return tuple((tuple(c.command), str(c.working_dir)) for c in candidates)
 
 
 def gate_is_partial(outcome) -> bool:
@@ -2713,6 +2723,14 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         if not survey_applied and rlog is not None:
             rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
                       closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
+    # THE PLAN WAS COMPOSED BLIND TO A MANIFEST THIS SURVEY JUST DELIVERED. After any command that could have
+    # changed the tree, no held body is current, so discovery found no `rake test` / `npm test` and the gate ran only
+    # syntax checks; the survey riding home with it carries the very bodies discovery asked for. Selection is
+    # deterministic, so ask it again now: if the checks differ, this gate verified less than it should have.
+    survey_changes_plan = bool(
+        survey_applied and plan.unanswered_reads and plan.workspace
+        and _plan_signature(proberun.select_completion_probes(plan.workspace)) != _plan_signature(plan.candidates))
+    replan_after_survey = bool(survey_applied and (not plan.surveyed_before or survey_changes_plan))
     participation_events = []
     # Read the harness's completed cleanup record, including when checks failed.
     # No cleanup is deferred to another gate or a coder tool.
@@ -2728,13 +2746,14 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         return GateOutcome(
             ran=False,
             refused=refusal_reason(result_text),
-            replan_after_survey=bool(survey_applied and not plan.surveyed_before),
+            replan_after_survey=replan_after_survey,
             participation=plan.participation,
             scope_unknown=scope_unknown,
             unsettled_writes=unsettled,
             witnessed=witnessed,
         )
-    out = GateOutcome(ran=True, swept=swept, scope_unknown=scope_unknown, unsettled_writes=unsettled, witnessed=witnessed)
+    out = GateOutcome(ran=True, swept=swept, scope_unknown=scope_unknown, unsettled_writes=unsettled, witnessed=witnessed,
+                      replan_after_survey=survey_changes_plan)
 
     results = []
     for i, c in enumerate(plan.candidates):

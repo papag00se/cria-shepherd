@@ -222,6 +222,11 @@ def from_observation(observation, function, *args, **kwargs):
         _OBSERVATION.reset(token)
 
 
+# Size sentinels in a survey's `!name\tN` record. Only ABSENT (the file is not there: ENOENT/ENOTDIR) may suppress a re-ask;
+# UNSTATABLE (any other stat error: EACCES, EIO, a transient failure) is no evidence either way and is asked again.
+ABSENT, UNSTATABLE = -1, -2
+
+
 class View:
     """The coder's workspace as cria currently knows it. Every answer is a fact somebody
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
@@ -500,8 +505,17 @@ class View:
         entry = self._files.get(rel)
         if rel in self._undeliverable and entry and entry[0] == self._undeliverable[rel]:
             return None
+        # ASKED AND FOUND ABSENT. A survey answers a want it cannot open with `!name\t-1` (the file is
+        # not there). Over an incomplete listing (a folded `vendor/` tree) `isfile` stays unknown for
+        # every manifest name discovery probes (go.mod, Cargo.toml, pom.xml ...), so each of those was
+        # re-queued after being answered, ahead of the Rakefile this session actually has: the
+        # eight-slot survey carried the same absent names every turn and the real manifest sat at
+        # position 16 of the queue and was never delivered.
+        if rel not in self._files and self._undeliverable.get(rel) == ABSENT:
+            return None
         if self.isfile(path) is not False:
             want_body(self._sess, rel)
+            note_unanswered_read(self._sess, rel)
         return None
 
     def _body_current(self, rel: str) -> bool:
@@ -1150,6 +1164,9 @@ class View:
     def _invalidate_body_observations(self) -> None:
         self._body_freshness.invalidate(effect=True)
         self._cache_candidates.clear()
+        # An "absent" answer describes the disk at survey time; anything that may have changed the tree voids it.
+        for rel in [r for r, n in self._undeliverable.items() if n == ABSENT]:
+            del self._undeliverable[rel]
         # Derived roots share invalidation, while future requests must not
         # reload a current-cache entry from an overlapping lineage root.
         for session, root in list(_BODY_CACHE):
@@ -1214,6 +1231,8 @@ class View:
         if observation is not None and self._superseded(observation, self.abs(rel)):
             return
         self._body_freshness.invalidate(self.abs(rel), effect=True)
+        if self._undeliverable.get(rel) == ABSENT:
+            del self._undeliverable[rel]
         self._stale.add(rel)
         self._body_confirmed.pop(rel, None)
         self._cache_candidates.pop(rel, None)  # not yet trusted this request — an edit ends it now
@@ -1573,6 +1592,25 @@ def want_body(sess: str, rel: str) -> None:
     _remember(_BODY_MISSES, sess, rel)
 
 
+# Reads that came back unanswered since the caller last took them. A planner (the completion gate)
+# composes its checks from manifest bodies; a body the view cannot vouch for is queued for the NEXT
+# survey, which is the one riding home with that very plan. The plan then has to know it was composed
+# blind, so it can look again once that survey lands.
+_UNANSWERED_READS: dict[str, set[str]] = {}
+
+
+def note_unanswered_read(sess: str, rel: str) -> None:
+    if not sess or not rel:
+        return
+    if len(_UNANSWERED_READS) > 512:
+        _UNANSWERED_READS.clear()
+    _UNANSWERED_READS.setdefault(sess, set()).add(rel)
+
+
+def take_unanswered_reads(sess: str) -> frozenset[str]:
+    return frozenset(_UNANSWERED_READS.pop(sess, ()))
+
+
 def want_program(sess: str, name: str) -> None:
     _remember(_PROG_MISSES, sess, name)
 
@@ -1721,8 +1759,11 @@ for rel in WANT:
     p = os.path.join(root, rel)
     try:
         sz = os.path.getsize(p)
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         W("!%s\t-1\n" % base64.b64encode(rel.encode()).decode())
+        continue
+    except OSError:
+        W("!%s\t-2\n" % base64.b64encode(rel.encode()).decode())
         continue
     if sz > BLOB_FILE:
         W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))

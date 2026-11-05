@@ -124,3 +124,7 @@ def test_the_runner_and_module_judgments_speak_before_the_checker_and_a_survey_o
     assert ("loop.gate_survey_only", {"level": "info"}) in d.log.events
     rc.record(d.source(), state, probegate.GateOutcome(), "", d.evidence)
     assert state.gate_fresh and not state.gate_replan_required and state.last_gate_ran is False
+    # a replan after a gate that RAN red must keep the red finding it already paid for
+    red = loop.GuardState(gate_plan=survey)
+    rc.record(d.source(), red, probegate.GateOutcome(ran=True, replan_after_survey=True), "syntax error in a.py", d.evidence)
+    assert red.gate_replan_required and not red.gate_fresh and red.last_gate_red
