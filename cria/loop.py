@@ -3629,18 +3629,7 @@ class Loop:
         # red gate nor waits for the completion critic to be unblocked.  A pending ordinary steer is
         # deliberately replaced only by a provenance-validated remediation, so the final body has one
         # owner rather than a cursor plus two competing directives.
-        diagnosis = assistruntime.current().completion_diagnosis
-        if self._ctx.assists and diagnosis is not None:
-            observed = diagnosis.observe_scheduled(completiondiagnosis.ScheduledObservationInput(
-                sess.plan.task, sess.drive_count, *session_cadence(sess, self._ctx),
-                bool(sess.workspace_root and self._ctx.reasoner_chat is not None)), sess,
-                _diagnosis_lifecycle_services(diagnosis, sess.workspace_root or "",
-                    self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog))
-            if not isinstance(observed, completiondiagnosis.ObservationRun):
-                raise TypeError("scheduled diagnosis hook must return ObservationRun")
-            completiondiagnosis._diagnosis_result(observed.diagnosis)
-            completiondiagnosis._remediation_result(observed.delivery,
-                (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
+        diagnosis = self._observe_scheduled_deliverable(sess, rlog)
         record_coder_preframe(rlog, sess, item, idx, total, driver="plan_on")
         remediation = bool(sess.completion_remediation_subject)
         msgs = []  # current notes are never offered to historical reducers
@@ -3675,9 +3664,7 @@ class Loop:
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash
-            if (delivery_receipts and delivery_receipts[-1][0] is coder
-                    and delivery_receipts[-1][1] == sess.completion_remediation_subject):
-                _record_remediation_delivery(sess, coder)
+            _acknowledge_remediation_delivery(sess, coder, delivery_receipts)
             return _forward_acting_coder(sess, coder)  # accepted after the thrash decision
 
         # coder produced no tool call → it thinks the step is done.
@@ -5039,6 +5026,10 @@ class Loop:
         sess.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
         sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root  # harness cwd, persisted (see _work)
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
+        # A typed missing-deliverable remediation is released only by the harness's own result for its
+        # exact subject (same owner and order as the plan-on driver), never by the model's claim.
+        _settle_completion_remediation(sess, body.get("messages", []), rlog)
+        _nudge_after_remediation_nonwrite(sess, body.get("messages", []), rlog)
         if sess.done_probe:
             settled = self._settle_task_done_probe(sess, body, session_key, rlog,
                                                   plan_off=True, rewritten=rewritten)
@@ -5123,6 +5114,9 @@ class Loop:
                                           gate_stall=sess.gate_stall))
         if done_now is not None:
             return done_now
+        # The same non-terminal deliverable observer the plan-on driver runs, on the same session
+        # cadence. It may replace a parked ordinary steer with a provenance-validated remediation.
+        diagnosis = self._observe_scheduled_deliverable(sess, rlog)
         # Resolve the pending note after the scheduled review can produce one, so a
         # grounded negative reaches this coder turn rather than waiting for another request.
         if steer is None and sess.nudge_reason:
@@ -5139,18 +5133,29 @@ class Loop:
         extra = []
         if steer:  # inject the steer into the coder framing this turn
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
+        # The remediation's durable owner is the session, not the one-shot nudge slot: it rides EVERY
+        # coder body until the harness's own write result settles it (the plan-on contract).
+        remediation = bool(sess.completion_remediation_subject)
+        durable = remediation and steer != sess.completion_remediation_reason
+        if durable:
+            extra.append({"role": "user", "content": prompts.render(
+                "nudge", reason=sess.completion_remediation_reason)})
         framed, reoriented = self._prepare_coder_context(sess, body, rlog, synthetic=True,
             notes=extra, rewritten=rewritten, session_key=session_key)
         _stalled_frame(sess, framed, extra)
-        comp = self._coder_turn(sess, framed, body, step=1, rlog=rlog)  # SHARED coder turn (see _work)
+        delivery_receipts = [] if remediation and diagnosis is not None else None
+        comp = self._coder_turn(sess, framed, body, step=1, rlog=rlog,
+                                delivery_receipts=delivery_receipts)  # SHARED coder turn (see _work)
+        if _has_tool_calls(comp):
+            _acknowledge_remediation_delivery(sess, comp, delivery_receipts)
         if rewritten and rewrite_observation is not None and rewrite_observation.key == session_key:
             self._store.ack_rewrite(rewrite_observation)
         if reset_delivery:
             sess.living_raw_reply = comp
         if reoriented:  # no hidden guards: surface only an executed reorientation
             _add_note(comp, "re-anchored after a harness compaction")
-        if steer:  # no hidden guards: surface WHICH guard steered the coder
-            _add_note(comp, f"steered the coder — {sess.steer_source or 'guard'}")
+        if steer or durable:  # no hidden guards: surface WHICH guard steered the coder
+            _add_note(comp, f"steered the coder — {sess.steer_source or 'completion remediation'}")
             sess.steer_source = ""
         if _has_tool_calls(comp):
             return _forward_acting_coder(sess, comp)
@@ -5305,6 +5310,26 @@ class Loop:
             bool(sess.workspace_root and self._ctx.reasoner_chat is not None),
             _diagnosis_lifecycle_services(definition, sess.workspace_root or "",
                 self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)))
+
+    def _observe_scheduled_deliverable(self, sess: PlanSession, rlog):
+        """The ONE scheduled missing-deliverable observer call, shared by the plan-on and plan-off drivers.
+
+        Non-terminal, with its own cadence stamp (session cadence): it neither clears a red gate nor waits
+        for the completion critic. Returns the selected diagnosis definition (None when absent), which
+        the caller also needs to decide whether a delivered remediation must be acknowledged."""
+        diagnosis = assistruntime.current().completion_diagnosis
+        if self._ctx.assists and diagnosis is not None:
+            observed = diagnosis.observe_scheduled(completiondiagnosis.ScheduledObservationInput(
+                sess.plan.task, sess.drive_count, *session_cadence(sess, self._ctx),
+                bool(sess.workspace_root and self._ctx.reasoner_chat is not None)), sess,
+                _diagnosis_lifecycle_services(diagnosis, sess.workspace_root or "",
+                    self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog))
+            if not isinstance(observed, completiondiagnosis.ObservationRun):
+                raise TypeError("scheduled diagnosis hook must return ObservationRun")
+            completiondiagnosis._diagnosis_result(observed.diagnosis)
+            completiondiagnosis._remediation_result(observed.delivery,
+                (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
+        return diagnosis
 
     def _prepare_coder_context(self, sess, body, rlog, *, synthetic, index=None, total=None,
                                item="", notes=(), rewritten=False, session_key=""):
@@ -6846,6 +6871,12 @@ def _record_remediation_delivery(sess: GuardState, coder: dict) -> None:
         completiondiagnosis._remediation_result(definition.acknowledge(
             sess, coder, _diagnosis_remediation_services(getattr(sess, "workspace_root", ""))),
             (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.ACKNOWLEDGED))
+
+
+def _acknowledge_remediation_delivery(sess: GuardState, coder: dict, receipts) -> None:
+    """Acknowledge only the reply that actually carried the armed subject's body (receipt identity)."""
+    if receipts and receipts[-1][0] is coder and receipts[-1][1] == sess.completion_remediation_subject:
+        _record_remediation_delivery(sess, coder)
 
 
 def _nudge_after_remediation_nonwrite(sess: GuardState, messages: list[dict], rlog) -> None:

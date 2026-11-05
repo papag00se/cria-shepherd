@@ -279,3 +279,62 @@ def test_reasoning_that_leaked_into_the_coders_content_never_reaches_the_harness
         "id": "w", "type": "function", "function": {"name": "write_file", "arguments": json.dumps({"path": "n.py", "content": "x"})}}])
     run = Run(tmp_path, Chat(leaky), tools=(SHELL, WRITE), coder_role=Role(name="coder", backend="local", reasoning="off"))
     assert run.turn()["content"] == "Writing the file now."
+
+
+READ = {"type": "function", "function": {"name": "read_file", "parameters": {
+    "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}}
+
+
+def observing_reasoner(asked):
+    """Every whole-task review is silent (no gap, no nudge); the scheduled deliverable observer says README.md is absent."""
+    base = judge([], asked)
+
+    def chat(body, rlog):
+        asked.append(rlog.phase)
+        if rlog.phase == "satisfaction":
+            return say(json.dumps(SILENT))
+        if rlog.phase == "deliverable-observation":
+            return say(json.dumps({"missing_file": True, "reason": "README.md is not in the listing", "proposed_fix": "",
+                                   "diagnosis_kind": "missing_file", "subject": "README.md", "task_quote": "README.md",
+                                   "evidence_source": "workspace_absence", "evidence_quote": ""}))
+        if rlog.phase == "deliverable-observation-requirement":
+            return say(json.dumps({"required_output": True, "subject": "README.md", "task_quote": QUOTE}))
+        return base(body, rlog)
+    return chat
+
+
+def test_the_plan_off_scheduled_observer_delivers_acknowledges_and_settles_a_missing_deliverable_over_a_red_gate_and_a_parked_steer(tmp_path):
+    """Plan-off had no scheduled deliverable observer at all. Now, on the session cadence and even under a RED gate (the
+    observer neither waits for nor clears it), a task-named absent file reaches the coder REPLACING a parked ordinary steer,
+    rides every later body (once, never duplicated), is acknowledged by the reply's inspection, draws one non-write follow-up
+    after that result, and is released only by the harness's own write result for the exact file."""
+    asked, bodies = [], []
+    script = iter([("read_file", {"path": "app.py"}), ("read_file", {"path": "app.py"}),
+                   ("write_file", {"path": "README.md", "content": "x"}), ("write_file", {"path": "notes.txt", "content": "x"})])
+
+    def coder(body, rlog):
+        bodies.append(body)
+        name, args = next(script)
+        return say(None, tool_calls=[{"id": f"c{len(bodies)}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}])
+
+    run = Run(tmp_path, coder, observing_reasoner(asked), tools=(SHELL, WRITE, READ), satisfaction_check_start_minutes=1,
+              satisfaction_check_every_minutes=1, satisfaction_check_min_turns=1, satisfaction_check_max_turns=1)
+    run.sess.last_gate_red, run.sess.nudge_reason, run.sess.steer_source = True, "GATE-RED-STEER", "completion gate (repo checks failed)"
+
+    def users(n):
+        return [m["content"] for m in bodies[n]["messages"] if m["role"] == "user" and m["content"].startswith("⟦ctx:steer⟧")]
+
+    first = run.turn()                                                  # observer fires on the first due drive, gate still red
+    assert asked.count("deliverable-observation") == 1 and "loop.satisfaction_blocked" in run.log.names()
+    assert run.sess.completion_remediation_subject == "README.md" and run.sess.deliverable_observation_last_drive == 1
+    assert len(users(0)) == 1 and "README.md" in users(0)[0] and "GATE-RED-STEER" not in users(0)[0]   # replaced, delivered once
+    assert first["tool_calls"] and run.sess.completion_remediation_nonwrite_ids == ("c1",)  # acknowledged by its inspection
+    run.turn("x = 1")                                                   # the inspection's result: one follow-up, remediation still carried
+    assert asked.count("deliverable-observation") == 1                  # armed: the observer stays out
+    assert any("remediation remains open" in u for u in users(1)) and sum("README.md" in u for u in users(1)) == 1
+    run.turn("x = 1")                                                   # remediation survives the follow-up, not duplicated
+    assert run.sess.completion_remediation_subject == "README.md" and sum("README.md" in u for u in users(2)) == 1
+    (tmp_path / "README.md").write_text("docs\n")
+    run.turn("Wrote README.md")                                         # the harness's write result releases it
+    assert run.sess.completion_remediation_subject == "" and not any("README.md" in u for u in users(3))
+    assert "loop.completion_remediation_written" in run.log.names()
