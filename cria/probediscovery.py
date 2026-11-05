@@ -119,6 +119,7 @@ class ProbeKind(enum.Enum):
     Typecheck = "typecheck"
     FormatCheck = "format_check"
     BuildCheck = "build_check"
+    DependencyCheck = "dependency_check"   # the ecosystem's STANDARD tool for undeclared/unused dependencies
     StaticAnalysis = "static_analysis"
     Unknown = "unknown"
 
@@ -239,7 +240,7 @@ class ProbeCandidate:
             return 5
         if self.kind is ProbeKind.SyntaxCheck:
             return 0  # the parse/compile floor always runs first
-        if self.kind in (ProbeKind.Typecheck, ProbeKind.BuildCheck):
+        if self.kind in (ProbeKind.Typecheck, ProbeKind.BuildCheck, ProbeKind.DependencyCheck):
             return 1
         if self.kind in (ProbeKind.Lint, ProbeKind.StaticAnalysis,
                          ProbeKind.FormatCheck):
@@ -513,6 +514,7 @@ def value_for(kind: ProbeKind) -> int:
     return {
         ProbeKind.Typecheck: 90,
         ProbeKind.BuildCheck: 82,
+        ProbeKind.DependencyCheck: 80,
         ProbeKind.Lint: 82,
         ProbeKind.StaticAnalysis: 82,
         ProbeKind.Test: 88,
@@ -527,6 +529,7 @@ def cost_for(kind: ProbeKind) -> ProbeCost:
         ProbeKind.Lint: ProbeCost.Cheap,
         ProbeKind.FormatCheck: ProbeCost.Cheap,
         ProbeKind.BuildCheck: ProbeCost.Cheap,
+        ProbeKind.DependencyCheck: ProbeCost.Cheap,
         ProbeKind.StaticAnalysis: ProbeCost.Moderate,
         ProbeKind.Test: ProbeCost.Moderate,
         ProbeKind.Unknown: ProbeCost.Moderate,
@@ -1335,6 +1338,112 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
                             p.dir, 60, 82, ProbeCost.Cheap,
                             "Go linting: read-only go vet (zero-config)", ecosystem=Ecosystem.Go))
     return out
+
+
+# ---------------------------------------------------------------------------
+# UNDECLARED DEPENDENCIES, answered by each ecosystem's STANDARD TOOL -- never a cria re-implementation of
+# import resolution. A tool that is absent is no check (absent tool = nothing composed). cria composes the
+# command and shows the tool's own lines; the single cria-authored piece is the Ruby "no Gemfile" fact below.
+
+def _names_in(root: Path) -> set[str] | None:
+    entries = scan_dir(root)
+    return None if entries is None else {e.name for e in entries}
+
+
+def _python_dependency_runner() -> list[str] | None:
+    """``deptry`` as the coder's shell can launch it: installed, else `uvx` / `pipx run`; None when none exists.
+    An unanswered question (None) keeps the plain name -- a missing tool then abstains at launch, never blocks."""
+    have = toolpath.resolved("deptry")
+    if have is None or have:
+        return [have or "deptry"]
+    if toolpath.resolved("uvx"):
+        return ["uvx", "deptry"]
+    if toolpath.resolved("pipx"):
+        return ["pipx", "run", "deptry"]
+    return None
+
+
+def _node_dependency_tool(p: ProjectDir) -> tuple[str, list[str]] | None:
+    """(name, argv) of `knip` or `depcheck`, only when the project declares it or it is on the coder's PATH."""
+    text = read_text(Path(p.dir) / "package.json") or ""
+    pm, _ = js_package_manager(p)
+    for tool, flags in (("knip", ["--dependencies"]), ("depcheck", [])):
+        if f'"{tool}"' in text:
+            return tool, [pm, "exec", tool, *flags]
+        if toolpath.resolved(tool):
+            return tool, [toolpath.resolved(tool), *flags]
+    return None
+
+
+def dependency_floor_candidates(root: Path) -> list[ProbeCandidate]:
+    """Gate checks for dependencies the code uses but the project does not declare (and, where the tool says it, declares
+    but never uses): Python `deptry` (DEP001 missing, DEP002 unused, DEP003 transitive), Node `knip --dependencies` /
+    `depcheck`, and Ruby's own Bundler load restriction when the project has a Gemfile but its Rakefile test task runs
+    outside the bundle (every other Ruby command already runs under `bundle exec` where a Gemfile exists)."""
+    from . import linterprobe  # local import: linterprobe never imports this module
+    root = Path(root)
+    out: list[ProbeCandidate] = []
+    names = _names_in(root) or set()
+    if linterprobe.collect_files(str(root), ["py"]) and (
+            "pyproject.toml" in names or any(n.startswith("requirements") and n.endswith(".txt") for n in names)):
+        runner = _python_dependency_runner()
+        if runner:
+            out.append(cand(ProbeKind.DependencyCheck, [*runner, "."], root, 70, 85, ProbeCost.Cheap,
+                            "Python dependencies: deptry (DEP001 missing, DEP002 unused, DEP003 transitive)",
+                            ecosystem=Ecosystem.Python))
+    for p in inventory(root):
+        if p.has("package.json"):
+            found = _node_dependency_tool(p)
+            if found:
+                out.append(cand(ProbeKind.DependencyCheck, found[1], p.dir, 65, 80, ProbeCost.Cheap,
+                                f"Node dependencies: {found[0]}", ecosystem=Ecosystem.JsTs))
+        gemfile = read_text(Path(p.dir) / "Gemfile")
+        if gemfile is not None and (p.has("Rakefile") or p.has("rakefile")) and not _BUNDLED_RAKE.search(gemfile):
+            body = read_text(Path(p.dir) / ("Rakefile" if p.has("Rakefile") else "rakefile")) or ""
+            if _RAKE_TEST_TASK.search(body):
+                floor = next(c.floor for c in TEST_CONVENTIONS if c.exts[0] == "rb")
+                out.append(cand(ProbeKind.DependencyCheck, ["bundle", "exec", *floor], p.dir, 60, 85, ProbeCost.Moderate,
+                                "Ruby dependencies: the test files loaded under Bundler's own restriction "
+                                "(the Rakefile's `rake test` runs outside the bundle)", ecosystem=Ecosystem.Ruby))
+    return out
+
+
+# Ruby's standard library and default/bundled gems: names `require` resolves without a Gemfile.
+_RUBY_STDLIB = frozenset("""abbrev base64 benchmark bigdecimal bundler cgi coverage csv date delegate did_you_mean digest drb
+English erb error_highlight etc fcntl fiddle fileutils find forwardable getoptlong io/console io/nonblock io/wait ipaddr irb
+json logger matrix minitest monitor mutex_m net/ftp net/http net/https net/imap net/pop net/protocol net/smtp nkf objspace
+observer open-uri open3 openssl optparse ostruct pathname pp prettyprint prime pstore psych pty racc rake rbconfig rdoc readline
+reline resolv rexml/document rinda ripper rss rubygems securerandom set shellwords singleton socket stringio strscan syslog
+tempfile test/unit time timeout tmpdir tsort un uri weakref yaml zlib rspec minitest/autorun minitest/spec ruby2_keywords
+continuation enumerator rational complex thread fiber mkmf""".split())
+_RUBY_REQUIRE = re.compile(r"""^\s*require\s*\(?\s*['"]([^'"]+)['"]""", re.M)
+
+
+def undeclared_gem_sentences(root: Path) -> list[str]:
+    """The ONE cria-authored dependency fact: Ruby code `require`s names that are neither the project's own files nor the
+    standard library, and the project has NO Gemfile to declare any gem. (With a Gemfile, Bundler is the check.)"""
+    from . import linterprobe
+    root = Path(root)
+    if wsview.current().exists(root / "Gemfile") is not False:
+        return []                                  # a Gemfile exists (or is unknown): Bundler's restriction answers
+    files = linterprobe.collect_files(str(root), ["rb"])
+    if not files:
+        return []
+    own = {Path(f).stem for f in files} | {str(Path(f).with_suffix("")) for f in files}
+    names: dict[str, None] = {}
+    for f in files:
+        body = read_text(Path(f) if os.path.isabs(f) else root / f)
+        for m in _RUBY_REQUIRE.finditer(body or ""):
+            name = m.group(1)
+            top = name.split("/")[0]
+            if name.startswith((".", "/")) or name in _RUBY_STDLIB or top in _RUBY_STDLIB:
+                continue
+            if top in own or name in own or any(o.endswith("/" + name) for o in own):
+                continue
+            names[top] = None
+    if not names:
+        return []
+    return [prompts.fill(prompts.load_map("discovery_observations")["no_gemfile"], gems=", ".join(f"`{n}`" for n in names))]
 
 
 # Config-free TEST floors, congruent with the syntax/lint floors' per-language tables. A language earns an

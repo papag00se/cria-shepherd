@@ -102,3 +102,13 @@ def test_a_green_gate_whose_checks_all_ran_in_a_subdirectory_says_so_and_strande
     out = clean(sec(0, "no tests ran in 0.01s", 5), stranded)
     native, sep, observed = out.partition("Automatic discovery observations (authored metadata, not checker output):")
     assert sep and "pytest_da_resolvers.py" in observed and "pytest_da_resolvers.py" not in native
+
+
+def test_the_no_gemfile_fact_rides_with_the_authored_observations_on_every_gate(tmp_path):
+    write(tmp_path, "lib/rates.rb", "require 'countries'\n")
+    plan = probegate.plan_gate(str(tmp_path))
+    assert plan.dependency_facts and "`countries`" in plan.dependency_facts[0]
+    out = clean(sec(0, "ok"), new_plan(workspace=str(tmp_path), candidates=[cand(["ruby", "-c", "x.rb"])],
+                                       dependency_facts=plan.dependency_facts))
+    native, sep, observed = out.partition("Automatic discovery observations (authored metadata, not checker output):")
+    assert sep and "no Gemfile declaring any gem" in observed and "Gemfile" not in native

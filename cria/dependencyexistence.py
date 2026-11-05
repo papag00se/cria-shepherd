@@ -28,7 +28,13 @@ _ECOSYSTEM_REGISTRY = {"go": "go", "rust": "crates", "ruby": "rubygems", "jvm": 
 
 _Coord = tuple[str, str, str | None]   # (registry, package, version)
 _CHECKED: dict[str, set[_Coord]] = {}
+ABSENT: dict[str, set[tuple[str, str]]] = {}   # session -> (registry, package) the registry said does not exist
 NOTES: dict[str, dict[str, str]] = {}   # session -> {tool_call_id: note text}, replayed while the result is in history
+
+
+def known_absent(session: str, registry: str, package: str) -> bool:
+    """True once this session's registry check found the package does not exist."""
+    return (registry, package) in ABSENT.get(session, ())
 
 
 def declared(root: str) -> list[_Coord]:
@@ -99,22 +105,58 @@ class _Budget:
         return "" if time.monotonic() > self.end else registries._run(argv, timeout=RUN_TIMEOUT)
 
 
+_N = r"(?:0|[1-9]\d*)"
+_PRE = r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+# registry -> (the ecosystem's own version grammar, the rule as one line). A registry with no strict grammar (maven, conan,
+# vcpkg, packagist) is not listed: its versions are never called invalid.
+VERSION_GRAMMAR: dict[str, tuple[re.Pattern, str]] = {
+    "go": (re.compile(rf"v{_N}\.{_N}\.{_N}{_PRE}"), "a Go module version is vMAJOR.MINOR.PATCH, no leading zeros"),
+    "npm": (re.compile(rf"{_N}\.{_N}\.{_N}{_PRE}"), "an npm version is semver MAJOR.MINOR.PATCH, no leading zeros"),
+    "crates": (re.compile(rf"{_N}\.{_N}\.{_N}{_PRE}"), "a crates.io version is semver MAJOR.MINOR.PATCH, no leading zeros"),
+    "pypi": (re.compile(r"v?(?:\d+!)?\d+(?:\.\d+)*(?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview)[-_.]?\d*)?"
+                        r"(?:(?:-\d+)|(?:[-_.]?(?:post|rev|r)[-_.]?\d*))?(?:[-_.]?dev[-_.]?\d*)?(?:\+[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*)?",
+                        re.I), "a PyPI version follows PEP 440"),
+    "rubygems": (re.compile(r"\d+(?:\.[0-9A-Za-z]+)*(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"), "a gem version is dot-separated numbers/letters starting with a number"),
+    "nuget": (re.compile(r"\d+(?:\.\d+){0,3}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"), "a NuGet version is 1-4 numeric parts with an optional -prerelease"),
+}
+
+
+def invalid_version(registry: str, version: str | None) -> str:
+    """The ecosystem's rule when ``version`` is not a valid version string for ``registry``; '' when valid or not checkable."""
+    grammar = VERSION_GRAMMAR.get(registry)
+    if not version or grammar is None or grammar[0].fullmatch(version.strip()):
+        return ""
+    return grammar[1]
+
+
 def fact(registry: str, package: str, version: str | None, fetch=None, run=None) -> str:
-    """The note for one coordinate, or '' (exists at that version / unknown)."""
+    """The note for one coordinate, or '' (exists at that version / unknown). A version that is not a valid version string
+    for its ecosystem is stated as invalid, then the package itself is still checked by name."""
+    return _fact(registry, package, version, fetch, run)[0]
+
+
+def _fact(registry: str, package: str, version: str | None, fetch=None, run=None) -> tuple[str, bool]:
+    """(note, the package does not exist on its registry)."""
+    rule = invalid_version(registry, version)
+    if rule:
+        head = prompts.render("dependency_existence_invalid_version", package=package, version=version,
+                              registry=LABEL.get(registry, registry), rule=rule).rstrip()
+        rest, absent = _fact(registry, package, None, fetch, run)
+        return head + ("\n" + rest if rest else ""), absent
     budget = _Budget()
     result = registries.check(registry, package, version, fetch or budget.fetch, run or budget.run)
     label = LABEL.get(registry, registry)
     if result.lookup.exists is False:
         names = result.suggestions.candidates if result.suggestions else []
         similar = prompts.render("dependency_existence_similar", names=", ".join(names)) if names else ""
-        return prompts.render("dependency_existence_missing_package", package=package, registry=label, similar=similar).rstrip()
+        return prompts.render("dependency_existence_missing_package", package=package, registry=label, similar=similar).rstrip(), True
     if version and result.version_ok is False and result.lookup.versions:
         newest = sorted(result.lookup.versions, key=_numeric_key)[-VERSIONS_SHOWN:]
         total = len(result.lookup.versions)
         phrase = "published versions are" if total <= VERSIONS_SHOWN else f"{total} versions are published, the newest {VERSIONS_SHOWN} are"
         return prompts.render("dependency_existence_missing_version", package=package, registry=label, count_phrase=phrase,
-                              versions=", ".join(newest), version=version)
-    return ""
+                              versions=", ".join(newest), version=version), False
+    return "", False
 
 
 def notes_for(session: str, coordinates: list[_Coord], fetch=None, run=None) -> list[str]:
@@ -130,7 +172,9 @@ def notes_for(session: str, coordinates: list[_Coord], fetch=None, run=None) -> 
             break
         looked += 1
         seen.add(coordinate)
-        text = fact(*coordinate, fetch=fetch, run=run)
+        text, absent = _fact(*coordinate, fetch, run)
+        if absent:
+            ABSENT.setdefault(session, set()).add(coordinate[:2])
         if text:
             out.append(text)
     return out

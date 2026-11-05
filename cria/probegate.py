@@ -414,6 +414,8 @@ class GatePlan:
     # The subdirectory every real probe had to be run in, when NONE of them could run at the
     # workspace root — "" in the ordinary case. See :func:`_checks_ran_elsewhere`.
     ran_in: str = ""
+    # Authored dependency facts (probediscovery.undeclared_gem_sentences), shown with the discovery observations.
+    dependency_facts: list = field(default_factory=list)
     # cria-facing observations about the PLAN itself (not about the repo).
     notes: list = field(default_factory=list)
     # Lossless asynchronous transport state. The path names the HARNESS-side spool and is learned
@@ -971,6 +973,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         if not any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
             plan.untested += probediscovery.tests_with_no_command(workspace)
         plan.ran_in = _checks_ran_elsewhere(workspace, plan.candidates)
+        plan.dependency_facts = probediscovery.undeclared_gem_sentences(workspace)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
     # Reviewer 6510f2dd follow-up: reclaim any PRIOR gate's spool (+``.done``) cria has already fully
@@ -1635,7 +1638,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     timeout_notes: list[str] = []   # one per genuinely-timed-out (EXIT 124) section, ALWAYS populated
     completed_output: list[str] = []
     zero_collected_output: list[str] = []
-    discovery_observations: list[str] = []
+    discovery_observations: list[str] = list(getattr(plan, "dependency_facts", None) or [])
 
     def finish(message: str, *, include_completed: bool = True, include_not_launched: bool = True) -> str:
         # Native zero-collected evidence is independent of the winning diagnostic/timeout branch.
@@ -1951,7 +1954,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         kinds = {probediscovery.ProbeKind.SyntaxCheck: "syntax",
                  probediscovery.ProbeKind.Lint: "lint",
                  probediscovery.ProbeKind.Typecheck: "type",
-                 probediscovery.ProbeKind.BuildCheck: "build"}
+                 probediscovery.ProbeKind.BuildCheck: "build",
+                 probediscovery.ProbeKind.DependencyCheck: "dependency"}
         ran = [w for k, w in kinds.items() if any(c.kind is k for c in cands)]
         covered = " and ".join([", ".join(ran[:-1]), ran[-1]] if len(ran) > 2 else ran) or "nothing"
         clean += " " + prompts.fill(words["ran_some" if ran_tests else "no_command"],

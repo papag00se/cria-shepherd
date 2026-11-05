@@ -63,7 +63,21 @@ def test_a_missing_package_and_a_missing_version_are_stated_once_from_the_regist
 def test_the_assist_is_selected_only_at_level_5():
     from cria import assistruntime, toolstages
     levels = {d.policy.id: d.policy.default_level for d in toolstages.defaults().history}
-    assert levels["dependency-existence-note"] == 5
+    assert levels["dependency-facts"] == 5
+    retired = {"dependency-existence-note", "package-quality-note", "dependency-api-evidence", "missing-dependency-note"}
+    assert not retired & set(levels)          # the four overlapping assists are ONE registration
+
+
+def test_an_invalid_version_string_is_stated_as_invalid_for_its_ecosystem(tmp_path):
+    (tmp_path / "go.mod").write_text("module app\nrequire github.com/shopspring/decimal v0.4.00\n")
+    out = request(tmp_path, "v1")
+    assert "`v0.4.00` is not a valid version string for the Go module proxy (declared for `github.com/shopspring/decimal`): " \
+           "a Go module version is vMAJOR.MINOR.PATCH, no leading zeros." in out
+    assert "not one of them" not in out        # not a published-versions claim: the string is not a version at all
+    assert de.invalid_version("go", "v1.6.0") == "" and de.invalid_version("go", "1.6.0")
+    assert de.invalid_version("npm", "1.02.0") and de.invalid_version("npm", "1.3.0") == ""
+    assert de.invalid_version("pypi", "2.31.0") == "" and de.invalid_version("pypi", "banana")
+    assert de.invalid_version("rubygems", "13.2.1") == "" and de.invalid_version("maven", "whatever") == ""
 
 
 def test_declared_dependency_files_beyond_lockfiles_are_read_with_only_exact_pins_as_version_claims(tmp_path):
@@ -91,3 +105,16 @@ def test_a_declared_npm_package_that_does_not_exist_is_stated_from_the_registry(
     out = request(tmp_path, "n1")
     assert "No package named `no-such-pkg-cria` exists on npm." in out
     assert "https://registry.npmjs.org/no-such-pkg-cria" in fake_fetch.calls
+
+
+def test_one_assist_states_a_nonexistent_gem_and_never_coaches_loading_it(tmp_path):
+    def facts(output, call_id):
+        msgs = [{"role": "user", "content": "go"},
+                {"role": "assistant", "content": None, "tool_calls": [{"id": call_id, "type": "function", "function": {"name": "x", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": call_id, "content": output}]
+        rp._note_dependency_facts(ReturnedHistory(msgs, {}, str(tmp_path), "s", True, None, 8192))
+        return msgs[-1]["content"]
+    assert "No package named `eu` exists on RubyGems." in facts("Could not find gem 'eu' in rubygems repository https://rubygems.org/", "c1")
+    load = facts("cannot load such file -- eu (LoadError)", "c2")
+    assert load == "cannot load such file -- eu (LoadError)"                 # the registry said it does not exist: no load-path coaching
+    assert "Note: `other`" in facts("cannot load such file -- other (LoadError)", "c3")   # an unjudged name is coached as before

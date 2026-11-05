@@ -262,6 +262,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         'One grounded dependency/environment advice family with package-resolution and source-search adapters; authoritative tool facts and prescriptions remain distinguishable.',
         ('A91', 'A94', 'A95', 'J56'),
         (
+            SourceOwner('cria/returnedpolicies.py', '_note_dependency_facts'),
             SourceOwner('cria/returnedpolicies.py', '_note_missing_dependency'),
             SourceOwner('cria/returnedpolicies.py', '_note_dependency_search'),
         ),

@@ -2,3 +2,4 @@
 stranded = Apparent test code in {{FILES}} is outside default automatic discovery conventions for {{RUNNER}} — {{CONVENTION}}. This naming observation does not establish whether an explicit-file invocation or a configured runner executes it.
 missing = No {{RUNNER}} tests were found by default automatic discovery conventions — {{CONVENTION}}. This does not establish that no other test invocation can run.
 section = Automatic discovery observations (authored metadata, not checker output):\n{{OBSERVATIONS}}
+no_gemfile = The Ruby code requires {{GEMS}}, which are not the project's own files or Ruby's standard library, and the project has no Gemfile declaring any gem.

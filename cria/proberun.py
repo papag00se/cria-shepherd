@@ -197,6 +197,10 @@ def select_completion_probes(root: str) -> list[ProbeCandidate]:
     for c in probediscovery.lint_floor_candidates(root):
         if not any(x.command == c.command and x.working_dir == c.working_dir for x in selected):
             selected.append(c)
+    # UNDECLARED DEPENDENCIES: each ecosystem's own standard tool (deptry / knip|depcheck / Bundler's load restriction).
+    for c in probediscovery.dependency_floor_candidates(root):
+        if not any(x.command == c.command and x.working_dir == c.working_dir for x in selected):
+            selected.append(c)
     # The TEST floor: a bare "script + test_*.py" project (no pyproject/pytest.ini/tests dir) is not a
     # detected ecosystem, so ranked discovery yields NO test probe — the gate then runs syntax+lint but
     # never the tests (a vacuous-green that reports "no problems" while the tests fail). pytest

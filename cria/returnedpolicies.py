@@ -308,14 +308,27 @@ def _note_missing_dependency(source: ReturnedHistory) -> None:
     if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
         return
     registry = packagequality.LOAD_REGISTRY.get(eco)
-    if registry and packagequality.judged_poor(source.session, registry, name):
-        return    # the package-quality fact already says this package is a poor choice; coaching how to LOAD it would amplify it
+    if registry and (packagequality.judged_poor(source.session, registry, name)
+                     or dependencyexistence.known_absent(source.session, registry, name)):
+        return    # the registry / quality fact already says this package does not exist or is a poor choice; coaching how to LOAD it would amplify it
     note = prompts.fill(proberun.dependency_line(eco, workspace_root or ""), name=name)
     if note in last["content"]:
         return
     append_note(last, note)
     if rlog is not None:
         rlog.emit("writeproxy.dependency_note", level="info", ecosystem=eco, name=name)
+
+
+def _note_dependency_facts(source: ReturnedHistory) -> None:
+    """ONE dependency-facts assist: for each coordinate the coder declares/installs, that a build/test error names, or that
+    fails to load, the facts the registries, the disk and the reasoner give about it. Parts, in order: existence and valid
+    version (`_note_dependency_existence`), package quality (`_note_package_quality`), the real exported API of the
+    installed dependency (`_note_dependency_surface`), then load-path coaching (`_note_missing_dependency`), which runs LAST so
+    it can see that the earlier parts judged the package nonexistent or poor and stay silent about how to load it."""
+    _note_dependency_existence(source)
+    _note_package_quality(source)
+    _note_dependency_surface(source)
+    _note_missing_dependency(source)
 
 
 def _note_dependency_search(source: ReturnedHistory) -> None:
@@ -561,36 +574,23 @@ RESULTS = (
         regressions=(Reference('tests/write_edit/test_write_edit_notes.py', 'test_an_empty_filtered_failure_and_an_empty_search_say_what_they_measured_and_nothing_else_does'),), migrated=False), filtered_failure),
 )
 HISTORY = (
-    HistoryDefinition(Policy('package-quality-note', 'returned-history', 5, family_id='F20',
-        state='per-session sets of packages already checked and of packages judged poor, and the notes replayed on their tool results',
-        services=('declared-coordinates', 'reasoner-question'),
-        prompts=('package_quality_question', 'package_quality_text'),
+    HistoryDefinition(Policy('dependency-facts', 'returned-history', 5, family_id='F20',
+        state='per-session coordinates already checked, packages judged poor or absent, notes replayed on their tool results, depsurface anchors/abstentions/withheld',
+        services=('declared-coordinates', 'reasoner-question', 'workspace-view', 'dependency-surface'),
+        prompts=('dependency_existence_missing_version', 'dependency_existence_missing_package', 'dependency_existence_similar',
+                 'dependency_existence_invalid_version', 'package_quality_question', 'package_quality_text',
+                 'dependency_surface_complete', 'dependency_surface_partial', 'dependency_surface_withheld'),
         hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
-        regressions=(Reference('tests/test_package_quality.py', 'test_a_one_release_placeholder_gem_is_compared_with_the_real_one_and_its_load_failure_stops_being_coached'),),
-        migrated=False), _note_package_quality),
-    HistoryDefinition(Policy('missing-dependency-note', 'returned-history', 2, family_id='F20',
-        services=('workspace-view',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
-        regressions=(Reference('tests/research_discovery/test_research_discovery_dependencies.py',
-                               'test_the_note_asks_the_disk_before_describing_an_install'),), migrated=False), _note_missing_dependency),
+        regressions=(Reference('tests/test_dependency_existence.py', 'test_a_missing_package_and_a_missing_version_are_stated_once_from_the_registry'),
+                     Reference('tests/test_dependency_existence.py', 'test_an_invalid_version_string_is_stated_as_invalid_for_its_ecosystem'),
+                     Reference('tests/test_package_quality.py', 'test_a_one_release_placeholder_gem_is_compared_with_the_real_one_and_its_load_failure_stops_being_coached'),
+                     Reference('tests/research_discovery/test_research_discovery_dependencies.py', 'test_the_note_asks_the_disk_before_describing_an_install'),
+                     Reference('tests/write_edit/test_write_edit_notes.py', 'test_the_dependency_surface_note_is_grounded_on_the_declared_version_stable_and_withdrawn_on_a_bump')),
+        migrated=False), _note_dependency_facts),
     HistoryDefinition(Policy('dependency-source-note', 'returned-history', 2, family_id='F20',
         services=('workspace-view',), prompts=('dependency_source_root',),
         hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
         regressions=(), migrated=False), _note_dependency_search),
-    HistoryDefinition(Policy('dependency-api-evidence', 'returned-history', 2, family_id='F20',
-        state='depsurface session anchors, abstentions and withheld coordinates; reanchor after context loss',
-        services=('declared-coordinates', 'dependency-surface'),
-        prompts=('dependency_surface_complete', 'dependency_surface_partial', 'dependency_surface_withheld'),
-        hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
-        regressions=(Reference('tests/write_edit/test_write_edit_notes.py', 'test_the_dependency_surface_note_is_grounded_on_the_declared_version_stable_and_withdrawn_on_a_bump'),
-                     ),
-        migrated=False), _note_dependency_surface),
-    HistoryDefinition(Policy('dependency-existence-note', 'returned-history', 5, family_id='F20',
-        state='per-session set of coordinates already checked and the notes replayed on their tool results',
-        services=('declared-coordinates',),
-        prompts=('dependency_existence_missing_version', 'dependency_existence_missing_package', 'dependency_existence_similar'),
-        hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
-        regressions=(Reference('tests/test_dependency_existence.py', 'test_a_missing_package_and_a_missing_version_are_stated_once_from_the_registry'),),
-        migrated=False), _note_dependency_existence),
     HistoryDefinition(Policy('running-session-note', 'returned-history', 2, family_id='F14',
         prompts=('running_command_note',), hooks=(Reference('cria/writeproxy.py', 'represent_inbound'),),
         regressions=(),
