@@ -1,0 +1,20 @@
+namespace Ledger;
+
+public class Book
+{
+    private readonly List<Expense> _items = new();
+
+    public void Add(Expense e) => _items.Add(e);
+
+    public decimal Total() => _items.Sum(e => e.Amount);
+
+    public Dictionary<string, decimal> ByCategory() =>
+        _items.GroupBy(e => e.Category).ToDictionary(g => g.Key, g => g.Sum(e => e.Amount));
+
+    public string ToCsv()
+    {
+        var lines = new List<string> { "category,amount,date" };
+        foreach (var e in _items) lines.Add($"{e.Category},{e.Amount},{e.Date}");
+        return string.Join("\n", lines);
+    }
+}

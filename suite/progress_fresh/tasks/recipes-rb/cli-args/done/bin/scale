@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+require_relative "../lib/recipe"
+
+target = Integer(ARGV.first, exception: false)
+unless ARGV.size == 1 && target && target.positive?
+  warn "usage: scale SERVINGS   (a positive integer)"
+  exit 1
+end
+
+r = Recipe.new("pancakes", 4, { "flour" => [2.0, "cup"], "milk" => [1.5, "cup"] })
+puts r.scale(target).to_s

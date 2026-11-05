@@ -1,0 +1,547 @@
+{
+ "report": {
+  "count": 72,
+  "accuracy": 0.6388888888888888,
+  "macro_f1": 0.5312348197804333,
+  "per_label_f1": {
+   "DONE": 0.0,
+   "PARTIAL": 0.6575342465753424,
+   "NOT_STARTED": 0.9361702127659575
+  },
+  "confusion": [
+   [
+    0,
+    23,
+    1
+   ],
+   [
+    0,
+    24,
+    0
+   ],
+   [
+    0,
+    2,
+    22
+   ]
+  ],
+  "recall": {
+   "DONE": 0.0,
+   "PARTIAL": 1.0,
+   "NOT_STARTED": 0.9166666666666666
+  },
+  "model": "/home/jesse/.cria/training/progress-v1/final/reference",
+  "split": "test",
+  "labels": [
+   "DONE",
+   "PARTIAL",
+   "NOT_STARTED"
+  ]
+ },
+ "predictions": [
+  {
+   "id": "csvstats-rs/median-even/NOT_STARTED",
+   "task": "csvstats-rs",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 224
+  },
+  {
+   "id": "csvstats-rs/median-even/PARTIAL",
+   "task": "csvstats-rs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 374
+  },
+  {
+   "id": "csvstats-rs/median-even/DONE",
+   "task": "csvstats-rs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 618
+  },
+  {
+   "id": "csvstats-rs/stddev/NOT_STARTED",
+   "task": "csvstats-rs",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 291
+  },
+  {
+   "id": "csvstats-rs/stddev/PARTIAL",
+   "task": "csvstats-rs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 348
+  },
+  {
+   "id": "csvstats-rs/stddev/DONE",
+   "task": "csvstats-rs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 535
+  },
+  {
+   "id": "csvstats-rs/readme-and-tests/NOT_STARTED",
+   "task": "csvstats-rs",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 217
+  },
+  {
+   "id": "csvstats-rs/readme-and-tests/PARTIAL",
+   "task": "csvstats-rs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 374
+  },
+  {
+   "id": "csvstats-rs/readme-and-tests/DONE",
+   "task": "csvstats-rs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 560
+  },
+  {
+   "id": "guestbook-php/escape-output/NOT_STARTED",
+   "task": "guestbook-php",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 207
+  },
+  {
+   "id": "guestbook-php/escape-output/PARTIAL",
+   "task": "guestbook-php",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 336
+  },
+  {
+   "id": "guestbook-php/escape-output/DONE",
+   "task": "guestbook-php",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 492
+  },
+  {
+   "id": "guestbook-php/reject-blank/NOT_STARTED",
+   "task": "guestbook-php",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 306
+  },
+  {
+   "id": "guestbook-php/reject-blank/PARTIAL",
+   "task": "guestbook-php",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 366
+  },
+  {
+   "id": "guestbook-php/reject-blank/DONE",
+   "task": "guestbook-php",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 440
+  },
+  {
+   "id": "guestbook-php/phpunit-config/NOT_STARTED",
+   "task": "guestbook-php",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 229
+  },
+  {
+   "id": "guestbook-php/phpunit-config/PARTIAL",
+   "task": "guestbook-php",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 296
+  },
+  {
+   "id": "guestbook-php/phpunit-config/DONE",
+   "task": "guestbook-php",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 477
+  },
+  {
+   "id": "inventory-py/low-boundary/NOT_STARTED",
+   "task": "inventory-py",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 220
+  },
+  {
+   "id": "inventory-py/low-boundary/PARTIAL",
+   "task": "inventory-py",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 309
+  },
+  {
+   "id": "inventory-py/low-boundary/DONE",
+   "task": "inventory-py",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 556
+  },
+  {
+   "id": "inventory-py/json-flag/NOT_STARTED",
+   "task": "inventory-py",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "tokens": 296
+  },
+  {
+   "id": "inventory-py/json-flag/PARTIAL",
+   "task": "inventory-py",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 406
+  },
+  {
+   "id": "inventory-py/json-flag/DONE",
+   "task": "inventory-py",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 481
+  },
+  {
+   "id": "inventory-py/tests/NOT_STARTED",
+   "task": "inventory-py",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 218
+  },
+  {
+   "id": "inventory-py/tests/PARTIAL",
+   "task": "inventory-py",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 361
+  },
+  {
+   "id": "inventory-py/tests/DONE",
+   "task": "inventory-py",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 443
+  },
+  {
+   "id": "ledger-cs/reject-negative/NOT_STARTED",
+   "task": "ledger-cs",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 206
+  },
+  {
+   "id": "ledger-cs/reject-negative/PARTIAL",
+   "task": "ledger-cs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 327
+  },
+  {
+   "id": "ledger-cs/reject-negative/DONE",
+   "task": "ledger-cs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 335
+  },
+  {
+   "id": "ledger-cs/month-filter/NOT_STARTED",
+   "task": "ledger-cs",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 288
+  },
+  {
+   "id": "ledger-cs/month-filter/PARTIAL",
+   "task": "ledger-cs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 386
+  },
+  {
+   "id": "ledger-cs/month-filter/DONE",
+   "task": "ledger-cs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 570
+  },
+  {
+   "id": "ledger-cs/csv-export/NOT_STARTED",
+   "task": "ledger-cs",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 238
+  },
+  {
+   "id": "ledger-cs/csv-export/PARTIAL",
+   "task": "ledger-cs",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 396
+  },
+  {
+   "id": "ledger-cs/csv-export/DONE",
+   "task": "ledger-cs",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 502
+  },
+  {
+   "id": "library-java/double-checkout/NOT_STARTED",
+   "task": "library-java",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 206
+  },
+  {
+   "id": "library-java/double-checkout/PARTIAL",
+   "task": "library-java",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 310
+  },
+  {
+   "id": "library-java/double-checkout/DONE",
+   "task": "library-java",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 322
+  },
+  {
+   "id": "library-java/fine-cap/NOT_STARTED",
+   "task": "library-java",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 290
+  },
+  {
+   "id": "library-java/fine-cap/PARTIAL",
+   "task": "library-java",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 290
+  },
+  {
+   "id": "library-java/fine-cap/DONE",
+   "task": "library-java",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 423
+  },
+  {
+   "id": "library-java/late-tests/NOT_STARTED",
+   "task": "library-java",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 221
+  },
+  {
+   "id": "library-java/late-tests/PARTIAL",
+   "task": "library-java",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 370
+  },
+  {
+   "id": "library-java/late-tests/DONE",
+   "task": "library-java",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 510
+  },
+  {
+   "id": "ringbuf-cpp/pop-empty/NOT_STARTED",
+   "task": "ringbuf-cpp",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 216
+  },
+  {
+   "id": "ringbuf-cpp/pop-empty/PARTIAL",
+   "task": "ringbuf-cpp",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 334
+  },
+  {
+   "id": "ringbuf-cpp/pop-empty/DONE",
+   "task": "ringbuf-cpp",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 496
+  },
+  {
+   "id": "ringbuf-cpp/peek-and-full/NOT_STARTED",
+   "task": "ringbuf-cpp",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 275
+  },
+  {
+   "id": "ringbuf-cpp/peek-and-full/PARTIAL",
+   "task": "ringbuf-cpp",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 292
+  },
+  {
+   "id": "ringbuf-cpp/peek-and-full/DONE",
+   "task": "ringbuf-cpp",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 386
+  },
+  {
+   "id": "ringbuf-cpp/capacity-doc/NOT_STARTED",
+   "task": "ringbuf-cpp",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 233
+  },
+  {
+   "id": "ringbuf-cpp/capacity-doc/PARTIAL",
+   "task": "ringbuf-cpp",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 304
+  },
+  {
+   "id": "ringbuf-cpp/capacity-doc/DONE",
+   "task": "ringbuf-cpp",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 441
+  },
+  {
+   "id": "todo-ts/list-copy/NOT_STARTED",
+   "task": "todo-ts",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 216
+  },
+  {
+   "id": "todo-ts/list-copy/PARTIAL",
+   "task": "todo-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 269
+  },
+  {
+   "id": "todo-ts/list-copy/DONE",
+   "task": "todo-ts",
+   "label": "DONE",
+   "prediction": "NOT_STARTED",
+   "tokens": 338
+  },
+  {
+   "id": "todo-ts/remove-method/NOT_STARTED",
+   "task": "todo-ts",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 317
+  },
+  {
+   "id": "todo-ts/remove-method/PARTIAL",
+   "task": "todo-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 468
+  },
+  {
+   "id": "todo-ts/remove-method/DONE",
+   "task": "todo-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 589
+  },
+  {
+   "id": "todo-ts/persist-json/NOT_STARTED",
+   "task": "todo-ts",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 237
+  },
+  {
+   "id": "todo-ts/persist-json/PARTIAL",
+   "task": "todo-ts",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 377
+  },
+  {
+   "id": "todo-ts/persist-json/DONE",
+   "task": "todo-ts",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 619
+  },
+  {
+   "id": "urlshort-go/validate-url/NOT_STARTED",
+   "task": "urlshort-go",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 216
+  },
+  {
+   "id": "urlshort-go/validate-url/PARTIAL",
+   "task": "urlshort-go",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 328
+  },
+  {
+   "id": "urlshort-go/validate-url/DONE",
+   "task": "urlshort-go",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 444
+  },
+  {
+   "id": "urlshort-go/hit-counter/NOT_STARTED",
+   "task": "urlshort-go",
+   "label": "NOT_STARTED",
+   "prediction": "PARTIAL",
+   "tokens": 265
+  },
+  {
+   "id": "urlshort-go/hit-counter/PARTIAL",
+   "task": "urlshort-go",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 438
+  },
+  {
+   "id": "urlshort-go/hit-counter/DONE",
+   "task": "urlshort-go",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 754
+  },
+  {
+   "id": "urlshort-go/http-tests/NOT_STARTED",
+   "task": "urlshort-go",
+   "label": "NOT_STARTED",
+   "prediction": "NOT_STARTED",
+   "tokens": 224
+  },
+  {
+   "id": "urlshort-go/http-tests/PARTIAL",
+   "task": "urlshort-go",
+   "label": "PARTIAL",
+   "prediction": "PARTIAL",
+   "tokens": 418
+  },
+  {
+   "id": "urlshort-go/http-tests/DONE",
+   "task": "urlshort-go",
+   "label": "DONE",
+   "prediction": "PARTIAL",
+   "tokens": 639
+  }
+ ]
+}

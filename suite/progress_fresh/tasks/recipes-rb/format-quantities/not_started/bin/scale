@@ -1,0 +1,5 @@
+#!/usr/bin/env ruby
+require_relative "../lib/recipe"
+
+r = Recipe.new("pancakes", 4, { "flour" => [2.0, "cup"], "milk" => [1.5, "cup"] })
+puts r.scale(Integer(ARGV.fetch(0, 4))).to_s

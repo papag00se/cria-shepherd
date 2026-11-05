@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+require_relative "../lib/recipe"
+
+target = ARGV.first
+abort "usage: scale SERVINGS" unless target
+
+r = Recipe.new("pancakes", 4, { "flour" => [2.0, "cup"], "milk" => [1.5, "cup"] })
+puts r.scale(Integer(target)).to_s

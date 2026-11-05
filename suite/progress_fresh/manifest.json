@@ -1,0 +1,99 @@
+{
+  "labels_are": "author-known by construction, not model-judged; never add to any training set",
+  "splits": {
+    "dev": {
+      "rows": 18,
+      "sha256": "8195fa8ffc273620c7661c2ec930a80460403a6e27beec910c8f63076cb7b108",
+      "by_label": {
+        "NOT_STARTED": 6,
+        "PARTIAL": 6,
+        "DONE": 6
+      },
+      "by_language": {
+        "Ruby": 9,
+        "JavaScript": 9
+      },
+      "by_task": {
+        "recipes-rb": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "weather-js": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        }
+      },
+      "evidence_chars": {
+        "min": 0,
+        "max": 852
+      }
+    },
+    "test": {
+      "rows": 72,
+      "sha256": "5d9068a35e891f3d5f7289e60c4fdf5b2646003608a683829cf72d5461c7604d",
+      "by_label": {
+        "NOT_STARTED": 24,
+        "PARTIAL": 24,
+        "DONE": 24
+      },
+      "by_language": {
+        "Rust": 9,
+        "PHP": 9,
+        "Python": 9,
+        "C#": 9,
+        "Java": 9,
+        "C++": 9,
+        "TypeScript": 9,
+        "Go": 9
+      },
+      "by_task": {
+        "csvstats-rs": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "guestbook-php": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "inventory-py": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "ledger-cs": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "library-java": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "ringbuf-cpp": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "todo-ts": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        },
+        "urlshort-go": {
+          "NOT_STARTED": 3,
+          "PARTIAL": 3,
+          "DONE": 3
+        }
+      },
+      "evidence_chars": {
+        "min": 0,
+        "max": 1254
+      }
+    }
+  }
+}

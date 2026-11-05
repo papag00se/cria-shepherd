@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(ringbuf CXX)
+set(CMAKE_CXX_STANDARD 17)
+add_executable(demo main.cpp)
+enable_testing()
+add_executable(ring_test ring_test.cpp)
+add_test(NAME ring_test COMMAND ring_test)
