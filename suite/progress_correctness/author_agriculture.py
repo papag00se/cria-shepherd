@@ -25,6 +25,28 @@ FAMILY_SPLITS = {
     'engineering-backup-catalog-v1': 'TRAIN',
     'music-rehearsal-setlist': 'TRAIN',
     'nonogram-puzzle-solver': 'TRAIN',
+    'bookbinding-signature-planner': 'TRAIN',
+    'boardgame-tournament-pairing': 'TRAIN',
+    'espresso-extraction-journal': 'TRAIN',
+    'weaving-loom-drafts': 'TRAIN',  # Quarantined: overlaps DEV knitting; never export.
+    'train-bicycle-maintenance': 'TRAIN',
+    'newspaper-ocr-proofing': 'TRAIN',
+    'clock-repair-timing': 'TRAIN',
+    'radiosonde-ascent-profile': 'TRAIN',
+    'engineering-audio-waveforms-v1': 'TRAIN',
+    'sourdough-fermentation-journal': 'TRAIN',
+    'ranked-choice-ballot-counter': 'TRAIN',
+    'earthquake-seismogram-analysis': 'TRAIN',
+    'engineering-chemical-formulas-v1': 'TRAIN',
+    'screenplay-scene-continuity': 'TRAIN',
+    'badminton-rally-scoring': 'TRAIN',
+    'watercolor-pigment-mixing': 'TRAIN',
+    'chess-fen-position': 'TRAIN',
+    'fossil-stratigraphic-survey': 'TRAIN',
+    'stop-motion-animation-dopesheet': 'TRAIN',
+    'model-rocket-flight-recovery': 'TRAIN',
+    'aircraft-weight-balance': 'TRAIN',
+    'camera-exposure-bracketing': 'TRAIN',
 }
 
 
