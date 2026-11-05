@@ -25,5 +25,3 @@ Explain the principal derailment: context → thinking/action → consequence. T
 For each supported fix, name the calls, upstream owner, falsifiable explanation, smallest correction, missed assistance, possible harm and validation. Test legitimate nearby cases and false positives/negatives; require a fails-before/passes-after regression. Apply the [design principles](principles.md), not model blame.
 
 Finding no supported fix is a valid result. If the cause remains unresolved, name its owner and one next source question or test; do not call it explained. This adds no fix quota, approval chain or closure gate.
-
-Implementation, model replays and live changes require separate authorization. Follow normal test and review.
