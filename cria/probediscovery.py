@@ -1369,7 +1369,10 @@ def _node_dependency_tool(p: ProjectDir) -> tuple[str, list[str]] | None:
     pm, _ = js_package_manager(p)
     for tool, flags in (("knip", ["--dependencies"]), ("depcheck", [])):
         if f'"{tool}"' in text:
-            return tool, [pm, "exec", tool, *flags]
+            # npm and yarn parse flags placed after the tool as their own (verified: knip received no
+            # `--dependencies`); `--` hands them to the tool. pnpm passes them through unchanged.
+            sep = ["--"] if flags and pm in ("npm", "yarn") else []
+            return tool, [pm, "exec", tool, *sep, *flags]
         if toolpath.resolved(tool):
             return tool, [toolpath.resolved(tool), *flags]
     return None

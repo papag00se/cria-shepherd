@@ -76,4 +76,16 @@ def test_node_runs_knip_or_depcheck_only_when_the_project_or_the_path_has_one(tm
     programs(monkeypatch, "depcheck")
     assert dep_checks(tmp_path)[0].command == ["depcheck"]
     write(tmp_path, "package.json", '{"name":"x","devDependencies":{"knip":"5.0.0"}}')
-    assert dep_checks(tmp_path)[0].command == ["npm", "exec", "knip", "--dependencies"]
+    assert dep_checks(tmp_path)[0].command == ["npm", "exec", "knip", "--", "--dependencies"]
+
+
+@pytest.mark.parametrize("pm,lock,argv", [
+    ("npm", "package-lock.json", ["npm", "exec", "knip", "--", "--dependencies"]),
+    ("yarn", "yarn.lock", ["yarn", "exec", "knip", "--", "--dependencies"]),
+    ("pnpm", "pnpm-lock.yaml", ["pnpm", "exec", "knip", "--dependencies"])])
+def test_knip_dependencies_flag_reaches_knip_not_the_package_manager(tmp_path, monkeypatch, pm, lock, argv):
+    programs(monkeypatch)
+    write(tmp_path, "package.json", '{"devDependencies": {"knip": "5"}}')
+    write(tmp_path, lock, "")
+    [c] = dep_checks(tmp_path)
+    assert c.command == argv
