@@ -3,9 +3,9 @@
 ONE config model, no local/cloud split: ``[backends.*]`` says WHERE a model runs (a
 transport + endpoint), ``[roles.*]`` says HOW cria uses one (a backend + sampling +
 reasoning), ``[failover]`` orders the roles per task_type, and ``[defaults]`` holds the
-shared endpoint. The other sections are ``[server]``, ``[logging]``, ``[indicators]``,
-``[tools]``, ``[context]``, ``[engagement]``, ``[planner]``. Unknown sections are ignored so
-a file can carry forward-looking config without breaking an older build.
+shared endpoint. Other sections configure the server, logging, tools, context, engagement,
+safety, retention and optional features; see ``cria.example.toml`` for the complete reference.
+Unknown configuration entries are rejected.
 
 **No secrets live in this file.** Anything sensitive (a web-search or provider API key)
 comes from the environment, not config — ``api_key_env`` only NAMES the variable. That is

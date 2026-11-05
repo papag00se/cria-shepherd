@@ -1,6 +1,6 @@
 # Testing
 
-`nice -n 19 python -m pytest -q tests` runs the whole suite (about 5,000 collected cases; a couple of minutes on the development box). Run ONE pytest process at a time (never `-n`): the suite shares the machine with model servers, and the test scratch is a per-session directory that `conftest.py` removes at exit, so do not override it. Use focused files while working and the whole suite before a commit. It is small on purpose: a test earns its place only by being able to fail for a real reason. The standard is the global test-refactor process (`~/.agents/processes/test-refactor.md`): minimum test machinery, maximum protection.
+`nice -n 19 python -m pytest -q tests` runs the whole suite. Run ONE pytest process at a time (never `-n`): the suite shares the machine with model servers, and the test scratch is a per-session directory that `conftest.py` removes at exit, so do not override it. Use focused files while working and the whole suite before a commit. It is small on purpose: a test earns its place only by being able to fail for a real reason. The standard is the global test-refactor process (`~/.agents/processes/test-refactor.md`): minimum test machinery, maximum protection.
 
 ## Layout
 

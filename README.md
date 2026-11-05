@@ -4,9 +4,9 @@
 
 cria-shepherd sits between a coding harness and its model server. It manages context, repairs supported tool-call formats, and requests checks when the agent reports completion.
 
-The harness still runs commands, edits files and controls workspace permissions. cria works on the requests and responses passing between the harness and the model. It supports the OpenAI Chat Completions and Responses APIs, with local models as the default backend. A caller's own instructions (Responses `instructions`/developer items, Chat `system`/`developer` messages) are carried behind cria's own coder prompt and reduced with a visible label only when the window requires it; they are never dropped silently.
+The harness still runs commands, edits files and controls workspace permissions. cria works on the requests and responses passing between the harness and the model. It supports the OpenAI Chat Completions and Responses APIs, with local models as the default backend. At levels with context preparation, a caller's own instructions (Responses `instructions`/developer items, Chat `system`/`developer` messages) are carried behind cria's coder prompt and reduced with a visible label only when the window requires it; they are never dropped silently. At L0, they are forwarded as sent.
 
-[Tool-call repair](#tool-call-repair) · [Assists](#what-cria-does) · [L0 vs L5](#l0-vs-l5) · [Getting started](#getting-started)
+[Tool-call repair](#tool-call-repair) · [Assists](#what-cria-does) · [L0 vs L5](#l0-vs-l5) · [Getting started](#getting-started) · [Explore the docs](docs/README.md)
 
 ## Tool-call repair
 
@@ -30,7 +30,7 @@ Context shaping keeps the original task and current work in view as the conversa
 
 ## L0 vs L5
 
-L0 retains proxy/wire and transport-recovery contracts without higher-level coding assistance; L5 enables level-eligible assists. Experimental planning remains separately opt-in. The grids show inferred usefulness across six repository tasks, using the best retained L5 score for each model/task.
+L0 retains proxy/wire and transport-recovery contracts without higher-level coding assistance; L5 enables level-eligible assists. Experimental planning remains separately opt-in. The grids show inferred usefulness across six repository tasks, using the best retained L5 score for each model/task. These historical selections span different revisions and settings, including planner-on runs; they are not a controlled comparison. [How to read the results](docs/methodology.md).
 
 ![L0 wire translation usefulness scores](docs/media/battery-l0.png)
 
@@ -113,7 +113,7 @@ Enable `[logging].capture_calls = true` to record full calls. Captures include p
 
 ```bash
 python -m pip install pytest
-nice -n 19 python -m pytest -q tests            # the whole suite: ~5,000 collected cases, a couple of minutes
+nice -n 19 python -m pytest -q tests            # the whole suite
 python -m pytest -q tests/shell_safety         # one domain
 python -m pytest tests/structure -q            # structural lints, incl. the generated assist inventory and doc links
 ```
@@ -121,6 +121,8 @@ python -m pytest tests/structure -q            # structural lints, incl. the gen
 Stdlib-only, with a fake model server and no GPU or network. Tests are organised by domain under `tests/<domain>/`; run one process at a time. [docs/testing.md](docs/testing.md) covers what a test here must be, how the pre-reset suite is preserved as the git tag `tests-before-reset-20261031`, and how to add a test.
 
 ## Documentation
+
+Start with the visual guides to [features](docs/features.md), [how cria works](docs/how-it-works.md), and [how we evaluate it](docs/methodology.md), or browse the [documentation home](docs/README.md).
 
 - [Testing](docs/testing.md): what the suite protects and the rules for changing it
 - [Configuration](cria.example.toml) and [model settings](docs/model-settings.md)
