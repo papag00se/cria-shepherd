@@ -163,7 +163,7 @@ def batches(rows, cells=BATCH_ATTENTION_CELLS):
 
 
 def ledger_path(out, phase):
-    return out / ("forward-ledger.jsonl" if phase == "discovery" else "validation-ledger.jsonl")
+    return out / {"discovery": "forward-ledger.jsonl", "validation": "validation-ledger.jsonl", "int4": "int4-ledger.jsonl"}[phase]
 
 
 def ledger_start(out, *, phase="discovery", **details):

@@ -157,17 +157,78 @@ def quantize(args):
     convert(args.out / f"validation-export-{args.classes}")
 
 
+def onnx_session(path, profile_prefix, *, cpu=False):
+    """One bounded ORT configuration for certification and quantization studies."""
+    import onnxruntime as ort
+    if not cpu:
+        ort.preload_dlls()
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    options.enable_profiling = True
+    options.add_session_config_entry("session.disable_prepacking", "1")
+    options.profile_file_prefix = str(profile_prefix)
+    providers = ["CPUExecutionProvider"] if cpu else [
+        ("CUDAExecutionProvider", {"device_id": 0, "use_tf32": 0, "gpu_mem_limit": 9 * 1024**3}),
+        "CPUExecutionProvider"]
+    engine = ort.InferenceSession(str(path), sess_options=options, providers=providers)
+    if not cpu and "CUDAExecutionProvider" not in engine.get_providers():
+        raise RuntimeError("CUDA execution provider did not initialize; do not silently run the full model on CPU")
+    return engine
+
+
+def onnx_rows(out, torch, engine, rows, classes, *, phase, purpose, hypothesis, model, edit, dtype, capture=None):
+    """Whole inputs, common batching, authoritative call logging and optional feature capture."""
+    import numpy as np
+    from suite.progress_dataset import LABELS
+    capture = capture or {}
+    records, features = [], defaultdict(list)
+    for batch in batches(rows):
+        length = max(r["tokens"] for r in batch)
+        ids = np.zeros((len(batch), length), dtype=np.int64)
+        mask = np.zeros_like(ids)
+        for i, row in enumerate(batch):
+            ids[i, :row["tokens"]] = row["input_ids"]
+            mask[i, :row["tokens"]] = 1
+
+        def run():
+            values = engine.run(["logits", *capture.values()], {"input_ids": ids, "attention_mask": mask})
+            logits = values[0]
+            if logits.shape != (len(batch), classes) or not np.isfinite(logits).all():
+                raise ValueError(f"Invalid ONNX output: {logits.shape}")
+            predictions = [{**{k: r[k] for k in ("id", "label", "tokens", "task")},
+                            **{k: r[k] for k in ("family", "labels") if k in r},
+                            "logits": logits[i].tolist(), "prediction": r.get("labels", LABELS)[int(logits[i].argmax())]}
+                           for i, r in enumerate(batch)]
+            return {"predictions": predictions, "features": dict(zip(capture, values[1:]))}
+
+        result = recorded_forward(out, torch, run, phase=phase, purpose=purpose, hypothesis=hypothesis,
+                                  examples=[r["id"] for r in batch], tokens=[r["tokens"] for r in batch],
+                                  shape=list(ids.shape), dtype=dtype, model=str(model), edit=edit,
+                                  providers=engine.get_providers(),
+                                  memory_note=("Torch allocator peak excludes the separate ORT CUDA arena; CUDA arena limit is 9 GiB"
+                                               if "CUDAExecutionProvider" in engine.get_providers() else "CPU ORT; Torch CUDA allocator does not measure CPU memory"))
+        records.extend(result["predictions"])
+        for key, value in result["features"].items():
+            features[key].append(value)
+    return records, {key: np.concatenate(value) for key, value in features.items()}
+
+
+def onnx_placements(profile):
+    from collections import Counter
+    events = json.loads(Path(profile).read_text())
+    counts = Counter((e.get("args", {}).get("provider"), e.get("args", {}).get("op_name"))
+                     for e in events if e.get("cat") == "Node" and e.get("args", {}).get("provider"))
+    return [{"provider": p, "op": op, "events": n} for (p, op), n in sorted(counts.items())]
+
+
 def onnx_predictions(args):
     """V4: exported FP32 and standard INT4 preserve the frozen native decisions.
 
     No retuning, reweighting or altered quantization recipe after this comparison. The CUDA provider performs heavy inference on device 0 (the explicitly isolated RTX 3080); CPU shape/index bookkeeping is permitted by the operator's clarification. Profile actual operator placement. Refutation: any changed prediction, including false-DONE additions or old-family changes. Never read fresh TEST here.
     """
     import gc
-    import numpy as np
-    import onnxruntime as ort
-    from collections import Counter
     torch = setup_gpu()
-    ort.preload_dlls()
     if args.classes == 2:
         rows, selftest = old_rows()
         reference = json.loads((args.out / "validation-old-native.json").read_text())["candidate"]
@@ -180,57 +241,18 @@ def onnx_predictions(args):
     root = args.out / f"validation-export-{args.classes}"
     path = root / ("normalized-fp32.onnx" if args.backend == "fp32" else "int4/model.onnx")
     name = f"validation-onnx-{args.backend}-{args.classes}"
-    options = ort.SessionOptions()
-    options.intra_op_num_threads = 2
-    options.inter_op_num_threads = 1
-    options.enable_profiling = True
-    # Keep extra packed weight copies out of the 10 GiB device; arithmetic and
-    # graph weights stay unchanged. Use the CUDA arena's normal growth policy.
-    options.add_session_config_entry("session.disable_prepacking", "1")
-    options.profile_file_prefix = str(args.out / (name + "-profile"))
-    engine = ort.InferenceSession(str(path), sess_options=options,
-                                 providers=[("CUDAExecutionProvider", {"device_id": 0, "use_tf32": 0,
-                                             "gpu_mem_limit": 9 * 1024**3}),
-                                            "CPUExecutionProvider"])
-    if "CUDAExecutionProvider" not in engine.get_providers():
-        raise RuntimeError("CUDA execution provider did not initialize; do not silently run the full model on CPU")
-    records = []
-    for batch in batches(rows):
-        length = max(r["tokens"] for r in batch)
-        ids = np.zeros((len(batch), length), dtype=np.int64)
-        mask = np.zeros_like(ids)
-        for i, row in enumerate(batch):
-            ids[i, :row["tokens"]] = row["input_ids"]
-            mask[i, :row["tokens"]] = 1
-
-        def run():
-            logits = engine.run(["logits"], {"input_ids": ids, "attention_mask": mask})[0]
-            if logits.shape != (len(batch), args.classes) or not np.isfinite(logits).all():
-                raise ValueError(f"Invalid ONNX output: {logits.shape}")
-            from suite.progress_dataset import LABELS
-            predictions = [{**{k: r[k] for k in ("id", "label", "tokens", "task")},
-                            **{k: r[k] for k in ("family", "labels") if k in r},
-                            "logits": logits[i].tolist(), "prediction": r.get("labels", LABELS)[int(logits[i].argmax())]}
-                           for i, r in enumerate(batch)]
-            return {"predictions": predictions}
-
-        result = recorded_forward(args.out, torch, run, phase="validation", purpose=f"Frozen {args.backend} ONNX: {args.classes} slots",
-                                  hypothesis=onnx_predictions.__doc__, examples=[r["id"] for r in batch],
-                                  tokens=[r["tokens"] for r in batch], shape=list(ids.shape),
-                                  dtype="FP32 activations; " + ("INT4 matrices/embeddings" if args.backend == "int4" else "FP32 weights"),
-                                  model=str(path), edit=CANDIDATE, providers=engine.get_providers(),
-                                  memory_note="Torch allocator peak excludes the separate ORT CUDA arena; arena limit is 9 GiB")
-        records.extend(result["predictions"])
+    engine = onnx_session(path, args.out / (name + "-profile"))
+    records, _ = onnx_rows(args.out, torch, engine, rows, args.classes, phase="validation",
+                          purpose=f"Frozen {args.backend} ONNX: {args.classes} slots", hypothesis=onnx_predictions.__doc__,
+                          model=path, edit=CANDIDATE, dtype="FP32 activations; " + ("INT4 matrices/embeddings" if args.backend == "int4" else "FP32 weights"))
     profile = engine.end_profiling()
     del engine
     gc.collect()
-    events = json.loads(Path(profile).read_text())
-    placements = Counter((e.get("args", {}).get("provider"), e.get("args", {}).get("op_name"))
-                         for e in events if e.get("cat") == "Node" and e.get("args", {}).get("provider"))
+    placements = onnx_placements(profile)
     stats = {"backend": args.backend, "classes": args.classes, "predictions": records,
              "changed_vs_native": [r["id"] for r in records if r["prediction"] != expected[r["id"]]["prediction"]],
              "max_logit_difference_vs_native": max(abs(a - b) for r in records for a, b in zip(r["logits"], expected[r["id"]]["logits"])),
-             "profile": profile, "operator_placements": [{"provider": p, "op": op, "events": count} for (p, op), count in sorted(placements.items())]}
+             "profile": profile, "operator_placements": placements}
     if args.classes == 2:
         stats["groups"] = {}
         for family in sorted({r["family"] for r in records}):
@@ -252,8 +274,7 @@ def onnx_predictions(args):
           "max logit difference", stats["max_logit_difference_vs_native"], flush=True)
     if "dev" in stats:
         print("dev", stats["dev"]["confusion"], "controls", stats["controls"]["confusion"], flush=True)
-    print("heavy operator placement", [(p, op, n) for (p, op), n in placements.items()
-                                       if op in ("MatMul", "MatMulNBits", "Gemm", "GatherBlockQuantized")], flush=True)
+    print("heavy operator placement", [p for p in placements if p["op"] in ("MatMul", "MatMulNBits", "Gemm", "GatherBlockQuantized")], flush=True)
 
 
 def fresh_test(args):

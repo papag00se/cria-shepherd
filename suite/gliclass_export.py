@@ -92,15 +92,66 @@ def run(training_root, experiment_root, onejev_root, export_name='export-001'):
     print(json.dumps(report), flush=True)
 
 
+def export_checkpoint(checkpoint, example, out, classes):
+    """Export any native checkpoint, without reapplying a study-specific repair.
+
+    The example is a complete, already-rendered input text file with the intended
+    class tokens. It supplies a trace, not fitting data. Actual traced forwards
+    are logged; no quality or deployment admission is implied.
+    """
+    from suite.progress_weight_study import setup_gpu, recorded_forward, write_json
+    torch = setup_gpu()
+    model, pipe, _ = load_native(str(checkpoint), 'cuda')
+    model.requires_grad_(False)
+    text = example.read_text()
+    inputs = pipe.tokenizer(text, return_tensors='pt', truncation=False).to('cuda')
+    tokens = inputs['input_ids'].shape[1]
+    if int((inputs['input_ids'] == model.config.class_token_index).sum()) != classes:
+        raise ValueError('rendered example must contain the requested number of class tokens')
+    folder = out / 'native/onnx'
+    folder.mkdir(parents=True, exist_ok=True)
+    write_json(out / 'export-input.json', {'rendered_input': text, 'input_ids': inputs['input_ids'].tolist(), 'classes': classes})
+
+    class RecordedNative(torch.nn.Module):
+        def __init__(self, native):
+            super().__init__()
+            self.native = native
+
+        def forward(self, **kwargs):
+            def run():
+                output = self.native(**kwargs)
+                return {'output': output, 'predictions': [{'id': 'export-trace', 'logits': output.logits.detach().cpu().tolist()}]}
+            return recorded_forward(out, torch, run, phase='int4', purpose='Reusable native checkpoint export',
+                hypothesis=export_checkpoint.__doc__, examples=['export-trace'], tokens=[tokens], shape=[1, tokens],
+                dtype='FP32', model=str(checkpoint), edit=None)['output']
+
+    source = folder / 'model.onnx'
+    export_native_graph(torch, RecordedNative(model), inputs, source, classes=classes)
+    write_json(out / 'download.json', {'snapshot': str(out / 'native'), 'checkpoint': str(checkpoint),
+        'files': {'onnx/model.onnx': {'bytes': source.stat().st_size, 'sha256': file_sha(source)}}})
+    print('Exported', source, flush=True)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--training-root', type=Path, required=True)
-    p.add_argument('--experiment-root', type=Path, required=True)
-    p.add_argument('--onejev-root', type=Path, required=True)
+    p.add_argument('--training-root', type=Path)
+    p.add_argument('--experiment-root', type=Path)
+    p.add_argument('--onejev-root', type=Path)
+    p.add_argument('--checkpoint', type=Path)
+    p.add_argument('--example', type=Path)
+    p.add_argument('--out', type=Path)
+    p.add_argument('--classes', type=int, choices=[2, 3], default=2)
     p.add_argument('--export-name', default='export-001')
     args = p.parse_args()
     os.umask(0o077)
-    run(args.training_root, args.experiment_root, args.onejev_root, args.export_name)
+    if args.checkpoint:
+        if not args.example or not args.out:
+            p.error('--checkpoint requires --example and --out')
+        export_checkpoint(args.checkpoint, args.example, args.out, args.classes)
+    else:
+        if not all((args.training_root, args.experiment_root, args.onejev_root)):
+            p.error('legacy comparison requires --training-root, --experiment-root and --onejev-root')
+        run(args.training_root, args.experiment_root, args.onejev_root, args.export_name)
 
 
 if __name__ == '__main__':

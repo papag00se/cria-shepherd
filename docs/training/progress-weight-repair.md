@@ -1,6 +1,8 @@
-# Progress weight repair: recovery in FP32, rejected after INT4
+# Progress weight repair and gradient-free INT4 recovery
 
-Completed 2026-11-04. **Not certified; not deployed.** The candidate was frozen using development and old-family TRAIN evidence before held-out validation. Fresh TEST was evaluated once, on that unchanged native candidate. Neither original checkpoint nor the live classifier bundle was overwritten.
+**Follow-up:** DONE recovery now survives weight-only INT4, a standalone native checkpoint is saved, and the reusable export/quantization commands reproduce all 261 checked logits exactly. Strict fidelity to the original FP32 candidate still fails; semantic generalization remains unresolved. See [the separately authorized INT4 follow-up](#separately-authorized-int4-follow-up) and [repeatable conversion](#saved-checkpoint-and-repeatable-conversion).
+
+The following initial-study record remains historical and unchanged in substance. Completed 2026-11-04. **Not certified; not deployed.** The candidate was frozen using development and old-family TRAIN evidence before held-out validation. Fresh TEST was evaluated once, on that unchanged native candidate. Neither original checkpoint nor the live classifier bundle was overwritten.
 
 ## Outcome and the actual trade-off
 
@@ -136,4 +138,90 @@ Interpreter: `~/.cria/training/onejev16-trained-v1/venv/bin/python`. Source tool
 
 The existing [`suite/gliclass_quantize.py`](../../suite/gliclass_quantize.py) normalizer was repaired to carry external weight references through graph-only identity elimination and semantic opset conversion, materializing only Gemm matrices needed for transposition and reloading weights afterward. This avoids serializing multiple simultaneous copies of the 1.76 GB checkpoint. It does not change the quantization recipe: symmetric INT4, block 128, MatMul axis 0, Gather axis 1, round-to-nearest, FP32 activations, no calibration data. Both conversions completed with peak process RSS about **5.27 GiB** after the earlier interrupted path. The final helper additionally preserves its caller's source protobuf through one private copy; a full-size follow-up check kept source, normalized result and reference in memory, confirmed identical graph nodes and all 414 normalized initializers, and peaked at **6.68 GiB** (`normalization-memory-check.json`). No new inference was needed for that ownership-preserving change. The complete INT4 bundles are 240,052,336 and 240,052,354 bytes.
 
-Verification: a direct normalization smoke check preserved constant-matrix transposition, eliminated aliases/Gemm, migrated opset semantics, and left no dangling external data; whole-classifier FP32 fidelity then preserved all 261 decisions. Existing related tests passed: `python -m pytest -q tests/suite_tooling/test_suite_tooling_classifier_experiments.py tests/suite_tooling/test_suite_tooling_progress_dataset.py -k 'not monotone_gather_backward'` → **22 passed, 2 deselected**. The backward tests were excluded under the no-gradient rule. No new automated unit tests were added; the new research runners were exercised by the recorded real validations. Production inference code, original checkpoints, and the live bundle were not changed by this work.
+Initial-study verification: a direct normalization smoke check preserved constant-matrix transposition, eliminated aliases/Gemm, migrated opset semantics, and left no dangling external data; whole-classifier FP32 fidelity then preserved all 261 decisions. Existing related tests passed: `python -m pytest -q tests/suite_tooling/test_suite_tooling_classifier_experiments.py tests/suite_tooling/test_suite_tooling_progress_dataset.py -k 'not monotone_gather_backward'` → **22 passed, 2 deselected**. The backward tests were excluded under the no-gradient rule. No new automated unit tests were added; the new research runners were exercised by the recorded real validations. Production inference code, original checkpoints, and the live bundle were not changed by this work.
+
+## Separately authorized INT4 follow-up
+
+The operator subsequently authorized exploration needed for successful INT4 inference. This is a separate DEV/old-family investigation, not a revision of the frozen candidate's failed certification. The original fresh TEST was neither rerun nor used to construct these variants. Artifacts below are relative to `~/.cria/training/progress-v1/weight-study-20261104/int4-repair/`.
+
+### Cause and function-preserving repair
+
+Quantizing only the final 128-weight scoring row reproduces DONE collapse. Keeping only that row FP32 restores DONE, but leaves 12/67 progress discrepancies. Thus final-row rounding is sufficient to cause collapse, while upstream quantization also matters.
+
+The repair uses positive channel scaling across the preceding ReLU. For each readout entry `w[j]`, choose `t[j] = -8` for negative entries, `+7` for positive entries, and zero otherwise. Set `s[j] = w[j]/t[j]` for nonzero entries, and one otherwise. Multiply the preceding linear layer's output column and bias by `s[j]`; replace the readout with `t[j]`. Since `s[j] > 0`, `ReLU(s[j]*x) = s[j]*ReLU(x)`. This preserves the real-arithmetic function and makes the readout exactly representable in symmetric Q4. The implementation verifies its actual packed representation, including smaller blocks. No data, labels, gradients, optimizer, or coefficient search enters this transformation.
+
+FP32 equalization preserves all 67 progress decisions, with maximum calibrated-logit difference `6.383657455444336e-05`; it is not claimed to be universally bitwise identical after floating-point rounding. Equalization addresses the readout's rounding, not every upstream perturbation amplified by its large weights.
+
+### Measured variants and limits
+
+| Conversion | Progress differences / 67 | DONE correct / 21 | Interpretation |
+|---|---:|---:|---|
+| Original standard INT4 | 41 | 0 | Recovery erased |
+| Equalized, matrix block 128 | 12 | 13 | Readout recovery survives |
+| **Equalized, matrix block 64** | **5** | **14** | Selected research artifact |
+| Block 64 with class projector/scorer/calibrator block 32 | 9 | 11 | Smaller maximum logit error, worse decision fidelity |
+| Block 64 plus Q4 relative-position table | 10 | 13 | No remaining FP32 learned weight matrix, but worse fidelity |
+
+**Precision correction:** “all-matrix INT4” was too broad a description of the selected artifact. It contains 202 `MatMulNBits` operators and one quantized token-embedding lookup. The standard exporter also retains a **512×1024 FP32 relative-position table**, which feeds LayerNorm rather than Gather. Activations, biases, normalization parameters and quantization scales are floating point. The explicit `--relative-int4` variant quantizes that table through a full-row Q4 Gather before the original LayerNorm; it is separately evaluated, not silently substituted for the selected recipe. Weight-only INT4 is not fully integer arithmetic.
+
+Selected DEV confusion is `[[14,7,0],[6,13,2],[0,2,7]]`. Its five departures from the original native teacher are one lost correct DONE, three corrected ordinary false-DONE answers, and one corrected corrupted-control false-DONE answer. These are opened-example facts, not population estimates. Four corrections do not cancel a failure of strict prediction equivalence. Complete prompts and replies are in `opened-block64-changes-readable.json`; all variant replies for another fully rendered example are in `opened-followup-example.json`. This classifier emits no reasoning text.
+
+The selected variant initially preserved all 64 old TRAIN protection/transfer decisions. On the subsequent **194-case old-family panel**, it changes only `expand2-test-062`, correcting the inherited AFTER error to DICTATES. Its dictation result is 50/50 correct and retrospective result 144/144 correct; there are no additional labeled errors. These comprise 64 reserved synthetic cases and 130 real TRAIN replay cases, not 194 independent fresh examples. Strict equivalence to AFTER/native nevertheless fails on that one corrected decision. The complete changed case is in `opened-final-old-change.json`. The fully quantized positional-table variant also gets all 194 targets right and changes the same inherited error.
+
+Continuous errors remain substantial. For selected block 64, mean per-input maximum calibrated-logit error is 1.3027 on progress and 8.1203 on old families; maxima are 6.3225 and 10.2236. For the smaller-head-block probe, progress mean error worsens to 1.5649 despite the maximum falling to 3.0674. `followup-results.json` records per-input winner-versus-rival margins and their changes, not just flip counts. A reference margin larger than its absolute perturbation is a sufficient **per-input** preservation bound, not an unseen-input guarantee.
+
+The control weakness persists: selected INT4 calls 11/16 correct control halves and 10/16 corrupted halves DONE. Quantization fidelity is not semantic recovery. Further generalization claims need a new untouched set; the original TEST remains spent.
+
+### Rejected approaches and bounded review
+
+- Retaining the entire head in FP32 still leaves 8/67 discrepancies at body block 128. Scorer-only FP32 also leaves eight, class-projector FP32 eleven, calibrator FP32 twelve, and token-embedding FP32 nine. These are interventions at specified configurations, not an irreducible floor or proof of a particular responsible layer.
+- A noise-threshold protection construction retained two anchor singular directions and reduced amplification from about 169 to 3.26, but changed one old TRAIN decision in FP32 and left 11/67 discrepancies against its own FP32 reference. It was rejected.
+- A single rank-four closed-form correction of teacher raw scores used four DEV tasks and 32 TRAIN anchors. The remaining DEV tasks, corruption controls, and transfer anchors did not construct its coefficients, but were already exposed diagnostics, not blind holdouts. It reduced maximum logit error while leaving 21/67 differences and only 7/21 DONE recall. It was rejected; no further fitting loop followed.
+- Two read-only reviewers agreed on one bounded smaller-block probe rather than fitting the five remaining labels. The class projector, scorer and calibrator were included for architectural relevance and low byte cost; excluding the text projector was a budget choice, not a claim of irrelevance. The probe was rejected. A subsequent precision inventory uncovered the positional-table exception, motivating the separately reported strict-Q4 variant. Speculative Gaussian flip-count, empirical-SNR and “eight-flip floor” claims from one review were explicitly withdrawn and are not findings.
+
+### Packaging, CPU compatibility and accounting
+
+`equalized-block64-packed/` stores two class-slot graphs against one shared weight file. Private graph symbols are renamed consistently, including lexical subgraph captures; arithmetic is unchanged. Diagnostic outputs are removed, but model inputs and logits are not shortened or altered. CUDA replay gives **identical logits and decisions on all 261 inputs** compared with the unpacked selected graphs.
+
+- Combined graphs plus shared weights: **248,069,490 bytes**, below the methodology's 250,000,000-byte graph/weight budget.
+- Research runtime payload including tokenizer, config, policies and candidate self-test records: **256,426,726 bytes**. This larger quantity excludes research profiles/reports and is not mislabeled as the graph/weight measurement. No package is installed.
+- CPU inference on six existing self-test inputs and three deterministic DEV inputs preserves their CUDA decisions; maximum CPU/CUDA logit differences are `2.96e-5` and `1.60e-5` respectively. This is a nine-input compatibility check, not full CPU panel validation.
+- The real `System1Runtime` constructor, tokenizer, renderer, decoder and startup self-test pass all six old-family records generated for this candidate. None of the old live bundle's six frozen logit records match within its startup tolerance; preserving labels is insufficient. The live records are untouched. Progress still lacks production family registration/routing, despite the separately usable three-slot graph.
+- CPU verification peaked at **1,615,749,120 bytes process RSS**. ORT CUDA sessions use a 9 GiB arena on the designated RTX 3080; their Torch allocator counters are not GPU-memory measurements. The RTX 3090 was not used.
+- **122 completed follow-up batches:** 120 in `int4-ledger.jsonl` plus one export trace in each `reproduced-{2,3}/int4-ledger.jsonl`. Fifteen are explicitly authorized CPU compatibility/startup forwards; the other 107 are on the RTX 3080. No recorded forward failed. Conversion/setup failures before a forward remain separate, including the initial lexical-capture ordering failure. The earlier 50 discovery + 51 validation counts and the separately disclosed unauthorized reviewer work are unchanged. The new reviewers performed no inference.
+
+The exporter save bug was independent of the weight repair: ORT's saver reordered explicit graph edges but ignored values captured by `If` subgraphs. The local quantizer now saves in the producer's valid order and runs the ONNX checker. Existing historical exports are not overwritten. A full-size standard conversion with the revised saver completed; the regression fixture fails under the historical saver and passes under the corrected path.
+
+## Saved checkpoint and repeatable conversion
+
+**Standalone native checkpoint:** `~/.cria/training/progress-v1/weight-study-20261104/int4-repair/checkpoint/`. It contains `model.safetensors` (**1,759,218,392 bytes**), native config, both tokenizer files, the exact readout edit and explanatory metadata. All 415 tensor keys, shapes and dtypes were checked: only the 74 recorded readout values differ from AFTER; every other tensor is identical. Config and tokenizer bytes are unchanged. This checkpoint contains the frozen repair **before** quantization's function-preserving equalization.
+
+The checkpoint was actually reloaded, exported with both slot counts, and converted through the reusable command—not merely saved. Freshly reproduced INT4 inference gives **exactly the same calibrated logits on all 261 checks** as the selected research artifact. Evidence: `checkpoint/save-verification.json`, `reproduced-{2,3}/comparison.json`, `reproduction.log` and `reproduction-check.log`. The reproduced shared graph/weight package is 248,069,080 bytes; private serialization metadata differs slightly from the original research package.
+
+Commands from the repository root, using a **new output directory**:
+
+```bash
+P="$HOME/.cria/training/onejev16-trained-v1/venv/bin/python"
+R="$HOME/.cria/training/progress-v1/weight-study-20261104/int4-repair"
+CKPT="$R/checkpoint"  # after retraining, point this at the NEW native checkpoint
+RUN="$HOME/.cria/training/progress-v1/export-next"
+export CUDA_VISIBLE_DEVICES=GPU-393d4998-707c-0ef0-a514-761015477256
+export OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2
+for c in 2 3; do
+  "$P" -m suite.gliclass_export --checkpoint "$CKPT" \
+    --example "$R/export-example-$c.txt" --classes "$c" --out "$RUN/export-$c"
+  "$P" -m suite.gliclass_quantize --root "$RUN/export-$c" \
+    --matrix-block 64 --equalize-readout
+done
+"$P" -m suite.progress_int4_study pack --out "$RUN" --variant candidate \
+  --graphs "$RUN/export-2/int4/model.onnx" "$RUN/export-3/int4/model.onnx" \
+  --checkpoint-path "$CKPT"
+```
+
+The example files are complete rendered trace inputs, not calibration/fitting data. No source checkpoint is edited. Export tracing is logged; weight conversion uses no gradients or task fitting. The selected recipe is symmetric round-to-nearest Q4, matrix blocks 64, token-embedding blocks 128, FP32 activations, `accuracy_level=1`, and exact-readout equalization. It deliberately retains the standard positional table in FP32. Adding `--relative-int4` selects the separate, less faithful measured variant.
+
+**Do not copy this checkpoint's 74-value repair onto a newly trained model.** Its direction/protection solve was specific to the original checkpoint and development evidence. The export and data-free quantization transforms are reusable; the empirical recovery and preservation claims are not automatically transferable. Compare every new quantized candidate with its own native reference and requalify old families, completion errors, CPU behavior and byte size. The packing command produces research graphs and historical self-test provenance, not newly validated startup records or production progress routing.
+
+Implementation owners: [`suite/gliclass_export.py`](../../suite/gliclass_export.py) exports arbitrary saved native checkpoints; [`suite/gliclass_quantize.py`](../../suite/gliclass_quantize.py) owns the reusable rescaling, Q4 conversion and positional-table option; [`suite/progress_int4_study.py`](../../suite/progress_int4_study.py) owns study comparisons, shared-weight packing, candidate CPU checks and follow-up reporting. Rebuild the consolidated report without inference using `python -m suite.progress_int4_study report --variant equalized-block64` with the training interpreter. It does not open the consumed TEST.
+
+Follow-up verification: **32 passed, 2 backward tests deselected** across the quantization, classifier-experiment and progress-dataset test files. The new small deterministic export fixtures cover caller ownership/Gemm transposition, lexical `If` captures during saving, mixed block sizes, positional-table conversion, positive-ReLU equivalence, exact Q4 readout representation, and shared-weight/lexical-name preservation. They use no trained classifier, GPU, network or backward pass. The remaining higher-risk gaps are independent semantic generalization, full-panel CPU qualification, and production progress routing—not checkpoint persistence or repeatability of the measured conversion.

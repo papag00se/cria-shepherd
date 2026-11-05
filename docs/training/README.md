@@ -6,7 +6,7 @@ This directory records the offline data/research workstream behind the optional 
 
 - [Methodology and lineage](methodology.md): data admission, blind Pi reviews, pretrained-reset fitting, native export/INT4 quantization, **how the candidate was reached** (rejected 68M Ettin, OneJev, GLiClass v1) and the process lessons. Start here.
 - [Expanded GLiClass v2 fit](gliclass-expanded-v2.md): 836 training cases (644 real + 192 blind-reviewed synthetic), 64/64 on the reserved synthetic challenge versus v1's 54/64, artifact identities, exposure and serving limits. **Fresh real evaluation cases: zero.**
-- [Progress weight-repair study](progress-weight-repair.md): gradient-free recovery of DONE recall, false-DONE costs, old-family preservation, and rejection after INT4 erased the recovery. **Not deployed.**
+- [Progress weight-repair study](progress-weight-repair.md): gradient-free DONE recovery, the original INT4 failure and subsequent quantization repair, saved native checkpoint and repeatable conversion commands, remaining fidelity/semantic limits. **Not deployed.**
 - [Synthetic training design](synthetic-data.md) and [research and backbone comparison](research.md).
 - Offline synthetic seed: [`suite/training_data/synthetic_seed.jsonl`](../../suite/training_data/synthetic_seed.jsonl); synthetic proposals are not verified real-world labels.
 
