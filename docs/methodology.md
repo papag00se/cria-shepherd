@@ -4,6 +4,8 @@
 
 cria is built from observed coding sessions. We inspect what happened, make a focused change, and look for both help and unintended consequences.
 
+![Illustration of a cycle from work to captured evidence, inspection and refinement](media/research-loop.png)
+
 ```mermaid
 flowchart LR
     A[Run a coding task] --> B[Inspect requests, replies and workspace]

@@ -7,7 +7,7 @@ The front page uses project artwork, a four-cell assist illustration, an archite
 | Files | Purpose |
 |---|---|
 | `cria-logo.png`, `hero.svg`, `hero.png` | Project artwork. The logo comes from `jesselanderson.com/frontend/public/images/studio/cria-logo.png`. |
-| `guide-path.png` | Editorial illustration generated with ChatGPT on 2026-11-05 for the documentation home; it is symbolic, not a screenshot of cria. |
+| `cria-flow.png`, `research-loop.png` | Editorial illustrations generated with ChatGPT on 2026-11-05 using the existing project artwork as visual reference. They depict the harness/model exchange and evidence-driven research cycle symbolically, not as screenshots. |
 | `execution-boundary.svg`, `execution-boundary.png` | Harness, proxy and model-server architecture. |
 | `field_guide.py`, `assists-overview.svg`, `assists-overview.png`, `assist-*.svg`, `assist-*.png` | A single 2×2 overview composed from four original vector scenes, with readable cell titles. Individual scenes remain available as source artifacts. PNGs use a stripped 256-color palette. |
 | `tool-repair-demo.py`, `tool-repair-run.txt`, `tool-repair.gif` | Fixed-input replay through production tool-recovery code, its recorded output and animation. |

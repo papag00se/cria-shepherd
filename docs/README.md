@@ -2,7 +2,7 @@
 
 **A small model can write useful code. cria helps it stay oriented while it does.**
 
-![Illustration: an alpaca follows a lit path past checkpoints](media/guide-path.png)
+![Illustration of a coding harness and its tools exchanging messages with a model through cria](media/cria-flow.png)
 
 [← Project home](../README.md) · [Features →](features.md) · [How it works →](how-it-works.md) · [How we evaluate it →](methodology.md)
 
