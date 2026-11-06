@@ -46,8 +46,36 @@ The run completed all **960 updates / two epochs** in **1,921.85 seconds (32.0 m
 
 The aggregate improvement is largely NOT_STARTED separation: of 96 additional correct DEV answers in epoch 1, the class-wise changes are **−15 DONE, +19 PARTIAL, +92 NOT_STARTED**. Restricting attention to the 400 DONE/PARTIAL examples, correctness moves only 198/400 to 202/400. False-DONE remains high, and epoch 2 largely collapses DONE back into PARTIAL. Thus this run improves aggregate DEV metrics but does **not** establish improved requirement-correctness discrimination. No causal explanation for the remaining confusion was established by this run.
 
-Both trained epochs score 32/32 on each old-family TRAIN diagnostic subset (64/64 combined), versus 30/32 dictation and 32/32 retrospective initially. This is exposed TRAIN replay, not a full old-family qualification or independent generalization result. New checkpoint INT4 conversion/fidelity, full old-family validation, and untouched TEST evaluation have not been performed. Nothing is deployed or published.
+Both trained epochs score 32/32 on each old-family TRAIN diagnostic subset (64/64 combined), versus 30/32 dictation and 32/32 retrospective initially. This is exposed TRAIN replay, not a full old-family qualification or independent generalization result. New checkpoint INT4 conversion/fidelity and full old-family validation have not been performed. TEST evaluation was subsequently authorized separately and is recorded below. Nothing is deployed or published.
 
 Authoritative results: `baseline.json`, `epoch-{1,2}-report.json`, `selected.json`, and the completed event in `events.jsonl`. `opened-dev-example.json` includes one complete rendered DEV input, all three recorded responses and `reasoning: null`: the incident-record diff deletes both private contact fields correctly; epoch 1 still chooses DONE narrowly, while epoch 2 switches to PARTIAL. It illustrates a real lost completion, not a claim that every such change is wrong.
+
+## Separately authorized one-time TEST evaluation
+
+The operator subsequently authorized exactly one evaluation of the already-selected epoch-1 native checkpoint on the separate 600-example synthetic TEST set. No epoch selection, retraining, quantization adjustment, prompt change, deployment or publication followed the result.
+
+`python -m suite.progress_correctness.evaluate_test --checkpoint RUN/epoch-1 --test ~/.cria/training/progress-correctness-v2/heldout-author/final --out RUN/test-once-epoch-1` executed on the RTX 3090 in native FP32 eval mode. It joined opaque blind-input IDs to the **actual author-private labels**, verified matching complete snapshot diffs and 200 three-state groups before inference, then persisted each full input and result as it occurred. The report records **one successful forward for each of 600 unique inputs**, completed in 27.42 seconds. No input was truncated. The original source/datasets/checkpoint remain unchanged.
+
+**Accuracy: 364/600 = 60.67%; macro-F1: 0.57640.** Confusion rows are truth and columns are predictions, ordered DONE, PARTIAL, NOT_STARTED:
+
+```text
+[99, 51, 50]
+[82, 66, 52]
+[ 0,  1,199]
+```
+
+| Class | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| DONE | 54.70% | 99/200 = 49.5% | 0.51969 |
+| PARTIAL | 55.93% | 66/200 = 33.0% | 0.41509 |
+| NOT_STARTED | 66.11% | 199/200 = 99.5% | 0.79441 |
+
+False-DONE: **82/200 PARTIAL cases (41.0%)**, **0/200 NOT_STARTED cases**, or **82/400 = 20.5%** of all non-DONE inputs. Of 181 DONE predictions, 99 are correct. The remaining 82 are false approvals. This is not a reliable completion detector on this synthetic challenge; high NOT_STARTED recall does not resolve DONE/PARTIAL confusion. No initial-checkpoint TEST baseline was run, so this result does not establish a TEST improvement over the source checkpoint.
+
+Provenance: 200 requirement groups, 52 recorded family IDs, four separate author contexts; synthetic author-labeled examples, executable author checks, **not independent real-world gold or independent semantic review**. Family-ID disjointness is not proof against semantic/template overlap. TEST authoring had no TRAIN/DEV solution access by design; see retained author provenance for construction limits. The set is now **consumed**, not a fresh source for selecting another model, modifying training data or tuning a recipe.
+
+Artifacts under `RUN/test-once-epoch-1/`: `evaluation.json` records the exact checkpoint, label-source join and author provenance; `calls.jsonl` contains lossless full rendered inputs, token IDs and result events; `predictions.jsonl` and `report.json` contain outputs and aggregate metrics. The first complete opened example is an RGB negative implementation that swaps the green/blue output positions: it is correctly labeled PARTIAL but predicted DONE. The classifier supplies no reasoning (`reasoning: null`). This visible code defect is not an excuse based on label noise.
+
+The evaluation runner and related existing checks compiled/passed; no new automated runner tests were added. No additional TEST forward or inference comparison was performed.
 
 Existing focused progress tests: 10 passed, 2 skipped. Runner compiled successfully. No new automated runner tests were added; the real run is the integration exercise, and recovery/selection behavior does not yet have dedicated automated coverage. An inherited Transformers configuration warning was emitted during loading; the requested repaired scoring row was verified exactly before work proceeded.
