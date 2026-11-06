@@ -37,8 +37,15 @@ def capture_calibrator(args):
     order = [index[r['id']] for r in original]
     rows += [{**r,'family':'progress','task':r['family'],'labels':list(LABELS),'panel':'benchmark'} for r in original]
     data = {k:np.concatenate([data[k],arrays[k][order]]) for k in ('text','classes')}
+    if args.full_model:
+        texts = {}
+        for path in [*(args.repair.glob('shard-*/calls.jsonl')),args.baseline.parent/'calls.jsonl']:
+            for line in path.read_text().splitlines():
+                record = json.loads(line)
+                if record.get('event')=='start' and 'rendered_input' in record:
+                    texts[record['id']]=record['rendered_input']
     torch = gpu()
-    model,_pipe,loading = load_native(str(args.source),'cuda')
+    model,pipe,loading = load_native(str(args.source),'cuda')
     model.requires_grad_(False)
     found = {}
     def hook(_module,inputs):
@@ -46,12 +53,30 @@ def capture_calibrator(args):
     handle = model.calibrator.mlp[-1].register_forward_pre_hook(hook)
     part = args.out/f'calibration-{args.shard}'
     part.mkdir(parents=True,exist_ok=False)
-    write(part/'run.json',{'source':str(args.source),'loading':loading,'gradients':False,'batch_size':args.batch_size,
-        'edited_tensor':CALIBRATOR,'edited_row':1,'beta_row_unchanged':True})
+    write(part/'run.json',{'source':str(args.source),'loading':loading,'gradients':False,'batch_size':1 if args.full_model else args.batch_size,
+        'full_model':args.full_model,'edited_tensor':CALIBRATOR,'edited_row':1,'beta_row_unchanged':True})
     saved = []
-    selected = list(range(len(rows)))[args.shard::2]
+    selected = ([i for i,r in enumerate(rows) if (r['panel']=='train')==(args.shard==1)]
+        if args.full_model else list(range(len(rows)))[args.shard::2])
     try:
-        for count in (2,3):
+        if args.full_model:
+            from suite.progress_weight_directions import prediction_records
+            import time
+            started=time.monotonic()
+            for index in selected:
+                before=rows[index];text=texts[before['id']];count=len(before['labels'])
+                inputs=pipe.tokenizer(text,truncation=False,return_tensors='pt').to('cuda')
+                before={**before,'tokens':int(inputs['input_ids'].shape[1])}
+                append(part/'calls.jsonl',{'event':'start','id':before['id'],'rendered_input':text,
+                    'input_ids':inputs['input_ids'].tolist()})
+                output=model(**inputs,max_num_classes=count)
+                after=prediction_records(output,[before])[0]
+                append(part/'predictions.jsonl',{**before,**after})
+                saved.append(np.pad(found['features'][0],((0,3-count),(0,0))))
+                append(part/'calls.jsonl',{'event':'result',**after,'reasoning':None})
+                if len(saved)%100==0:
+                    print(json.dumps({'completed':len(saved),'total':len(selected),'seconds':time.monotonic()-started}),flush=True)
+        for count in (() if args.full_model else (2,3)):
             indices = [i for i in selected if len(rows[i]['labels'])==count]
             for start in range(0,len(indices),args.batch_size):
                 idx = indices[start:start+args.batch_size]
@@ -70,7 +95,7 @@ def capture_calibrator(args):
     write(part/'completed.json',{'rows':len(saved),'gpu_peak_reserved_bytes':torch.cuda.max_memory_reserved()})
 
 
-def calibrated_cache(path):
+def calibrated_cache(path,reference_predictions=None):
     import numpy as np
     rows,features = [],[]
     for shard in range(2):
@@ -79,10 +104,14 @@ def calibrated_cache(path):
         features.append(np.load(part/'activations.npz')['features'])
     if len(rows)!=5036 or len({r['id'] for r in rows})!=5036:
         raise ValueError('expected 5036 distinct captured inputs')
+    if reference_predictions:
+        reference={r['id']:r for r in map(json.loads,reference_predictions.read_text().splitlines())}
+        output_fields=('prediction','logits','uncalibrated_logits','inverse_temperatures','calibration_biases')
+        rows=[{**r,**{k:reference[r['id']][k] for k in output_fields}} for r in rows]
     return rows,np.concatenate(features)
 
 
-def preservation(rows,feature,logits,active,scale,panels,binary=False,guard=0.01):
+def preservation(rows,feature,logits,active,scale,panels,binary=False,guard=0.01,partial_floor=0.,done_floor=0.):
     """Retain correct answers and forbid new false approvals of PARTIAL."""
     import numpy as np
     protection,limits,protected = [],[],Counter()
@@ -103,24 +132,29 @@ def preservation(rows,feature,logits,active,scale,panels,binary=False,guard=0.01
         for win,lose in sorted(pairs):
             gap = logits[i,win]-logits[i,lose]
             protection.append(-(feature[i,win]-feature[i,lose])[active]/scale)
-            limits.append(gap-min(guard,gap/2))
+            minimum=min(guard,gap/2)
+            if row['label']=='PARTIAL' and row['prediction']!='DONE' and lose==0:
+                minimum=max(minimum,partial_floor)
+            if row['label']=='DONE' and win==0:
+                minimum=max(minimum,done_floor)
+            limits.append(gap-minimum)
             protected[row['panel']+'/'+row['label']] += 1
     return np.stack(protection),np.array(limits),protected
 
 
 def solve_top1(args):
-    """Fit exposed DONE/PARTIAL top-1 margins directly, retaining the prior best.
+    """Fit exposed margins, protecting prior actual and optional pairwise decisions.
 
-    One shared hinge slack per example measures its worst competing label, not
-    just D-minus-P while silently ignoring NOT_STARTED. DONE gets twice the
-    PARTIAL objective weight; both classes retain their existing protections.
+    One hinge slack per example measures its worst competitor, or only the
+    DONE/PARTIAL competitor when explicitly requested. DONE has twice PARTIAL's
+    objective weight. Absolute guard floors can expand numerically weak gaps.
     """
     import numpy as np
     from safetensors import safe_open
     from scipy.optimize import linprog
     from scipy.sparse import csr_matrix,eye,hstack,vstack
     args.out.mkdir(parents=True,exist_ok=False)
-    rows,feature = calibrated_cache(args.calibrator_cache)
+    rows,feature = calibrated_cache(args.calibrator_cache,args.reference_predictions)
     feature = feature.astype(np.float64)
     logits = np.array([r['logits']+[0.]*(3-len(r['logits'])) for r in rows])
     fit = [i for i,r in enumerate(rows) if r['panel']=='benchmark' and r['label'] in ('DONE','PARTIAL')]
@@ -132,13 +166,13 @@ def solve_top1(args):
     targets,margin,owner = [],[],[]
     for j,i in enumerate(fit):
         correct = rows[i]['labels'].index(rows[i]['label'])
-        for other in range(3):
+        for other in ((1-correct,) if args.pairwise_objective else range(3)):
             if other!=correct:
                 targets.append((feature[i,correct]-feature[i,other])[active]/scale)
                 margin.append(logits[i,correct]-logits[i,other]); owner.append(j)
     a = np.stack(targets)
     protect,limits,protected = preservation(rows,feature,logits,active,scale,('train','old','dev','benchmark'),
-        binary=args.protect_binary,guard=args.preservation_margin)
+        binary=args.protect_binary,guard=args.preservation_margin,partial_floor=args.partial_floor,done_floor=args.done_floor)
     incidence = csr_matrix((-np.ones(len(owner)),(np.arange(len(owner)),owner)),shape=(len(owner),n))
     ident = eye(p,format='csr')
     constraint = vstack([
@@ -163,9 +197,16 @@ def solve_top1(args):
         result=linprog(objective,A_ub=constraint,b_ub=rhs,A_eq=equality,b_eq=[0.],
             bounds=[(None,None)]*p+[(0,None)]*(p+n),method='highs-ds')
         if not result.success:
-            raise RuntimeError(result.message)
+            write(args.out/'solve.json',{'source':str(args.source),'success':False,'solver_status':result.status,
+                'message':result.message,'partial_floor':args.partial_floor,'done_floor':args.done_floor,
+                'benchmark_enters_weight_solve':True,'gradients':False})
+            return
         delta=np.zeros(original.shape[1]);delta[active]=result.x[:p]/scale
-        prefix='dp-top1-binary' if args.protect_binary else 'dp-top1-benchmark'
+        prefix='dp-pairwise' if args.pairwise_objective else ('dp-top1-binary' if args.protect_binary else 'dp-top1-benchmark')
+        if args.partial_floor:
+            prefix+=f'-partialfloor{args.partial_floor:g}'
+        if args.done_floor:
+            prefix+=f'-donefloor{args.done_floor:g}'
         if args.preservation_margin!=0.01:
             prefix+=f'-guard{args.preservation_margin:g}'
         name=f'{prefix}-l1{strength:g}'
@@ -180,7 +221,10 @@ def solve_top1(args):
     np.savez(args.out/'weights.npz',**candidates)
     write(args.out/'solve.json',{'source':str(args.source),'method':solve_top1.__doc__,
         'reference_cache':str(args.calibrator_cache),'fit_panel':'exposed benchmark DONE/PARTIAL',
+        'reference_predictions':str(args.reference_predictions) if args.reference_predictions else None,
         'fit_rows':n,'target_margin':target,'done_to_partial_objective_weight':2.,
+        'objective_competitors':'DONE/PARTIAL only' if args.pairwise_objective else 'both competing labels',
+        'partial_preservation_floor':args.partial_floor,'done_preservation_floor':args.done_floor,
         'retains_train_mean_bias':True,'active_coordinates':p,'retains_binary_done_partial_preferences':args.protect_binary,
         'preservation_margin':args.preservation_margin,
         'protection_panels':['train','old','dev','benchmark'],'protected_inequalities':dict(protected),
@@ -291,11 +335,16 @@ if __name__=='__main__':
     parser.add_argument('--batch-size',type=int,default=64)
     parser.add_argument('--top1',action='store_true')
     parser.add_argument('--protect-binary',action='store_true')
+    parser.add_argument('--pairwise-objective',action='store_true')
+    parser.add_argument('--partial-floor',type=float,default=0.)
+    parser.add_argument('--done-floor',type=float,default=0.)
+    parser.add_argument('--reference-predictions',type=Path)
     parser.add_argument('--preservation-margin',type=float,default=0.01)
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--calibrator-cache',type=Path)
     parser.add_argument('--protect-exposed',action='store_true')
     parser.add_argument('--capture-calibrator',action='store_true')
+    parser.add_argument('--full-model',action='store_true',help='capture exact native endpoints; shard 0 DEV/old/benchmark, shard 1 TRAIN')
     parser.add_argument('--benchmark-capture',type=Path)
     parser.add_argument('--baseline',type=Path)
     parser.add_argument('--shard',type=int,choices=(0,1),default=0)

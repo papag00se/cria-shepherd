@@ -6,7 +6,7 @@ After the initial one-time TEST evaluation and the TRAIN/DEV-only readout experi
 
 The work below uses that authorization. The initial solves use TRAIN activations and benchmark selection; the first resumed calibrator solve includes exposed preservation constraints; the latest continuation **directly fits exposed benchmark DONE/PARTIAL margins**. These are different exposure levels, not independent validation. No gradient update, dataset overwrite, deployment, publication or INT4 conversion is made.
 
-All candidates descend from `~/.cria/training/progress-correctness-v2/continuation-20261106T001652Z/epoch-1/`. The latest continuation uses the separately saved 64-value calibrator edit as its reference/base, with the original epoch-1 encoder and scorer unchanged. It does not compose the preceding 58-value readout edit or the set-aside projector edit. Prior results/checkpoints are retained.
+All candidates descend from `~/.cria/training/progress-correctness-v2/continuation-20261106T001652Z/epoch-1/`. The current lineage is original epoch-1 → 64-value calibrator edit → 113-DONE top-one edit → 124-DONE pairwise edit. The original epoch-1 encoder and scorer remain unchanged. None composes the preceding 58-value readout edit or the set-aside projector edit. Prior results/checkpoints are retained.
 
 ## Operator correction — this is not the requested DONE/PARTIAL repair
 
@@ -16,7 +16,43 @@ Re-screening all 39 existing edits finds **no improvement in true-DONE recogniti
 
 Future benchmark selection in `benchmark_repair.py` now uses those DONE/PARTIAL metrics. Macro-F1 and NOT_STARTED improvements cannot compensate for a regression in them. `done-partial-objective-correction.json` records the re-screen of existing outcomes; no new model forward was needed.
 
-## Latest continuation — a larger verified DONE-recognition gain
+## Latest continuation — saved-model 124 DONE, with PARTIAL preserved
+
+**Current selection:** `dp-pairwise-partialfloor0.005-l10.001-step1`, saved at `~/.cria/training/progress-correctness-v2/done-partial-native-20261106T044008Z/checkpoint/`. It starts from the preceding 113-DONE `conservative-checkpoint/`, not from the original epoch-1 weights or the earlier projector/readout experiments. The benchmark's 400 DONE/PARTIAL labels directly enter the numerical fit; TRAIN, DEV, benchmark and old-family examples enter preservation. This remains exposed-label optimization, not fresh validation.
+
+The complete **saved checkpoint** was reloaded and evaluated on all 600 benchmark, 600 DEV, 836 old-family and 3,000 TRAIN inputs. No weight assignment or resave occurs in the final DEV/old reload check (`repair native --verify-only`). Authoritative comparison with the preceding saved model:
+
+- Benchmark DONE: **113 → 124/200**; PARTIAL: **85 → 91/200**; PARTIAL falsely approved DONE: **80 → 79/200**. DONE precision **58.25% → 61.08%**. NOT_STARTED stays **199/200**. Confusion: `[[124,52,24],[79,91,30],[0,1,199]]`, **414/600** correct versus 397/600.
+- DEV DONE: **123 → 124/200**; PARTIAL: **85 → 88/200**; PARTIAL falsely approved DONE: **115 → 112/200**. Confusion: `[[124,76,0],[112,88,0],[0,3,197]]`, **409/600** versus 405/600.
+- **All 836 old-family decisions are unchanged**, including seven inherited errors: dictation **178/178**, retrospective **651/658**, total **829/836**. These are exposed TRAIN cases, not fresh qualification.
+- Full-native TRAIN DONE: **367 → 372/1,000**; PARTIAL **688 → 700/1,000**; PARTIAL falsely approved DONE **301 → 291/1,000**; NOT_STARTED **991/1,000** unchanged. These replace earlier head-only TRAIN estimates for this comparison.
+- Across the **1,400 true PARTIAL examples** in TRAIN, DEV and benchmark, **no previously correct PARTIAL answer is lost and no new PARTIAL is falsely approved**. This is example-level preservation, not merely compensating aggregate counts.
+
+DONE preservation is not universal: benchmark has **14 newly correct DONE and three formerly correct DONE regressions**, for net +11. Seven corrections were formerly PARTIAL and seven NOT_STARTED. Five PARTIAL corrections were formerly NOT_STARTED; one, the missing daily-temperature floor, was formerly DONE. DEV has seven fixes and three losses; TRAIN has 22 fixes and five losses. No correct PARTIAL is among these losses. A complete preorder/postorder tree implementation is a genuine DONE→PARTIAL regression, not relabeled or excused as noise.
+
+### Repairing numerical replay before fitting
+
+Earlier cached-head reconstruction differed materially from full forwards near ties. This continuation captures the **exact final-calibrator input and raw logits from full, untruncated, single-example native forwards**. Encoder, scorer, calibrator prefix and temperature row remain unchanged, so those inputs can be reused while editing the final bias-output row. Replay invokes the actual calibrator on GPU; it is not a separately implemented scoring formula. Source replay reproduces all **5,036** native decisions and logits exactly. The selected edit's endpoint replay also matches all **5,036** complete-model outputs exactly, maximum logit difference **0.0**. The separate saved DEV/old reload matches the earlier edited in-memory run on all **1,436** outputs, maximum difference **0.0**.
+
+GPU setup now installs the same existing gather implementation centrally in `repair.gpu()`, rather than selecting different implementations in different evaluators. The benchmark evaluator uses the shared prediction-record owner to retain actual raw logits, inverse temperatures and calibration biases as well as calibrated logits. No input, policy, label order or token content was changed or shortened.
+
+### Objective, controls and remaining limits
+
+Twelve new weight candidates were constructed and evaluated. The first eight use DONE-versus-PARTIAL hinge margins, DONE objective weight 2, target margin 0.1, L1 penalties 0.001/0.01 and half/full steps. Both constructions preserve existing top-one and correct binary score preferences; one adds an absolute **0.005** guard for currently non-approved PARTIAL examples. The latter produces the selected full-step, lower-penalty edit. SciPy HiGHS dual simplex performs the direct numerical fitting; there are no gradients, backward passes, Torch optimizer steps or additional neural-training epochs.
+
+After the leading edit's full-native confirmation, four further candidates start from its actual recorded outputs and also enlarge DONE guard gaps to 0.005. Their endpoint benchmark false-PARTIAL approvals are **80, 80, 82 and 84**, all worse than the selected candidate's **79**, so none replaces it. Larger true-DONE counts do not buy additional false approvals. The same cached prefix remains valid because only the downstream bias row changes; reference-output overlays retain input/gold metadata from the original captures.
+
+Ignoring NOT_STARTED only as a diagnostic on the same three-label forwards, DONE/PARTIAL score preferences improve from `[[127,73],[96,104]]` to `[[138,62],[89,111]]`. Both classes improve this time. This is **not** a separate native two-label evaluation, a proof of a general semantic separator, or fresh generalization.
+
+The selected checkpoint changes **183 FP32 values** relative to the preceding model, **212** relative to original epoch-1, all in the bias-output row of `calibrator.mlp.6.weight`. The temperature row and all other **414 persisted tensors** remain unchanged. Update norm is **108,395.459** relative to the preceding model and **108,257.281** relative to original epoch-1, whose row norm is about **0.219**. The smallest benchmark DONE winning margin is **3.0517578125e-5**. Exact replay does not remove this severe numerical-conditioning concern: real-arithmetic linear constraints can still be violated by the eventual FP32 dot product. Larger guards did not guarantee preservation in the rejected cohort.
+
+Opened complete native examples include correct letterbox-bar calculation (PARTIAL→DONE), accumulation missing the nonnegative daily floor (DONE→PARTIAL), the tree-traversal regression, TRAIN rainfall aggregation with the wet-station function still missing (NOT_STARTED→PARTIAL), and a correct DEV building/status filter (PARTIAL→DONE). Native reasoning is `null`; no textual explanation is invented.
+
+Artifacts under `done-partial-native-20261106T044008Z/`: source `calibration-{0,1}/`, `source-endpoint-fidelity.json`, the two `pairwise-floor*` fits and evaluations, `both-floor-fit/` and its four rejected evaluations, separate `checkpoint/`, saved-model `final-native-benchmark/`, `native-training-confirmation/`, `saved-dev-old-verification.json`, opened examples and consolidated `final-result.json`. Final saved DEV/old inputs/results are in the preceding repair root's `dp-saved-endpoint-verification-0/`; its run metadata records the checkpoint path, no weight assignment, no checkpoint save and clean loading keys.
+
+Existing focused checks: **10 passed, 2 skipped**, plus compilation, actual native comparisons and saved-tensor comparisons. No new tests were written; there is still no automated model-level regression suite for this fitting/capture path, and no full-suite pass is claimed. **Selected for this exposed DONE/PARTIAL objective only. FP32 only; no quantization, CPU qualification, fresh validation, deployment or weight publication. Originals and previous checkpoints are untouched.**
+
+## Previous top-one continuation — a larger verified DONE-recognition gain
 
 The operator asked to continue improving the results. Twelve new calibrator-bias weight candidates were constructed and evaluated, using the exposed benchmark's 400 DONE/PARTIAL examples **directly in the fitting objective**, rather than only in preservation or selection. No helper counterfactuals, input changes, dropped inputs, gradients, backward passes or additional neural-training epochs are involved.
 

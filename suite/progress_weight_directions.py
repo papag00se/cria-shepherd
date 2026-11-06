@@ -129,10 +129,10 @@ def prediction_records(output, batch):
             for i, row in enumerate(batch)]
 
 
-def head_predictions(model, torch, text, classes, batch):
+def head_predictions(model, torch, text, classes, batch, *, raw_logits=None):
     from gliclass.model import GLiClassOutput
     projected = model.model.classes_projector(classes)
-    raw = model.model.scorer(text, projected)
+    raw = model.model.scorer(text, projected) if raw_logits is None else raw_logits
     output = GLiClassOutput(logits=raw, text_embeddings=text, class_embeddings=projected,
                             class_mask=torch.ones_like(raw, dtype=torch.bool))
     return prediction_records(model._calibrate(output, True, True), batch)

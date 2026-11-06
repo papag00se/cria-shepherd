@@ -33,6 +33,8 @@ def gpu():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False
+    from suite.progress_loto import install_fast_gather
+    install_fast_gather(torch)
     return torch
 
 
@@ -114,7 +116,7 @@ def cached(out):
 def metrics(rows, baseline=None):
     import numpy as np
     reports = {}
-    for panel in ('train','dev','old'):
+    for panel in ('train','dev','old','benchmark'):
         subset = [r for r in rows if r['panel']==panel]
         for family in sorted({r['family'] for r in subset}):
             part = [r for r in subset if r['family']==family]
@@ -345,17 +347,22 @@ def replay(args):
 
 
 def native(args):
-    """Confirm a selected edit through the whole encoder; save it separately."""
+    """Confirm an edit, or reload a saved checkpoint without changing its weights."""
     import numpy as np
     torch = gpu()
     model,pipe,_loading = load_native(str(args.source),'cuda')
     model.requires_grad_(False)
-    weights = np.load(args.out/args.weights)[args.candidate]
-    tensor = model.state_dict()[args.tensor]
-    tensor.copy_(torch.from_numpy(weights.reshape(tuple(tensor.shape))).to('cuda'))
+    if not args.verify_only:
+        weights = np.load(args.out/args.weights)[args.candidate]
+        tensor = model.state_dict()[args.tensor]
+        tensor.copy_(torch.from_numpy(weights.reshape(tuple(tensor.shape))).to('cuda'))
     hashes = json.loads((BASE/'contract.json').read_text())['policy_sha256']
     part = args.out/f'{args.confirmation_prefix}{args.shard}'
     part.mkdir(exist_ok=False)
+    write(part/'run.json',{'source':str(args.source),'verify_only':args.verify_only,
+        'weight_assignment':not args.verify_only,'checkpoint_saved':not args.verify_only and args.shard==0,
+        'device':torch.cuda.get_device_name(0),'visible':os.environ.get('CUDA_VISIBLE_DEVICES'),
+        'loading':_loading,'precision':'native FP32; full inputs; no autocast','gradients':False})
     selected = [r for r in panels() if r['panel'] in ('dev','old')][args.shard::args.shards]
     started = time.monotonic()
     for index,row in enumerate(selected):
@@ -372,7 +379,7 @@ def native(args):
         append(part/'predictions.jsonl',result)
         if (index+1)%100==0:
             print(json.dumps({'completed':index+1,'total':len(selected),'seconds':time.monotonic()-started}),flush=True)
-    if args.shard==0:
+    if args.shard==0 and not args.verify_only:
         checkpoint = args.out/args.checkpoint_name
         model.save_pretrained(checkpoint,safe_serialization=True,max_shard_size='4GB')
         pipe.tokenizer.save_pretrained(checkpoint)
@@ -460,6 +467,7 @@ def main():
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--candidate')
     parser.add_argument('--tensor',default=READOUT)
+    parser.add_argument('--verify-only',action='store_true',help='native: reload --source without assigning or saving weights')
     parser.add_argument('--confirmation-prefix',default='native-')
     parser.add_argument('--checkpoint-name',default='checkpoint')
     parser.add_argument('--selection-context',default='TRAIN only; DEV selection; consumed TEST excluded')

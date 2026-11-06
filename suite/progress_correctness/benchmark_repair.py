@@ -390,6 +390,22 @@ def run(args):
     torch = gpu()
     model,_pipe,loading = load_native(str(args.source),'cuda')
     model.requires_grad_(False)
+    reference_rows,reference_features = [],None
+    if args.reference_cache:
+        from suite.progress_correctness.done_partial_repair import calibrated_cache
+        reference_rows,reference_features = calibrated_cache(args.reference_cache,args.reference_predictions)
+    reference_index={r['id']:i for i,r in enumerate(reference_rows)}
+    def predict(batch,text,classes):
+        if not args.native_endpoint_replay:
+            return head_predictions(model,torch,text,classes,batch)
+        count=len(batch[0]['labels']);indices=[reference_index[r['id']] for r in batch]
+        features=torch.from_numpy(reference_features[indices,:count]).to('cuda')
+        raw=torch.tensor([reference_rows[i]['uncalibrated_logits'] for i in indices],device='cuda',dtype=torch.float32)
+        handle=model.calibrator.mlp[-1].register_forward_pre_hook(lambda _module,_inputs:(features,))
+        try:
+            return head_predictions(model,torch,text,classes,batch,raw_logits=raw)
+        finally:
+            handle.remove()
     candidates = {}
     paths = [args.extra_weights] if args.extra_weights else [args.repair/name for name in ('candidate-weights.npz','balanced-weights.npz')]
     for path in paths:
@@ -403,6 +419,8 @@ def run(args):
         'source':str(args.source),'loading':loading,'tensor':args.tensor,'weight_sources':[str(path) for path in paths],
         'batch_size':args.batch_size,'reference_cache':str(args.reference_cache) if args.reference_cache else None,
         'candidate_shard':args.candidate_shard,'candidate_shards':args.candidate_shards,
+        'native_endpoint_replay':args.native_endpoint_replay,
+        'reference_predictions':str(args.reference_predictions) if args.reference_predictions else None,
         'construction':args.construction_context,
         'fresh_blind':False,'gradients':False,'deployed':False,'published':False})
     for name,weights in candidates.items():
@@ -413,8 +431,8 @@ def run(args):
             source = rows[start:start+args.batch_size]
             batch = [{**r,'task':r['family'],'family':'progress','labels':list(LABELS)} for r in source]
             append(args.out/'calls.jsonl',{'event':'start','candidate':name,'ids':[r['id'] for r in source]})
-            outputs = head_predictions(model,torch,torch.from_numpy(data['text'][start:start+args.batch_size]).to('cuda'),
-                torch.from_numpy(data['classes'][start:start+args.batch_size]).to('cuda'),batch)
+            outputs = predict(batch,torch.from_numpy(data['text'][start:start+args.batch_size]).to('cuda'),
+                torch.from_numpy(data['classes'][start:start+args.batch_size]).to('cuda'))
             for old,new in zip(source,outputs):
                 row = {**old,**new,'benchmark_family':old['family'],'reasoning':None}
                 records.append(row)
@@ -425,10 +443,7 @@ def run(args):
             from suite.progress_correctness.repair import metrics
             source_rows,source_data = cached(args.repair)
             if args.reference_cache:
-                from suite.progress_correctness.done_partial_repair import calibrated_cache
-                reference,_features = calibrated_cache(args.reference_cache)
-                reference = {r['id']:r for r in reference}
-                source_rows = [{**r,**reference[r['id']]} for r in source_rows]
+                source_rows = [{**r,**reference_rows[reference_index[r['id']]]} for r in source_rows]
             source_by_id = {r['id']:r for r in source_rows}
             preservation = []
             for family in ('progress','dictation','retrospective'):
@@ -438,8 +453,8 @@ def run(args):
                     select = idx[offset:offset+args.batch_size]
                     source_batch = [source_rows[i] for i in select]
                     append(args.out/'preservation-calls.jsonl',{'event':'start','candidate':name,'ids':[r['id'] for r in source_batch]})
-                    result = head_predictions(model,torch,torch.from_numpy(source_data['text'][select]).to('cuda'),
-                        torch.from_numpy(source_data['classes'][select,:count]).to('cuda'),source_batch)
+                    result = predict(source_batch,torch.from_numpy(source_data['text'][select]).to('cuda'),
+                        torch.from_numpy(source_data['classes'][select,:count]).to('cuda'))
                     for old,new in zip(source_batch,result):
                         rec = {**old,**new}
                         preservation.append(rec)
@@ -486,6 +501,8 @@ if __name__=='__main__':
     parser.add_argument('--source',type=Path,default=SOURCE)
     parser.add_argument('--construction-context',default='TRAIN-only weight solves; benchmark used for diagnosis/comparison/selection')
     parser.add_argument('--reference-cache',type=Path)
+    parser.add_argument('--reference-predictions',type=Path)
+    parser.add_argument('--native-endpoint-replay',action='store_true',help='replay native last-calibrator inputs and raw logits; only valid for final calibrator edits')
     parser.add_argument('--batch-size',type=int,default=64)
     parser.add_argument('--candidate-shard',type=int,default=0)
     parser.add_argument('--candidate-shards',type=int,default=1)

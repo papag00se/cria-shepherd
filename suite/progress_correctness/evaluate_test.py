@@ -16,8 +16,9 @@ from suite.gliclass_probe import load_native
 from suite.onejev_probe import append
 from suite.progress_correctness.heldout_adapter import full_diff
 from suite.progress_dataset import LABELS, render_state
-from suite.progress_loto import f1_report, install_fast_gather
+from suite.progress_loto import f1_report
 from suite.progress_correctness.repair import gpu
+from suite.progress_weight_directions import prediction_records
 
 
 def run(checkpoint, test, out, *, capture_activations=False):
@@ -51,7 +52,6 @@ def run(checkpoint, test, out, *, capture_activations=False):
         'provenance':json.loads((test/'provenance.json').read_text())}
     (out/'evaluation.json').write_text(json.dumps(config,indent=2)+'\n')
     torch = gpu()
-    install_fast_gather(torch)
     model, pipe, _ = load_native(str(checkpoint),'cuda')
     model.eval()
     model.requires_grad_(False)
@@ -79,10 +79,9 @@ def run(checkpoint, test, out, *, capture_activations=False):
                 saved['text'].append(output.text_embeddings.float().cpu().numpy()[0])
             if tuple(values.shape)!=(1,len(LABELS)) or not torch.isfinite(values).all():
                 raise ValueError('invalid native calibrated logits')
-            logits = values[0].cpu().tolist()
-            result = {'id':row['id'],'group':truth['group'],'family':truth['family'],
-                'label':truth['label'],'prediction':LABELS[int(values[0].argmax())],
-                'logits':logits,'tokens':inputs['input_ids'].shape[1],'reasoning':None}
+            meta={'id':row['id'],'label':truth['label'],'tokens':inputs['input_ids'].shape[1],
+                'family':truth['family'],'labels':list(LABELS)}
+            result = {**prediction_records(output,[meta])[0],'group':truth['group'],'reasoning':None}
             append(out/'calls.jsonl', {'event':'result',**result})
             append(out/'predictions.jsonl', result)
             predictions.append(result)
