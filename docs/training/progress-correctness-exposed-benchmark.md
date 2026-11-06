@@ -4,9 +4,9 @@
 
 After the initial one-time TEST evaluation and the TRAIN/DEV-only readout experiment, the operator explicitly authorized using the same 600 synthetic examples as an **exposed development benchmark**: improve those results first, then investigate fresh examples later. Evaluation does not automatically train on examples or make a dataset useless. Repeated feedback/selection changes the interpretation, not its mechanical usability.
 
-The work below uses that authorization. Benchmark errors guide diagnosis and candidate selection; the numerical weight solves still use **TRAIN** activations, paired TRAIN counterfactuals, and old-family TRAIN preservation inputs. No fresh-blind claim, gradient update, dataset overwrite, deployment, publication or INT4 conversion is made.
+The work below uses that authorization. The initial solves use TRAIN activations and benchmark selection; the first resumed calibrator solve includes exposed preservation constraints; the latest continuation **directly fits exposed benchmark DONE/PARTIAL margins**. These are different exposure levels, not independent validation. No gradient update, dataset overwrite, deployment, publication or INT4 conversion is made.
 
-Source remains `~/.cria/training/progress-correctness-v2/continuation-20261106T001652Z/epoch-1/`, not the preceding DEV-selected 58-value edit. Prior results/checkpoints are retained.
+All candidates descend from `~/.cria/training/progress-correctness-v2/continuation-20261106T001652Z/epoch-1/`. The latest continuation uses the separately saved 64-value calibrator edit as its reference/base, with the original epoch-1 encoder and scorer unchanged. It does not compose the preceding 58-value readout edit or the set-aside projector edit. Prior results/checkpoints are retained.
 
 ## Operator correction — this is not the requested DONE/PARTIAL repair
 
@@ -16,7 +16,49 @@ Re-screening all 39 existing edits finds **no improvement in true-DONE recogniti
 
 Future benchmark selection in `benchmark_repair.py` now uses those DONE/PARTIAL metrics. Macro-F1 and NOT_STARTED improvements cannot compensate for a regression in them. `done-partial-objective-correction.json` records the re-screen of existing outcomes; no new model forward was needed.
 
-## Resumed DONE/PARTIAL work — a small targeted gain
+## Latest continuation — a larger verified DONE-recognition gain
+
+The operator asked to continue improving the results. Twelve new calibrator-bias weight candidates were constructed and evaluated, using the exposed benchmark's 400 DONE/PARTIAL examples **directly in the fitting objective**, rather than only in preservation or selection. No helper counterfactuals, input changes, dropped inputs, gradients, backward passes or additional neural-training epochs are involved.
+
+The selected candidate is **`dp-top1-benchmark-l10.01-step1`**, saved separately at `~/.cria/training/progress-correctness-v2/done-partial-top1-20261106T033639Z/conservative-checkpoint/`. Actual **complete-model, saved-checkpoint evaluation**, compared with the preceding 64-value candidate:
+
+- DONE correct: **101 → 113/200**, recall **50.5% → 56.5%**.
+- PARTIAL correct: **68 → 85/200**, recall **34% → 42.5%**.
+- PARTIAL falsely approved DONE: **80 → 80/200**. No newly false-approved PARTIAL benchmark example; no previously correct benchmark answer is lost.
+- DONE precision: **55.49% → 58.25%**. The one inherited false-DONE on NOT_STARTED remains; NOT_STARTED correct stays **199/200**.
+- Benchmark total: **368 → 397/600**. This aggregate does not replace the class-specific objective.
+- Full native DEV confusion is unchanged: `[[123,77,0],[115,85,0],[0,3,197]]`, **405/600**. One previously correct DONE becomes PARTIAL and another DONE is corrected; unchanged totals do **not** mean all DEV decisions are unchanged.
+- **All 836 old-family TRAIN decisions are unchanged**, including the seven inherited errors, **829/836 correct**. This is not fresh old-family qualification.
+
+Relative to the original epoch-1 benchmark result, DONE is **99 → 113**, PARTIAL **66 → 85**, and PARTIAL false-DONE **82 → 80**. The new benchmark confusion is `[[113,59,28],[80,85,35],[1,0,199]]`.
+
+### Construction and what improved
+
+The new objective has one shared hinge slack per example against **both** competing labels, so it targets actual top-1 decisions rather than DONE-minus-PARTIAL while ignoring NOT_STARTED. DONE examples receive twice the PARTIAL objective weight. Target margin is 0.1. The same linear additive-bias edit preserves source-correct decisions and prevents new PARTIAL approvals in the real-arithmetic construction; an equality also retains the mean TRAIN bias contribution. SciPy HiGHS dual simplex fits two L1 penalties (0.001, 0.01), with half/full steps: four candidates per construction.
+
+Three constructions were completed: ordinary top-1 fitting; additional preservation of existing DONE/PARTIAL score preferences even when NOT_STARTED dominates; and that preference protection with a larger 0.05 preservation buffer. TRAIN, DEV, benchmark and old examples enter preservation. The benchmark labels also enter the objective. This is **direct numerical supervised weight fitting on exposed examples**, not merely evaluating or selecting TRAIN-derived weights.
+
+Eleven of the twelve additional correct DONE answers were formerly NOT_STARTED; one was formerly PARTIAL. All seventeen additional correct PARTIAL answers were formerly NOT_STARTED. Eleven further genuine DONE examples move NOT_STARTED→PARTIAL and remain wrong. Thus the measured gain is real three-label DONE recognition, **not a demonstrated clean improvement of DONE-versus-PARTIAL discrimination in isolation**. As a diagnostic, taking the larger of the existing DONE/PARTIAL scores while ignoring NOT_STARTED changes truth-row confusion `[[104,96],[83,117]] → [[127,73],[96,104]]`: DONE preference improves but PARTIAL preference worsens. This is not a separate two-label native evaluation; the model still receives all three labels. The actual three-label PARTIAL count and false approvals do not regress, but that masking dependence must not be sold as robust semantic separation.
+
+TRAIN head-only replay changes `[[370,624,6],[302,683,15],[1,9,990]] → [[368,629,3],[302,687,11],[1,8,991]]`: two fewer correct TRAIN DONE, four more PARTIAL, unchanged PARTIAL false-DONE. No full-native TRAIN rerun or broad generalization improvement is claimed.
+
+### Native checks rejected the more aggressive edits
+
+The weaker-penalty candidate initially gives cached-head **125 DONE / 89 PARTIAL / 80 PARTIAL false-DONE**, but the complete saved model produces **81** false-DONE PARTIALs. It is **not accepted**, despite its larger DONE count. A preference-protected, larger-buffer candidate gives native benchmark **110 DONE / 94 PARTIAL / 78 false-DONE PARTIAL**, but native DEV PARTIAL falls **85 → 82**, with false-DONE **115 → 118**. It is also set aside. Both artifacts and all comparisons are retained.
+
+The selected higher-penalty edit still has material numerical sensitivity: cached-head and full-native evaluation differ on **five of 2,036** benchmark/DEV/old decisions, maximum calibrated-logit difference **0.009033203125**. Three benchmark differences merely exchange wrong NOT_STARTED and PARTIAL answers; two DEV differences exchange a DONE fix and loss. Reported results above are full-native, not an assertion of exact head fidelity. The original reference cache itself differs from the previous saved-model results on one near-tie benchmark answer.
+
+The saved matrix differs from the previous candidate at **103 FP32 values**, and from original epoch-1 at **132 values**, all in the bias-output row of `calibrator.mlp.6.weight`. The temperature row and all other 414 tensors are unchanged. Update norm relative to the preceding candidate is **6449.248**; total change from original epoch-1 is **7220.454**, versus the original row norm about **0.219**. A newly correct straight-alpha compositing implementation wins DONE by only about **0.000317**. Larger gains do not remove the numerical/quantization concern.
+
+Three changed native examples were opened in full: correct adjacent-stage transitions (NOT_STARTED→DONE), correct straight-alpha foreground-over-background compositing including zero alpha (PARTIAL→DONE), and an inverted crop-aspect formula (NOT_STARTED→PARTIAL). Inputs remain complete and unchanged; native reasoning is `null`.
+
+Artifacts in `done-partial-top1-20261106T033639Z/`: `calibration-{0,1}/`, `reference-fidelity.json`, `fit/`, `binary-protected-fit/`, `binary-margin-fit/`, the paired evaluation directories for all twelve candidates, separately saved `checkpoint/` (rejected aggressive), `conservative-checkpoint/` (selected) and `robust-checkpoint/` (rejected DEV trade-off), their native benchmark outputs, `conservative-native-dev-old.json`, `opened-native-changes.json`, and `final-result.json`. Full native DEV/old calls are in the preceding repair root's `dp-top1-{conservative,robust}-native-0/` and `dp-top1-native-{0,1}/`.
+
+The evaluator's inherited 3090-only setup rejected the first 3080 launch before any forward. It now reuses the repair workstream's shared GPU setup, retaining the same gather implementation, and the authorized 3080 rerun completed all 600 inputs. The failed launch is retained separately, not counted as an evaluation. No GPU admission policy elsewhere or machine resource policy changed.
+
+Existing focused checks: **10 passed, 2 skipped**, plus compilation and actual native/tensor comparisons. No new tests were written; the numerical/capture runner still has no automated model-level regression coverage, and no full-suite pass is claimed. **FP32 only: no quantization, CPU qualification, fresh evaluation, deployment or weight publication.**
+
+## Earlier resumed DONE/PARTIAL work — a small targeted gain
 
 The operator explicitly directed the investigation to continue with **new edits that recognize more genuinely DONE implementations without sacrificing PARTIAL**. Thirty-six new candidate evaluations were completed, starting from the original trained epoch-1 checkpoint, without any helper-function counterfactuals in the objective or follow-up evaluation:
 

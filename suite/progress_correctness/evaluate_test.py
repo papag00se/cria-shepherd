@@ -1,7 +1,8 @@
-"""One authorized, read-only held-out score of the already-selected native model.
+"""Read-only native scoring, once per complete input in each evaluation run.
 
-No training, checkpoint selection, quantization, publication or deployment.
-Predictions are persisted once per input before aggregate reporting.
+No weight updates, checkpoint selection, quantization, publication or deployment
+happen here. Whether a dataset is fresh or exposed depends on the study's fit
+history, not on this evaluator. Predictions precede aggregate reporting.
 """
 from __future__ import annotations
 
@@ -15,7 +16,8 @@ from suite.gliclass_probe import load_native
 from suite.onejev_probe import append
 from suite.progress_correctness.heldout_adapter import full_diff
 from suite.progress_dataset import LABELS, render_state
-from suite.progress_loto import _setup_torch, f1_report
+from suite.progress_loto import f1_report, install_fast_gather
+from suite.progress_correctness.repair import gpu
 
 
 def run(checkpoint, test, out, *, capture_activations=False):
@@ -44,10 +46,12 @@ def run(checkpoint, test, out, *, capture_activations=False):
     config = {'checkpoint':str(checkpoint), 'test':str(test), 'inputs':len(blind),
         'label_source':'author-private evidence joined to blind IDs and verified against full snapshot diff',
         'precision':'native FP32 eval; no autocast', 'training':False, 'deployed':False,
-        'tuning':False, 'per_input_evaluations':1, 'capture_activations':capture_activations,
+        'tuning':False, 'tuning_scope':'this evaluation run only; see checkpoint fit history',
+        'per_input_evaluations':1, 'capture_activations':capture_activations,
         'provenance':json.loads((test/'provenance.json').read_text())}
     (out/'evaluation.json').write_text(json.dumps(config,indent=2)+'\n')
-    torch = _setup_torch(False)
+    torch = gpu()
+    install_fast_gather(torch)
     model, pipe, _ = load_native(str(checkpoint),'cuda')
     model.eval()
     model.requires_grad_(False)

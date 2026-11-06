@@ -1,9 +1,8 @@
-"""Compare existing TRAIN-constructed weight edits on an exposed benchmark.
+"""Evaluate direct weight edits on the operator-authorized exposed benchmark.
 
-The operator explicitly authorized reuse of the original synthetic TEST as a
-working development benchmark. This is not a fresh blind generalization score.
-No label from this benchmark enters the weight solve; its metrics may select an
-existing candidate. No gradients, source mutation, deployment or publication.
+This is not a fresh blind generalization score. Individual solve records and the
+construction context state whether benchmark labels enter selection, preservation
+constraints or the fitting objective. No gradients, deployment or publication.
 """
 from __future__ import annotations
 
@@ -389,29 +388,33 @@ def run(args):
             raise ValueError('benchmark labels differ from original evaluation')
     data = np.load(args.capture/'activations.npz')
     torch = gpu()
-    model,_pipe,loading = load_native(str(SOURCE),'cuda')
+    model,_pipe,loading = load_native(str(args.source),'cuda')
     model.requires_grad_(False)
     candidates = {}
     paths = [args.extra_weights] if args.extra_weights else [args.repair/name for name in ('candidate-weights.npz','balanced-weights.npz')]
     for path in paths:
         weights = np.load(path)
         candidates.update({key:weights[key] for key in weights.files if key!='baseline'})
+    candidates = {key:value for index,(key,value) in enumerate(candidates.items())
+        if index%args.candidate_shards==args.candidate_shard}
     summaries = {'source_recorded':report(original,baseline)}
     write(args.out/'run.json',{'authorization':'operator explicitly authorizes exposed TEST reuse to improve results before fresh evaluation',
         'benchmark_capture':str(args.capture),'recorded_baseline':str(args.baseline),
-        'source':str(SOURCE),'loading':loading,'tensor':args.tensor,'weight_sources':[str(path) for path in paths],
-        'construction':'TRAIN-only weight solves; benchmark used for diagnosis/comparison/selection',
+        'source':str(args.source),'loading':loading,'tensor':args.tensor,'weight_sources':[str(path) for path in paths],
+        'batch_size':args.batch_size,'reference_cache':str(args.reference_cache) if args.reference_cache else None,
+        'candidate_shard':args.candidate_shard,'candidate_shards':args.candidate_shards,
+        'construction':args.construction_context,
         'fresh_blind':False,'gradients':False,'deployed':False,'published':False})
     for name,weights in candidates.items():
         tensor = model.state_dict()[args.tensor]
         tensor.copy_(torch.from_numpy(weights.reshape(tuple(tensor.shape))).to('cuda'))
         records = []
-        for start in range(0,len(rows),64):
-            source = rows[start:start+64]
+        for start in range(0,len(rows),args.batch_size):
+            source = rows[start:start+args.batch_size]
             batch = [{**r,'task':r['family'],'family':'progress','labels':list(LABELS)} for r in source]
             append(args.out/'calls.jsonl',{'event':'start','candidate':name,'ids':[r['id'] for r in source]})
-            outputs = head_predictions(model,torch,torch.from_numpy(data['text'][start:start+64]).to('cuda'),
-                torch.from_numpy(data['classes'][start:start+64]).to('cuda'),batch)
+            outputs = head_predictions(model,torch,torch.from_numpy(data['text'][start:start+args.batch_size]).to('cuda'),
+                torch.from_numpy(data['classes'][start:start+args.batch_size]).to('cuda'),batch)
             for old,new in zip(source,outputs):
                 row = {**old,**new,'benchmark_family':old['family'],'reasoning':None}
                 records.append(row)
@@ -421,13 +424,18 @@ def run(args):
         if args.preservation:
             from suite.progress_correctness.repair import metrics
             source_rows,source_data = cached(args.repair)
+            if args.reference_cache:
+                from suite.progress_correctness.done_partial_repair import calibrated_cache
+                reference,_features = calibrated_cache(args.reference_cache)
+                reference = {r['id']:r for r in reference}
+                source_rows = [{**r,**reference[r['id']]} for r in source_rows]
             source_by_id = {r['id']:r for r in source_rows}
             preservation = []
             for family in ('progress','dictation','retrospective'):
                 idx = [i for i,r in enumerate(source_rows) if r['family']==family]
                 count = 3 if family=='progress' else 2
-                for offset in range(0,len(idx),64):
-                    select = idx[offset:offset+64]
+                for offset in range(0,len(idx),args.batch_size):
+                    select = idx[offset:offset+args.batch_size]
                     source_batch = [source_rows[i] for i in select]
                     append(args.out/'preservation-calls.jsonl',{'event':'start','candidate':name,'ids':[r['id'] for r in source_batch]})
                     result = head_predictions(model,torch,torch.from_numpy(source_data['text'][select]).to('cuda'),
@@ -475,6 +483,12 @@ def run(args):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repair',type=Path,required=True)
+    parser.add_argument('--source',type=Path,default=SOURCE)
+    parser.add_argument('--construction-context',default='TRAIN-only weight solves; benchmark used for diagnosis/comparison/selection')
+    parser.add_argument('--reference-cache',type=Path)
+    parser.add_argument('--batch-size',type=int,default=64)
+    parser.add_argument('--candidate-shard',type=int,default=0)
+    parser.add_argument('--candidate-shards',type=int,default=1)
     parser.add_argument('--capture',type=Path,required=True)
     parser.add_argument('--baseline',type=Path,required=True)
     parser.add_argument('--out',type=Path,required=True)
