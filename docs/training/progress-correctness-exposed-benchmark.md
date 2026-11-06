@@ -16,7 +16,45 @@ Re-screening all 39 existing edits finds **no improvement in true-DONE recogniti
 
 Future benchmark selection in `benchmark_repair.py` now uses those DONE/PARTIAL metrics. Macro-F1 and NOT_STARTED improvements cannot compensate for a regression in them. `done-partial-objective-correction.json` records the re-screen of existing outcomes; no new model forward was needed.
 
-## Latest continuation — saved-model 124 DONE, with PARTIAL preserved
+## Latest round — 24 new edits, no replacement accepted
+
+The operator requested another round of weight manipulation. **Twenty-four new weight candidates were constructed and evaluated**, starting from the verified 124-DONE checkpoint. None replaces it: the promising saved alternatives regress PARTIAL performance in like-for-like full-model DEV checks on the RTX 3080. Higher benchmark DONE counts do not compensate. The retained checkpoint remains `done-partial-native-20261106T044008Z/checkpoint/`; its originally reported **RTX 3090** benchmark is **124 DONE / 91 PARTIAL / 79 PARTIAL false-DONE**.
+
+The new round is recorded under `~/.cria/training/progress-correctness-v2/done-partial-temperature-20261106T063629Z/`. No original checkpoint or dataset is overwritten. There are no gradients, backward passes, Torch optimizer steps, added training epochs, helper counterfactuals, input changes, truncation, quantization, deployment or weight publication.
+
+### New constructions, not re-ranking previous edits
+
+1. Four temperature-row perturbations scale the final calibrator's inverse-temperature weight row by 0, 0.5, 1.5 or 2. Its bias and additive-bias output row are initially unchanged. Actual nonlinear inverse temperatures are recomputed on GPU. None alone meets the DONE/PARTIAL objective.
+2. Eight compensating bias-row fits use the 0.5 and 1.5 temperature variants as initial points, with actual GPU logits, pairwise target margin 0.05, L1 penalties 0.001/0.01 and half/full steps. Protection still refers to the original 124-DONE model's decisions and gaps, not the perturbed model's changed answers. This separation is implemented in the shared `preservation` function and initial-point options of `done_partial_repair.py`.
+3. Four bias-only pairwise fits penalize physical coefficient changes, normalized by the starting bias row's L1 norm, rather than RMS-scaled coefficient changes. Target margin is 0.05; penalties are 0.01/0.1, with half/full steps. No temperature edit is composed into these candidates.
+4. Four more physical-penalty fits target both competing labels, including NOT_STARTED, using the same settings. These yield the two saved alternatives below.
+5. Four final correction candidates start from the stronger alternative's actual endpoint outputs, retain the original 124-DONE reference, and enlarge PARTIAL and DONE guards to 0.01 and 0.005. Penalties are 0.1/1. Their benchmark PARTIAL false-DONE count is **81**, versus source **79**, for all four; none is promoted. These larger guards require updates of roughly 520,000–602,000 in norm and do not cure FP32 preservation failures.
+
+All numerical fits directly use the exposed benchmark's 400 DONE/PARTIAL labels, plus exposed TRAIN/DEV/benchmark/old preservation constraints. This is numerical supervised fitting, not fresh validation. Sigmoid temperature effects come from actual GPU evaluation; the remaining bias-row solve is conditionally linear in real arithmetic, not a temperature derivative or neural gradient update.
+
+### Saved-model checks rejected attractive benchmark counts
+
+The stronger physical-penalty alternative, `dp-top1-binary-physical-l1-target0.05-partialfloor0.005-l10.01-step1`, is saved separately as `aggressive-checkpoint/`. On the **RTX 3090**, the complete reloaded model gives benchmark **133 DONE / 99 PARTIAL / 79 PARTIAL false-DONE**, versus source **124 / 91 / 79**. Its DEV has **121 DONE / 89 PARTIAL / 111 false-DONE**, versus source **124 / 88 / 112**: PARTIAL improves there, but DONE falls. Old-family decisions remain unchanged.
+
+On the **RTX 3080**, the same saved alternative gives benchmark **137 DONE / 100 PARTIAL / 79 PARTIAL false-DONE**. This must be compared with a newly measured **same-device source** result, **124 / 90 / 80**, not silently with the old 3090 counts. The decisive DEV comparison on that card is source **118 DONE / 86 PARTIAL / 114 false-DONE** → alternative **117 / 83 / 117**. **Three fewer correct PARTIALs and three more false approvals disqualify it**, despite the benchmark gain. All old-family decisions are unchanged on that card too.
+
+The more conservative alternative, penalty 0.1, is separately saved as `conservative-checkpoint/`. Its complete saved-model benchmark is **127 DONE / 97 PARTIAL / 79 false-DONE** on both cards. But on the RTX 3080 its DEV PARTIAL falls **86 → 85**, and PARTIAL false-DONE rises **114 → 115**. It is also rejected. On the 3090 its DEV PARTIAL counts are unchanged, with one fewer correct DONE. One inherited old retrospective error is corrected on both cards; no correct old-family answer is lost. That old correction cannot buy the PARTIAL regression.
+
+Both saved alternatives also receive complete native TRAIN verification on the **RTX 3080**, matching their same-device endpoint replay exactly. The stronger gives `[[364,634,2],[283,709,8],[1,8,991]]`; the conservative gives `[[364,635,1],[284,709,7],[0,9,991]]`. The source gives `[[372,626,2],[291,700,9],[1,8,991]]`. TRAIN PARTIAL counts improve, but eight fewer DONE answers are recognized. These are additional exposed-data trade-offs, not a uniform DONE-recognition improvement.
+
+### What the device controls establish
+
+The old source itself is not bit-invariant across devices: its 3080 benchmark has **90 correct PARTIAL / 80 false-DONE**, versus the originally recorded 3090 **91 / 79**. Those are additional hardware-conditioned observations, not a dataset change or a revision to the original measurement. For the stronger new alternative, cached endpoint replay versus full native 3080 evaluation differs on **29 of 2,036** critical-panel decisions; maximum raw-logit difference is **0.00026702880859375**, maximum calibrated-bias/logit difference **0.15625**. Full 3090 checks reproduce the endpoint benchmark counts constructed from 3090 prefix captures. The earlier exact 5,036-row replay result applied to its recorded per-panel devices, not arbitrary hardware.
+
+Our large fitted coefficients amplify routine numerical differences into changed judgments. The new alternatives' bias-row norms are about **150,463** and **135,188**, versus the original epoch-1 row's approximately **0.219**. They change **199** and **170** FP32 values relative to the 124-DONE source, respectively; their temperature rows and all other 414 tensors remain unchanged. This is evidence about these edits and arithmetic paths, not a semantic-capacity limit, a quantization floor, or an excuse to attribute an incorrect judgment to the weights or hardware.
+
+A complete native counterexample was opened on the same card for source and both alternatives: room allocation assigns available rooms but omits the required `ValueError` when a talk cannot be placed. The source correctly says PARTIAL; both alternatives falsely say DONE. Inputs are identical; raw logits and inverse temperatures are identical within that card; the changed additive biases cause the false approval. The stronger model's DONE win is only about **7.6e-6**. The inverted crop-height formula and a version-only CLI edit were also opened in full as rejected controls. Native reasoning remains `null`.
+
+`evaluate_test.py` and new calibrator captures now record the actual GPU and visibility in their run metadata. Capture metadata describes its actual feature position rather than asserting that every caller leaves the temperature row unchanged. No GPU admission policy or machine resource policy is changed. Actual model computations remain on the authorized GPUs; CPU work is numerical fitting and reporting.
+
+Evidence: all five pairs of candidate-evaluation directories, initial/final fit records, separate saved alternatives, `*-native-benchmark*` runs, `*-native-training/`, device-control and saved-reload calls under the preceding repair root's `temperature-*` directories, opened rejection examples, and consolidated `final-result.json`. Both GPUs are released after the round. Existing focused checks: **10 passed, 2 skipped**, plus compilation and actual native/tensor comparisons. No new automated model-level tests were written. **The 124-DONE source is retained; nothing is deployed, quantized or published as weights.**
+
+## Previous continuation — retained saved-model 124 DONE, with PARTIAL preserved
 
 **Current selection:** `dp-pairwise-partialfloor0.005-l10.001-step1`, saved at `~/.cria/training/progress-correctness-v2/done-partial-native-20261106T044008Z/checkpoint/`. It starts from the preceding 113-DONE `conservative-checkpoint/`, not from the original epoch-1 weights or the earlier projector/readout experiments. The benchmark's 400 DONE/PARTIAL labels directly enter the numerical fit; TRAIN, DEV, benchmark and old-family examples enter preservation. This remains exposed-label optimization, not fresh validation.
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 import json
+import os
 from pathlib import Path
 import time
 
@@ -52,6 +53,8 @@ def run(checkpoint, test, out, *, capture_activations=False):
         'provenance':json.loads((test/'provenance.json').read_text())}
     (out/'evaluation.json').write_text(json.dumps(config,indent=2)+'\n')
     torch = gpu()
+    config.update(device=torch.cuda.get_device_name(0),visible=os.environ.get('CUDA_VISIBLE_DEVICES'))
+    (out/'evaluation.json').write_text(json.dumps(config,indent=2)+'\n')
     model, pipe, _ = load_native(str(checkpoint),'cuda')
     model.eval()
     model.requires_grad_(False)

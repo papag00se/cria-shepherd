@@ -5,13 +5,16 @@ DONE/PARTIAL and old decisions, plus PARTIAL cases not currently approved DONE,
 are protected. Optional exposed DEV/benchmark protection is disclosed in results.
 For a scorer readout edit the constraints use a frozen-beta surrogate. For the
 calibrator's bias output row they are exact: its inputs and beta output do not
-change. Every candidate is still evaluated with the actual native calibrator.
+change. Frozen temperature variants may supply their actual GPU outputs as an initial point;
+preservation still refers to the original source decisions. No sigmoid derivative is used.
+Every candidate is evaluated with the actual native calibrator.
 """
 from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
 import json
+import os
 from pathlib import Path
 
 from suite.progress_correctness.repair import SOURCE, cached, write
@@ -54,7 +57,8 @@ def capture_calibrator(args):
     part = args.out/f'calibration-{args.shard}'
     part.mkdir(parents=True,exist_ok=False)
     write(part/'run.json',{'source':str(args.source),'loading':loading,'gradients':False,'batch_size':1 if args.full_model else args.batch_size,
-        'full_model':args.full_model,'edited_tensor':CALIBRATOR,'edited_row':1,'beta_row_unchanged':True})
+        'full_model':args.full_model,'device':torch.cuda.get_device_name(0),'visible':os.environ.get('CUDA_VISIBLE_DEVICES'),
+        'feature_position':'input to calibrator final linear layer','feature_independent_of_tensor':CALIBRATOR})
     saved = []
     selected = ([i for i,r in enumerate(rows) if (r['panel']=='train')==(args.shard==1)]
         if args.full_model else list(range(len(rows)))[args.shard::2])
@@ -111,10 +115,11 @@ def calibrated_cache(path,reference_predictions=None):
     return rows,np.concatenate(features)
 
 
-def preservation(rows,feature,logits,active,scale,panels,binary=False,guard=0.01,partial_floor=0.,done_floor=0.):
+def preservation(rows,feature,logits,active,scale,panels,binary=False,guard=0.01,partial_floor=0.,done_floor=0.,reference_logits=None):
     """Retain correct answers and forbid new false approvals of PARTIAL."""
     import numpy as np
     protection,limits,protected = [],[],Counter()
+    reference_logits = logits if reference_logits is None else reference_logits
     for i,row in enumerate(rows):
         if row['panel'] not in panels:
             continue
@@ -127,12 +132,13 @@ def preservation(rows,feature,logits,active,scale,panels,binary=False,guard=0.01
             pairs.add((winner,0))
         if binary and row['label'] in ('DONE','PARTIAL'):
             correct=labels.index(row['label']); other=1-correct
-            if logits[i,correct]>logits[i,other]:
+            if reference_logits[i,correct]>reference_logits[i,other]:
                 pairs.add((correct,other))
         for win,lose in sorted(pairs):
             gap = logits[i,win]-logits[i,lose]
             protection.append(-(feature[i,win]-feature[i,lose])[active]/scale)
-            minimum=min(guard,gap/2)
+            reference_gap=reference_logits[i,win]-reference_logits[i,lose]
+            minimum=min(guard,reference_gap/2)
             if row['label']=='PARTIAL' and row['prediction']!='DONE' and lose==0:
                 minimum=max(minimum,partial_floor)
             if row['label']=='DONE' and win==0:
@@ -156,7 +162,12 @@ def solve_top1(args):
     args.out.mkdir(parents=True,exist_ok=False)
     rows,feature = calibrated_cache(args.calibrator_cache,args.reference_predictions)
     feature = feature.astype(np.float64)
-    logits = np.array([r['logits']+[0.]*(3-len(r['logits'])) for r in rows])
+    reference_logits = np.array([r['logits']+[0.]*(3-len(r['logits'])) for r in rows])
+    if args.initial_predictions:
+        initial={r['id']:r for r in map(json.loads,args.initial_predictions.read_text().splitlines())}
+        logits=np.array([initial[r['id']]['logits']+[0.]*(3-len(r['labels'])) for r in rows])
+    else:
+        logits=reference_logits
     fit = [i for i,r in enumerate(rows) if r['panel']=='benchmark' and r['label'] in ('DONE','PARTIAL')]
     contrast = feature[fit,0]-feature[fit,1]
     rms = np.sqrt(np.mean(contrast**2,axis=0))
@@ -172,7 +183,8 @@ def solve_top1(args):
                 margin.append(logits[i,correct]-logits[i,other]); owner.append(j)
     a = np.stack(targets)
     protect,limits,protected = preservation(rows,feature,logits,active,scale,('train','old','dev','benchmark'),
-        binary=args.protect_binary,guard=args.preservation_margin,partial_floor=args.partial_floor,done_floor=args.done_floor)
+        binary=args.protect_binary,guard=args.preservation_margin,partial_floor=args.partial_floor,done_floor=args.done_floor,
+        reference_logits=reference_logits)
     incidence = csr_matrix((-np.ones(len(owner)),(np.arange(len(owner)),owner)),shape=(len(owner),n))
     ident = eye(p,format='csr')
     constraint = vstack([
@@ -181,7 +193,7 @@ def solve_top1(args):
         hstack([-ident,-ident,csr_matrix((p,n))]),
         hstack([csr_matrix(-a),csr_matrix((len(a),p)),incidence]),
     ],format='csr')
-    target=0.1
+    target=args.target_margin
     rhs=np.concatenate([limits,np.zeros(2*p),np.array(margin)-target])
     # Do not spend weight magnitude moving all scores together: retain the
     # mean TRAIN bias shift while fitting label-relative decisions.
@@ -191,9 +203,13 @@ def solve_top1(args):
     weight=np.array([2. if rows[i]['label']=='DONE' else 1. for i in fit]);weight/=weight.sum()
     with safe_open(args.source/'model.safetensors',framework='numpy') as f:
         original=f.get_tensor(CALIBRATOR)
+    if args.initial_weights:
+        original=np.load(args.initial_weights)[args.initial_candidate]
     candidates,details={},{}
-    for strength in (0.001,0.01):
-        objective=np.concatenate([np.zeros(p),np.full(p,strength/p),weight])
+    penalty=(1/(scale*float(np.abs(original[1].astype(np.float64)).sum()))
+        if args.physical_penalty else np.full(p,1/p))
+    for strength in args.regularization:
+        objective=np.concatenate([np.zeros(p),strength*penalty,weight])
         result=linprog(objective,A_ub=constraint,b_ub=rhs,A_eq=equality,b_eq=[0.],
             bounds=[(None,None)]*p+[(0,None)]*(p+n),method='highs-ds')
         if not result.success:
@@ -203,6 +219,12 @@ def solve_top1(args):
             return
         delta=np.zeros(original.shape[1]);delta[active]=result.x[:p]/scale
         prefix='dp-pairwise' if args.pairwise_objective else ('dp-top1-binary' if args.protect_binary else 'dp-top1-benchmark')
+        if args.initial_candidate:
+            prefix+=f'-{args.initial_candidate}'
+        if args.physical_penalty:
+            prefix+='-physical-l1'
+        if target!=0.1:
+            prefix+=f'-target{target:g}'
         if args.partial_floor:
             prefix+=f'-partialfloor{args.partial_floor:g}'
         if args.done_floor:
@@ -222,6 +244,10 @@ def solve_top1(args):
     write(args.out/'solve.json',{'source':str(args.source),'method':solve_top1.__doc__,
         'reference_cache':str(args.calibrator_cache),'fit_panel':'exposed benchmark DONE/PARTIAL',
         'reference_predictions':str(args.reference_predictions) if args.reference_predictions else None,
+        'initial_predictions':str(args.initial_predictions) if args.initial_predictions else None,
+        'initial_weights':str(args.initial_weights) if args.initial_weights else None,'initial_candidate':args.initial_candidate,
+        'weight_penalty':'L1 physical delta divided by starting bias-row L1' if args.physical_penalty else 'mean absolute RMS-scaled delta',
+        'regularization':list(args.regularization),
         'fit_rows':n,'target_margin':target,'done_to_partial_objective_weight':2.,
         'objective_competitors':'DONE/PARTIAL only' if args.pairwise_objective else 'both competing labels',
         'partial_preservation_floor':args.partial_floor,'done_preservation_floor':args.done_floor,
@@ -339,6 +365,12 @@ if __name__=='__main__':
     parser.add_argument('--partial-floor',type=float,default=0.)
     parser.add_argument('--done-floor',type=float,default=0.)
     parser.add_argument('--reference-predictions',type=Path)
+    parser.add_argument('--initial-predictions',type=Path,help='actual GPU logits after the initial temperature edit; protection still uses reference decisions')
+    parser.add_argument('--initial-weights',type=Path)
+    parser.add_argument('--initial-candidate')
+    parser.add_argument('--target-margin',type=float,default=0.1)
+    parser.add_argument('--physical-penalty',action='store_true',help='top1: penalize physical coefficient changes rather than feature-scaled changes')
+    parser.add_argument('--regularization',type=float,nargs='+',default=(0.001,0.01),help='top1: L1 penalty strengths')
     parser.add_argument('--preservation-margin',type=float,default=0.01)
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--calibrator-cache',type=Path)
