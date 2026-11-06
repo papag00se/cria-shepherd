@@ -12,9 +12,54 @@ Source remains `~/.cria/training/progress-correctness-v2/continuation-20261106T0
 
 The operator corrected the objective: **improve DONE correctness without sacrificing PARTIAL**, not aggregate accuracy or robustness to unrelated helpers. The projector candidate below recognizes only one more true DONE (99→100) while falsely approving eight more PARTIALs (82→90). **It is set aside, not recommended as a successful repair of the requested decision.** Its checkpoint is retained only as experiment provenance; nothing was deployed.
 
-Re-screening all 39 existing edits finds **no improvement in true-DONE recognition while retaining DONE precision, PARTIAL correct count and PARTIAL false-DONE count**. A few protected readout edits retain 99/200 true DONE, increase PARTIAL correct 66→67 and reduce PARTIAL false-DONE 82→80; that is a tiny precision improvement, not meaningful DONE recovery. There is no successful DONE/PARTIAL result to claim from this round.
+Re-screening all 39 existing edits finds **no improvement in true-DONE recognition while retaining DONE precision, PARTIAL correct count and PARTIAL false-DONE count**. A few protected readout edits retain 99/200 true DONE, increase PARTIAL correct 66→67 and reduce PARTIAL false-DONE 82→80; that is a tiny precision improvement, not meaningful DONE recovery. There was no successful DONE/PARTIAL result to claim from those initial 39 edits; the resumed work below constructs new edits rather than re-ranking them.
 
 Future benchmark selection in `benchmark_repair.py` now uses those DONE/PARTIAL metrics. Macro-F1 and NOT_STARTED improvements cannot compensate for a regression in them. `done-partial-objective-correction.json` records the re-screen of existing outcomes; no new model forward was needed.
+
+## Resumed DONE/PARTIAL work — a small targeted gain
+
+The operator explicitly directed the investigation to continue with **new edits that recognize more genuinely DONE implementations without sacrificing PARTIAL**. Thirty-six new candidate evaluations were completed, starting from the original trained epoch-1 checkpoint, without any helper-function counterfactuals in the objective or follow-up evaluation:
+
+1. Twelve final-scorer readout edits, constructed by linear programming from TRAIN DONE/PARTIAL margins and paired differences, with inequalities preserving source-correct answers and preventing new false approvals of TRAIN PARTIAL cases. These use a frozen-temperature surrogate; actual calibration is recomputed for evaluation. The best benchmark-compatible setting adds only one DONE and loses one PARTIAL on DEV, so it is not the final choice.
+2. Twelve edits to the **bias-output weight row of the calibrator**, constructed from TRAIN constraints alone. This exposes a different, 256-feature decision representation instead of the scorer's 58 active coordinates. It still gives no useful joint benchmark/DEV improvement without collateral effects.
+3. Twelve further calibrator-bias edits with **exposed DEV and benchmark examples included in preservation constraints**, while the margin-fitting objective remains TRAIN-only. This is direct use of those examples in the weight solve, not merely selection or fresh validation.
+
+The selected new candidate is `dp-calibration-lp-margin0.05-l10.001-step1`, from `calibration-exposed-protection/`. The actual **reloaded saved checkpoint** scores:
+
+- True DONE recognized: **99/200 → 101/200** (49.5% → 50.5%). Both additions were previously called PARTIAL, not NOT_STARTED.
+- PARTIAL correctly recognized: **66/200 → 68/200** (33% → 34%).
+- PARTIAL falsely approved DONE: **82/200 → 80/200** (41% → 40%). **No newly false-approved PARTIAL case** and no previously correct benchmark answer is lost.
+- DONE precision: **54.70% → 55.49%**. Total false-DONE predictions across PARTIAL and NOT_STARTED fall **82 → 81**. One already-incorrect NOT_STARTED case changes from PARTIAL to DONE; true-NOT_STARTED recall remains 199/200.
+- Full native DEV replay: DONE **118 → 123**, PARTIAL **84 → 85**, PARTIAL false-DONE **116 → 115**, and NOT_STARTED **196 → 197**. Correct total is **398 → 405/600**; no previously correct DEV answer is lost. Because DEV entered preservation constraints, this is not independent validation.
+- **All 836 old-family TRAIN decisions are unchanged**, including seven inherited errors (829/836 correct). No old-family improvement is invented.
+
+Benchmark confusion, truth rows / prediction columns DONE, PARTIAL, NOT_STARTED:
+
+```text
+[101,49, 50]
+[ 80,68, 52]
+[  1, 0,199]
+```
+
+### Why this edit is different
+
+The calibrator's final linear layer produces two outputs per label: the inverse-temperature input and an additive bias. Only the second output's **weight row** is edited. Its input `g_k` depends on unchanged text/class representations and unchanged raw scorer logits; its temperature output is unchanged. Therefore, in real arithmetic, the calibrated-score change is **exactly `g_k · delta_w`**, not a derivative or a frozen-temperature approximation. The decision-preservation inequalities are linear in these weights. Every candidate is nevertheless checked with the real native scorer/calibrator.
+
+The numerical solve minimizes TRAIN DONE/PARTIAL hinge-margin shortfall, paired-margin shortfall and a scaled L1 weight-change penalty using SciPy's HiGHS dual-simplex solver (SciPy 1.18.1 in the existing research venv). No gradients, backward pass, Torch optimizer or additional training epochs are used. Two target margins (0.05, 0.2), two regularization settings (0.001, 0.01), and three interpolation strengths (0.25, 0.5, 1) were evaluated per construction. These are numerical weight fits; the exposed inputs explicitly influence the final constraints.
+
+Only **64 saved FP32 values** change, all in the bias-output row of `calibrator.mlp.6.weight`. The temperature row is bit-identical; all other 414 persisted tensors, including the complete encoder, class projector and scorer, are exact to the original epoch-1 checkpoint. Source checkpoints and datasets are untouched, and the saved candidate is separate.
+
+This is a **small local repair, not a completion-correctness breakthrough**. The update norm is **3271.385** versus **0.21875** for the original bias-output row. One newly correct DONE is only about **5.34e-5** above PARTIAL in the full native evaluation, so its numerical fragility must not be hidden. There is no INT4/CPU/fresh-data qualification or deployment.
+
+### Full-model checks and opened examples
+
+The selected candidate was run through the complete encoder on all 600 DEV and 836 old inputs, then reloaded from its saved checkpoint for all 600 benchmark inputs. The **600 benchmark predictions match cached-head evaluation**, maximum logit difference `0.0006103515625`. DEV/old native evaluation differs from cached-head replay on **two DEV examples, both additional correct DONE answers**; maximum logit difference `0.000518798828125`. The reported DEV metrics above are the authoritative full-native results, not the smaller cached-head estimate. Large weights and near ties make these differences material, even though no preservation loss occurred.
+
+All five changed benchmark examples were opened in full: two genuinely complete implementations move PARTIAL→DONE (whole caption-line counting and repeated-language minute totals with zero totals removed); two incomplete implementations move DONE→PARTIAL (a recursive tree leaf counter returning only child count, and frame duration using floor rather than fractional division); one already-wrong NOT_STARTED answer becomes DONE. Native classifiers provide logits and **no textual reasoning**; reasoning remains `null`.
+
+Research runner: `suite/progress_correctness/done_partial_repair.py`. `benchmark_repair.py --skip-nuisance-controls` avoids repeating the unrelated-helper detour. Existing focused tests remain **10 passed, 2 skipped**, plus compilation and actual experiment checks; the new capture/linear-program runner has no automated model-level regression coverage, and no full-suite pass is claimed.
+
+Artifacts: `~/.cria/training/progress-correctness-v2/done-partial-repair-20261106T030026Z/`, including `calibration-{0,1}/`, `calibration-train-fit/`, `calibration-exposed-protection/`, `checkpoint/`, `native-dev-old-confirmation.json`, `final-native-benchmark/`, `opened-benchmark-changes.json` and `final-result.json`. Full native DEV/old calls are in the preceding repair root's `dp-calibration-native-{0,1}/`. Neither the earlier 58-value DEV readout edit nor the set-aside class-projector edit is composed into this candidate. **No deployment or publication.**
 
 ## Measured result of the set-aside aggregate-score candidate
 

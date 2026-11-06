@@ -438,7 +438,7 @@ def run(args):
                         append(args.out/f'{name}-preservation.jsonl',rec)
                     append(args.out/'preservation-calls.jsonl',{'event':'result','candidate':name,'rows':len(result)})
             summaries[name]['preservation'] = metrics(preservation,source_by_id)
-        if args.preservation and (args.capture/'text-pairs-0/activations.npz').exists():
+        if args.preservation and not args.skip_nuisance_controls and (args.capture/'text-pairs-0/activations.npz').exists():
             controls = {}
             for variant,offset in [('before',0),('after',1)]:
                 outputs = []
@@ -485,6 +485,7 @@ if __name__=='__main__':
     parser.add_argument('--shard',type=int,default=0)
     parser.add_argument('--tensor',default=READOUT)
     parser.add_argument('--preservation',action='store_true')
+    parser.add_argument('--skip-nuisance-controls',action='store_true')
     parser.add_argument('--capture-encoder',action='store_true')
     parser.add_argument('--projector-directions',action='store_true')
     parser.add_argument('--capture-text',action='store_true')
