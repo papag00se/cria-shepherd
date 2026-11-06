@@ -22,19 +22,73 @@ Future benchmark selection in `benchmark_repair.py` now uses those DONE/PARTIAL 
 
 The initial report held this back under a stricter all-panel/device preservation screen. The operator clarified that improving the exposed benchmark is the priority, then explicitly selected this result: **“I want the latest one. Those are good results.”** That decision supersedes the initial holdback; the measurements do not change. DEV regressions, eight fewer TRAIN DONE answers, numerical sensitivity and exposure remain documented below. This is the current research selection, not deployment or fresh qualification. The previous 124-DONE checkpoint remains intact.
 
-## Authorized twelve-pass neural continuation — running
+## Authorized twelve-pass neural continuation — completed, selection unchanged
 
-The operator requested **12 complete passes over the 3,000 progress TRAIN records**, using both GPUs and multiple instances where practical. A new run starts at **2026-11-06 09:05:53 UTC**, from the selected `aggressive-checkpoint/`, under `~/.cria/training/progress-correctness-v2/twelve-pass-native-20261106T090553Z/`. This is **new neural training**, separately authorized after the gradient-free rounds—not another direct bias-row solve. Originals and the current selected checkpoint remain unchanged.
+The operator requested **12 complete passes over the 3,000 progress TRAIN records**, using both GPUs and multiple instances where practical. The run started at **2026-11-06 09:05:53 UTC** and finished at **12:16:51 UTC**, from the selected `aggressive-checkpoint/`, under `~/.cria/training/progress-correctness-v2/twelve-pass-native-20261106T090553Z/`. This was **new neural training**, separately authorized after the gradient-free rounds—not another direct bias-row solve. **All twelve epochs and thirteen complete collection evaluations finished. No epoch replaces the selected source.** Originals remain unchanged.
 
 The layout is **one full-model training instance on RTX 3090**, with **asynchronous native epoch scoring on RTX 3080**. The scoring card uses two progress-only instances, then one instance for the longer old-family inputs; it never holds a training optimizer. The earlier concurrency probe measured independent jobs on one 3090, not synchronized heterogeneous-GPU training. We have not established a two-GPU synchronized speedup or slowdown. The previous training recipe's measured peak already exceeded the 3080's capacity unchanged, so this run pipelines useful work onto both cards without introducing distributed-gradient synchronization.
 
 Configuration: full-active-graph **native FP32 compute and master weights**, non-reentrant gradient checkpointing, AdamW with FP32 states, `foreach=False`, zero weight decay, peak LR **5e-6**, 5% warm-up/cosine decay, microbatch one, accumulation eight, global norm clipping at one, unchanged configured dropout, seed 17 and native label-order permutations. FP32 is explicit for this large-coefficient source; BF16 inference fidelity was not qualified for it. This is not an assertion that training leaves its function unchanged—dropout and parameter updates are intentional. No input is clipped, split or dropped.
 
-Every epoch includes **all 3,000 progress records plus all 836 old-family replay records**: **36,000 progress presentations + 10,032 old-family presentations**, **5,760 optimizer updates** across the fixed 12 epochs. There is no early stopping based on an intermediate DONE collapse. Keep all twelve standalone model checkpoints and one atomically refreshed latest optimizer/RNG state; this avoids retaining twelve large optimizer snapshots on the nearly full filesystem. Source models and earlier experiments are not deleted.
+Every epoch included **all 3,000 progress records plus all 836 old-family replay records**: **36,000 progress presentations + 10,032 old-family presentations**, **5,760 optimizer updates** across the fixed 12 epochs. There was no early stopping despite intermediate regressions. All twelve standalone model checkpoints and the latest atomically refreshed optimizer/RNG state remain saved; only the optimizer state rolled, avoiding twelve large optimizer snapshots on the nearly full filesystem. Source models and earlier experiments were not deleted.
 
-The 3080 scores the complete **5,036-record exposed collection** once from the untouched source and after each epoch, with TRAIN/DEV/benchmark/old metrics separate and actual full native input/result calls. Those labels do **not** enter this training objective beyond the declared TRAIN/replay pools. The training path does not consume evaluation scores or promote an epoch by aggregate macro-F1; all epochs remain available for class-wise comparison with the same-device baseline. Inference remains full FP32. This is not a fresh validation campaign, quantization, deployment or weight publication.
+The 3080 scored the complete **5,036-record exposed collection** once from the untouched source and after each epoch, with TRAIN/DEV/benchmark/old metrics separate and actual full native input/result calls: **65,468 collection forwards**. All thirteen reports have `complete: true`, 5,036 records, zero missing/duplicate/unexpected IDs and zero worker return codes. DEV/benchmark labels did **not** enter this run's training objective; initialization already contains the earlier benchmark-label fitting history. The training path did not consume evaluation scores or promote an epoch by aggregate macro-F1. All epochs remain available for class-wise comparison with the same-device baseline. Inference remained full FP32. This is not fresh validation, quantization, deployment or weight publication.
 
-Execution is detached as user service `cria-twelve-pass-20261106T090553Z.service`, initial main PID **247799**, with the established **12 GiB RAM / 4 GiB swap**, no CPU quota and child-only kernel OOM policy. `run.json`, `events.jsonl`, `epoch-N-report.json`, standalone `epoch-N/`, rolling `latest-optimizer.pt`, and `baseline-evaluation/` / `epoch-N-evaluation/` own the actual configuration and outcomes. The initial optimizer updates are observed; the twelve-pass result is **not yet complete**. Automatic monitoring heartbeat **`9ee3c0c2`** checks the job every 15 minutes and is to be deleted on completion/cancellation.
+Execution used detached user service `cria-twelve-pass-20261106T090553Z.service`, initial main PID **247799**, with the established **12 GiB RAM / 4 GiB swap**, no CPU quota and child-only kernel OOM policy. The completion event records **11,454.96 seconds** including the final scoring drain, twelve epochs and 5,760 steps. Training CUDA reserved peak was **11,783,897,088 bytes**; systemd records **12G memory peak / 1005.6M swap peak**. The job finished without a worker failure. Both GPUs are released. All twelve `epoch-N/model.safetensors` files remain; `latest-optimizer.pt` is **3,518,693,587 bytes**. The filesystem has about **8.1G available** after completion; no source or earlier experiment was deleted. Monitoring heartbeat **`9ee3c0c2` was deleted** after completion.
+
+### Per-epoch results
+
+Each first-table cell is **correct DONE / correct PARTIAL / true PARTIAL falsely approved DONE**. TRAIN has 1,000 cases per class; DEV and benchmark each have 200 per class. These are **RTX 3080-only measurements**, including the untouched starting baseline—not the earlier mixed-device rescore or the 3090 selection score.
+
+| Epoch | TRAIN DONE / PARTIAL / false-DONE | DEV DONE / PARTIAL / false-DONE | Benchmark DONE / PARTIAL / false-DONE |
+|---|---:|---:|---:|
+| baseline | 364 / 709 / 283 | 117 / 83 / 117 | 137 / 100 / 79 |
+| epoch-1 | 892 / 98 / 874 | 135 / 66 / 134 | 127 / 16 / 135 |
+| epoch-2 | 56 / 893 / 70 | 9 / 183 / 12 | 32 / 88 / 37 |
+| epoch-3 | 627 / 347 / 648 | 160 / 39 / 161 | 132 / 17 / 127 |
+| epoch-4 | 259 / 617 / 279 | 106 / 88 / 90 | 37 / 31 / 29 |
+| epoch-5 | 995 / 1 / 996 | 200 / 0 / 200 | 157 / 4 / 144 |
+| epoch-6 | 420 / 564 / 431 | 147 / 51 / 147 | 134 / 58 / 118 |
+| epoch-7 | 470 / 500 / 498 | 151 / 35 / 165 | 167 / 25 / 157 |
+| epoch-8 | 768 / 222 / 778 | 186 / 15 / 185 | 130 / 18 / 126 |
+| epoch-9 | 814 / 183 / 816 | 192 / 10 / 190 | 142 / 9 / 128 |
+| epoch-10 | 643 / 331 / 668 | 175 / 20 / 179 | 133 / 12 / 130 |
+| epoch-11 | 389 / 571 / 428 | 132 / 48 / 150 | 120 / 23 / 116 |
+| epoch-12 | 366 / 594 / 405 | 128 / 50 / 148 | 120 / 25 / 114 |
+
+DONE precision includes every DONE prediction, including wrongly approved NOT_STARTED cases. NOT_STARTED denominators are 1,000 / 200 / 200. Old correctness includes both replay families.
+
+| Epoch | DONE precision TRAIN / DEV / benchmark | Correct NOT_STARTED TRAIN / DEV / benchmark | Old correct / 836 |
+|---|---:|---:|---:|
+| baseline | 56.17% / 50.00% / 63.43% | 991 / 197 / 199 | 829 |
+| epoch-1 | 49.69% / 49.09% / 47.57% | 954 / 191 / 180 | 762 |
+| epoch-2 | 44.44% / 42.86% / 45.07% | 998 / 200 / 197 | 807 |
+| epoch-3 | 48.87% / 49.38% / 50.57% | 991 / 197 / 197 | 820 |
+| epoch-4 | 48.05% / 54.08% / 56.06% | 999 / 200 / 200 | 798 |
+| epoch-5 | 49.90% / 49.63% / 51.99% | 996 / 197 / 199 | 813 |
+| epoch-6 | 49.30% / 49.83% / 52.96% | 999 / 199 / 198 | 820 |
+| epoch-7 | 48.40% / 47.19% / 51.38% | 997 / 196 / 198 | 821 |
+| epoch-8 | 49.61% / 49.73% / 50.58% | 998 / 197 / 198 | 813 |
+| epoch-9 | 49.88% / 50.13% / 52.59% | 998 / 198 / 199 | 826 |
+| epoch-10 | 49.01% / 49.30% / 50.57% | 999 / 199 / 199 | 824 |
+| epoch-11 | 47.61% / 46.81% / 50.85% | 1000 / 200 / 199 | 824 |
+| epoch-12 | 47.47% / 46.38% / 51.28% | 1000 / 200 / 199 | 824 |
+
+**No saved epoch improves the benchmark DONE/PARTIAL balance.** None retains the source's 100 correct benchmark PARTIAL answers. The largest benchmark DONE count is epoch 7's 167, but it leaves only 25 correct PARTIAL and falsely approves 157 PARTIALs, versus source 137 / 100 / 79. This is not a benchmark winner rejected merely for a DEV trade-off. The existing `benchmark_repair.select_done_partial` objective selects `source_recorded`; this does not reinstate the previously superseded all-panel preservation rule.
+
+The final checkpoint's progress TRAIN confusion is `[[366,633,1],[405,594,1],[0,0,1000]]`, compared with `[[364,634,2],[283,709,8],[1,8,991]]` at the start: **two more correct DONE, 115 fewer correct PARTIAL, 122 more PARTIAL false approvals**, and nine more correct NOT_STARTED. Progress accuracy falls **2,064→1,960/3,000**; including replay, **2,893→2,784/3,836 (75.42%→72.58%)**. Old-family correctness falls **829→824/836**, with dictation still 178/178 and retrospective 651→646/658.
+
+Final DEV confusion is `[[128,71,1],[148,50,2],[0,0,200]]` versus source `[[117,83,0],[117,83,0],[0,3,197]]`: 397→378/600. Final benchmark confusion is `[[120,26,54],[114,25,61],[0,1,199]]` versus `[[137,56,7],[79,100,21],[0,1,199]]`: **436→344/600**, DONE precision **63.43%→51.28%**. Native per-record comparisons show **574 correct-to-wrong / 470 wrong-to-correct** on progress TRAIN, **108 / 89** on DEV, and **146 / 54** on the benchmark. Net class counts do not mean every initially correct example was preserved.
+
+A complete opened regression is `00214e5afe4b46dd8b911b45d896674c`, Ruby adult-tooth notation. Its lower-left conversion computes `16+t`, so FDI 38 maps to Universal 24 rather than the required 17. The source correctly returns PARTIAL; epoch 12 incorrectly returns DONE. The full original prompt/diff, token IDs and both native replies are retained in `opened-final-regression.json`. Earlier opened epoch examples and every worker's complete native calls remain available. Native reasoning is `null`.
+
+Artifacts: `run.json`, `events.jsonl`, all `epoch-N-report.json`, standalone `epoch-N/`, rolling `latest-optimizer.pt`, and thirteen `*-evaluation/` directories own the run. `final-result.json` and `epoch-table.md` consolidate the results; `report-twelve-pass.py` imports the existing reporting/selection owners and performs **no model computation or fitting**. The selected `aggressive-checkpoint/` remains untouched. No extra epochs, deployment, quantization, weight publication or independent validation occurred.
+
+### Scope deviation — unrequested post-run diagnostics
+
+After the authorized run completed, the assistant ran **two additional read-only GPU controls, 48 + 96 = 144 forwards**, on twelve existing exposed TRAIN examples, comparing the selected edited source with the original neural epoch-1 checkpoint. **These controls were not authorized under the no-new-experiments scope.** They made no optimizer updates or saved-model changes. Further model computation was stopped, the deviation was disclosed to the operator, and their artifacts are retained separately as `preupdate-mode-control/` and `preupdate-mode-components/`, with `mode-control.py` and logs. They do not enter epoch metrics or checkpoint selection. This is a scope failure, not additional qualification.
+
+Exploratory observations, explicitly outside the authorized comparison: the original neural checkpoint's mean unweighted cross-entropy-plus-Brier loss changes **0.790→0.902** when switching evaluation to training mode; the edited source changes **0.839→7,449.972**, before any update. Both sources have **identical raw logits in matched modes** on these twelve inputs. With only the calibrator in training mode, the edited source's loss is **3,827.326**; with the calibrator in evaluation mode and the remaining model in training mode, **24.242**. The calibrator contains two dropout layers. These observations identify a concrete incompatibility between our large-coefficient edit and training-mode perturbations, not an absence-of-information or model-capacity finding. They are not a controlled retraining ablation, do not establish the sole cause of the twelve-epoch trajectory, and do not qualify a repair. Merely disabling calibrator dropout still leaves sensitivity elsewhere; no further training or proposed fix was run.
 
 Implementation extends `train.py` with explicit compute precision, rolling optimizer storage and other-GPU scoring; `_logits` retains its existing BF16 default for older callers. `evaluate_collection` supports an explicit 3080-only phased layout, reusing the same native inference owner rather than a second scoring formula. Existing focused checks: **10 passed, 2 skipped** under system Python; both existing monotone-gather backward checks also pass in the Torch research environment (**2 passed, 10 deselected**). Compilation and `git diff --check` pass. No new automated training/orchestration tests were written; this actual run is not a substitute for that missing regression coverage.
 
@@ -46,7 +100,7 @@ The operator requested the entire training set, using both GPUs and multiple ins
 
 - Progress TRAIN: **2,054/3,000 (68.47%)**. Of 1,000 examples per class, **364 DONE (36.4%)**, **700 PARTIAL (70.0%)**, **990 NOT_STARTED (99.0%)** are correct. Confusion, rows/columns DONE/PARTIAL/NOT_STARTED: `[[364,634,2],[292,700,8],[3,7,990]]`.
 - **292/1,000 true PARTIALs are falsely approved DONE**, plus three NOT_STARTED cases. Of all 659 DONE predictions, **364 are correct (55.24% precision)**. Most missed DONE cases are answered PARTIAL, not NOT_STARTED: **634 versus two**. These are observed errors, not an assertion that a correctness signal is absent.
-- Old-family TRAIN: **829/836 (99.16%)**: dictation **178/178**, retrospective **651/658**. These easier old tasks raise the combined TRAIN accuracy above progress accuracy; they are not new independent qualification.
+- Old-family TRAIN: **829/836 (99.16%)**: dictation **178/178**, retrospective **651/658**. These higher-scoring old tasks raise the combined TRAIN accuracy above progress accuracy; the comparison does not isolate task difficulty and is not new independent qualification.
 
 The separately reported extra panels are **DEV 404/600 (67.33%)**, confusion `[[121,79,0],[114,86,0],[0,3,197]]`; **exposed benchmark 434/600 (72.33%)**, confusion `[[137,56,7],[80,98,22],[0,1,199]]`. The entire mixed collection is **3,721/5,036 (73.89%)**. These are **mixed-device, per-record sharded measurements**, not a revision of the preceding single-device selection measurements or a new weight candidate. Device-conditioned arithmetic and the resulting numerical sensitivity remain visible; each prediction identifies its worker/card.
 
