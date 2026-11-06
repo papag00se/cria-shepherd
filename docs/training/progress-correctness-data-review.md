@@ -1,6 +1,8 @@
 # Selected progress TRAIN/DEV data review — 2026-11-06
 
-**Exhaustive two-phase review complete.** All selected 3,000 TRAIN and 600 DEV samples have an individual labels-hidden judgment and a final label/fixture review. All twelve shard summaries exist; there are no missing, extra or duplicate IDs and no original-label mismatches. This is analysis, not a corrected dataset release.
+**Exhaustive label/fixture review complete.** All selected 3,000 TRAIN and 600 DEV samples have an individual labels-hidden judgment and a final label/fixture review. All twelve shard summaries exist; there are no missing, extra or duplicate IDs and no original-label mismatches. This is analysis, not a corrected dataset release.
+
+**Scope correction and later assessment:** this review checked labels, code and fixtures; it did not deliver the requested individual teaching-value assessment. The subsequent [all-TRAIN clarity and meaningful-nuance review](progress-correctness-exemplar-review.md) is complete: 2,206 good exemplars, 731 weak, 19 wrong targets and 44 ambiguous. Its scope is TRAIN only, its question is different, and some earlier contract/context judgments were reconsidered with history preserved. The counts below remain the historical outcomes of this earlier TRAIN/DEV review, not the latest teaching-value counts.
 
 ## Bottom line
 
@@ -54,6 +56,8 @@ Do not add all proposed reviewer errors or ambiguities to the confirmed-error co
 - A dice assignment task relies on `score.rb`, absent from the model-visible diff. The private scorer demonstrates greedy failure (15 versus optimal 31), supporting the author's PARTIAL, but the classifier input lacks the scoring semantics needed to establish that concrete case. Private evidence does not retroactively become model input.
 - Imperatives to actually build/run Go offline ask about process events not recorded by a source diff. The shown implementations can be correct while this separate obligation is unobservable. This is not a demonstrated compilation defect or a reason to relabel them all PARTIAL.
 - A culture-name restriction can be a caller precondition or a required invalid-field rule; it must not be converted into validation by assumption.
+
+The later TRAIN exemplar assessment resolves seventeen process-only Go ambiguities under a consistent source-buildability/run-context interpretation of the diff-only implementation policy; it does not claim that builds were executed. The earlier process-event interpretation and every original disposition remain preserved. A literal C link command lacking `main` remains ambiguous. See the later report for this reconciliation rather than treating the earlier fifty dispositions as immutable gold.
 
 Some reviewer concerns were not sustained: the C width declaration exists in the full seed, migration never promised failure atomicity, extra legal XML escaping is not prohibited, and a fully LF-terminated four-line FASTQ with empty sequence/quality is not rejected by the shown splitter. Those opinions remain in the record rather than being quietly removed.
 
