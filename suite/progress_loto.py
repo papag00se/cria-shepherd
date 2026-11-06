@@ -194,8 +194,8 @@ def _setup_torch(deterministic: bool):
     return torch
 
 
-def _logits(torch, model, inputs, classes):
-    with torch.autocast("cuda", dtype=torch.bfloat16):
+def _logits(torch, model, inputs, classes, *, precision='bf16'):
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=precision=='bf16'):
         return model(**inputs, max_num_classes=classes).logits[0, :classes].float()
 
 

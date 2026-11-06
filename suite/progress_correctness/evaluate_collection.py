@@ -23,6 +23,22 @@ def totals(rows):
     return {'rows':len(rows),'correct':correct,'accuracy':correct/len(rows) if rows else None}
 
 
+def launch_worker(args, name, device, uuid, assigned):
+    ids_file = args.out/f'{name}-input-ids.json'
+    write(ids_file,[r['id'] for r in assigned])
+    command = [sys.executable,'-m','suite.progress_correctness.repair','native',
+        '--source',str(args.source),'--out',str(args.out),'--verify-only',
+        '--candidate','operator-selected-full-collection',
+        '--evaluation-panels','train','dev','old','benchmark',
+        '--input-ids',str(ids_file),'--confirmation-prefix',name+'-',
+        '--shard','0','--shards','1']
+    env = {**os.environ,'CUDA_VISIBLE_DEVICES':uuid,'OPENBLAS_NUM_THREADS':'2','OMP_NUM_THREADS':'2'}
+    with (args.out/f'{name}.log').open('w') as log:
+        process = subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT)
+    return {'name':name,'gpu':device,'visible':uuid,'assigned_rows':len(assigned),
+        'process':process,'pid':process.pid,'directory':name+'-0'}
+
+
 def run(args):
     started = time.monotonic()
     args.out.mkdir(parents=True,exist_ok=False)
@@ -36,33 +52,26 @@ def run(args):
     smaller = progress[:2000]
     larger = progress[2000:]+old
     jobs = []
-    for device,uuid,pool,instances in (
-        ('3090',args.gpu_3090,larger,3),('3080',args.gpu_3080,smaller,2)):
-        for index in range(instances):
-            name = f'{device}-{index}'
-            assigned = pool[index::instances]
-            ids_file = args.out/f'{name}-input-ids.json'
-            write(ids_file,[r['id'] for r in assigned])
-            log = (args.out/f'{name}.log').open('w')
-            command = [sys.executable,'-m','suite.progress_correctness.repair','native',
-                '--source',str(args.source),'--out',str(args.out),'--verify-only',
-                '--candidate','operator-selected-full-collection',
-                '--evaluation-panels','train','dev','old','benchmark',
-                '--input-ids',str(ids_file),'--confirmation-prefix',name+'-',
-                '--shard','0','--shards','1']
-            env = {**os.environ,'CUDA_VISIBLE_DEVICES':uuid,'OPENBLAS_NUM_THREADS':'2','OMP_NUM_THREADS':'2'}
-            process = subprocess.Popen(command,env=env,stdout=log,stderr=subprocess.STDOUT)
-            log.close()
-            jobs.append({'name':name,'gpu':device,'visible':uuid,'assigned_rows':len(assigned),
-                'process':process,'pid':process.pid,'directory':name+'-0'})
-    write(args.out/'run.json',{'checkpoint':str(args.source),'expected_rows':len(rows),
-        'panels':dict(Counter(r['panel'] for r in rows)),
-        'instances':[{k:v for k,v in j.items() if k!='process'} for j in jobs],
-        'full_model':True,'gradient_updates':0,'weight_assignment':False,'checkpoint_saved':False,
-        'fresh_validation':False,'input_truncation':False,'deployed':False,'published_weights':False})
+    waves = [[('3090',args.gpu_3090,larger,3),('3080',args.gpu_3080,smaller,2)]] if args.gpu_3090 else [
+        [('3080',args.gpu_3080,progress,2)],[('3080',args.gpu_3080,old,1)]]
+    for wave_index,wave in enumerate(waves):
+        wave_jobs = []
+        for device,uuid,pool,instances in wave:
+            for index in range(instances):
+                name = f'{device}-'+('old-' if wave_index else '')+str(index)
+                job = launch_worker(args,name,device,uuid,pool[index::instances])
+                jobs.append(job)
+                wave_jobs.append(job)
+        write(args.out/'run.json',{'checkpoint':str(args.source),'expected_rows':len(rows),
+            'panels':dict(Counter(r['panel'] for r in rows)),
+            'instances':[{k:v for k,v in j.items() if k!='process'} for j in jobs],
+            'full_model':True,'gradient_updates':0,'weight_assignment':False,'checkpoint_saved':False,
+            'fresh_validation':False,'input_truncation':False,'deployed':False,'published_weights':False})
+        for job in wave_jobs:
+            job['returncode'] = job['process'].wait()
     records,resources = [],{}
     for job in jobs:
-        code = job['process'].wait()
+        code = job['returncode']
         part = args.out/job['directory']
         resources[job['name']] = {'returncode':code,'assigned_rows':job['assigned_rows']}
         if (part/'completed.json').exists():
@@ -95,7 +104,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,required=True)
     parser.add_argument('--out',type=Path,required=True)
-    parser.add_argument('--gpu-3090',required=True)
+    parser.add_argument('--gpu-3090',help='omit to score on 3080 only: two progress instances, then one old-family instance')
     parser.add_argument('--gpu-3080',required=True)
     run(parser.parse_args())
 
