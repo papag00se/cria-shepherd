@@ -185,7 +185,7 @@ def verdict_tool(key: str, schema: str = "") -> dict:
     flags point opposite ways, so the descriptions the model reads cannot be shared."""
     pre = "observe_" if schema == "observation" else "verdict_"
     flag = _TD["observe_missing_file"] if schema == "observation" else _TD["verdict_satisfied"]
-    return {"type": "function", "function": {
+    tool = {"type": "function", "function": {
         "name": "verdict", "description": _TD["verdict"],
         "parameters": {"type": "object", "properties": {
             key: {"type": "boolean", "description": flag},
@@ -198,6 +198,13 @@ def verdict_tool(key: str, schema: str = "") -> dict:
             "evidence_quote": {"type": "string", "description": _TD[pre + "evidence_quote"]}},
             "required": [key, "reason", "proposed_fix", "diagnosis_kind", "subject",
                          "task_quote", "evidence_source", "evidence_quote"]}}}
+    if schema == "focused-task":
+        parameters = tool["function"]["parameters"]
+        parameters["properties"]["on_track"] = {"type": "boolean", "description": _TD["focused_on_track"]}
+        parameters["properties"]["reason"]["description"] = _TD["focused_reason"]
+        parameters["properties"]["proposed_fix"]["description"] = _TD["focused_fix"]
+        parameters["required"].append("on_track")
+    return tool
 
 
 def tools_for(verdict_key: str = "", schema: str = "") -> list:

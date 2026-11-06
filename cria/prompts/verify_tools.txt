@@ -44,6 +44,9 @@ answer_now_steer = Answer NOW with the short unstick directive spoken to the cod
 # and answers in prose, never sees it.
 verdict = Give your final answer. Call this once, when you have finished looking. Do not call it and another tool in the same turn.
 verdict_satisfied = true only when every requested deliverable is present, verified and working; false otherwise.
+focused_on_track = true when the observed difficulty is resolved or the coder is making productive progress, even if the task is incomplete. This does not authorize completion. False when an intervention is warranted or the evidence is undecidable.
+focused_reason = One task- and evidence-grounded finding about the observed difficulty. Empty if on_track is true or no actionable intervention is supported. Incomplete alone does not mean stalled.
+focused_fix = Only the unmet task requirement, never implementation advice. Empty if on_track is true or no actionable intervention is supported.
 verdict_reason = A short evidence-based verdict: what proves completion, or the exact deliverable that is missing, failing, fake or unproven.
 verdict_fix = When satisfied is false, NAME the missing or failing deliverable in one line — what must become true, not how to make it true. Never a command, a tool call, a library, a filename the task did not name, or an approach; those belong to the coder. Empty string when true.
 verdict_diagnosis_kind = When false, exactly one of missing_file, missing_content, failed_check, unverified_requirement, or other. A whole absent file and missing content inside an existing file are different types. Empty when true.

@@ -324,6 +324,9 @@ class AuthorServices:
     engine: groundedaction.GroundedActions
     seat: groundedaction.AuthorInput
     log: Log
+    # Task-aware drivers bind the shared task-review evidence/judgment/delivery seat.
+    # Standalone action authors retain their distinct author/vet contract.
+    review: Callable[[Trigger], "AuthorResult"] | None = None
 
 
 @dataclass(frozen=True)
@@ -335,6 +338,8 @@ class AuthorResult:
 
 def _author(source: AuthorServices, state: StateAccess, trigger: Trigger, truth: str = "",
             stall_rounds: int = 0, *, actions: groundedaction.Definition) -> AuthorResult:
+    if source.review is not None:
+        return source.review(trigger)
     checks = truth.strip() or source.current_checks().strip()
     superseded = source.superseded_by_coder_run(checks)
     if superseded:
@@ -408,9 +413,13 @@ def settle(source: ReturnedProbeInput, state: StateAccess, *, enabled: bool = Tr
         source.log.emit("loop.stalled_on_track", step=source.step, condition=trigger.value,
                         grounded=bool(truth))
         return Result(Status.ON_TRACK, trigger)
+    if source.author is not None and source.author.review is not None and not authored:
+        # An undecidable/suppressed focused review is silence, not a canned diagnosis.
+        return Result(Status.WITHHELD, trigger)
     if trigger is Trigger.REFUSAL:
         text = authored or _redirect(state.repeat_count, state.repeat_action, truth)
-        steer = Steer(text, "refusal guard", trigger, bool(authored), bool(truth), True)
+        steer = Steer(text, "refusal guard", trigger, bool(authored), bool(truth),
+                      source.author is None or source.author.review is None)
         source.log.emit("loop.redirect", step=source.step, chars=len(text))
     else:
         canned = (prompts.render("spin_ground_truth", spin_path=state.spin_path, truth=truth)
@@ -450,6 +459,8 @@ def progress(source: ProgressInput, state: StateAccess, *, enabled: bool = True,
                        source.stalled_rounds, actions=actions)
     text = authored.text
     source.log.emit("loop.thrash_diagnosed", plan_off=True, stall=source.stalled_rounds)
+    if source.author.review is not None and not text:
+        return Result(authored.status, Trigger.PROGRESS_STALL)
     steer = Steer(text or source.truth, "periodic check-in", Trigger.PROGRESS_STALL,
                   bool(text), True, author_status=authored.status, checks_reattached=authored.reattached)
     state.pending_steer = steer

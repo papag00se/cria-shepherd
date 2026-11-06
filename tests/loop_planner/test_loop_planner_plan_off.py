@@ -108,7 +108,8 @@ def test_periodic_check_is_measured_from_when_it_last_ran(drive, last, start, ev
 @pytest.mark.parametrize("kw,why", [
     (dict(steer="x"), "steer"), (dict(rewritten=True), "history-rewritten"),
     (dict(done_probe=True), "done-probe-in-flight"), (dict(gate_red=True), "gate-red"),
-    (dict(gate_red=True, gate_stall=loop.RED_HOLDS_SATISFACTION_FOR), ""),   # a red that stopped moving stops blocking
+    (dict(steer="x", rewritten=True, gate_red=True), "history-rewritten"),
+    (dict(steer="x", done_probe=True, gate_red=True), "done-probe-in-flight"),
     ({}, "")])
 def test_satisfaction_blocker_names_its_reason(kw, why):
     """shipping-rates-rb x nemotron-elastic 1787344941: 68 skips all 'gate-red', check never ran in 31 minutes."""
@@ -132,12 +133,10 @@ def test_both_drivers_offer_the_periodic_satisfaction_off_ramp_with_their_own_fl
     assert calls == [False, True]
 
 
-class Sess:
-    drive_count, satisfaction_last_drive = 80, -1
-    coder_seconds, coder_timed_turns = 7.5, 1          # 7.5 s/turn: 10 min = 80 turns, 2.5 min = 20
-    nudge_reason = last_gap_named = steer_source = last_gate_flag = workspace_root = ""
-    done_probe = last_gate_red = False
-    gate_plan = plan = None
+class Sess(loop.GuardState):
+    def __init__(self):
+        super().__init__(drive_count=80, coder_seconds=7.5, coder_timed_turns=1)
+        self.plan = None  # 7.5 s/turn: 10 min = 80 turns, 2.5 min = 20
 
 
 def run_satisfaction(monkeypatch, sess, verdict, *, blocked=False):
@@ -146,7 +145,13 @@ def run_satisfaction(monkeypatch, sess, verdict, *, blocked=False):
                                satisfaction_check_min_turns=5, satisfaction_check_max_turns=100))()
     driver, rlog = Loop.__new__(Loop), Rlog()
     driver._ctx = ctx
-    monkeypatch.setattr(loop, "judge_satisfaction", lambda *a, **k: verdict)
+    # This fixture replaces the judge AFTER grounding, not its old bare prose result.
+    from cria import completiondiagnosis as cd
+    satisfied, reason, action = verdict
+    if reason and not getattr(reason, "diagnosis_result", None):
+        reason = loop._diagnosis_nudge(cd.DiagnosisResult(cd.DiagnosisStatus.GROUNDED,
+            str(reason), diagnosis_kind=getattr(reason, "diagnosis_kind", "other"), subject=getattr(reason, "subject", "")))
+    monkeypatch.setattr(loop, "judge_satisfaction", lambda *a, **k: (satisfied, reason, action))
     monkeypatch.setattr(loop, "_satisfaction_evidence", lambda *a, **k: "evidence")
     monkeypatch.setattr(loop, "_gate_notes", lambda *a, **k: "")
     out = driver._periodic_satisfaction(sess, {"messages": [{"role": "user", "content": "t"}]}, rlog,
@@ -154,11 +159,23 @@ def run_satisfaction(monkeypatch, sess, verdict, *, blocked=False):
     return out, rlog
 
 
-def test_a_blocked_check_returns_before_any_model_call(monkeypatch):
+@pytest.mark.parametrize("blocker", ["history-rewritten", "done-probe-in-flight"])
+def test_a_blocked_check_returns_before_any_model_call(monkeypatch, blocker):
     sess = Sess()
-    out, rlog = run_satisfaction(monkeypatch, sess, (False, "zone_for missing", ""), blocked="gate-red")
-    assert out is None and sess.nudge_reason == "" and sess.satisfaction_last_drive == -1
-    assert rlog.events[0][0] == "loop.satisfaction_blocked" and rlog.events[0][1]["why"] == "gate-red"
+    out, rlog = run_satisfaction(monkeypatch, sess, (False, "zone_for missing", ""), blocked=blocker)
+    assert out is None and sess.nudge_reason == "" and sess.task_review_last_drive == -1
+    assert rlog.events[0][0] == "loop.satisfaction_blocked" and rlog.events[0][1]["why"] == blocker
+
+
+@pytest.mark.parametrize("hold", ["steer", "gate-red"])
+def test_a_positive_scheduled_review_cannot_release_over_a_red_gate_or_pending_steering(monkeypatch, hold):
+    sess = Sess()
+    sess.last_gate_red = hold == "gate-red"
+    sess.nudge_reason = "pending ordinary steer" if hold == "steer" else ""
+    out, log = run_satisfaction(monkeypatch, sess, (True, "all task requirements look satisfied", ""), blocked=hold)
+    assert out is None and not sess.done_probe and not sess.pending_done
+    assert sess.task_review_last_drive == 80
+    assert "loop.satisfaction_check" in log.kinds()  # the question ran; only release was withheld
 
 
 def test_a_not_satisfied_verdict_names_the_gap_once_and_never_ends_the_session(monkeypatch):
@@ -209,12 +226,20 @@ def test_a_missing_file_gap_rearms_only_after_a_new_complete_workspace_observati
         assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t2\t200\tImporter.java')}\n{wsview.SURVEY_CLOSE}\n")
         sess.drive_count += 20
         _, rlog = run_satisfaction(monkeypatch, sess, (False, gap, ""))
-        assert "REVIEW.md" in sess.nudge_reason and any(kw.get("rearmed") for k, kw in rlog.events)
-        sess.nudge_reason = ""
+        assert sess.nudge_reason == "" and sess.completion_remediation_subject == "REVIEW.md"
+        assert not any(kw.get("rearmed") for k, kw in rlog.events)  # an open remediation already rides every body
         view.note_a_mutator_ran()                               # no current absence fact
         sess.drive_count += 20
         run_satisfaction(monkeypatch, sess, (False, gap, ""))
-        assert sess.nudge_reason == ""
+        assert sess.nudge_reason == "" and sess.completion_remediation_subject == "REVIEW.md"
+        # Only a current harness fact that the file exists releases the durable remediation.
+        assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t1\t100\tREVIEW.md')}\n{wsview.SURVEY_CLOSE}\n")
+        loop._settle_completion_remediation(sess, [], Rlog())
+        assert sess.completion_remediation_subject == ""
+        assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t3\t300\tImporter.java')}\n{wsview.SURVEY_CLOSE}\n")
+        sess.drive_count += 20
+        run_satisfaction(monkeypatch, sess, (False, gap, ""))
+        assert "REVIEW.md" in sess.nudge_reason and sess.completion_remediation_subject == "REVIEW.md"
     finally:
         wsview.unbind(token)
 

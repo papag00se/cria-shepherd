@@ -1,0 +1,5 @@
+CURRENT WORKSPACE OBSERVATION (unavailable or stale observations do not establish absence):
+{{INVENTORY}}
+
+RESEARCH FACTS RECORDED FROM RETURNED TOOLS:
+{{RESEARCH}}

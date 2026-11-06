@@ -442,14 +442,16 @@ class GapState(RemediationState, Protocol):
 
 class DeliveryTrigger(Enum):
     SCHEDULED_REVIEW = "scheduled-review"
-    DELIVERABLE_OBSERVATION = "deliverable-observation"
+    STUCK_REVIEW = "stuck-review"
 
 
 @dataclass(frozen=True)
 class DeliveryInput:
     diagnosis: DiagnosisResult
     trigger: DeliveryTrigger
-    plan_off: bool = False
+    # Focused guards already carry a typed pending steer with delivery acknowledgement.
+    # Return the shared guidance to that owner rather than queueing a second copy.
+    park: bool = True
 
 
 @dataclass(frozen=True)
@@ -465,9 +467,9 @@ class DeliveryServices:
 def deliver_gap(source: DeliveryInput, state: GapState, services: DeliveryServices) -> RemediationResult:
     """Consume already-grounded provenance, never re-judge or alter review state.
 
-    The scheduled-review path suppresses repeats unless a complete/current survey
-    renewed the same missing-file observation. The independent deliverable observer
-    deliberately replaces ordinary steering, and only for a typed output absence.
+    Scheduled and focused reviews share priority and repeat suppression. A typed
+    required-file absence may replace ordinary steering and arms durable remediation
+    in either driver. An active remediation already carries its evidence each turn.
     """
     gap = _diagnosis_result(source.diagnosis)
     if gap.status is not DiagnosisStatus.GROUNDED:
@@ -477,18 +479,15 @@ def deliver_gap(source: DeliveryInput, state: GapState, services: DeliveryServic
     target = gap.subject if gap.diagnosis_kind == "missing_file" else ""
     renewed = bool(target and target == getattr(state, "last_gap_subject", "") and observed
                    and observed != getattr(state, "last_gap_observation", ""))
-    if source.trigger is DeliveryTrigger.DELIVERABLE_OBSERVATION:
-        if not target:
-            return RemediationResult(RemediationStatus.NOT_APPLICABLE)
-        rearmed = False
-    else:
-        if not named or state.nudge_reason or (named == (getattr(state, "last_gap_named", "") or "").strip() and not renewed):
-            return RemediationResult(RemediationStatus.NOT_APPLICABLE)
-        rearmed = renewed
+    if (not named or state.completion_remediation_subject
+            or (state.nudge_reason and not target)
+            or (named == (getattr(state, "last_gap_named", "") or "").strip() and not renewed)):
+        return RemediationResult(RemediationStatus.NOT_APPLICABLE)
+    rearmed = renewed
     nudge = prompts.render("periodic_missing_file_gap" if target else "periodic_gap",
                            reason=gap.text, subject=gap.subject)
     head = services.event_head(named, 120)
-    if target and (source.trigger is DeliveryTrigger.DELIVERABLE_OBSERVATION or not source.plan_off):
+    if target:
         armed = _remediation_result(services.arm(state, target, nudge),
                                     (RemediationStatus.PENDING, RemediationStatus.NOT_APPLICABLE))
         if armed.status is RemediationStatus.NOT_APPLICABLE:
@@ -496,66 +495,21 @@ def deliver_gap(source: DeliveryInput, state: GapState, services: DeliveryServic
     state.last_gap_named = named
     state.last_gap_subject = target
     state.last_gap_observation = observed if target else ""
-    state.nudge_reason = nudge
-    state.steer_source = ("deliverable observation" if source.trigger is DeliveryTrigger.DELIVERABLE_OBSERVATION
-                          else "completion check (deliverable not found)")
+    if source.park:
+        state.nudge_reason = nudge
+        state.steer_source = "task review (deliverable gap)"
     _emit(services.log, "loop.satisfaction_gap_named", level="info", head=head,
-          subject=target, rearmed=rearmed)
-    return RemediationResult(RemediationStatus.DELIVERED, target, state.nudge_reason)
-
-
-class ObservationState(GapState, Protocol):
-    deliverable_observation_last_drive: int
-
-
-@dataclass(frozen=True)
-class ScheduledObservationInput:
-    task: str
-    drive: int
-    start: int
-    every: int
-    available: bool
-
-
-@dataclass(frozen=True)
-class ObservationRun:
-    diagnosis: DiagnosisResult
-    delivery: RemediationResult
+          subject=target, rearmed=rearmed, trigger=source.trigger.value)
+    return RemediationResult(RemediationStatus.DELIVERED, target, nudge)
 
 
 @dataclass(frozen=True)
 class ObservationLifecycleServices:
     observer: ObservationServices
     delivery: DeliveryServices
-    due: Callable[[int, int, int, int], bool]
     # Both policy hooks belong to the same selected definition as nested services.
     observe: Callable[[ObservationInput, ObservationServices], DiagnosisResult]
     deliver: Callable[[DeliveryInput, GapState, DeliveryServices], RemediationResult]
-
-
-def observe_scheduled(source: ScheduledObservationInput, state: ObservationState,
-                      services: ObservationLifecycleServices) -> ObservationRun:
-    """Independent plan-on observation cadence; does not clear or reinterpret a red gate.
-
-    The pre-inspection stamp records an attempt, including a subsequent arm decline.
-    """
-    silent = ObservationRun(DiagnosisResult(DiagnosisStatus.NOT_APPLICABLE),
-                            RemediationResult(RemediationStatus.NOT_APPLICABLE))
-    if (state.completion_remediation_subject
-            or not services.due(source.drive, source.start, source.every, state.deliverable_observation_last_drive)):
-        return silent
-    if services.delivery.observation() is None:
-        return silent
-    state.deliverable_observation_last_drive = source.drive
-    if not (source.available and source.task.strip()):
-        return silent
-    gap = _diagnosis_result(services.observe(ObservationInput(source.task, source.available), services.observer))
-    if gap.status is not DiagnosisStatus.GROUNDED:
-        return ObservationRun(gap, silent.delivery)
-    delivery = _remediation_result(
-        services.deliver(DeliveryInput(gap, DeliveryTrigger.DELIVERABLE_OBSERVATION), state, services.delivery),
-        (RemediationStatus.DELIVERED, RemediationStatus.NOT_APPLICABLE))
-    return ObservationRun(gap, delivery)
 
 
 def observe_terminal(root_task: Callable[[], str], available: bool,
@@ -587,7 +541,6 @@ class DiagnosisDefinition:
     settle: Callable[[RemediationState, list[dict], RemediationServices], RemediationResult]
     observe: Callable[[ObservationInput, ObservationServices], DiagnosisResult]
     deliver: Callable[[DeliveryInput, GapState, DeliveryServices], RemediationResult]
-    observe_scheduled: Callable[[ScheduledObservationInput, ObservationState, ObservationLifecycleServices], ObservationRun]
     observe_terminal: Callable[[Callable[[], str], bool, ObservationLifecycleServices], DiagnosisResult]
 
 
@@ -597,10 +550,10 @@ DEFINITION = DiagnosisDefinition(
                     "negative_diagnosis_support", "negative_diagnosis_log_above", "missing_output_requirement",
                     "verdict_nudge_action", "completion_remediation_nonwrite", "deliverable_observation",
                     "deliverable_observation_user", "periodic_missing_file_gap", "periodic_gap"),
-           state="task-local last_gap_* repeat memory, transient observer cadence, durable completion_remediation_* delivery correlation; only matching write, or a fresh harness fact that the exact subject is a file (wsview present_now), settles",
+           state="task-local last_gap_* repeat memory, durable completion_remediation_* delivery correlation; only matching write, or a fresh harness fact that the exact subject is a file (wsview present_now), settles",
            services=("workspace-subject", "closed-question", "reducible-evidence-blocks", "verdict-fix-reader",
                      "tool-write-path", "workspace-path-equality", "shell-command-reader", "inspecting-critic",
-                     "workspace-inventory", "workspace-observation-fingerprint", "periodic-check-due", "retained-root-task"),
+                     "workspace-inventory", "workspace-observation-fingerprint", "retained-root-task"),
            hooks=(Reference("cria/loop.py", "_verdict_nudge"), Reference("cria/loop.py", "_confirm_completion"),
                   Reference("cria/loop.py", "observe_task_missing_file"), Reference("cria/loop.py", "Loop._work_item"),
                   Reference("cria/loop.py", "Loop._periodic_satisfaction"),
@@ -609,8 +562,7 @@ DEFINITION = DiagnosisDefinition(
                         Reference("tests/loop_orientation/test_loop_orientation_completion_diagnosis.py", "test_remediation_survives_inspection_gets_one_follow_up_and_ends_only_with_the_correlated_write"),
                         Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_a_missing_deliverable_is_observed_armed_survives_shell_inspection_and_settles_only_on_the_write"),
                         Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_a_scheduled_review_gap_repeats_only_when_a_fresh_survey_renewed_the_same_absence"),
-                        Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_the_scheduled_observer_is_stamped_per_attempt_even_when_it_finds_nothing"),
                         Reference("tests/gates_completion/test_gates_completion_scenario_diagnosis_flow.py", "test_a_found_absence_at_done_is_returned_with_its_event")),
            migrated=False), ground_diagnosis, arm_remediation, acknowledge_delivery, follow_up_nonwrite, settle_remediation,
-    observe_missing_file, deliver_gap, observe_scheduled, observe_terminal)
+    observe_missing_file, deliver_gap, observe_terminal)
 DEFINITIONS = (DEFINITION,)

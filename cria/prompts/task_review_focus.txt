@@ -1,0 +1,6 @@
+This is a focused, non-terminal task review. The observed trigger is:
+{{TRIGGER}}
+
+Determine whether that observation warrants intervention in the work on the ORIGINAL TASK. A detector's count is only a reason to inspect, never proof of wasted work. Compare the ordered actions, their actual results, current file contents, and dated check observations. Inspect the implicated files when needed. Keep the diagnosis focused on the observed difficulty, but consider every original deliverable rather than a generated step alone.
+
+Incomplete does not mean off track. If the coder is making productive changes or has already resolved the observed difficulty, add "on_track": true and leave all diagnosis fields, reason and proposed_fix empty. Otherwise add "on_track": false. Only name an actionable gap when the task and current evidence support it; never infer a stall merely because a requested file has not been written yet. If you cannot establish a warranted intervention, leave the diagnosis empty. Do not prescribe code, commands, libraries or an implementation approach. This review cannot end the task; satisfied retains its ordinary whole-task meaning.

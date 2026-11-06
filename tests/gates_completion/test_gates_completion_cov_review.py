@@ -34,9 +34,11 @@ def test_a_negative_verdict_invalidates_held_success_and_a_later_true_releases_i
     c2, st2 = Calls(), state(); approved = cr.review_task(c2.input(), st2)
     assert approved.approved and st2.latest_satisfaction is True and st2.latest_satisfaction_evidence == 'all green' and st2.pending_done == 'write done'
 
-@pytest.mark.parametrize('trigger,level,value', [(cr.ReviewTrigger.CLAIM, 4, 'reactive-claim'), (cr.ReviewTrigger.PLAN_EXHAUSTED, 4, 'reactive-plan-exhausted'), (cr.ReviewTrigger.SCHEDULED, 5, 'scheduled')])
+@pytest.mark.parametrize('trigger,level,value', [(cr.ReviewTrigger.CLAIM, 4, 'reactive-claim'), (cr.ReviewTrigger.PLAN_EXHAUSTED, 4, 'reactive-plan-exhausted'), (cr.ReviewTrigger.SCHEDULED, 5, 'scheduled'), (cr.ReviewTrigger.STUCK, 5, 'stuck')])
 def test_every_review_event_names_its_trigger_and_scheduled_reviews_belong_to_the_higher_level(trigger, level, value):
     """The event carries the trigger value and status; only the scheduled review is an L5 behaviour."""
     c = Calls(); cr.review_task(c.input(trigger), state())
-    assert trigger.level == level and c.events == [('loop.task_review', {'assist_id': 'whole-task-review', 'family_id': 'F34', 'trigger': value, 'satisfied': True, 'status': 'approved'})]
+    focused = trigger is cr.ReviewTrigger.STUCK
+    assert trigger.level == level and c.events == [('loop.task_review', {'assist_id': 'whole-task-review', 'family_id': 'F34', 'trigger': value,
+        'satisfied': None if focused else True, 'status': 'on-track' if focused else 'approved'})]
     with pytest.raises(ValueError): cr.ReviewInput('claim', 't', None, None, None, None, None)

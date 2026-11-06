@@ -308,14 +308,14 @@ class GuardState:
     # THE DRIVE THE PERIODIC STEP CHECK LAST RAN ON. It used to stamp a `coder_turns` TICK, which the
     # gate zeroes every 15 turns: 12 was the only multiple of 12 that counter could hold, so the memo
     # matched forever and the check fired once per SESSION. Same stamp-what-ran shape as
-    # `satisfaction_last_drive`, on the same monotonic clock.
+    # `task_review_last_drive`, on the same monotonic clock.
     step_checked_drive: int = -1
     drive_count: int = 0  # total drives this session, BOTH drivers — paces the periodic SATISFACTION
     # and STEP checks. Monotonic: nothing resets it, which is the whole reason both read it.
-    # THE DRIVE THE OFF-RAMP CHECK LAST ACTUALLY RAN ON, not the last one it was due on. Stamped
-    # only when the check executes, so a drive where it was skipped is retried at the next
-    # opportunity rather than costing a whole interval. -1 means it has never run.
-    satisfaction_last_drive: int = -1
+    # One non-terminal attempt clock for scheduled coverage AND focused stuck reviews.
+    # A deferred opportunity is not stamped. No verdict is cached: reactive completion
+    # always judges again. -1 means neither kind of review has run.
+    task_review_last_drive: int = -1
     # cria's OWN running measure of the coder's pace: wall seconds spent inside coder requests and how
     # many were timed. Never includes cria's check/judge time (only the coder call is bracketed).
     coder_seconds: float = 0.0
@@ -326,9 +326,6 @@ class GuardState:
     # never a replacement authored by cria.
     latest_satisfaction: bool | None = None
     latest_satisfaction_evidence: object = None
-    # The non-terminal durable-deliverable observer has its own stamp: it must never consume or
-    # alter the completion critic's cadence/state.
-    deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     # A periodic check-in whose result was survey-only gets exactly ONE follow-up replan against the
     # now-surveyed view (guard_periodic_replan_after_survey). Set the instant that replan is issued;
@@ -660,44 +657,21 @@ def session_cadence(sess, ctx) -> tuple[int, int]:
             cadence_turns(ctx.satisfaction_check_every_minutes, spt, lo, hi))
 
 
-# HOW LONG A RED GATE MAY HOLD THE WHOLE-TASK QUESTION BACK. Two gates with the same finding-set is
-# already the signal `gate_stall` exists to carry; a third says the red is not moving and is therefore
-# not evidence that the coder is mid-fix.
-RED_HOLDS_SATISFACTION_FOR = 2
+def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red: bool) -> str:
+    """Name transport deferral before release-only holds.
 
-
-def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red: bool,
-                          gate_stall: int = 0) -> str:
-    """WHICH condition is holding the satisfaction check back this turn — "" when none is.
-
-    Returns a name rather than a bool so the skip event can say why (#12). The order is reporting
-    order only; any one of them is enough to skip, and the first named is the one recorded.
-
-    `gate_red` is the one that LATCHES, and that is what made this worth naming. It is set by
-    `record_gate_state` when a gate RAN and found problems, and only a later gate that runs and comes
-    back genuinely clean clears it — a gate that could not run leaves it exactly as it was. So a
-    session whose checks are red early stays blocked until a clean gate happens to land, and on
-    rust-toml-cli x ternary-bonsai (2026-08-19) none ever did: 34 due drives, all skipped, while the
-    workspace sat at three of four deliverables with a README that was never written.
-
-    A RED THAT IS NOT MOVING IS NOT A REASON TO WAIT. The block reads "checks are failing, so there
-    is obvious work — do not ask the whole-task question yet", and that is true while the coder is
-    closing on the red. It is false when the same finding-set comes back gate after gate, and it is
-    false from turn one on a whole class of tasks: "fix the failing repository tests" starts red BY
-    CONSTRUCTION, so the latch closes on the first gate and never opens.
-
-    Measured on shipping-rates-rb x nemotron-elastic 1787344941: 76 skips, 68 of them `gate-red`,
-    `last_ran` stuck at -1 for the entire session. The one mechanism that asks "have you started
-    items 2 to 5 yet?" never ran, and express pricing and the README were never begun in 31 minutes.
-    `gate_stall` already counts consecutive gates with the SAME finding-set — the fact is in hand, so
-    the hold ends when the red stops moving (#12)."""
-    if steer:
-        return "steer"
+    A history rewrite or unfinished probe delays inspection. Ordinary steering and
+    failing checks only delay release: neither can starve review of other outputs.
+    Transport must win when several conditions coexist, or an ordinary steer would
+    hide an unfinished probe from the scheduler.
+    """
     if rewritten:
         return "history-rewritten"
     if done_probe:
         return "done-probe-in-flight"
-    if gate_red and gate_stall < RED_HOLDS_SATISFACTION_FOR:
+    if steer:
+        return "steer"
+    if gate_red:
         return "gate-red"
     return ""
 
@@ -885,7 +859,7 @@ def thrash_edits_clause(gs: GuardState) -> str:
 
 def _critic_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *,
                     reasoning_off: bool, workspace_root: str = "", verdict_key: str = "",
-                    evidence_blocks: list[str] | None = None) -> tuple[dict | None, str]:
+                    evidence_blocks: list[str] | None = None, verdict_schema: str = "") -> tuple[dict | None, str]:
     """F37: shared critic answer reading; recovery can only say keep working.
 
     Empty ``verdict_key`` preserves the step critic's existing wire declaration;
@@ -906,7 +880,7 @@ def _critic_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, 
         comp = _judge_completion(
             reasoner_chat, role, system, user, rlog, phase=phase,
             workspace_root=workspace_root, allow_inspection=not reasoning_off,
-            verdict_key=verdict_key, seed_files=True, evidence_blocks=evidence_blocks,
+            verdict_key=verdict_key, verdict_schema=verdict_schema, seed_files=True, evidence_blocks=evidence_blocks,
             evidence_intro=None, force_think_off=reasoning_off)
         vtext = _completion_text(comp)
         if role is not None:
@@ -939,11 +913,12 @@ def _critic_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, 
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "",
-                          evidence_blocks: list[str] | None = None) -> dict | None:
+                          evidence_blocks: list[str] | None = None, focused: bool = False) -> dict | None:
     """Whole-task critic adapter: the shared F37 pipeline, with the satisfied key."""
     obj, _ = _critic_verdict(system, user, reasoner_chat, reasoner_role, rlog,
                             reasoning_off=reasoning_off, workspace_root=workspace_root,
-                            verdict_key="satisfied", evidence_blocks=evidence_blocks)
+                            verdict_key="satisfied", evidence_blocks=evidence_blocks,
+                            verdict_schema="focused-task" if focused else "")
     return obj
 
 
@@ -1873,7 +1848,8 @@ class VerdictNudge(str):
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
                        workspace_root: str = "", routes: str = "",
                        gate_findings: str = "", messages: list | None = None,
-                       sess=None, closing_claim: str = "") -> tuple[bool, str, str]:
+                       sess=None, closing_claim: str = "", review_trigger: ReviewTrigger = ReviewTrigger.CLAIM,
+                       focus: str = "") -> tuple[bool, str, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -1909,6 +1885,10 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         evidence = "\n\n".join(part for part in (evidence, prompts.render(
             "satisfaction_closing_claim_statement", claim=closing_claim.strip())) if part)
     system = prompts.load("satisfaction")
+    if review_trigger is ReviewTrigger.STUCK:
+        system += "\n\n" + prompts.render("task_review_focus", trigger=focus)
+    elif review_trigger is ReviewTrigger.SCHEDULED:
+        system += "\n\n" + prompts.load("task_review_scheduled")
     user = prompts.render("satisfaction_user", task=task,
                           evidence=evidence or "(no actions recorded yet)")
     if coder_tools:  # reasoning about the coder's work → give it the coder's tools (see _verify)
@@ -1924,7 +1904,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if coder_tools:
         asked = asked + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
     obj = _satisfaction_verdict(system, asked, reasoner_chat, reasoner_role, rlog, reasoning_off=False,
-                                workspace_root=workspace_root, evidence_blocks=blocks)
+                                workspace_root=workspace_root, evidence_blocks=blocks,
+                                focused=review_trigger is ReviewTrigger.STUCK)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
     if obj is not None:
@@ -1933,6 +1914,10 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
         satisfied = obj["satisfied"]
+        if review_trigger is ReviewTrigger.STUCK and (satisfied or obj.get("on_track") is True):
+            nudge = VerdictNudge()
+            nudge.on_track = True
+            return satisfied, nudge, ""
         if satisfied:
             questions = _ApprovalQuestions(reasoner_chat, reasoner_role, rlog, workspace_root)
             for definition in assistruntime.current().pre_release:
@@ -1991,7 +1976,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # "satisfied" that exists ONLY because the careful pass failed is downgraded and we fail CLOSED. A
     # false "done" over fake work is far worse than a few more work turns.
     retry = _satisfaction_verdict(system, asked, reasoner_chat, reasoner_role, rlog, reasoning_off=True,
-                                  workspace_root=workspace_root, evidence_blocks=blocks)
+                                  workspace_root=workspace_root, evidence_blocks=blocks,
+                                  focused=review_trigger is ReviewTrigger.STUCK)
     if retry is not None:
         retry = _fill_missing_verdict_flag(retry, "satisfied", rlog, "satisfaction-retry")
     if retry is None:
@@ -2031,6 +2017,58 @@ def observe_task_missing_file(task: str, *, workspace_root: str, reasoner_chat, 
         _diagnosis_observation_services(definition, workspace_root, reasoner_chat, reasoner_role, rlog)))
 
 
+def _run_task_review(sess, body, rlog, chat, role, *, trigger, focus="", drive=None):
+    """One evidence/judgment seat for completion, scheduled coverage and focused stalls.
+
+    Only non-terminal attempts share a cadence stamp. A focused answer never
+    supplies completion authority; a later claim always performs a new review.
+    """
+    runtime = assistruntime.current()
+    if not runtime.review_applies(trigger):
+        if trigger in (ReviewTrigger.CLAIM, ReviewTrigger.PLAN_EXHAUSTED):
+            raise ValueError("whole-task-review is required for reactive completion at L4/L5")
+        return ReviewResult(ReviewStatus.NOT_SELECTED)
+    root = getattr(sess, "workspace_root", "") or ""
+    messages = body.get("messages", [])
+    if trigger in (ReviewTrigger.SCHEDULED, ReviewTrigger.STUCK):
+        sess.task_review_last_drive = sess.drive_count if drive is None else drive
+
+    def history():
+        recorded = _satisfaction_evidence(messages, rlog=rlog, chat_fn=chat, role=role,
+            gate_plan=getattr(sess, "gate_plan", None), workspace_root=root,
+            origin=getattr(sess, "handoff_origin", None))
+        current = prompts.render("task_review_evidence", inventory=workspace_inventory(root) if root else "",
+                                 research=session_research_facts(messages, sess))
+        return "\n\n".join(part for part in (recorded, current) if part)
+
+    def judge(task, evidence):
+        return judge_satisfaction(task, evidence, chat, role, rlog,
+            coder_tools=_coder_tools_summary(body.get("tools"), params=False), workspace_root=root,
+            routes=known_routes(messages, sess), gate_findings=getattr(sess, "last_gate_flag", "") or "",
+            messages=messages, sess=sess, review_trigger=trigger, focus=focus,
+            closing_claim=getattr(sess, "closing_claim", "") if trigger is ReviewTrigger.CLAIM else "")
+
+    return runtime.review(ReviewInput(trigger, getattr(getattr(sess, "plan", None), "task", ""),
+        history, lambda: _gate_notes(sess), judge, VerdictNudge, rlog), sess)
+
+
+def _deliver_task_review(sess, reason, rlog, *, focused=False):
+    """Shared provenance, priority, repeat suppression and missing-file remediation."""
+    definition = assistruntime.current().completion_diagnosis
+    if definition is None:
+        return completiondiagnosis.RemediationResult(completiondiagnosis.RemediationStatus.NOT_APPLICABLE)
+    gap = getattr(reason, "diagnosis_result", None)
+    if gap is None:
+        # An untyped/unverified reason must not acquire grounded provenance here.
+        return completiondiagnosis.RemediationResult(completiondiagnosis.RemediationStatus.NOT_APPLICABLE)
+    result = definition.deliver(completiondiagnosis.DeliveryInput(gap,
+        completiondiagnosis.DeliveryTrigger.STUCK_REVIEW if focused else completiondiagnosis.DeliveryTrigger.SCHEDULED_REVIEW,
+        park=not focused), sess,
+        _diagnosis_delivery_services(definition, getattr(sess, "workspace_root", "") or "", rlog))
+    return completiondiagnosis._remediation_result(result,
+        (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
+
+
 def _diagnosis_nudge(result) -> VerdictNudge:
     result = completiondiagnosis._diagnosis_result(result)
     nudge = (VerdictNudge(result.evidence, result.action,
@@ -2067,7 +2105,7 @@ def _diagnosis_delivery_services(definition, root, log):
 def _diagnosis_lifecycle_services(definition, root, chat, role, log):
     return completiondiagnosis.ObservationLifecycleServices(
         observer=_diagnosis_observation_services(definition, root, chat, role, log),
-        delivery=_diagnosis_delivery_services(definition, root, log), due=periodic_check_due,
+        delivery=_diagnosis_delivery_services(definition, root, log),
         observe=definition.observe, deliver=definition.deliver)
 
 
@@ -3623,18 +3661,13 @@ class Loop:
         # `_periodic_satisfaction` has a deliberate contract that `blocked` is its first word, tested
         # against a Loop with no context at all, and a gate in front of that would break it.
         blocker = _satisfaction_blocker(steer=sess.nudge_reason, rewritten=False,
-                                        done_probe=sess.done_probe, gate_red=sess.last_gate_red,
-                                        gate_stall=sess.gate_stall)
+                                        done_probe=sess.done_probe, gate_red=sess.last_gate_red)
         done_now = None if not self._ctx.assists else self._periodic_satisfaction(
             sess, body, rlog, plan_off=False, blocked=blocker)
         if done_now is not None:
             return done_now
-        # A current task-named file absence needs action ownership before the plan cursor is framed.
-        # This is a bounded, non-terminal observer with an independent cadence: it neither clears a
-        # red gate nor waits for the completion critic to be unblocked.  A pending ordinary steer is
-        # deliberately replaced only by a provenance-validated remediation, so the final body has one
-        # owner rather than a cursor plus two competing directives.
-        diagnosis = self._observe_scheduled_deliverable(sess, rlog)
+        # Scheduled and focused task review share diagnosis/remediation ownership.
+        diagnosis = assistruntime.current().completion_diagnosis
         record_coder_preframe(rlog, sess, item, idx, total, driver="plan_on")
         remediation = bool(sess.completion_remediation_subject)
         msgs = []  # current notes are never offered to historical reducers
@@ -4850,11 +4883,13 @@ class Loop:
         never asked for held a finished task open for the rest of its budget (15 step_incomplete
         events on work that was already done).
 
-        `blocked` is the caller's own reason to stay quiet this turn — a steer is pending, the
-        history was just rewritten, a done-probe is already in flight, or the gate is red. Gated on
-        GREEN either way: cria never proposes ending a task while the repo's own checks fail.
+        Scheduled coverage and missing-output observation are one review. Transport
+        and history rewrites defer inspection without consuming its cadence; ordinary
+        steering and red checks hold release only. Focused stuck reviews share this
+        cadence, evidence and grounded delivery. Completion still requires repo checks.
         """
-        if blocked:
+        if blocked and blocked not in ("steer", "gate-red"):
+            # Transport/history blockers defer inspection, not merely its delivery.
             # SAY IT, OR THIS IS UNDIAGNOSABLE. cria recorded nothing when the check did not run, so
             # "it fired once in 86 calls" could not be told from "it was only due once" without
             # reconstructing the drive sequence by hand from the captures afterwards (#12). A lost
@@ -4868,16 +4903,15 @@ class Loop:
             # event (#12) — the caller now says which condition it saw.
             if rlog is not None:
                 rlog.emit("loop.satisfaction_blocked", drive=sess.drive_count,
-                          last_ran=sess.satisfaction_last_drive, plan_off=plan_off,
+                          last_ran=sess.task_review_last_drive, plan_off=plan_off,
                           why=blocked if isinstance(blocked, str) else "unnamed")
             return None            # BEFORE anything else — see test_blocked_short_circuits
         if not assistruntime.current().review_applies(ReviewTrigger.SCHEDULED):
             return None
-        if not periodic_check_due(sess.drive_count, *session_cadence(sess, self._ctx),
-                                      sess.satisfaction_last_drive):
+        if sess.completion_remediation_subject:
+            return None  # its grounded gap is already carried until a real write settles it
+        if not periodic_check_due(sess.drive_count, *session_cadence(sess, self._ctx), sess.task_review_last_drive):
             return None
-        # Stamped BEFORE the work, so a negative still spaces the next judgment.
-        sess.satisfaction_last_drive = sess.drive_count
         review = self._review_task(sess, body, rlog, trigger=ReviewTrigger.SCHEDULED)
         satisfied, reason = review.approved, review.reason
         rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
@@ -4898,32 +4932,19 @@ class Loop:
             #
             # Bounded three ways, because the original objection was right about the noise:
             #   - only when the judge actually said something — an empty reason stays silent (#3);
-            #   - only when nothing else is steering this turn (the caller's `blocked` covers the
-            #     guard steers; this covers a nudge already parked for the next turn);
+            #   - non-file guidance yields to an existing steer; a grounded required-file absence
+            #     can replace it and has one durable remediation owner;
             #   - and NEVER the same reason twice running. feed-pipeline-java × qwen35 produced
             #     TWELVE consecutive not-satisfied verdicts on a workspace already scoring 5 of 5;
             #     twelve identical steers is precisely the clock-noise the old comment defended
             #     against, and this is what keeps that objection satisfied.
             #
-            # It carries the judge's REASON only. `proposed_fix` stays unused on this path: naming
-            # the gap is what was ruled on, choosing the implementation is not (#2's corollary, and
-            # steer_diagnose's own "Do not choose the IMPLEMENTATION").
-            diagnosis = assistruntime.current().completion_diagnosis
-            if diagnosis is not None:
-                # VerdictNudge remains the public text/provenance carrier. Source-produced values
-                # retain their original typed status; legacy callers retain their declared evidence.
-                gap = getattr(reason, "diagnosis_result", None)
-                if gap is None:
-                    gap = completiondiagnosis.DiagnosisResult(
-                        completiondiagnosis.DiagnosisStatus.GROUNDED if reason else completiondiagnosis.DiagnosisStatus.NOT_APPLICABLE,
-                        getattr(reason, "evidence", str(reason or "")), getattr(reason, "action", ""),
-                        getattr(reason, "diagnosis_kind", ""), getattr(reason, "subject", ""))
-                delivered = diagnosis.deliver(completiondiagnosis.DeliveryInput(
-                    gap, completiondiagnosis.DeliveryTrigger.SCHEDULED_REVIEW, plan_off), sess,
-                    _diagnosis_delivery_services(diagnosis, sess.workspace_root or "", rlog))
-                completiondiagnosis._remediation_result(delivered,
-                    (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
-            return None   # never ENDS the session on a not-satisfied verdict — that is unchanged
+            # Delivery accepts only the provenance owner's diagnosis and requirement text,
+            # never the judge's implementation advice or an untyped reason string.
+            _deliver_task_review(sess, reason, rlog)
+            return None   # a negative review never ends the session
+        if blocked or sess.last_gate_red:
+            return None  # inspection may proceed on red/pending steering; task release may not
         probe_tc = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True
@@ -5115,15 +5136,16 @@ class Loop:
         done_now = None if not self._ctx.assists else self._periodic_satisfaction(
             sess, body, rlog, plan_off=True,
             blocked=_satisfaction_blocker(steer=steer or sess.nudge_reason, rewritten=rewritten,
-                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red,
-                                          gate_stall=sess.gate_stall))
+                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red))
         if done_now is not None:
             return done_now
-        # The same non-terminal deliverable observer the plan-on driver runs, on the same session
-        # cadence. It may replace a parked ordinary steer with a provenance-validated remediation.
-        diagnosis = self._observe_scheduled_deliverable(sess, rlog)
-        # Resolve the pending note after the scheduled review can produce one, so a
-        # grounded negative reaches this coder turn rather than waiting for another request.
+        diagnosis = assistruntime.current().completion_diagnosis
+        # A required-output remediation owns this turn; it replaces an ordinary
+        # local guard note as well as the parked slot, never adds a second directive.
+        if sess.completion_remediation_subject:
+            steer = sess.nudge_reason or sess.completion_remediation_reason
+            sess.nudge_reason = ""
+        # Resolve pending notes only after task review, so a new grounded gap is heard now.
         if steer is None and sess.nudge_reason:
             steer, sess.nudge_reason = sess.nudge_reason, ""
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
@@ -5248,31 +5270,8 @@ class Loop:
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
     def _review_task(self, sess: PlanSession, body: dict, rlog, *, trigger: ReviewTrigger) -> ReviewResult:
-        """Bind existing evidence/judge services to the registered state-writing stage.
-
-        The stage owns assembly order and recording. This adapter supplies the same
-        original-task, provenance and read-only services the three callers used before.
-        Tail-pruning deliberately does not enter this authoritative transition.
-        """
-        runtime = assistruntime.current()
-        if trigger is not ReviewTrigger.SCHEDULED and not runtime.review_applies(trigger):
-            raise ValueError("whole-task-review is required for reactive completion at L4/L5")
-        def history():
-            return _satisfaction_evidence(body.get("messages", []), rlog=rlog,
-                chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                gate_plan=getattr(sess, "gate_plan", None),
-                workspace_root=getattr(sess, "workspace_root", "") or "",
-                origin=getattr(sess, "handoff_origin", None))
-        def judge(task, evidence):
-            return judge_satisfaction(task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                rlog, coder_tools=_coder_tools_summary(body.get("tools"), params=False),
-                workspace_root=sess.workspace_root or "",
-                routes=known_routes(body.get("messages", []), sess),
-                gate_findings=getattr(sess, "last_gate_flag", "") or "",
-                messages=body.get("messages", []), sess=sess,
-                closing_claim=(getattr(sess, "closing_claim", "") if trigger is ReviewTrigger.CLAIM else ""))
-        return runtime.review(ReviewInput(trigger, getattr(getattr(sess, "plan", None), "task", ""),
-            history, lambda: _gate_notes(sess), judge, VerdictNudge, rlog), sess)
+        return _run_task_review(sess, body, rlog, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                trigger=trigger)
 
     def _done_critic_reason(self, sess: PlanSession, body: dict, rlog, *, plan_off: bool = True) -> str:
         """The task-level reasoner critic on a GREEN single-item 'done' (parity with the loop's _verify):
@@ -5315,26 +5314,6 @@ class Loop:
             bool(sess.workspace_root and self._ctx.reasoner_chat is not None),
             _diagnosis_lifecycle_services(definition, sess.workspace_root or "",
                 self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)))
-
-    def _observe_scheduled_deliverable(self, sess: PlanSession, rlog):
-        """The ONE scheduled missing-deliverable observer call, shared by the plan-on and plan-off drivers.
-
-        Non-terminal, with its own cadence stamp (session cadence): it neither clears a red gate nor waits
-        for the completion critic. Returns the selected diagnosis definition (None when absent), which
-        the caller also needs to decide whether a delivered remediation must be acknowledged."""
-        diagnosis = assistruntime.current().completion_diagnosis
-        if self._ctx.assists and diagnosis is not None:
-            observed = diagnosis.observe_scheduled(completiondiagnosis.ScheduledObservationInput(
-                sess.plan.task, sess.drive_count, *session_cadence(sess, self._ctx),
-                bool(sess.workspace_root and self._ctx.reasoner_chat is not None)), sess,
-                _diagnosis_lifecycle_services(diagnosis, sess.workspace_root or "",
-                    self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog))
-            if not isinstance(observed, completiondiagnosis.ObservationRun):
-                raise TypeError("scheduled diagnosis hook must return ObservationRun")
-            completiondiagnosis._diagnosis_result(observed.diagnosis)
-            completiondiagnosis._remediation_result(observed.delivery,
-                (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
-        return diagnosis
 
     def _prepare_coder_context(self, sess, body, rlog, *, synthetic, index=None, total=None,
                                item="", notes=(), rewritten=False, session_key=""):
@@ -7275,10 +7254,25 @@ def _stalled_author(gs, body, rlog, chat, role, root=None, *, condition='refusal
         thrash_edits=thrash_edits_clause(gs))
     seat = groundedaction.AuthorInput(chat, role, root, evidence, body, rlog, condition,
                                      outcome, truth_text, step_text)
+    def review(trigger):
+        # Step-driver probe settlement precedes its next _work_item drive increment.
+        drive = gs.drive_count + (0 if getattr(gs, "plan_off", True) else 1)
+        focused = groundedaction.GroundedActions.trigger(trigger.value, evidence)
+        result = _run_task_review(gs, body, rlog, chat, role, trigger=ReviewTrigger.STUCK,
+                                  focus=focused, drive=drive)
+        if result.status is ReviewStatus.ON_TRACK:
+            return stalledwork.AuthorResult(None, stalledwork.Status.ON_TRACK)
+        delivered = (_deliver_task_review(gs, result.reason, rlog, focused=True)
+                     if result.status is ReviewStatus.GUIDANCE else None)
+        if delivered is not None and delivered.status is completiondiagnosis.RemediationStatus.DELIVERED:
+            return stalledwork.AuthorResult(delivered.reason, stalledwork.Status.STEER)
+        return stalledwork.AuthorResult(None, stalledwork.Status.WITHHELD)
+
     return stalledwork.AuthorServices(original, lambda: getattr(gs, 'last_gate_flag', ''),
         lambda text: _checks_superseded_by_coder_run(body.get('messages', []), text),
         lambda text: _checks_already_visible(body, text), _checks_ran_before,
-        _grounded_actions(system1), seat, rlog)
+        _grounded_actions(system1), seat, rlog,
+        review=review if hasattr(gs, "plan") and assistruntime.current().review_applies(ReviewTrigger.STUCK) else None)
 
 
 def _stalled_text(steer):

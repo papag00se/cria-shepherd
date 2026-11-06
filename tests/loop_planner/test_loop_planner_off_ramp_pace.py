@@ -32,9 +32,9 @@ def first_check_turn(monkeypatch, turn_seconds, ctx, *, blocked=()):
         replies.chat({}, Rlog())
         clock.now += 999                       # cria's own check/judge time between coder calls: never counted
         if turn in blocked or not loop.periodic_check_due(sess.drive_count, *loop.session_cadence(sess, ctx),
-                                                          sess.satisfaction_last_drive):
+                                                          sess.task_review_last_drive):
             continue
-        sess.satisfaction_last_drive = sess.drive_count
+        sess.task_review_last_drive = sess.drive_count
         ran.append(turn)
         if len(ran) == 2:
             return ran

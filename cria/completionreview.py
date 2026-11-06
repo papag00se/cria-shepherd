@@ -1,24 +1,26 @@
-"""Authoritative whole-task evaluation; callers still own scheduling and release.
+"""Shared task review; callers retain trigger admission, transport and release.
 
-Tail-pruning and step verification are different questions, not consumers of
-this state-writing policy. Evidence helpers and the response reader are shared
-services; this unit owns their composition, judgment and satisfaction transition.
+Completion and scheduled reviews own the satisfaction transition. Focused stuck
+reviews share the same evidence and diagnosis but never write completion state.
+Tail pruning and optional step advancement remain distinct questions.
 """
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol
 
 from .assistcontract import Policy, Reference
+from .completiondiagnosis import DiagnosisStatus
 
 
 class ReviewTrigger(Enum):
     CLAIM = "reactive-claim"
     PLAN_EXHAUSTED = "reactive-plan-exhausted"
     SCHEDULED = "scheduled"
+    STUCK = "stuck"
 
     @property
     def level(self) -> int:
-        return 5 if self is ReviewTrigger.SCHEDULED else 4
+        return 5 if self in (ReviewTrigger.SCHEDULED, ReviewTrigger.STUCK) else 4
 
 
 class ReviewStatus(Enum):
@@ -26,6 +28,9 @@ class ReviewStatus(Enum):
     REJECTED = "rejected"
     UNKNOWN_TASK = "unknown-task"
     NOT_SELECTED = "not-selected"
+    GUIDANCE = "guidance"
+    ON_TRACK = "on-track"
+    WITHHELD = "withheld"
 
 
 class SatisfactionState(Protocol):
@@ -93,12 +98,22 @@ def review_task(source: ReviewInput, state: SatisfactionState) -> ReviewResult:
     else:
         evidence = source.history() + source.checks()
         satisfied, reason, action = source.judge(source.task, evidence)
-        record_satisfaction(state, satisfied, reason)
-        result = ReviewResult(ReviewStatus.APPROVED if satisfied else ReviewStatus.REJECTED,
-                              reason, action)
+        if source.trigger is ReviewTrigger.STUCK:
+            # A focused diagnosis is never authority to release or reopen a task.
+            # Productive unfinished work is not evidence of a stall.
+            diagnosis = getattr(reason, "diagnosis_result", None)
+            grounded = diagnosis is not None and diagnosis.status is DiagnosisStatus.GROUNDED
+            status = (ReviewStatus.ON_TRACK if satisfied or getattr(reason, "on_track", False)
+                      else ReviewStatus.GUIDANCE if grounded and reason else ReviewStatus.WITHHELD)
+            result = ReviewResult(status, reason, action)
+        else:
+            record_satisfaction(state, satisfied, reason)
+            result = ReviewResult(ReviewStatus.APPROVED if satisfied else ReviewStatus.REJECTED,
+                                  reason, action)
     source.log.emit("loop.task_review", assist_id=DEFINITION.policy.id,
                     family_id=DEFINITION.policy.family_id, trigger=source.trigger.value,
-                    satisfied=result.approved, status=result.status.value)
+                    satisfied=None if source.trigger is ReviewTrigger.STUCK else result.approved,
+                    status=result.status.value)
     return result
 
 
@@ -110,17 +125,22 @@ class ReviewDefinition:
 
 DEFINITION = ReviewDefinition(
     Policy("whole-task-review", "whole-task-evaluation", 4, family_id="F34",
-           prompts=("satisfaction", "satisfaction_user", "satisfaction_user_composed"),
-           state="durable session satisfaction barrier; negative clears held success; no verdict cache",
+           prompts=("satisfaction", "satisfaction_user", "satisfaction_user_composed",
+                    "task_review_evidence", "task_review_scheduled", "task_review_focus"),
+           state="task-local shared non-terminal attempt cadence; completion/scheduled negatives clear held success; focused results never write satisfaction; no verdict cache",
            services=("qualified-action-history", "gate-observations", "task-judge", "original-task"),
            triggers=tuple((trigger.value, trigger.level) for trigger in ReviewTrigger),
            hooks=tuple(Reference("cria/loop.py", "Loop." + name) for name in
-                       ("_review_task", "_reopen_if_unsatisfied", "_periodic_satisfaction", "_done_critic_reason")),
+                       ("_review_task", "_reopen_if_unsatisfied", "_periodic_satisfaction", "_done_critic_reason"))
+                 + (Reference("cria/loop.py", "_run_task_review"), Reference("cria/loop.py", "_stalled_author")),
            regressions=(Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_a_negative_verdict_invalidates_held_success_and_a_later_true_releases_it_without_inventing_any"),
                         Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_a_claim_without_a_known_task_is_unaskable_gathers_nothing_and_clears_held_success"),
                         Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_every_review_event_names_its_trigger_and_scheduled_reviews_belong_to_the_higher_level"),
                         Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge"),
                         Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_repos_checks_pass"),
+                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_one_task_review_finds_a_missing_deliverable_without_waiting_for_checks_or_ordinary_steering"),
+                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_stuck_review_shares_task_evidence_delivery_and_cadence_without_completion_or_s1"),
+                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_plan_on_focused_review_reaches_the_same_coder_turn_without_a_second_scheduled_review"),
                         ),
            migrated=True),
     review_task)
