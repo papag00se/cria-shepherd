@@ -1,8 +1,8 @@
-"""Gradient-free native readout repair using TRAIN and DEV only.
+"""Gradient-free readout fitting and complete native checkpoint evaluation.
 
-Collect full, untruncated native activations in independent GPU shards. Construct
-closed-form readout edits from TRAIN and check the actual nonlinear calibrator.
-No gradient, optimizer, TEST access, quantization, deployment or publication.
+Construct readout edits from TRAIN and check the actual nonlinear calibrator.
+Explicit read-only evaluation panels may also include the exposed benchmark.
+No gradient, optimizer, quantization, deployment or publication.
 """
 from __future__ import annotations
 
@@ -43,6 +43,17 @@ def panels():
     dev = progress_rows(DATA/'dev-600-candidate.jsonl')
     old = json.loads((BASE/'train-cases.json').read_text())
     return [{**r,'panel':panel} for panel,rows in [('train',train),('dev',dev),('old',old)] for r in rows]
+
+
+def evaluation_rows(selected_panels):
+    rows = [r for r in panels() if r['panel'] in selected_panels]
+    if 'benchmark' in selected_panels:
+        from suite.progress_correctness.evaluate_test import benchmark_inputs
+        blind,actual,_groups = benchmark_inputs(DATA/'heldout-author/final')
+        rows.extend({**actual[r['id']],'family':'progress','task':actual[r['id']]['family'],
+            'panel':'benchmark','rendered_state':r['rendered_state'],'policy':r['policy']}
+            for r in blind)
+    return rows
 
 
 def capture(args):
@@ -362,12 +373,20 @@ def native(args):
     write(part/'run.json',{'source':str(args.source),'verify_only':args.verify_only,
         'weight_assignment':not args.verify_only,'checkpoint_saved':not args.verify_only and args.shard==0,
         'device':torch.cuda.get_device_name(0),'visible':os.environ.get('CUDA_VISIBLE_DEVICES'),
-        'loading':_loading,'precision':'native FP32; full inputs; no autocast','gradients':False})
-    selected = [r for r in panels() if r['panel'] in ('dev','old')][args.shard::args.shards]
+        'loading':_loading,'precision':'native FP32; full inputs; no autocast','gradients':False,
+        'evaluation_panels':args.evaluation_panels,'input_ids_file':str(args.input_ids) if args.input_ids else None})
+    selected = evaluation_rows(args.evaluation_panels)
+    if args.input_ids:
+        ids = set(json.loads(args.input_ids.read_text()))
+        selected = [r for r in selected if r['id'] in ids]
+    selected = selected[args.shard::args.shards]
     started = time.monotonic()
     for index,row in enumerate(selected):
         labels = list(labels_for(row['family']))
-        text = pipe.prepare_input(render_state(row['complete_input']),labels,prompt=policy_text(row['family'],hashes))
+        if row['panel']=='benchmark':
+            text = pipe.prepare_input(row['rendered_state'],labels,prompt=row['policy'])
+        else:
+            text = pipe.prepare_input(render_state(row['complete_input']),labels,prompt=policy_text(row['family'],hashes))
         inputs = pipe.tokenizer(text,truncation=False,return_tensors='pt').to('cuda')
         meta = {**row,'labels':labels,'tokens':int(inputs['input_ids'].shape[1])}
         append(part/'calls.jsonl',{'event':'start','candidate':args.candidate,'id':row['id'],
@@ -468,6 +487,8 @@ def main():
     parser.add_argument('--candidate')
     parser.add_argument('--tensor',default=READOUT)
     parser.add_argument('--verify-only',action='store_true',help='native: reload --source without assigning or saving weights')
+    parser.add_argument('--evaluation-panels',nargs='+',choices=['train','dev','old','benchmark'],default=['dev','old'])
+    parser.add_argument('--input-ids',type=Path,help='native: explicit parallel-worker input IDs; never used to derive labels')
     parser.add_argument('--confirmation-prefix',default='native-')
     parser.add_argument('--checkpoint-name',default='checkpoint')
     parser.add_argument('--selection-context',default='TRAIN only; DEV selection; consumed TEST excluded')

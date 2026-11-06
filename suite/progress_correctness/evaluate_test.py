@@ -22,9 +22,8 @@ from suite.progress_correctness.repair import gpu
 from suite.progress_weight_directions import prediction_records
 
 
-def run(checkpoint, test, out, *, capture_activations=False):
-    out.mkdir(parents=True, exist_ok=False)
-    started = time.monotonic()
+def benchmark_inputs(test):
+    """Join author labels to complete blind inputs, validating the actual snapshot diff."""
     blind = [json.loads(s) for s in (test/'review-blind.jsonl').read_text().splitlines()]
     evidence = [json.loads(s) for s in (test/'private-evidence.jsonl').read_text().splitlines()]
     actual = {r['id']: r for r in evidence}
@@ -45,6 +44,14 @@ def run(checkpoint, test, out, *, capture_activations=False):
             raise ValueError('blind input and actual labeled snapshot differ')
         if list(row['options']) != list(LABELS):
             raise ValueError('unexpected native label order')
+    return blind,actual,groups
+
+
+def run(checkpoint, test, out, *, capture_activations=False):
+    out.mkdir(parents=True, exist_ok=False)
+    started = time.monotonic()
+    blind,actual,groups = benchmark_inputs(test)
+    evidence=list(actual.values())
     config = {'checkpoint':str(checkpoint), 'test':str(test), 'inputs':len(blind),
         'label_source':'author-private evidence joined to blind IDs and verified against full snapshot diff',
         'precision':'native FP32 eval; no autocast', 'training':False, 'deployed':False,
