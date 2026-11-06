@@ -8,9 +8,17 @@ The work below uses that authorization. Benchmark errors guide diagnosis and can
 
 Source remains `~/.cria/training/progress-correctness-v2/continuation-20261106T001652Z/epoch-1/`, not the preceding DEV-selected 58-value edit. Prior results/checkpoints are retained.
 
-## Result
+## Operator correction — this is not the requested DONE/PARTIAL repair
 
-Selected candidate: `projector-rank3-ns-protected-all-originals-1`.
+The operator corrected the objective: **improve DONE correctness without sacrificing PARTIAL**, not aggregate accuracy or robustness to unrelated helpers. The projector candidate below recognizes only one more true DONE (99→100) while falsely approving eight more PARTIALs (82→90). **It is set aside, not recommended as a successful repair of the requested decision.** Its checkpoint is retained only as experiment provenance; nothing was deployed.
+
+Re-screening all 39 existing edits finds **no improvement in true-DONE recognition while retaining DONE precision, PARTIAL correct count and PARTIAL false-DONE count**. A few protected readout edits retain 99/200 true DONE, increase PARTIAL correct 66→67 and reduce PARTIAL false-DONE 82→80; that is a tiny precision improvement, not meaningful DONE recovery. There is no successful DONE/PARTIAL result to claim from this round.
+
+Future benchmark selection in `benchmark_repair.py` now uses those DONE/PARTIAL metrics. Macro-F1 and NOT_STARTED improvements cannot compensate for a regression in them. `done-partial-objective-correction.json` records the re-screen of existing outcomes; no new model forward was needed.
+
+## Measured result of the set-aside aggregate-score candidate
+
+Previously selected by aggregate benchmark macro-F1: `projector-rank3-ns-protected-all-originals-1`.
 
 Benchmark score improves from **364/600 (60.67%), macro-F1 0.57640**, to **389/600 (64.83%), macro-F1 0.63694**. It is selected on this exposed benchmark, not qualified on independent fresh data.
 
@@ -85,6 +93,6 @@ Actual execution and artifacts live under:
 - `final-native-benchmark/` records a full evaluation of the actual reloaded saved checkpoint, not merely a cached-head estimate: **389/600, macro-F1 0.63694**, all 600 predictions identical to the cached-head candidate, maximum logit difference `4.100799560546875e-05`. Runtime was 26.60 seconds.
 - `final-result.json` joins the actual native benchmark and DEV/old-family evidence, with exact checkpoint provenance and collateral metrics. `opened-final-changes.json` contains a full genuine correction (complete quadratic Bezier implementation plus unrelated helper, NOT_STARTED → DONE) and a genuine regression (only a Ruby label constant changed, NOT_STARTED → PARTIAL); both were opened end to end.
 
-Runner: `suite/progress_correctness/benchmark_repair.py`; existing `evaluate_test.py` optionally captures activations, and `repair.py native` accepts the chosen tensor/checkpoint output path. No new automated runner tests were added. Compilation and existing focused progress tests are the repository checks; native equivalence and exact saved-tensor comparisons are additional actual experiment evidence, not a full-suite pass.
+Runner: `suite/progress_correctness/benchmark_repair.py`; existing `evaluate_test.py` optionally captures activations, and `repair.py native` accepts the chosen tensor/checkpoint output path. The inference/capture runners still have no automated model-level coverage. After the operator corrected the objective, the existing metrics test was extended to reject the actual aggregate-score trade-off and prefer DONE improvement without PARTIAL sacrifice. It fails under the preceding macro-F1 selection policy and passes with the corrected selector. Focused tests: **10 passed, 2 skipped**. Compilation, native equivalence and exact saved-tensor comparisons are additional evidence, not a full-suite pass.
 
 Fresh evaluation is a later question, not an approval gate invented for this work. The current result's scope is improvement of these exposed examples plus measured collateral effects on DEV and old TRAIN. No deployment or publication is authorized.

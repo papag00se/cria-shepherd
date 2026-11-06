@@ -128,6 +128,22 @@ def test_metrics_and_group_balancing():
     assert sum(w.values()) == pytest.approx(len(rows))
     assert sum(w[str(i)] for i in range(3)) == pytest.approx(w["3"])  # each group carries the same total weight
 
+    # Incident: better aggregate accuracy/NOT_STARTED separation bought eight
+    # additional false approvals of PARTIAL. That must not win D/P selection.
+    from suite.progress_correctness.benchmark_repair import select_done_partial
+    candidates = {
+        "source_recorded": {"confusion": [[99, 51, 50], [82, 66, 52], [0, 1, 199]],
+                            "done_precision": 99/181, "macro_f1": 0.5764},
+        "aggregate-winner": {"confusion": [[100, 82, 18], [90, 92, 18], [0, 3, 197]],
+                             "done_precision": 100/190, "macro_f1": 0.6369},
+        "precision-only": {"confusion": [[99, 51, 50], [80, 67, 53], [0, 1, 199]],
+                           "done_precision": 99/179, "macro_f1": 0.5784},
+    }
+    assert select_done_partial(candidates) == "precision-only"
+    candidates["done-improvement"] = {"confusion": [[110, 40, 50], [80, 68, 52], [0, 1, 199]],
+                                      "done_precision": 110/190, "macro_f1": 0.60}
+    assert select_done_partial(candidates) == "done-improvement"
+
 
 @pytest.mark.parametrize("descending", [False, True])
 def test_monotone_gather_backward_matches_stock_gather(descending):

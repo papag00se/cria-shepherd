@@ -357,6 +357,25 @@ def rank3_directions(args):
         'benchmark_used_for_fitting':False})
 
 
+def select_done_partial(summaries):
+    """Operator objective: improve DONE without sacrificing PARTIAL.
+
+    Both DONE recall and precision must retain the source result. PARTIAL must
+    retain correct answers in aggregate and must not incur more false DONE.
+    NOT_STARTED/overall accuracy cannot buy a regression on either side.
+    """
+    baseline = summaries['source_recorded']
+    base_matrix = baseline['confusion']
+    eligible = []
+    for name,stats in summaries.items():
+        m = stats['confusion']
+        if (m[0][0]>=base_matrix[0][0] and m[1][1]>=base_matrix[1][1]
+                and m[1][0]<=base_matrix[1][0] and stats['done_precision']>=baseline['done_precision']):
+            eligible.append(name)
+    return max(eligible,key=lambda name:(summaries[name]['confusion'][0][0],
+        summaries[name]['done_precision'],summaries[name]['confusion'][1][1]))
+
+
 def run(args):
     import numpy as np
     args.out.mkdir(parents=True,exist_ok=False)
@@ -443,10 +462,14 @@ def run(args):
                 'max_logit_difference':max(abs(a-b) for r in records for a,b in zip(r['logits'],native[r['id']]['logits']))}
         write(args.out/'summary.json',summaries)
         print(json.dumps({'candidate':name,**summaries[name]}),flush=True)
-    # This selection is explicitly exposed-benchmark selection, not a new test.
-    best = max(summaries,key=lambda name:summaries[name]['macro_f1'])
-    write(args.out/'selected.json',{'candidate':best,'criterion':f'highest exposed benchmark macro-F1 among the recorded source and {len(candidates)} supplied TRAIN-constructed edits',
-        'fresh_blind':False,'metrics':summaries[best]})
+    # Exposed-benchmark selection, not a fresh test. Overall macro-F1 must not
+    # select a NOT_STARTED improvement that sacrifices the requested D/P goal.
+    best = select_done_partial(summaries)
+    write(args.out/'selected.json',{'candidate':best,
+        'criterion':'maximize DONE correct, then DONE precision, then PARTIAL correct; retain source DONE recall/precision and PARTIAL correct/false-DONE counts',
+        'fresh_blind':False,'metrics':summaries[best],
+        'done_correct_gain':summaries[best]['confusion'][0][0]-summaries['source_recorded']['confusion'][0][0],
+        'partial_false_done_change':summaries[best]['confusion'][1][0]-summaries['source_recorded']['confusion'][1][0]})
 
 
 if __name__=='__main__':
