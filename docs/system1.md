@@ -51,7 +51,7 @@ The standalone bundle is `expanded-v2-live`. Its graph plus external weights occ
 
 Complete final qualification calls are retained at `~/.cria/calls/system1-serving-v2-20261025/qualification-003.jsonl`. Training remains as described in [methodology](training/methodology.md); serving uses neither training dependencies nor GPU inference.
 
-The two coding cells run with this classifier active (`ornith1.5_9b / Java`, planner OFF; independent terminal judgments 2% and 15% usefulness) are not classifier evidence: neither was an ablation, and the retained run records and call captures live under `~/.cria/suite/_campaigns/system1-v2-ornith-java-20261025` and `~/.cria/calls/`. What they taught is in [the decision log](decision-log.md) ("System1 deployment cells").
+The two coding cells run with this classifier active (`ornith1.5_9b / Java`, planner OFF; independent terminal judgments 2% and 15% usefulness) are not classifier evidence: neither was an ablation, and the retained run records and call captures live under `~/.cria/suite/_campaigns/system1-v2-ornith-java-20261025` and `~/.cria/calls/`. What they taught is in [the decision log](decision-log.md) ("System1 deployment cells"). Those were the initial deployment cells, not the entirety of runtime use: the [November 6 runtime inspection](system1-runtime-evidence.md) finds recorded System 1 judgments in at least 191 distinct stored coding runs, traces actual policy enforcement and a real miss, and distinguishes firing from demonstrated coding benefit.
 
 ## Development runs on the GPU
 
