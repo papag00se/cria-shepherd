@@ -351,9 +351,10 @@ def native(args):
     model,pipe,_loading = load_native(str(args.source),'cuda')
     model.requires_grad_(False)
     weights = np.load(args.out/args.weights)[args.candidate]
-    model.state_dict()[READOUT].copy_(torch.from_numpy(weights.reshape(1,-1)).to('cuda'))
+    tensor = model.state_dict()[args.tensor]
+    tensor.copy_(torch.from_numpy(weights.reshape(tuple(tensor.shape))).to('cuda'))
     hashes = json.loads((BASE/'contract.json').read_text())['policy_sha256']
-    part = args.out/f'native-{args.shard}'
+    part = args.out/f'{args.confirmation_prefix}{args.shard}'
     part.mkdir(exist_ok=False)
     selected = [r for r in panels() if r['panel'] in ('dev','old')][args.shard::args.shards]
     started = time.monotonic()
@@ -372,7 +373,7 @@ def native(args):
         if (index+1)%100==0:
             print(json.dumps({'completed':index+1,'total':len(selected),'seconds':time.monotonic()-started}),flush=True)
     if args.shard==0:
-        checkpoint = args.out/'checkpoint'
+        checkpoint = args.out/args.checkpoint_name
         model.save_pretrained(checkpoint,safe_serialization=True,max_shard_size='4GB')
         pipe.tokenizer.save_pretrained(checkpoint)
         # Verify every persisted tensor against the original, not just the row
@@ -389,11 +390,11 @@ def native(args):
                 count = int((a!=b).sum())
                 if count:
                     changed[key] = count
-        if set(changed)!={READOUT}:
+        if set(changed)!={args.tensor}:
             raise ValueError('unexpected tensor changes when saving edited checkpoint')
         write(checkpoint/'repair.json',{'source':str(args.source),'candidate':args.candidate,
             'weights':args.weights,'changed_values_by_tensor':changed,'gradient_updates':0,
-            'construction':'TRAIN only; DEV selection; consumed TEST excluded',
+            'construction':args.selection_context,
             'deployed':False,'published':False})
     write(part/'completed.json',{'rows':len(selected),'candidate':args.candidate,
         'seconds':time.monotonic()-started,'gpu_peak_reserved_bytes':torch.cuda.max_memory_reserved()})
@@ -434,7 +435,7 @@ def reload_check(args):
     """One DEV forward after reloading the actual saved standalone checkpoint."""
     import numpy as np
     torch = gpu()
-    model,pipe,loading = load_native(str(args.out/'checkpoint'),'cuda')
+    model,pipe,loading = load_native(str(args.out/args.checkpoint_name),'cuda')
     model.requires_grad_(False)
     row = next(r for r in panels() if r['panel']=='dev')
     recorded = {r['id']:r for r in [json.loads(s) for s in (args.out/f'{args.candidate}-predictions.jsonl').read_text().splitlines()]}
@@ -445,9 +446,10 @@ def reload_check(args):
     difference = float(np.max(np.abs(np.array(values)-recorded[row['id']]['logits'])))
     report = {'id':row['id'],'rendered_input':text,'logits':values,'reasoning':None,
         'prediction':labels[int(np.argmax(values))], 'cached_head_prediction':recorded[row['id']]['prediction'],
-        'maximum_logit_difference':difference,'loading':loading,'source':str(args.out/'checkpoint'),
+        'maximum_logit_difference':difference,'loading':loading,'source':str(args.out/args.checkpoint_name),
         'test_accessed':False}
-    write(args.out/'saved-checkpoint-reload.json',report)
+    reload_prefix = '' if args.confirmation_prefix=='native-' else args.confirmation_prefix
+    write(args.out/f'{reload_prefix}saved-checkpoint-reload.json',report)
     print(json.dumps(report),flush=True)
 
 
@@ -457,6 +459,10 @@ def main():
     parser.add_argument('--source',type=Path,default=SOURCE)
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--candidate')
+    parser.add_argument('--tensor',default=READOUT)
+    parser.add_argument('--confirmation-prefix',default='native-')
+    parser.add_argument('--checkpoint-name',default='checkpoint')
+    parser.add_argument('--selection-context',default='TRAIN only; DEV selection; consumed TEST excluded')
     parser.add_argument('--weights',default='candidate-weights.npz')
     parser.add_argument('--stage',default='')
     parser.add_argument('--shard',type=int,default=0)

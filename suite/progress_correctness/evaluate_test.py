@@ -18,7 +18,7 @@ from suite.progress_dataset import LABELS, render_state
 from suite.progress_loto import _setup_torch, f1_report
 
 
-def run(checkpoint, test, out):
+def run(checkpoint, test, out, *, capture_activations=False):
     out.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     blind = [json.loads(s) for s in (test/'review-blind.jsonl').read_text().splitlines()]
@@ -44,7 +44,7 @@ def run(checkpoint, test, out):
     config = {'checkpoint':str(checkpoint), 'test':str(test), 'inputs':len(blind),
         'label_source':'author-private evidence joined to blind IDs and verified against full snapshot diff',
         'precision':'native FP32 eval; no autocast', 'training':False, 'deployed':False,
-        'tuning':False, 'per_input_evaluations':1,
+        'tuning':False, 'per_input_evaluations':1, 'capture_activations':capture_activations,
         'provenance':json.loads((test/'provenance.json').read_text())}
     (out/'evaluation.json').write_text(json.dumps(config,indent=2)+'\n')
     torch = _setup_torch(False)
@@ -52,6 +52,14 @@ def run(checkpoint, test, out):
     model.eval()
     model.requires_grad_(False)
     predictions = []
+    saved, found, hooks = defaultdict(list), {}, []
+    if capture_activations:
+        def classes(_module, inputs):
+            found['classes'] = inputs[0].float().cpu().numpy()[0]
+        def relu(_module, _inputs, output):
+            found['relu2'] = output.float().cpu().numpy()[0]
+        hooks = [model.model.classes_projector.register_forward_pre_hook(classes),
+                 model.model.scorer.mlp[3].register_forward_hook(relu)]
     with torch.inference_mode():
         for i, row in enumerate(blind):
             truth = actual[row['id']]
@@ -59,7 +67,12 @@ def run(checkpoint, test, out):
             inputs = pipe.tokenizer(text, truncation=False, return_tensors='pt').to('cuda')
             append(out/'calls.jsonl', {'event':'start','id':row['id'],'rendered_input':text,
                 'input_ids':inputs['input_ids'].tolist(),'tokens':inputs['input_ids'].shape[1]})
-            values = model(**inputs,max_num_classes=len(LABELS)).logits.float()
+            output = model(**inputs,max_num_classes=len(LABELS),output_text_embeddings=capture_activations)
+            values = output.logits.float()
+            if capture_activations:
+                for key in ('classes','relu2'):
+                    saved[key].append(found[key])
+                saved['text'].append(output.text_embeddings.float().cpu().numpy()[0])
             if tuple(values.shape)!=(1,len(LABELS)) or not torch.isfinite(values).all():
                 raise ValueError('invalid native calibrated logits')
             logits = values[0].cpu().tolist()
@@ -71,6 +84,11 @@ def run(checkpoint, test, out):
             predictions.append(result)
             if (i+1)%100==0:
                 print(json.dumps({'completed':i+1,'total':len(blind),'seconds':time.monotonic()-started}),flush=True)
+    for hook in hooks:
+        hook.remove()
+    if capture_activations:
+        import numpy as np
+        np.savez(out/'activations.npz',**{key:np.stack(value) for key,value in saved.items()})
     report = f1_report([r['label'] for r in predictions],[r['prediction'] for r in predictions])
     report['per_class'] = {}
     matrix = report['confusion']
@@ -98,5 +116,6 @@ if __name__=='__main__':
     parser.add_argument('--checkpoint',type=Path,required=True)
     parser.add_argument('--test',type=Path,required=True)
     parser.add_argument('--out',type=Path,required=True)
+    parser.add_argument('--capture-activations',action='store_true',help='retain pre-readout representations for explicitly authorized benchmark reuse')
     args=parser.parse_args()
-    run(args.checkpoint,args.test,args.out)
+    run(args.checkpoint,args.test,args.out,capture_activations=args.capture_activations)

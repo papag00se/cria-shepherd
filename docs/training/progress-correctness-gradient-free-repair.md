@@ -1,5 +1,7 @@
 # Gradient-free repair of the continued native checkpoint
 
+This page records the original TRAIN/DEV-only experiment. The operator subsequently authorized reusing the previously scored TEST as an exposed benchmark; [that follow-up](progress-correctness-exposed-benchmark.md) supersedes neither these frozen results nor their checkpoint, and records a different projector edit.
+
 ## Outcome
 
 A direct edit to **58 FP32 values in the 128-value final scoring row** improves the selected epoch-1 checkpoint's DEV accuracy from **398/600 (66.33%) to 409/600 (68.17%)** and macro-F1 from **0.66258 to 0.68298**. PARTIAL false-DONE falls from **116/200 (58%) to 88/200 (44%)**, but DONE recall also falls from **118/200 (59%) to 101/200 (50.5%)**. This is a modest DEV improvement with real losses, **not a solved completion detector**.
