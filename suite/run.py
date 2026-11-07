@@ -189,6 +189,24 @@ HARNESSES = {"codex": _codex_argv, "opencode": _opencode_argv, "pi": _pi_argv}
 CHAT_HARNESSES = ("opencode", "pi")
 
 
+def _provision_rust_toolchain(workspace: Path, base: dict, version: str) -> tuple[dict, int, int | None]:
+    """Install an explicitly requested Rust toolchain and clippy into this cell's sandboxed state."""
+    root = _cell_install_root(workspace)
+    rustup_home = root / "rustup"
+    rustup_home.mkdir(parents=True, exist_ok=True)
+    tmp = root / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    env = {**base, "RUSTUP_HOME": str(rustup_home), "TMPDIR": str(tmp)}
+    sandbox = _opencode_argv("", workspace)
+    prefix = sandbox[:sandbox.index(str(OPENCODE_BINARY))]
+    result = subprocess.run([*prefix, "rustup", "toolchain", "install", version, "--profile", "minimal",
+                             "--component", "clippy", "--no-self-update"], env=env)
+    default_exit = None
+    if result.returncode == 0:
+        default_exit = subprocess.run([*prefix, "rustup", "default", version], env=env).returncode
+    return env, result.returncode, default_exit
+
+
 def pi_env(base: dict, workspace: Path, model: str, window: int, adapter_url: str) -> dict:
     """Isolated Pi environment: the agent dir inside the cell's install root, the only provider an
     OpenAI-compatible Chat endpoint at the adapter with `window` as the model's context window. Nothing of the
@@ -595,6 +613,7 @@ def _isolated_installs(ws) -> dict:
         "PYTHONUSERBASE": str(root / "py"),
         # node: `npm install -g` and `npm root -g`.
         "npm_config_prefix": str(root / "npm"),
+        "npm_config_cache": str(root / "npm-cache"),
         # Go module downloads AND sumdb state must fit the same writable roots as installs.
         # Isolating GOBIN alone leaves go get/download using a read-only host ~/go.
         "GOPATH": str(root / "go"),
@@ -806,11 +825,14 @@ class MilestonePacing:
         self.next_milestone += self.interval_seconds
 
 
-def milestone_progress(verdict: dict, minute: int, actual_active_seconds: float | None = None) -> str:
+def milestone_progress(verdict: dict, minute: int, actual_active_seconds: float | None = None, *,
+                       judged_at_active_seconds: float | None = None) -> str:
     """The canonical checkpoint progress report: always an inferred usefulness percentage."""
     control = "protected first 30min" if minute < 30 else f"decision={verdict['decision']}"
     when = (f"{minute}min" if actual_active_seconds is None else
             f"scheduled {minute}min, actual active {actual_active_seconds / 60:.3f}min")
+    if judged_at_active_seconds is not None:
+        when += f", judgment observed at {judged_at_active_seconds / 60:.3f}min"
     return (f"[milestone] {when} usefulness={verdict['usefulness_percent']}% "
             f"{control}: {verdict['reason']}\n"
             f"[material changes] {verdict['material_changes']}")
@@ -863,7 +885,8 @@ def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop):
             waiting.remove(record)
             record.update(verdict, status="judged", judged_at_active_seconds=pacing.active_elapsed(time.time()))
             fresh.append(record)
-            print(milestone_progress(verdict, record["at_active_minutes"], record["actual_active_seconds"]), flush=True)
+            print(milestone_progress(verdict, record["at_active_minutes"], record["actual_active_seconds"],
+                                     judged_at_active_seconds=record["judged_at_active_seconds"]), flush=True)
         if not fresh:
             return None
         deciding = max((r for r in judgments if r["status"] == "judged"), key=lambda r: r["at_active_minutes"])
@@ -1001,6 +1024,7 @@ def _main(scope) -> None:
                     help="experimental planner; off unless explicitly requested")
     ap.add_argument("--note", default="")
     ap.add_argument("--campaign-id")
+    ap.add_argument("--rust-toolchain", help="explicit Rust toolchain to install with clippy inside this cell")
     ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--lane-row", default=None,
                     help="row.json of the lane row (shared cria instance + lane server) this cell runs in")
@@ -1158,6 +1182,10 @@ def _main(scope) -> None:
 
     if suite_scratch is not None:
         env['TMPDIR'] = str(suite_scratch)
+    rust_toolchain_install_exit = rust_toolchain_default_exit = None
+    if args.rust_toolchain:
+        env, rust_toolchain_install_exit, rust_toolchain_default_exit = _provision_rust_toolchain(
+            ws, env, args.rust_toolchain)
     with adapter:
         t0 = time.time()
         with open(log_path, "w") as lf:
@@ -1214,6 +1242,8 @@ def _main(scope) -> None:
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
         "active_seconds": round(pacing.active_elapsed(t1), 1), "terminal": terminal,
+        **({"rust_toolchain": args.rust_toolchain, "rust_toolchain_install_exit": rust_toolchain_install_exit,
+            "rust_toolchain_default_exit": rust_toolchain_default_exit} if args.rust_toolchain else {}),
         "milestone_minutes": args.milestone_minutes,
         "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,

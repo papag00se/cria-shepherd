@@ -187,6 +187,16 @@ def _table(rs: list[dict], hist: dict, tasks, level: int) -> dict:
     return out
 
 
+def standing_cells(rs: list[dict], hist: dict, level: int) -> list[dict]:
+    """Rank actual scorecard cells from lowest standing usefulness, never table averages."""
+    tasks = hist.get("tasks", list(TASKS))
+    table = _table(rs, hist, tasks, level)
+    cells = [{"model": model, "task": task, "level": level, "usefulness_percent": score}
+             for model, (scores, *_metrics) in table.items()
+             for task, score in zip(tasks, scores) if task in TASKS and score is not None]
+    return sorted(cells, key=lambda row: (row["usefulness_percent"], row["model"], row["task"]))
+
+
 def report(rs: list[dict], now: float | None = None) -> str:
     """The standing scorecard: an `Updated:` line, then one table per engagement level L0-L5 (a colored-dot
     cell per task, the cell an inferred usefulness percentage), then the legend. Every table lists its models in
@@ -234,6 +244,13 @@ def write_report(rs: list[dict], now: float | None = None) -> Path:
 
 
 def main() -> int:
+    if "--select-level" in sys.argv:
+        import argparse
+        parser = argparse.ArgumentParser(description="List standing task cells, lowest usefulness first.")
+        parser.add_argument("--select-level", type=int, choices=range(6), required=True)
+        args = parser.parse_args()
+        print(json.dumps(standing_cells(rows(all_rows=True), _historical(), args.select_level), indent=2))
+        return 0
     if "--write" in sys.argv:
         print(f"wrote {write_report(rows(all_rows=True))}")
         return 0

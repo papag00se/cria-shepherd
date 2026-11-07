@@ -105,7 +105,7 @@ def test_every_ecosystem_cache_and_install_root_is_inside_the_cell(tmp_path, mon
     monkeypatch.setenv("CARGO_HOME", "/host/cargo")
     monkeypatch.setenv("JAVA_TOOL_OPTIONS", "-Dkeep=yes -Dmaven.repo.local=/host/m2")
     root, env = _isolated(tmp_path, monkeypatch, ruby=[str(tmp_path / "installs/xdg-data/gem/ruby/3.3.0")])
-    for key in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "GEM_HOME", "PYTHONUSERBASE", "npm_config_prefix",
+    for key in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "GEM_HOME", "PYTHONUSERBASE", "npm_config_prefix", "npm_config_cache",
                 "GOPATH", "GOMODCACHE", "GOCACHE", "GOBIN", "CARGO_HOME", "CARGO_INSTALL_ROOT"):
         assert Path(env[key]).is_relative_to(root), key
     assert not root.is_relative_to(tmp_path / "ws")           # evidence tree stays clean
@@ -116,6 +116,102 @@ def test_every_ecosystem_cache_and_install_root_is_inside_the_cell(tmp_path, mon
     gem_path = env["GEM_PATH"].split(os.pathsep)
     assert gem_path == [str(root / "gem"), str(tmp_path / "installs/xdg-data/gem/ruby/3.3.0"),
                         "/usr/lib/ruby/gems"]      # replaces, not extends: cell + own installs + Ruby's own
+
+
+@pytest.mark.skipif(not shutil.which("npm"), reason="needs npm")
+def test_npm_cache_resolves_and_is_writable_per_cell(tmp_path, monkeypatch):
+    monkeypatch.setenv("npm_config_cache", str(tmp_path / "host-cache"))
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in ("a", "b"):
+        root = tmp_path / name
+        monkeypatch.setattr(run, "_cell_install_root", lambda _ws, root=root: root)
+        env = {**os.environ, **run._isolated_installs(tmp_path / ("ws-" + name)), "HOME": str(home)}
+        cache = subprocess.run(["npm", "config", "get", "cache"], env=env, capture_output=True, text=True, timeout=30, check=True)
+        assert Path(cache.stdout.strip()) == root / "npm-cache"
+        result = subprocess.run(["npm", "cache", "verify"], env=env, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        assert (root / "npm-cache" / "_cacache").is_dir()
+        assert env["npm_config_prefix"] == str(root / "npm")
+    assert not (home / ".npm").exists() and not (tmp_path / "host-cache").exists()
+
+
+@pytest.mark.skipif(not run.BWRAP.is_file(), reason="needs the suite sandbox")
+def test_opt_in_rust_toolchain_provisions_inside_cell_and_preserves_explicit_override(tmp_path, monkeypatch):
+    ws, state, host = (tmp_path / name for name in ("ws", "state", "host"))
+    for directory in (ws, state, host):
+        directory.mkdir()
+    tools = state / "tools"
+    tools.mkdir()
+    rustup = tools / "rustup"
+    rustup.write_text('#!/bin/sh\nif [ "$1" = default ]; then\n'
+                      '  printf "%s" "$2" > "$RUSTUP_HOME/default"\nelse\n'
+                      '  printf "%s\\n" "$@" > "$RUSTUP_HOME/args"\n'
+                      '  printf "%s" "$RUSTUP_TOOLCHAIN" > "$RUSTUP_HOME/override"\n'
+                      '  touch "$CARGO_HOME/provisioned"\nfi\n')
+    rustup.chmod(0o755)
+    (state / "rustup").mkdir()
+    (state / "cargo").mkdir()
+    monkeypatch.setattr(run, "_cell_install_root", lambda _ws: state)
+    env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+           "CARGO_HOME": str(state / "cargo"), "RUSTUP_HOME": str(host), "RUSTUP_TOOLCHAIN": "explicit-project"}
+    actual, status, default_status = run._provision_rust_toolchain(ws, env, "1.99.1")
+    assert status == default_status == 0 and Path(actual["RUSTUP_HOME"]) == state / "rustup"
+    assert actual["RUSTUP_TOOLCHAIN"] == "explicit-project" and env["RUSTUP_HOME"] == str(host)
+    assert (state / "rustup/args").read_text().splitlines() == [
+        "toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy", "--no-self-update"]
+    assert (state / "rustup/override").read_text() == "explicit-project"
+    assert (state / "rustup/default").read_text() == "1.99.1"
+    assert (state / "cargo/provisioned").is_file() and list(host.iterdir()) == []
+    rustup.write_text('#!/bin/sh\nprintf "real installer failure\\n" >&2\nexit 7\n')
+    failed_env, status, default_status = run._provision_rust_toolchain(ws, env, "1.99.1")
+    assert status == 7 and default_status is None and failed_env["RUSTUP_HOME"] == str(state / "rustup")
+    rustup.write_text('#!/bin/sh\n[ "$1" = default ] && exit 9\nexit 0\n')
+    _, status, default_status = run._provision_rust_toolchain(ws, env, "1.99.1")
+    assert status == 0 and default_status == 9
+
+
+@pytest.mark.skipif(not run.BWRAP.is_file() or not Path('/usr/bin/cargo-clippy').is_file()
+                    or not Path('/usr/bin/rustc').is_file() or not (Path.home() / '.cargo/bin/rustup').is_file(),
+                    reason="needs bubblewrap, rustup, and the system Rust toolchain with clippy")
+def test_private_rustup_default_runs_real_rustc_and_clippy(tmp_path, monkeypatch):
+    ws, state = tmp_path / 'ws', tmp_path / 'state'
+    ws.mkdir()
+    state.mkdir()
+    rustc = subprocess.run(['/usr/bin/rustc', '-vV'], text=True, capture_output=True, check=True).stdout
+    version = next(line.split(': ', 1)[1] for line in rustc.splitlines() if line.startswith('release: '))
+    host = next(line.split(': ', 1)[1] for line in rustc.splitlines() if line.startswith('host: '))
+    toolchains = state / 'rustup/toolchains'
+    toolchains.mkdir(parents=True)
+    (toolchains / f'{version}-{host}').symlink_to('/usr')
+    tools = state / 'tools'
+    tools.mkdir()
+    rustup = tools / 'rustup'
+    # Model a successful install of the already available system toolchain without network;
+    # default selection and compiler/clippy execution use the real rustup and binaries.
+    rustup.write_text(f'#!/bin/sh\nif [ "$1" = toolchain ]; then exit 0; fi\nexec {Path.home()}/.cargo/bin/rustup "$@"\n')
+    rustup.chmod(0o755)
+    (ws / 'src').mkdir()
+    (ws / 'Cargo.toml').write_text('[package]\nname="control"\nversion="0.1.0"\nedition="2021"\n')
+    (ws / 'src/main.rs').write_text('fn main() {}\n')
+    monkeypatch.setattr(run, '_cell_install_root', lambda _ws: state)
+    env = {**os.environ, 'CARGO_HOME': str(state / 'cargo'), 'CARGO_NET_OFFLINE': 'true',
+           'PATH': str(tools) + os.pathsep + str(Path.home() / '.cargo/bin') + os.pathsep + os.environ['PATH']}
+    env.pop('RUSTUP_TOOLCHAIN', None)
+    actual, install_status, default_status = run._provision_rust_toolchain(ws, env, version)
+    assert install_status == default_status == 0
+    args = run._opencode_argv('', ws)
+    prefix = args[:args.index(str(run.OPENCODE_BINARY))]
+    for command in (['rustc', '--version'], ['cargo', 'clippy', '-q', '--no-deps']):
+        result = subprocess.run([*prefix, *command], env=actual, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+    (ws / 'rust-toolchain.toml').write_text(f'[toolchain]\nchannel = "{version}"\n')
+    result = subprocess.run([*prefix, 'rustup', 'show', 'active-toolchain'], env=actual,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0 and 'overridden by' in result.stdout and 'rust-toolchain.toml' in result.stdout
+    result = subprocess.run([*prefix, 'rustup', 'show', 'active-toolchain'],
+                            env={**actual, 'RUSTUP_TOOLCHAIN': version}, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0 and 'environment variable RUSTUP_TOOLCHAIN' in result.stdout
 
 
 def test_cell_install_root_is_private_per_workspace_and_outside_the_workspace(tmp_path):

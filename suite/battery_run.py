@@ -88,7 +88,7 @@ def sh(*cmd: str, timeout: int | None = 120) -> int:
 
 
 def cell_timeout() -> int | None:
-    """Judgment-paced suite cells may wait indefinitely without consuming active time."""
+    """No process timeout: asynchronous checkpoint review does not pause the active clock."""
     return None
 
 
@@ -105,6 +105,7 @@ def main() -> int:
     ap.add_argument("--planner", choices=("on", "off"), default="off",
                     help="experimental planner; off unless explicitly requested")
     ap.add_argument("--campaign-id")
+    ap.add_argument("--rust-toolchain", help="explicit Rust toolchain to install with clippy inside this cell")
     ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--lane-row", default=None, help="row.json of a lane row (see suite/lanes.py)")
     ap.add_argument("--harness", default="codex", choices=("codex", "opencode", "pi"),
@@ -136,6 +137,8 @@ def main() -> int:
                    "--milestone-minutes", str(args.milestone_minutes)]
         if args.campaign_id:
             command += ["--campaign-id", args.campaign_id]
+        if args.rust_toolchain:
+            command += ["--rust-toolchain", args.rust_toolchain]
         if args.harness != "codex":
             command += ["--harness", args.harness]
         if args.lane_row:
@@ -172,6 +175,8 @@ def main() -> int:
                    "--level", str(level)]
         if args.campaign_id:
             command += ["--campaign-id", args.campaign_id]
+        if args.rust_toolchain:
+            command += ["--rust-toolchain", args.rust_toolchain]
         return sh(*command, timeout=cell_timeout())
     finally:
         # Restore, always. An interrupted campaign must not leave the live config in the baseline

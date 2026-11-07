@@ -99,11 +99,15 @@ Go's `GOPATH`, `GOMODCACHE` and `GOCACHE` are explicitly cell-local under the sa
 
 JVM tools receive cell-local `maven.repo.local` and `java.io.tmpdir` properties through `JAVA_TOOL_OPTIONS`, retaining unrelated ambient JVM options. Maven otherwise writes to the sandbox's read-only host `~/.m2`; Java/Jansi ignore shell `TMPDIR`. The JVM parses quoted properties directly, including install paths with spaces. Offline real Maven/login-shell regressions exercise absent and poisoned ambient properties without fetching plugins or changing task sources.
 
-Cargo's `CARGO_HOME` and `CARGO_INSTALL_ROOT` also point to the cell's `cargo` directory. Install-root isolation alone does not redirect registry/index/download writes from the host's read-only `~/.cargo`. The toolchain remains the existing runtime; neither host write permissions nor task dependencies are changed. Real Cargo/login-shell tests prove isolated home/config use and an offline compiled binary with absent and poisoned ambient home settings.
+Cargo's `CARGO_HOME` and `CARGO_INSTALL_ROOT` also point to the cell's `cargo` directory. Install-root isolation alone does not redirect registry/index/download writes from the host's read-only `~/.cargo`. The default toolchain remains the existing runtime; neither host write permissions nor task dependencies are changed. Real Cargo/login-shell tests prove isolated home/config use and an offline compiled binary with absent and poisoned ambient home settings.
+
+A cell that deliberately needs clippy can opt in to a matching Rust toolchain, for example `python -m suite.battery_run --restored-fleet --level 5 --model phi4 --task rust-toml-cli --rust-toolchain 1.99.1`. The suite runs rustup inside the existing filesystem sandbox, installs that version and clippy into the cell's private `RUSTUP_HOME`, sets that version as the private rustup default, and records the requested version and both command exit statuses in the result row. This needs network access to the Rust distribution server; its output and failures are not hidden. An unsuccessful install does not block the run or switch it back to the host toolchain. The option does not set `RUSTUP_TOOLCHAIN`, so rustup still honors an explicit environment or project toolchain override; that override needs its own matching clippy. Without the flag the toolchain remains unchanged.
 
 ## Report
 
 The standing report is [`docs/battery-report.md`](../docs/battery-report.md): an `Updated: YYYY-MM-DD HH:MM TZ` line under the title, then six L0–L5 tables (original descriptive titles with table-average percentages) and a legend. Cell and chat labels use official model / language via `report_labels.cell_label`, matching the Ruby/Go/Python/Java/Node/Rust columns. All six tables are ordered together by descending L5 average usefulness; equal means use ascending official model identity and unscored L5 identities come last.
+
+For future lowest-standing-cell selection, `python -m suite.battery_status --select-level 5` prints the same materialized task cells sorted by usefulness (then model and task), without row/column averages. Choose the level explicitly; frozen cells remain until replaced by a valid live result. This does not alter prior selections or scores.
 
 Refresh it from the result rows:
 

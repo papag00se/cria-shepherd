@@ -76,6 +76,20 @@ def test_aliases_share_one_row_and_a_live_judgment_supersedes_only_its_frozen_ce
     assert "93%" in cells[0] and [c.split()[-1] for c in cells[1:]] == ["20%", "30%", "40%", "50%", "60%"]
 
 
+def test_selection_uses_standing_cells_at_requested_level_not_averages():
+    hist = {"tasks": list(T), "frozen": {"phi4": {"5": {"pct": [5, 80, None, None, None, None]},
+                                                        "0": {"pct": [1, None, None, None, None, None]}}}}
+    rows = result("phi4", 5, [90]) + result("phi4", 0, [2]) + [
+        {"model": "phi4", "task": T[0], "level": 5, "usefulness_percent": 0, "aborted": True},
+        {"model": "phi4", "task": T[1], "level": 5, "usefulness_percent": 0, "superseded": True},
+        {"model": "phi4", "task": "average", "level": 5, "usefulness_percent": 0}]
+    assert status.standing_cells(rows, hist, 5) == [
+        {"model": "phi4", "task": T[1], "level": 5, "usefulness_percent": 80},
+        {"model": "phi4", "task": T[0], "level": 5, "usefulness_percent": 90}]
+    assert status.standing_cells(rows, hist, 0) == [
+        {"model": "phi4", "task": T[0], "level": 0, "usefulness_percent": 2}]
+
+
 def test_operator_labels_use_official_model_and_scorecard_language_for_every_task():
     """Chat/progress labels and the table header share one language mapping; task ids stay out of labels."""
     assert {t: cell_label("gemma4-qat", t).split(" / ")[1] for t in T} == dict(zip(

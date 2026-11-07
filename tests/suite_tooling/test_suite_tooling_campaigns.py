@@ -33,6 +33,17 @@ def test_a_cell_without_a_result_runs_and_one_with_a_result_does_not(level):
     assert cmd[cmd.index("--level") + 1] == str(level) and "--restored-fleet" in cmd and "--planner" not in cmd
 
 
+def test_restored_battery_forwards_an_explicit_rust_toolchain(monkeypatch):
+    calls = []
+    monkeypatch.setattr(battery_run.run_guard, "other_suite_runners", lambda **_: [])
+    monkeypatch.setattr(battery_run, "sh", lambda *cmd, **kw: calls.append(cmd) or 0)
+    monkeypatch.setattr(sys, "argv", ["battery_run.py", "--level", "5", "--model", campaign.MODELS[0],
+                                      "--task", campaign.TASKS[-1], "--restored-fleet", "--rust-toolchain", "1.99.1"])
+    assert battery_run.main() == 0
+    cmd = calls[0]
+    assert cmd[cmd.index("--rust-toolchain") + 1] == "1.99.1"
+
+
 def test_restored_battery_delegates_without_touching_the_live_arm_and_legacy_arms_keep_planner_off(monkeypatch, tmp_path):
     """--restored-fleet launches run.py through the campaign path (no set_level); legacy BASE/CRIA arms pass
     `--planner off` (4a089fe7: selecting full engagement must not opt into planning); cells have no timeout cap."""

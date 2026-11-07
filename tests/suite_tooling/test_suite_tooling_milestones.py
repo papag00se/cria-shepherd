@@ -100,6 +100,8 @@ def test_progress_line_always_states_the_inferred_percentage_and_changes():
     assert "usefulness=37%" in run.milestone_progress(v, 45) and "decision=continue" in run.milestone_progress(v, 45)
     early = run.milestone_progress(v, 15)
     assert "protected" in early and v["material_changes"] in early
+    late = run.milestone_progress(v, 30, 1800, judged_at_active_seconds=2100)
+    assert "actual active 30.000min" in late and "judgment observed at 35.000min" in late
 
 
 @pytest.mark.parametrize("raw", [verdict_text(decision="yes"), verdict_text(usefulness=101),
@@ -142,6 +144,8 @@ def test_checkpoint_copy_is_frozen_honest_about_being_approximate_and_carries_co
     prior = [{"at_active_minutes": 15, "checkpoint": "/prior/milestone", "usefulness_percent": 25,
               "decision": "continue", "reason": "substantial partial", "evidence": ["code.py"]}]
     monkeypatch.setattr(milestones.shutil, "copytree", mutate_after_copy)
+    moments = iter([1000.0, 1003.0])
+    monkeypatch.setattr(milestones, "_now", lambda: next(moments))
     cp = milestones.create("r", 30, ws, task, prior, actual_active_seconds=1800.0)
     monkeypatch.undo()
     assert (cp / "workspace/src/a.py").read_text() == "a = 1\n"
@@ -149,7 +153,10 @@ def test_checkpoint_copy_is_frozen_honest_about_being_approximate_and_carries_co
     assert "LIVE workspace" in packet and "approximate" in packet and "unchanged" not in packet
     assert 'F "base.txt"' in packet and "25%" in packet and "/prior/milestone/workspace" in packet
     assert "Deliver the answer." in packet and "private_hint" not in packet
-    assert json.loads((cp / "policy.json").read_text())["snapshot"] == {"mode": "live-unpaused", "errors": []}
+    assert json.loads((cp / "policy.json").read_text())["snapshot"] == {
+        "mode": "live-unpaused", "errors": [], "started_at": 1000.0, "finished_at": 1003.0}
+    assert "1970-01-01T00:16:40+00:00" in packet and "1970-01-01T00:16:43+00:00" in packet
+    assert "later activity" in packet
 
 
 def test_monitor_never_pauses_collects_each_late_judgment_and_ends_on_a_genuine_stop(tmp_path, monkeypatch):
@@ -162,6 +169,7 @@ def test_monitor_never_pauses_collects_each_late_judgment_and_ends_on_a_genuine_
     assert [(j["at_active_minutes"], j["actual_active_seconds"], j["judged_at_active_seconds"]) for j in judgments] == \
         [(15, 900, 1000), (30, 1800, 2000), (45, 2700, 3000)]
     third = (milestones.ROOT / "async.045min/packet.txt").read_text()
+    assert "actual active elapsed 16.667min" in third
     assert str(milestones.ROOT / "async.030min/workspace") in third and "NOT YET JUDGED" not in third
 
 
@@ -171,6 +179,7 @@ def test_unanswered_checkpoints_stay_pending_and_never_gain_an_invented_verdict(
     rig = Rig(tmp_path, monkeypatch, exits_at=2500, answers={15: (1900, "continue", 10)})
     terminal, judgments = rig.monitor()
     assert "Scheduled 15min checkpoint, NOT YET JUDGED" in (milestones.ROOT / "async.030min/packet.txt").read_text()
+    assert "actual active elapsed 15.000min" in (milestones.ROOT / "async.030min/packet.txt").read_text()
     assert terminal == "exited" and rig.events == []
     assert [j["status"] for j in judgments] == ["judged", "pending"] and "decision" not in judgments[1]
     assert milestones.pending() == [milestones.ROOT / "async.030min"]

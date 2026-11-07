@@ -16,6 +16,8 @@ import argparse
 import json
 import shutil
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -43,19 +45,29 @@ def _elapsed_text(seconds: float | None) -> str:
     return 'not recorded' if seconds is None else f'{seconds / 60:.3f}min'
 
 
+def _now() -> float:
+    return time.time()
+
+
+def _utc(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+
+
 def _freeze(ws: Path, snapshot: Path) -> dict:
     """Copy the live workspace without stopping anything. The copy is APPROXIMATE by design.
 
     Files may change before, during and after the copy; the operator accepts that. Nothing is locked,
     retried, fingerprinted or repaired — only copy failures (a file that vanished mid-copy) are disclosed."""
     errors: list[str] = []
+    started_at = _now()
     try:
         storage.copy_workspace(ws, snapshot)
     except shutil.Error as exc:                       # per-file failures; everything else was still copied
         errors = [f"{src}: {why}" for src, _dst, why in exc.args[0]]
     except OSError as exc:                            # a directory vanished under the walk
         errors = [f"{exc.filename or ws}: {exc.strerror or exc}"]
-    return {"mode": "live-unpaused", "errors": errors}
+    return {"mode": "live-unpaused", "errors": errors,
+            "started_at": started_at, "finished_at": _now()}
 
 
 def create(run_id: str, minute: int, ws: Path, task_dir: Path,
@@ -75,12 +87,14 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
     baseline = workspace_evidence.tree(seed) if seed.is_dir() else "(empty baseline)"
     prior = "\n".join(
         f"Scheduled {v['at_active_minutes']}min; actual active elapsed "
-        f"{_elapsed_text(v.get('actual_active_seconds'))} judgment: {v['usefulness_percent']}%, "
+        f"{_elapsed_text(v.get('actual_active_seconds'))}; judgment observed at actual active elapsed "
+        f"{_elapsed_text(v.get('judged_at_active_seconds'))}: {v['usefulness_percent']}%, "
         f"{v['decision']}: {v['reason']}\nMaterial changes: {v.get('material_changes', 'not recorded')}\n"
         f"Prior frozen snapshot (inspect read-only): "
         f"{v['checkpoint']}/workspace" for v in (previous or [])) or "No earlier milestone judgment."
     unjudged = "\n".join(
-        f"Scheduled {v['at_active_minutes']}min checkpoint, NOT YET JUDGED (snapshot to inspect read-only): "
+        f"Scheduled {v['at_active_minutes']}min checkpoint, NOT YET JUDGED; actual active elapsed "
+        f"{_elapsed_text(v.get('actual_active_seconds'))} (snapshot to inspect read-only): "
         f"{v['checkpoint']}/workspace" for v in (pending or []))
     caveat = ("Copied from the LIVE workspace while the coder kept running (nothing was paused), so it is "
               "approximate: files may have changed during or after the copy and the copy may mix states"
@@ -90,7 +104,9 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
         SYSTEM.read_text().strip(),
         "", "=" * 78, "",
         f"CHECKPOINT: {run_id}; scheduled {minute}min slot; actual active elapsed {_elapsed_text(actual_active_seconds)}", "",
-        f"SNAPSHOT CONDITIONS: {caveat}", "",
+        f"SNAPSHOT CONDITIONS: {caveat}",
+        f"SNAPSHOT COPY WINDOW (UTC): {_utc(frozen['started_at'])} to {_utc(frozen['finished_at'])}. "
+        "This snapshot does not establish later activity or whether the run was coding, reviewing, or waiting on a gate.", "",
         f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
         f"BASELINE SEED DIRECTORY (inspect read-only):\n{seed}", "",
         f"BASELINE SEED TREE (before coder started):\n{baseline}", "",
