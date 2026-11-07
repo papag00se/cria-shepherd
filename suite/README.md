@@ -1,5 +1,9 @@
 # Model × task evaluation suite
 
+## Operator storage direction
+
+All local test-run outputs must converge on `~/.cria/test-runs/outputs/`, and all debug call captures on `~/.cria/test-runs/calls/`; call debugging stays enabled on this machine unless the operator asks otherwise. Preserve only files normally committed, not build outputs, package installations or caches. Real users' coding outputs remain in their own workspaces. No additional directories under `~/.cria` without operator consent; configuration, secrets, service logs and multipart state are permitted. System 1 belongs with the cria installation, not in `~/.cria`. **Migration pending:** the current runner and historical paths below still use the old layout; this policy does not claim that they have been migrated.
+
 One matrix cell per `run.py` invocation. A run receives active working time in milestone intervals, preserves its workspace and exact call captures, and appends one metadata row to `results/results.jsonl`.
 
 **Default policy:** planner off; report at 15, 30, 45, … active minutes with total inferred usefulness and material changes since the previous milestone. One snapshot and judgment serves both reporting and continuation—there is no separate 10-minute reporting clock.

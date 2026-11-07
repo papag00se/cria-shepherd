@@ -25,6 +25,6 @@ We fine-tuned a pretrained classifier using real coding-session examples and sep
 
 ## Getting it running
 
-System 1 is enabled by default. On first start, cria automatically installs its trained model into its own model directory; a compatible replacement can be selected with `[system1].bundle_dir`. **Publication of the standard bundle is pending approval**, so automatic delivery will become available after the release asset is published. See the [technical reference](system1.md) for startup behavior.
+System 1 ships with cria and is enabled by default. A compatible replacement can be selected with `[system1].bundle_dir`; disabling it explicitly changes the judgment path. Clones must fetch the Git LFS model data. See the [technical reference](system1.md) for startup behavior.
 
 For the full research record, see [training methodology](training/methodology.md). For the service implementation, see [System 1 serving](system1.md).

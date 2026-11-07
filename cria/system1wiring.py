@@ -56,9 +56,6 @@ def build(cfg, log: Log | None = None, *, capture_dir=None):
     except ImportError as exc:
         raise StartupError(f"[system1] enabled but the runtime dependencies are unavailable: {exc}") from exc
     try:
-        if not bundle.is_dir() and cfg.uses_default_bundle:
-            from .system1download import install
-            install(bundle, lambda staged: System1Runtime(staged, cfg.threads, capture_dir=capture_dir))
         if not bundle.is_dir():
             raise FileNotFoundError(f"[system1] bundle_dir is not a directory: {bundle}")
         runtime = System1Runtime(bundle, cfg.threads, capture_dir=capture_dir)

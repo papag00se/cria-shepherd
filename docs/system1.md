@@ -19,7 +19,7 @@ The original root task, completion gate, workspace survey, harness sandbox, samp
 
 ## Configuration
 
-Install cria normally (`python -m pip install -e .`); the CPU runtime dependencies are included. On first start cria downloads, validates and installs the standard bundle to `~/.cria/models/system1/expanded-v2-live`. Publication of the release asset is pending approval, so that download is not yet available. A compatible replacement can be configured without downloading the standard bundle.
+Install cria normally (`python -m pip install -e .`); the CPU runtime dependencies and System 1 bundle are included. Clones must fetch Git LFS objects before installation. The bundle is installed inside the `cria` Python package; startup fails if it is missing or invalid. A compatible replacement can be configured explicitly.
 
 The production bundle is local and self-contained, not a pointer to an experiment's mutable environment. It includes the actual graph/external weights, native tokenizer and policy/configuration metadata, which cria loads directly from the bundle directory.
 
@@ -30,7 +30,7 @@ bundle_dir = "/absolute/path/to/the/bundle"
 threads = 6
 ```
 
-System 1 is enabled by default and uses `~/.cria/models/system1/expanded-v2-live` unless `bundle_dir` selects a compatible replacement. An explicit `enabled = false` retains the legacy reasoner path for internal comparisons. `threads` must be a positive integer. Unknown keys and wrong types are errors.
+System 1 is enabled by default and uses the bundle in `cria/system1_bundle` unless `bundle_dir` selects a compatible replacement. An explicit `enabled = false` changes these judgments to the legacy reasoner path; disable it only if you understand that consequence. `threads` must be a positive integer. Unknown keys and wrong types are errors.
 
 ## Serving fidelity and observability
 

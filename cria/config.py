@@ -704,15 +704,15 @@ class PlannerConfig:
 SYSTEM1_DEFAULT_THREADS = 6  # intra-op CPU threads the trained artifact was assessed with
 
 
-SYSTEM1_DEFAULT_BUNDLE = "~/.cria/models/system1/expanded-v2-live"
+SYSTEM1_DEFAULT_BUNDLE = str(Path(__file__).resolve().parent / "system1_bundle")
 
 
 @dataclass(frozen=True)
 class System1Config:
     """The trained CPU classifier for briefing and directive judgments.
 
-    The default bundle lives in cria's own model directory; a compatible replacement can be
-    selected explicitly. The service refuses to start if the selected bundle cannot be loaded.
+    The default bundle ships with cria; a compatible replacement can be selected explicitly.
+    The service refuses to start if the selected bundle cannot be loaded.
     """
 
     enabled: bool = True

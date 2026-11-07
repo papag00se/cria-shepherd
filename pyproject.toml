@@ -20,6 +20,7 @@ include = ["cria", "cria.*"]
 
 [tool.setuptools.package-data]
 "cria.prompts" = ["*.txt"]
+"cria" = ["system1_bundle/*", "system1_bundle/policy/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

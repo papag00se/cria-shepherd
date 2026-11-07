@@ -12,7 +12,7 @@ sys.path.insert(0, "/home/jesse/src/cria-shepherd")
 lock = open("/var/tmp/system1_gpu_judge.lock", "w"); fcntl.flock(lock, fcntl.LOCK_EX)
 import onnxruntime as _ort
 _ort.preload_dlls()
-from cria import system1
+from cria import config, system1
 
 class _Sess(_ort.InferenceSession):
     def __init__(self, path, sess_options=None, providers=None, **kw):
@@ -28,7 +28,7 @@ class _Ort:
 _imp = system1._import
 system1._import = lambda n: _Ort() if n == "onnxruntime" else _imp(n)
 family, inp, out = sys.argv[1:4]
-rt = system1.System1Runtime("/home/jesse/.cria/models/system1/expanded-v2-live", 4)
+rt = system1.System1Runtime(config.SYSTEM1_DEFAULT_BUNDLE, 4)
 states = json.load(open(inp))
 labels = []
 for s in states:

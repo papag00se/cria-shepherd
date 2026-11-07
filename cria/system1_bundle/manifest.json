@@ -1,0 +1,175 @@
+{
+  "bundle_id": "gliclass-v4-edge-expanded-v2-int4",
+  "config": "config.json",
+  "families": {
+    "dictation": {
+      "labels": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "policy": "policy/dictation.txt",
+      "state_key": "public_directive"
+    },
+    "retrospective": {
+      "labels": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "policy": "policy/retrospective.txt",
+      "state_key": "candidate_briefing"
+    }
+  },
+  "files": {
+    "config.json": {
+      "bytes": 4405,
+      "sha256": "a664324aeb02d33bc2a0f71db8ee4d53c875ce446d8a84b8054c3291bce899f1"
+    },
+    "model.onnx": {
+      "bytes": 3202383,
+      "sha256": "1c5264a03aee24a79bf6cd1bdc8dd88c8e90f6fa1416959af008f99a4e880fb2"
+    },
+    "model.onnx.data": {
+      "bytes": 236627072,
+      "sha256": "6f706024b8f6d00ac0942da84be01f21c41ad3355cba31300daf3386c476cc7c"
+    },
+    "policy/dictation.txt": {
+      "bytes": 1270,
+      "sha256": "17fa507f8491e2ed8092b3c3b053607ee17e76ef258f1cde42b7c1d943ae7222"
+    },
+    "policy/retrospective.txt": {
+      "bytes": 488,
+      "sha256": "fea534b6605c680a6cdaf0674e57a409f634380c21ec5e79882126ef929866cf"
+    },
+    "tokenizer.json": {
+      "bytes": 8340434,
+      "sha256": "fac3bf8dbdea44df6c0dd296ca81ca058710c69abdb8d69905d5c26d4dccf66a"
+    },
+    "tokenizer_config.json": {
+      "bytes": 536,
+      "sha256": "1121ad33ecd98a97b2db184ce896546feb7555bebddf33a2dfe1b1a1077dc847"
+    }
+  },
+  "graph": "model.onnx",
+  "max_window_tokens": 16384,
+  "provenance": {
+    "frozen_policy_sha256": {
+      "dictation": "17fa507f8491e2ed8092b3c3b053607ee17e76ef258f1cde42b7c1d943ae7222",
+      "retrospective": "fea534b6605c680a6cdaf0674e57a409f634380c21ec5e79882126ef929866cf"
+    },
+    "model": "offline-finetuned/knowledgator-gliclass-v4-edge",
+    "native_weights_sha256": "fb264ea9355debf86adfe063369deec979dcc92236f63c44dc8d66fa3af062c0",
+    "not_human_gold": "assistant-reviewed labels; synthetic challenge plus exposed training replay",
+    "producer_sha256": {
+      "cria/system1.py": "e27fab446a134491dd06e11f2577d81817202c491f9c7bf15a5c2eb3ec69394c",
+      "suite/system1_package.py": "4fb99bc2aa83a6f885a63c17f3f823526c74ce4c8bf8f11e7a498cce479b460a"
+    },
+    "revision": "885af1af8a07edf4ed34df83ca0d995ed8201283",
+    "source_files_sha256": {
+      "assessment-v2-results.jsonl": "b943509c1710ffc224e67d0d4c409baaf1c00f0ee7c6a1640e2665944477df60",
+      "contract.json": "3ee91291ebf7da6a5a5ca73e5239f87fbc24ad1a34ba988d1a59ae8681b6a01b",
+      "download.json": "f8763b34b55e5cbe4c10ebe54a8e79efe32f5fbe1a0566c30c94a7574a1ebb32",
+      "quantized.json": "5bbfa0eda61bd014941d8d2edfeb33b305a686a21ca0a2218123f142cd77a9e3",
+      "recipe.json": "8e58814b42b966551607aab82a619f2c29c2fa80ac6d271cd29650071e0906d8",
+      "trained.json": "7542e5a66ee1172fc48ffe3913546977fad4f0289e794aeebef553efc6027216",
+      "training-source.json": "972d60c009231b9ae8f6c0bb1ce3d71e6202691d88db586943a45600af4edbed"
+    },
+    "source_int4_sha256": {
+      "model.onnx": "1c5264a03aee24a79bf6cd1bdc8dd88c8e90f6fa1416959af008f99a4e880fb2",
+      "model.onnx.data": "6f706024b8f6d00ac0942da84be01f21c41ad3355cba31300daf3386c476cc7c"
+    }
+  },
+  "renderer": "gliclass-uni-encoder-prompt-first/1",
+  "schema": "system1-bundle/1",
+  "selftest": [
+    {
+      "family": "retrospective",
+      "id": "expand2-test-017",
+      "input_ids_sha256": "db3b4ee6a5c83a72ab4a9b74686d7510f2596855a237ea4b7d6042b5d1f1520c",
+      "label": "RETROSPECTIVE",
+      "logits": [
+        5.44373083114624,
+        -6.818110942840576
+      ],
+      "state": {
+        "candidate_briefing": "Two proofs from the Ruby typesetting preview are attached to the session. They use the same measure, size, and compound word. The reference breaks the word at an internal position allowed by the selected language; the current preview moves it intact onto the following line. The chosen language appears in the request capture. Nothing saved shows the line breaker's language setting. The required language-appropriate break is still missing."
+      },
+      "tokens": 194
+    },
+    {
+      "family": "retrospective",
+      "id": "retrospective-915bdfa713cc1dc23eee2b254b4bd8dda1feb2de99fc5aa24f62b94b7d297580",
+      "input_ids_sha256": "69da6937dedb499380993d40a5f2c1e86a8750f1828282946f20b848bc5eb04e",
+      "label": "PLAN",
+      "logits": [
+        -6.387767791748047,
+        5.130695343017578
+      ],
+      "state": {
+        "candidate_briefing": "The task is to turn the Ada Handle resolver into a command-line tool that accepts a handle as an argument, supports `--json` and `--help`, exits non-zero when the handle cannot be resolved, and outputs the resolved address, holder's address, and the number of handles the holder owns. The tool must use Node's built-in `fetch` (replacing the deprecated `request` package), run without a `node_modules` directory, include tests (including an end-to-end test against `api.handle.me`), and have a Dockerfile.\n\nWhat has been built:\n- `lookup.js` \u2014 the CLI tool that uses Node's built-in `fetch` to call `https://api.handle.me/handles/<handle>`, outputs JSON or plain text with `address`, `holder_address`, and `handle_count`.\n- `package.json` \u2014 defines the project, with `jest` added as a devDependency.\n- `test/lookup.test.js` \u2014 tests for basic lookup, JSON output, `--help`, error handling, and an end-to-end request to `api.handle.me`.\n- `Dockerfile` \u2014 Docker image based on `node:20-slim` that runs the tool without Node installed on the host.\n- `README.md` \u2014 brief documentation.\n\nWhat is broken or unfinished:\n- `package-lock.json` exists on disk (218 B) but is not listed in the task's deliverables. The task says the tool must run with no `node_modules` directory present, and `package-lock.json` is an artifact of `npm install` that should not be present.\n- The test file has a bug: the `exits non-zero when handle cannot be resolved` test uses `toThrow()` which does not work with `execSync` (it returns the output string, not throws). The test was rewritten to use `.not.toThrow()` but the assertion logic is still flawed \u2014 `execSync` does not throw on non-zero exit codes, so the test will fail.\n- The `handle_count` JSON key in the output is `handle_count` (matching the task spec), but the test was checking `data.length` which is not the correct key. The test was updated to check `data.handle_count` but the `lookup.js` code was also updated to use `handle_count` as the key.\n- The `node_modules` directory was not removed from the filesystem (it was created by a prior `npm install`). The task requires the tool to run without `node_modules`.\n- The `package-lock.json` file is present and should be removed.\n- The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern.\n\nWhat was last done:\n- The `lookup.js` code was verified to work correctly (outputs `handle_count: 5` for the `goose` handle).\n- The `package.json` was updated to include `jest` as a devDependency.\n- The `test/lookup.test.js` was rewritten with corrected assertions.\n- The `Dockerfile` was verified to exist and be correct.\n- The `node_modules` directory was not removed from the filesystem.\n- The `package-lock.json` file was not removed.\n- The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern.\n\nThe task is not yet complete because:\n1. `node_modules` still exists on disk and must be removed.\n2. `package-lock.json` still exists and should be removed.\n3. The `exits non-zero when handle cannot be resolved` test in `test/lookup.test.js` has a flawed assertion pattern that will fail.\n4. The `handle_count` JSON key in `lookup.js` was changed to `handle_count` but the test was checking `data.length` \u2014 the test was updated to check `data.handle_count` but the `lookup.js` code was also updated to use `handle_count` as the key.\n5. The `package-lock.json` file is present and should be removed.\n6. The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern.\n\nThe task is not yet complete because:\n1. `node_modules` still exists on disk and must be removed.\n2. `package-lock.json` still exists and should be removed.\n3. The `exits non-zero when handle cannot be resolved` test in `test/lookup.test.js` has a flawed assertion pattern that will fail.\n4. The `handle_count` JSON key in `lookup.js` was changed to `handle_count` but the test was checking `data.length` \u2014 the test was updated to check `data.handle_count` but the `lookup.js` code was also updated to use `handle_count` as the key.\n5. The `package-lock.json` file is present and should be removed.\n6. The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern."
+      },
+      "tokens": 1309
+    },
+    {
+      "family": "retrospective",
+      "id": "expand2-test-025",
+      "input_ids_sha256": "bc0c2700de08454df9682b2690a868a23a4d65cc4936a7fa915108b9b905ad06",
+      "label": "RETROSPECTIVE",
+      "logits": [
+        4.7565131187438965,
+        -6.364655494689941
+      ],
+      "state": {
+        "candidate_briefing": "Timeline, Java appointment simulator:\n\n09:00:00 \u2014 generated request R42 accepted; reservation A created.\n09:00:03 \u2014 client records a response timeout.\n09:00:04 \u2014 client repeats R42; reservation B created.\n09:00:05 \u2014 duplicate-reservation check fails.\n\nThis is a fictional scheduling fixture without patient data. The request token was added to transport logging during the session, so both attempts can now be linked. The reservation implementation did not change. The ticket requires a repeated accepted request to leave one reservation. A past proposal to forbid retries in the client was withdrawn; the service still receives repeats. The final fixture contains both reservations."
+      },
+      "tokens": 250
+    },
+    {
+      "family": "dictation",
+      "id": "dictation-009c6e8a26f15b3f1b6ea08202c154eff044e21705cdd272fdc9de6864d2fb19",
+      "input_ids_sha256": "a44086646e85a717efa38a390f792776b967252d865b412c2a265bf6b5462ef3",
+      "label": "DICTATES",
+      "logits": [
+        -6.608051300048828,
+        5.4997053146362305
+      ],
+      "state": {
+        "public_directive": "Ensure Node's built-in fetch is available in your environment. Confirm availability by verifying typeof fetch evaluates to 'function' before making further edits."
+      },
+      "tokens": 335
+    },
+    {
+      "family": "dictation",
+      "id": "expand2-test-057",
+      "input_ids_sha256": "d7589f8a71ceda72090e4a929e8d054012628193b8637512521f2ef5b2c9bc04",
+      "label": "DESCRIBES",
+      "logits": [
+        5.649437427520752,
+        -7.205904483795166
+      ],
+      "state": {
+        "public_directive": "Spectral reduction review for the Node astronomy pipeline.\n\nThe issue concerns two masks applied to generated spectra. One mask comes from the detector calibration and marks permanently unusable pixels. Another is produced for an individual exposure when a transient spike is detected. Both masks are visible in the saved reduction report. The extracted spectrum omits the permanent defects but retains the transient spike, even though that spike is marked in the exposure mask. The reference spectrum has no spike at that position.\n\nThe diagnostic viewer currently displays `bad pixels: detector=4 exposure=1`. The existing source declaration is `const mask = detector.mask;`. Those observations locate the discrepancy between the two reported inputs and the extraction result. They do not show a repaired extraction. Preserve the distinction in the diagnostic viewer: an operator needs to know whether a bad pixel came from the detector map or the exposure analysis.\n\nFor the extracted spectrum, however, either source of badness must prevent that pixel from contributing. A usable result must exclude the transient and permanent defects without dropping neighboring valid samples. Earlier review notes recommended combining the two masks; that recommendation was about the required extraction behavior and did not settle a representation or combination API. The generated exposure also has valid pixels that exist in neither mask, so simply rejecting the entire exposure would fail the acceptance example. Keep the viewer's separate counts meaningful while repairing extraction, and judge success from the extracted values as well as the viewer."
+      },
+      "tokens": 590
+    },
+    {
+      "family": "dictation",
+      "id": "dictation-31c729f6fcab80badc2c7c771d74edc5b2644d8c9471d45b76deef2de485bbb3",
+      "input_ids_sha256": "908599378c90b2186269481d4b1da6c2a956003464918523886404894999bfec",
+      "label": "DICTATES",
+      "logits": [
+        -6.93521785736084,
+        5.5232367515563965
+      ],
+      "state": {
+        "public_directive": "Fix the test to call lookup.js with --json alice and assert that the output\u2019s resolved_address, holder_address, and handle_count match the JSON returned by the external API."
+      },
+      "tokens": 346
+    }
+  ],
+  "tokenizer": "tokenizer.json",
+  "tokenizer_config": "tokenizer_config.json",
+  "weight_budget_bytes": 250000000,
+  "weights": [
+    "model.onnx.data"
+  ]
+}

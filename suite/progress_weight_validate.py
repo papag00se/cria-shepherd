@@ -9,13 +9,14 @@ from collections import defaultdict
 import json
 from pathlib import Path
 
+from cria.config import SYSTEM1_DEFAULT_BUNDLE
 from suite.progress_weight_directions import READOUT, prediction_records, panel_report
 from suite.progress_weight_study import AFTER, DEV, OUT, batches, jsonl, prepare_rows, recorded_forward, setup_gpu, write_json
 
 CANDIDATE = "readout-protected"
 FRESH_TEST_PURPOSE = "ONE final fresh TEST evaluation: frozen native candidate"
 OLD_RESULTS = Path("~/.cria/training/gliclass-v4-edge-expanded-v2/assessment/v2/results.jsonl").expanduser()
-SELFTEST = Path("~/.cria/models/system1/expanded-v2-live/selftest.json").expanduser()
+SELFTEST = Path(SYSTEM1_DEFAULT_BUNDLE) / "selftest.json"
 
 
 def freeze(args):

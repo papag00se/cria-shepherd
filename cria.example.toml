@@ -70,7 +70,7 @@ max_gather_rounds = 12             # cap the planner investigate loop
 # Override bundle_dir to use a compatible replacement; missing or invalid bundles prevent startup.
 [system1]
 enabled = true
-# bundle_dir = "~/.cria/models/system1/expanded-v2-live"
+# bundle_dir = "/absolute/path/to/a/compatible/bundle" # default: bundled with cria
 # threads = 6  # CPU intra-op threads (positive integer)
 
 [engagement]

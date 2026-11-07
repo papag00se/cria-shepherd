@@ -38,7 +38,7 @@ L0 retains proxy/wire and transport-recovery contracts without higher-level codi
 
 ## Getting started
 
-You need Python 3.11+, an OpenAI-compatible model server and a coding harness. The standard installation includes the CPU runtime and automatically obtains System 1 on first start. **The model release is pending approval**, so automatic delivery is not yet available. See the [System 1 guide](docs/system1-guide.md).
+You need Python 3.11+, Git LFS, an OpenAI-compatible model server and a coding harness. System 1 and its CPU runtime are part of the standard installation. Fetch Git LFS objects when cloning; the service refuses to start if the required bundle is missing. System 1 can be disabled explicitly, changing its judgment path. See the [System 1 guide](docs/system1-guide.md).
 
 ```bash
 git clone https://github.com/papag00se/cria-shepherd.git
@@ -71,7 +71,7 @@ Large files are read through successive shell calls the harness runs ("multipart
 
 ### System 1: our trained decision model
 
-System 1 runs on CPU and helps judge briefings and guidance. It is enabled by default; cria installs the standard bundle on first start, or accepts a compatible replacement through configuration. The bundle release is pending approval. [What it does and how we trained it](docs/system1-guide.md) · [Technical configuration](docs/system1.md).
+System 1 runs on CPU and helps judge briefings and guidance. Its model ships with cria and is enabled by default; disabling it explicitly changes how those judgments are made. [What it does and how we trained it](docs/system1-guide.md) · [Technical configuration](docs/system1.md).
 
 ### Disable individual registered assists
 
