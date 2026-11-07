@@ -1,0 +1,15 @@
+[
+  {
+    "id": "C168",
+    "source_ids": [
+      "C168"
+    ],
+    "session": "01a1b444-bbfb-74f0-9a1e-8dd480a84338",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Task: Implement a parallel supplier feed importer in Java that is at least 4× faster than a single-threaded baseline, produces deterministic results across repeated runs, safely handles malformed CSV input, and exposes a stable `Importer.summarize(path)` API returning `skus`, `rows`, and `totals`. Deliverables include a working build, correct behavior, and a `REVIEW.md` documenting remaining risks.\n\nWhat exists:\n- `src/main/java/pipeline/Importer.java` (11168 B) implements the importer using OpenCSV for CSV parsing. It defines static accumulators (`totals`, `rowCount`, `skippedCounts`), a `Summary` inner class, and a `summarize(String path)` method that supports parallel workers via a fixed thread pool.\n- `pom.xml` (1065 B) declares Java 21 and the OpenCSV dependency (`com.opencsv:opencsv:5.9`).\n- `data/feed.csv` (1211931 B) and `data/feed_messy.csv` (235 B) are sample input files.\n- `README.md` (370 B) exists but is not central to the implementation.\n\nWhat is broken or unfinished:\n- The build fails. The last `mvn compile` and `mvn test` runs (9 commands ago) reported two identical type-mismatch errors in `Importer.java`:\n  - Line 234: `java.util.List<java.lang.String[]>` cannot be converted to `java.lang.String[]`\n  - Line 238: `java.lang.String[]` cannot be converted to `java.util.List<java.lang.String[]>`\n- These errors indicate a mismatch between the `load()` method’s return type (`List<String[]>`) and how the result is used in the worker submission loop. Until this compiles, none of the performance, threading, or malformed-input requirements can be verified.\n- The `REVIEW.md` file has not been created.\n\nWhat was being done last:\n- The most recent edit wrapped the OpenCSV reader in a try-with-resources and added catch blocks for `CsvValidationException` and `CsvException` to convert them into `IOException`s. That change was written successfully and landed at lines 197–200.\n- The code had already implemented the parallel worker pattern, malformed-row detection, and a public `summarize(path)` API, but the compilation errors suggest the worker loop is passing the wrong type to the `worker()` method or misusing the `rawRows` collection.\n\nOutstanding requirements (evidence-based):\n- Fix the compilation errors at lines 234 and 238 so the project builds cleanly.\n- Verify that parallel processing yields identical results on repeated runs (determinism).\n- Confirm the 4× speedup over a single-threaded baseline without altering totals, row counts, or per-SKU values.\n- Ensure malformed input (blank quantities, currency symbols, missing columns, quoted commas) is handled safely and that skipped-row counts by reason are reported in the summary.\n- Create `REVIEW.md` with file/line references for any remaining risks or incomplete behaviors."
+    },
+    "label": "RETROSPECTIVE",
+    "ambiguous": true
+  }
+]

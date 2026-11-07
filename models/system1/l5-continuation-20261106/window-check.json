@@ -1,0 +1,14 @@
+{
+  "retrospective": {
+    "tokens": 9113,
+    "arena_ceiling": 4714,
+    "outcome": "System1OverCeiling",
+    "window_outcome": "System1NoFit"
+  },
+  "dictation": {
+    "tokens": 9304,
+    "arena_ceiling": 4714,
+    "outcome": "System1OverCeiling",
+    "window_outcome": "System1NoFit"
+  }
+}

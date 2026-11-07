@@ -3,3 +3,5 @@ scripts/fleet_gpu_lease.patch whitespace=-blank-at-eol
 # Exact historical operator wording, including its original trailing spaces.
 tests/fixtures/walk-prompt-f36e880a.txt whitespace=-blank-at-eol
 cria/system1_bundle/model.onnx.data filter=lfs diff=lfs merge=lfs -text
+models/system1/train-001/reference/model.safetensors filter=lfs diff=lfs merge=lfs -text
+models/system1/l5-continuation-20261106/cpu-fit-001/reference/model.safetensors filter=lfs diff=lfs merge=lfs -text

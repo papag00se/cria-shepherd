@@ -5,7 +5,7 @@ Operator-authorized launch: 2026-11-06 UTC. This is gradient training, separatel
 ## Exact source and data
 
 - Start from `~/.cria/training/progress-v1/weight-study-20261104/int4-repair/checkpoint/`, the saved native repaired checkpoint—not the pretrained base or unedited progress checkpoint. The loaded scoring row is checked against that checkpoint before any update. The source remains unchanged.
-- Use all 3,000 examples in `~/.cria/training/progress-correctness-v2/train-3000-candidate.jsonl` each epoch, alongside all 836 existing dictation/retrospective TRAIN examples from `training/system1-v2/train-001/train-cases.json`.
+- Use all 3,000 examples in `~/.cria/training/progress-correctness-v2/train-3000-candidate.jsonl` each epoch, alongside all 836 existing dictation/retrospective TRAIN examples from `models/system1/train-001/train-cases.json`.
 - DEV: all 600 examples in `dev-600-candidate.jsonl`, baseline and after each epoch. A deterministic 64-example old-family TRAIN panel provides preservation diagnostics; it is neither a held-out test nor a replacement for later qualification.
 - Inputs are fully rendered with native policies. No clipping or dropping. The initial length census found a maximum of 2,005 tokens across TRAIN/replay/DEV.
 

@@ -25,7 +25,7 @@ The data tooling rejects duplicate/cross-partition IDs, scenarios and exact inpu
 
 ## Training tools
 
-New local research test outputs are written under `~/.cria/test-runs/outputs/research/`. The expanded-v2 native checkpoint, tokenizer, training and held examples, and training contract are in the gitignored repository directory `training/system1-v2/train-001/`. Other historical research artifacts remain at their recorded paths.
+New local research test outputs are written under `~/.cria/test-runs/outputs/research/`. The expanded-v2 native checkpoint, tokenizer, training and held examples, and training contract are retained in the repository directory `models/system1/train-001/` (checkpoint via Git LFS). Other historical research artifacts remain at their recorded paths.
 
 - Publisher model: `knowledgator/gliclass-v4-edge`, pinned revision `885af1af8a07edf4ed34df83ca0d995ed8201283`; Apache-2.0.
 - Publisher GLiClass SDK, pinned to `6a00f8067648f25aa0f4f477d167c5f391cb4165`, plus Hugging Face Transformers and its native tokenizer.

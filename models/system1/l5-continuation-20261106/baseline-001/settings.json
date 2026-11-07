@@ -1,0 +1,16 @@
+{
+  "reference": "training/system1-v2/train-001/reference",
+  "bundle": "cria/system1_bundle",
+  "native_loading": {
+    "missing_keys": [],
+    "unexpected_keys": [],
+    "mismatched_keys": [],
+    "error_msgs": []
+  },
+  "torch_threads": 2,
+  "runtime_threads": 2,
+  "runtime_arena_bytes": 8589934592,
+  "native_dtype": "FP32",
+  "runtime": "CPU INT4",
+  "reserved_labels_used_for_fit": false
+}

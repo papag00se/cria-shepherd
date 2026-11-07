@@ -1,0 +1,21 @@
+{
+  "starting_checkpoint": "/home/jesse/src/cria-shepherd/training/system1-v2/train-001/reference",
+  "device": "cpu",
+  "precision": "FP32",
+  "epochs": 1,
+  "accumulation": 16,
+  "learning_rate": 5e-06,
+  "seed": 17,
+  "prior_train_rows": 836,
+  "new_train_rows": 135,
+  "loading": {
+    "missing_keys": [],
+    "unexpected_keys": [],
+    "mismatched_keys": [],
+    "error_msgs": []
+  },
+  "inactive": {
+    "model.logit_scale": "native process_encoder_output uses this scalar only when normalize_features=True; checkpoint=False"
+  },
+  "reserved_labels_used": false
+}

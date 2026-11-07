@@ -1,0 +1,1282 @@
+[
+  {
+    "id": "expand2-test-001",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Observatory handover, Java orbit service. The imported asteroid elements carry a TT epoch, while the nightly visibility sheet labels its observation times UTC. The comparison fixture still differs by roughly a minute at the first crossing. No numerical tolerance was changed during this session.\n\nEarlier, an engineer suggested moving all calculations to a common time scale. That suggestion was recorded in the meeting minutes, not implemented or adopted as the current design. The only committed edit added the epoch's scale to the import summary. The test transcript contains one failing crossing comparison and twelve passing parsing checks. Accurate crossing times remain an unmet acceptance condition; the transcript establishes neither the source of the offset nor a verified remedy."
+    },
+    "model_text": "Observatory handover, Java orbit service. The imported asteroid elements carry a TT epoch, while the nightly visibility sheet labels its observation times UTC. The comparison fixture still differs by roughly a minute at the first crossing. No numerical tolerance was changed during this session.\n\nEarlier, an engineer suggested moving all calculations to a common time scale. That suggestion was recorded in the meeting minutes, not implemented or adopted as the current design. The only committed edit added the epoch's scale to the import summary. The test transcript contains one failing crossing comparison and twelve passing parsing checks. Accurate crossing times remain an unmet acceptance condition; the transcript establishes neither the source of the offset nor a verified remedy.",
+    "input_sha256": "1dd2386799b090c316a6db65a4ea858d9453954e30cbebecbc6da84c77e3df19",
+    "group_id": "expand2-test-g01",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-002",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Java orbit import now exposes the epoch scale in its summary, but the visibility fixture is still out of tolerance. The first crossing differs from the reference sheet; the parser tests passed, and no arithmetic change has been exercised. The old meeting minutes contain an engineer's suggestion about using a common time scale.\n\nThat suggestion is the approach for the next pass: normalize the element epoch and observation timestamps onto the same scale before computing the crossing. Keep the reference sheet unchanged while doing that comparison. The summary-field edit is already present, so it is not evidence that the timing problem has been repaired. The unresolved result is the crossing-time comparison, not the import count."
+    },
+    "model_text": "The Java orbit import now exposes the epoch scale in its summary, but the visibility fixture is still out of tolerance. The first crossing differs from the reference sheet; the parser tests passed, and no arithmetic change has been exercised. The old meeting minutes contain an engineer's suggestion about using a common time scale.\n\nThat suggestion is the approach for the next pass: normalize the element epoch and observation timestamps onto the same scale before computing the crossing. Keep the reference sheet unchanged while doing that comparison. The summary-field edit is already present, so it is not evidence that the timing problem has been repaired. The unresolved result is the crossing-time comparison, not the import count.",
+    "input_sha256": "ee61c7dce01547b2251bad421aec8d2336978ed397c7250c702a1b15b478ed57",
+    "group_id": "expand2-test-g01",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-003",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Reconciliation worksheet \u2014 Python publishing import, generated quarter.\n\nInput extract:\n  usage U17, territory North, amount 18.40\n  usage U17, territory South, amount 7.60\n\nThe agreement assigns both territories to the same fictional publisher. The import preview reports two rows. The quarter statement contains one entry for U17, worth 18.40, and its total is short by 7.60. The required territorial breakdown is absent.\n\nThe statement header and currency are correct. The saved evidence covers the preview and the final statement, but contains no intermediate grouping trace. There is consequently no recorded finding about where the South entry disappeared. No reconciliation change was made during the session. The accounting request remains a separate amount for each territory, not a different statement heading."
+    },
+    "model_text": "Reconciliation worksheet \u2014 Python publishing import, generated quarter.\n\nInput extract:\n  usage U17, territory North, amount 18.40\n  usage U17, territory South, amount 7.60\n\nThe agreement assigns both territories to the same fictional publisher. The import preview reports two rows. The quarter statement contains one entry for U17, worth 18.40, and its total is short by 7.60. The required territorial breakdown is absent.\n\nThe statement header and currency are correct. The saved evidence covers the preview and the final statement, but contains no intermediate grouping trace. There is consequently no recorded finding about where the South entry disappeared. No reconciliation change was made during the session. The accounting request remains a separate amount for each territory, not a different statement heading.",
+    "input_sha256": "94feb5506fbc177006837e51faa62cc457e1e76109cdeec9dc7824202e2a5de0",
+    "group_id": "expand2-test-g02",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-004",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The publishing importer is written in Python. Its quarter-end report still loses one of two invented usage entries that differ only in territory. Both entries were visible in the input dump, and renaming the report heading did not affect the total.\n\nThe next useful investigation is the grouping boundary: compare the keys before and after aggregation, then make territory part of the identity wherever those two records currently collapse. Reconcile the two amounts again after that change. The accountant's requested breakdown is still outstanding, and no passing reconciliation has been recorded. This handover concerns the supplied fictional agreement rather than any live royalty account."
+    },
+    "model_text": "The publishing importer is written in Python. Its quarter-end report still loses one of two invented usage entries that differ only in territory. Both entries were visible in the input dump, and renaming the report heading did not affect the total.\n\nThe next useful investigation is the grouping boundary: compare the keys before and after aggregation, then make territory part of the identity wherever those two records currently collapse. Reconcile the two amounts again after that change. The accountant's requested breakdown is still outstanding, and no passing reconciliation has been recorded. This handover concerns the supplied fictional agreement rather than any live royalty account.",
+    "input_sha256": "d1acb7d43c4edbaba3fbfe8505b5e6a51ccd9e32ea9e4e6b2ca6a3b8bf676cb1",
+    "group_id": "expand2-test-g02",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-005",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Session receipt: fictional clinic room allocator, Ruby.\n\nCompleted: the setup screen now displays a room's equipment category. Observed: a simulated imaging appointment and a simulated consultation were both assigned Room C at 09:00. The equipment labels were correct in the response. The overlap check stayed red in the final local run.\n\nThe work ticket says each room can host at most one appointment at a time, independent of the practitioner. That condition remains unsatisfied in the fixture. A discarded prototype had used a practitioner-only calendar; its removal is recorded in the history, but the current allocator was not compared with that prototype. No patient records, real names, or real appointments are involved."
+    },
+    "model_text": "Session receipt: fictional clinic room allocator, Ruby.\n\nCompleted: the setup screen now displays a room's equipment category. Observed: a simulated imaging appointment and a simulated consultation were both assigned Room C at 09:00. The equipment labels were correct in the response. The overlap check stayed red in the final local run.\n\nThe work ticket says each room can host at most one appointment at a time, independent of the practitioner. That condition remains unsatisfied in the fixture. A discarded prototype had used a practitioner-only calendar; its removal is recorded in the history, but the current allocator was not compared with that prototype. No patient records, real names, or real appointments are involved.",
+    "input_sha256": "bd84de3bcf4a16ec656acfacc9ca669d032135a9aae5d914ad3658ff4e595a83",
+    "group_id": "expand2-test-g03",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-006",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Ruby room allocator status for the fictional clinic: equipment categories appear correctly, but two simulated appointments still occupy Room C at the same time. The final run reproduced the collision. A discarded prototype had tracked availability only by practitioner.\n\nFor the continuation, treat the room as a separately reserved resource and reject an allocation whenever its interval intersects an existing room reservation. Exercise that rule with appointments belonging to different practitioners, since the current fixture already demonstrates that combination. The display work is complete; the room collision is the remaining defect. The fixture contains invented appointment tokens and does not represent a real clinic schedule."
+    },
+    "model_text": "Ruby room allocator status for the fictional clinic: equipment categories appear correctly, but two simulated appointments still occupy Room C at the same time. The final run reproduced the collision. A discarded prototype had tracked availability only by practitioner.\n\nFor the continuation, treat the room as a separately reserved resource and reject an allocation whenever its interval intersects an existing room reservation. Exercise that rule with appointments belonging to different practitioners, since the current fixture already demonstrates that combination. The display work is complete; the room collision is the remaining defect. The fixture contains invented appointment tokens and does not represent a real clinic schedule.",
+    "input_sha256": "515b4ff5977ce8f118a63f2597cb36dd470042fdb69a262ce267259428d812b2",
+    "group_id": "expand2-test-g03",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-007",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Variable-font specimen exporter, Go, checkpoint 6.\n\nThe narrow-axis specimen and the default-axis specimen currently have the same line breaks. Their reported glyph advances differ, so the saved evidence does not support the initial suspicion that the font was loaded twice with identical settings. The PDF comparison is still red at the third paragraph.\n\nA comment in the old issue said a later worker would replace the width cache. That was an expectation written before the advance dump existed; it is not a recorded change or a current assignment. This session added the advance dump and reproduced the mismatch, with no layout edit. Distinct wrapping for the supplied axis settings remains required."
+    },
+    "model_text": "Variable-font specimen exporter, Go, checkpoint 6.\n\nThe narrow-axis specimen and the default-axis specimen currently have the same line breaks. Their reported glyph advances differ, so the saved evidence does not support the initial suspicion that the font was loaded twice with identical settings. The PDF comparison is still red at the third paragraph.\n\nA comment in the old issue said a later worker would replace the width cache. That was an expectation written before the advance dump existed; it is not a recorded change or a current assignment. This session added the advance dump and reproduced the mismatch, with no layout edit. Distinct wrapping for the supplied axis settings remains required.",
+    "input_sha256": "c171f4af0b351d28de654ec4f6c46539b0c709ba3ebde76487733f0ca2a805fa",
+    "group_id": "expand2-test-g04",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-008",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Width-cache review for the Go variable-font specimen exporter.\n\nEstablished observations:\n- The two specimens use different axis coordinates.\n- Their advance dumps differ.\n- Their line breaks are identical.\n- The third paragraph disagrees with the reference proof.\n\nThe added advance dump is the only completed edit. No layout change has been exercised, and the dump has not implicated font loading. The source comment on the width cache says it is shared between specimens. The old issue anticipated replacing that cache entirely.\n\nIncluding the axis coordinates in the existing cache identity would keep widths measured under one setting from being reused under the other; that is the narrower repair for this continuation. The reference proof remains unchanged, and no passing comparison has been recorded."
+    },
+    "model_text": "Width-cache review for the Go variable-font specimen exporter.\n\nEstablished observations:\n- The two specimens use different axis coordinates.\n- Their advance dumps differ.\n- Their line breaks are identical.\n- The third paragraph disagrees with the reference proof.\n\nThe added advance dump is the only completed edit. No layout change has been exercised, and the dump has not implicated font loading. The source comment on the width cache says it is shared between specimens. The old issue anticipated replacing that cache entirely.\n\nIncluding the axis coordinates in the existing cache identity would keep widths measured under one setting from being reused under the other; that is the narrower repair for this continuation. The reference proof remains unchanged, and no passing comparison has been recorded.",
+    "input_sha256": "db2d4c5d1ae915e4c65e5b4e515db826c21bd32ab8b7b728a3dd816fbeed879b",
+    "group_id": "expand2-test-g04",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-009",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Event journal from the Node greenhouse simulator:\n\n02:10:00 \u2014 two valves open; pump state normal.\n02:10:05 \u2014 third valve opens; pump state overloaded.\n02:10:07 \u2014 first valve closes; pump state normal.\n\nAll times belong to a generated irrigation schedule. The capacity limit is two open valves. The run used the original generator; the browser event display was the only changed component. Each bed still received its configured total watering duration.\n\nYesterday's proposal to stagger every zone by five minutes was rejected because the trial lost watering time. Today's event journal establishes a two-second capacity violation but no selected remedy. Both capacity compliance and full watering duration remain required."
+    },
+    "model_text": "Event journal from the Node greenhouse simulator:\n\n02:10:00 \u2014 two valves open; pump state normal.\n02:10:05 \u2014 third valve opens; pump state overloaded.\n02:10:07 \u2014 first valve closes; pump state normal.\n\nAll times belong to a generated irrigation schedule. The capacity limit is two open valves. The run used the original generator; the browser event display was the only changed component. Each bed still received its configured total watering duration.\n\nYesterday's proposal to stagger every zone by five minutes was rejected because the trial lost watering time. Today's event journal establishes a two-second capacity violation but no selected remedy. Both capacity compliance and full watering duration remain required.",
+    "input_sha256": "dfa1c3d37d8b7745151c5a9822c145ae9952baf857e19b272a1d8be495e1ded8",
+    "group_id": "expand2-test-g05",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-010",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Node greenhouse simulator still opens three valves briefly even though the fictional pump supports two. The transition event is visible now; the generator has not changed. Yesterday's five-minute staggering idea was rejected because the resulting watering totals were wrong.\n\nThere is a narrower way to retain those totals: move the pending opening event to the first closing event that releases pump capacity, carrying its original duration with it. Use that ordering rule for the continuation and check the transition that currently trips the overload flag. The browser event display is already implemented. Both the per-bed totals and the capacity limit are necessary for the simulated schedule to count as correct."
+    },
+    "model_text": "The Node greenhouse simulator still opens three valves briefly even though the fictional pump supports two. The transition event is visible now; the generator has not changed. Yesterday's five-minute staggering idea was rejected because the resulting watering totals were wrong.\n\nThere is a narrower way to retain those totals: move the pending opening event to the first closing event that releases pump capacity, carrying its original duration with it. Use that ordering rule for the continuation and check the transition that currently trips the overload flag. The browser event display is already implemented. Both the per-bed totals and the capacity limit are necessary for the simulated schedule to count as correct.",
+    "input_sha256": "f7b4c1b1afb942e7101b5e77a1be101a5e852b22d0cb54b523265f6c4ff931a3",
+    "group_id": "expand2-test-g05",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-011",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Museum accession import, Rust. The small fixture has two objects acquired together and one object acquired independently. Each object receives a distinct accession identifier, but the exported acquisition count is three rather than two. The collection editor shows the expected shared acquisition label on the first pair.\n\nThe last completed change improved the error message for a missing accession identifier. It did not touch acquisition counting. A note from an earlier review described grouping by the accession prefix as a possible remedy; that review predates the independent object fixture and the possibility was never accepted. The outstanding requirement is a count of acquisition events rather than a count of objects. No counting fix was committed."
+    },
+    "model_text": "Museum accession import, Rust. The small fixture has two objects acquired together and one object acquired independently. Each object receives a distinct accession identifier, but the exported acquisition count is three rather than two. The collection editor shows the expected shared acquisition label on the first pair.\n\nThe last completed change improved the error message for a missing accession identifier. It did not touch acquisition counting. A note from an earlier review described grouping by the accession prefix as a possible remedy; that review predates the independent object fixture and the possibility was never accepted. The outstanding requirement is a count of acquisition events rather than a count of objects. No counting fix was committed.",
+    "input_sha256": "2902d9da70790955e06a89815869fdf9f6d8da04cc8dde9151ccf3dfebbfd1a5",
+    "group_id": "expand2-test-g06",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-012",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Rust accession importer handover. Objects in the invented museum fixture have distinct accession identifiers, and two share an acquisition. The export counts all three objects as separate acquisitions. The editor already shows the shared acquisition label, so the display is not the missing part.\n\nDo not revive the old accession-prefix idea. Derive the export count from acquisition identities, preserving the independent acquisition in the fixture, and rerun the export comparison. The only completed patch so far was the missing-identifier error message. The acquisition requirement remains open, and the continuation needs evidence from the exported count rather than another screenshot of the labels."
+    },
+    "model_text": "Rust accession importer handover. Objects in the invented museum fixture have distinct accession identifiers, and two share an acquisition. The export counts all three objects as separate acquisitions. The editor already shows the shared acquisition label, so the display is not the missing part.\n\nDo not revive the old accession-prefix idea. Derive the export count from acquisition identities, preserving the independent acquisition in the fixture, and rerun the export comparison. The only completed patch so far was the missing-identifier error message. The acquisition requirement remains open, and the continuation needs evidence from the exported count rather than another screenshot of the labels.",
+    "input_sha256": "642eb186b296d4cea901ebb7c14654cb356875feaff623aae6078115e6e8090c",
+    "group_id": "expand2-test-g06",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-013",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Accountant: Did the Java split-ledger change make the statement show a full percentage total?\nDeveloper: No. The footer now names the correct currency. The statement still shows 99.99 percent.\nAccountant: Did we lose money or alter the co-writers' ownership?\nDeveloper: Neither appears in the saved checks. The stored fractions sum exactly to one, and the cent allocations balance.\n\nThe three writers and their shares are fictional. The transcript also contains independently rounded display values. A previous review had suggested distributing a display remainder, but that review ended without a design decision. A visibly complete percentage total remains absent from the delivered statement."
+    },
+    "model_text": "Accountant: Did the Java split-ledger change make the statement show a full percentage total?\nDeveloper: No. The footer now names the correct currency. The statement still shows 99.99 percent.\nAccountant: Did we lose money or alter the co-writers' ownership?\nDeveloper: Neither appears in the saved checks. The stored fractions sum exactly to one, and the cent allocations balance.\n\nThe three writers and their shares are fictional. The transcript also contains independently rounded display values. A previous review had suggested distributing a display remainder, but that review ended without a design decision. A visibly complete percentage total remains absent from the delivered statement.",
+    "input_sha256": "00b1e66d0872fb328b25382b2dff23a8fb207f007b07a6127e072d6b2a4f78a1",
+    "group_id": "expand2-test-g07",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-014",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Java split ledger keeps exact shares for three invented co-writers. Its statement shows 99.99 percent, while cent allocation still balances. The currency-label patch is present and does not address that discrepancy.\n\nThe display remainder can be assigned without changing the stored ownership fractions. Take that route for the statement: distribute the remaining display unit across the rounded percentages with deterministic tie handling, and leave the accounting fractions intact. Confirm that the visible percentage total is complete in the existing fixture. The earlier reviewer left this as an open suggestion; the remaining change is in presentation, not ownership accounting."
+    },
+    "model_text": "The Java split ledger keeps exact shares for three invented co-writers. Its statement shows 99.99 percent, while cent allocation still balances. The currency-label patch is present and does not address that discrepancy.\n\nThe display remainder can be assigned without changing the stored ownership fractions. Take that route for the statement: distribute the remaining display unit across the rounded percentages with deterministic tie handling, and leave the accounting fractions intact. Confirm that the visible percentage total is complete in the existing fixture. The earlier reviewer left this as an open suggestion; the remaining change is in presentation, not ownership accounting.",
+    "input_sha256": "c3dced76d7b1453d81604446f1ea86f4080ef7e0af209ac0d2b700f77c126619",
+    "group_id": "expand2-test-g07",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-015",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Photometry cache incident, Python notebook service.\n\nThe second exposure belongs to a different filter from the first. A repeated lookup returned the first exposure's zero point. The capture includes the two filter names and the returned calibration values; it does not include a trace of the cache lookup. The scientific acceptance condition requires the calibration appropriate to each filter.\n\nThe session ended after adding filter names to the diagnostic output. There was no invalidation change and no successful rerun of the second exposure. In the earlier conversation, a cache flush was suggested as a one-time experiment. That experiment was never performed, and the suggestion was not carried forward as an instruction."
+    },
+    "model_text": "Photometry cache incident, Python notebook service.\n\nThe second exposure belongs to a different filter from the first. A repeated lookup returned the first exposure's zero point. The capture includes the two filter names and the returned calibration values; it does not include a trace of the cache lookup. The scientific acceptance condition requires the calibration appropriate to each filter.\n\nThe session ended after adding filter names to the diagnostic output. There was no invalidation change and no successful rerun of the second exposure. In the earlier conversation, a cache flush was suggested as a one-time experiment. That experiment was never performed, and the suggestion was not carried forward as an instruction.",
+    "input_sha256": "96c794cc75ec72164f92054099b6e53c3a781f8e13886a0c3c6673d27a14e6cd",
+    "group_id": "expand2-test-g08",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-016",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Python photometry notebook, last saved cell output:\n  exposure A / blue filter / zero point 24.1\n  exposure B / red filter / zero point 24.1\n\nThe reference calibration for the red filter is 23.6. The diagnostic filter names were added during this session; calibration and cache behavior have not changed. The saved output shows a mismatch but no lookup trace. Earlier discussion of a one-time cache flush ended without an experiment.\n\nA cache identity containing the filter as well as the exposure would prevent cross-filter calibration reuse; use that as the repair boundary here. The remaining requirement is a separately correct result for both exposures. Clearer diagnostic text alone has not satisfied it."
+    },
+    "model_text": "Python photometry notebook, last saved cell output:\n  exposure A / blue filter / zero point 24.1\n  exposure B / red filter / zero point 24.1\n\nThe reference calibration for the red filter is 23.6. The diagnostic filter names were added during this session; calibration and cache behavior have not changed. The saved output shows a mismatch but no lookup trace. Earlier discussion of a one-time cache flush ended without an experiment.\n\nA cache identity containing the filter as well as the exposure would prevent cross-filter calibration reuse; use that as the repair boundary here. The remaining requirement is a separately correct result for both exposures. Clearer diagnostic text alone has not satisfied it.",
+    "input_sha256": "bb6c20b8df37fcd33084d3a0f38db03f19a040bae1f18d6fa6f4ac82c5cc62fc",
+    "group_id": "expand2-test-g08",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-017",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Two proofs from the Ruby typesetting preview are attached to the session. They use the same measure, size, and compound word. The reference breaks the word at an internal position allowed by the selected language; the current preview moves it intact onto the following line. The chosen language appears in the request capture. Nothing saved shows the line breaker's language setting. The required language-appropriate break is still missing."
+    },
+    "model_text": "Two proofs from the Ruby typesetting preview are attached to the session. They use the same measure, size, and compound word. The reference breaks the word at an internal position allowed by the selected language; the current preview moves it intact onto the following line. The chosen language appears in the request capture. Nothing saved shows the line breaker's language setting. The required language-appropriate break is still missing.",
+    "input_sha256": "785a1c03b70fd06fc28926598a64a58f7050e450260c4deef85d5381d497b47f",
+    "group_id": "expand2-test-g09",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-018",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Typography preview handover, Ruby. The chosen language reaches the request, and the proof still moves the compound word to the next line instead of breaking it at the expected internal point. A discarded manual-soft-hyphen experiment produced the desired visual result but was never an application repair.\n\nCheck whether the language selection reaches the line breaker, then connect that selection to the appropriate hyphenation rules if it stops at the request layer. Keep the manuscript free of inserted discretionary characters for this repair. The target is the ordinary preview path used by the editor. The source and reference proof are both present, but no successful application-level comparison has been recorded."
+    },
+    "model_text": "Typography preview handover, Ruby. The chosen language reaches the request, and the proof still moves the compound word to the next line instead of breaking it at the expected internal point. A discarded manual-soft-hyphen experiment produced the desired visual result but was never an application repair.\n\nCheck whether the language selection reaches the line breaker, then connect that selection to the appropriate hyphenation rules if it stops at the request layer. Keep the manuscript free of inserted discretionary characters for this repair. The target is the ordinary preview path used by the editor. The source and reference proof are both present, but no successful application-level comparison has been recorded.",
+    "input_sha256": "e97de8e1193734cb42e6c7ccac417bbee3ce2e3584ecbd6108803582b3aa647a",
+    "group_id": "expand2-test-g09",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-019",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Fictional outpatient scheduler, Go. This handover covers a weekly 08:30 clinic in a named local time zone. The generated occurrences are 08:30 before the seasonal clock change and 07:30 afterward. The ticket requires the clinic's wall-clock start to remain 08:30.\n\nThe run log contains both local renderings and their underlying UTC instants. No real patients appear in the fixture. Earlier notes said the recurrence engine would be replaced during this milestone; that milestone was canceled. The only implementation change completed here was a clearer zone label in the preview. The recurrence comparison still fails, and neither a replacement engine nor a modification of the current one has been selected."
+    },
+    "model_text": "Fictional outpatient scheduler, Go. This handover covers a weekly 08:30 clinic in a named local time zone. The generated occurrences are 08:30 before the seasonal clock change and 07:30 afterward. The ticket requires the clinic's wall-clock start to remain 08:30.\n\nThe run log contains both local renderings and their underlying UTC instants. No real patients appear in the fixture. Earlier notes said the recurrence engine would be replaced during this milestone; that milestone was canceled. The only implementation change completed here was a clearer zone label in the preview. The recurrence comparison still fails, and neither a replacement engine nor a modification of the current one has been selected.",
+    "input_sha256": "12794e7127b008032a4120f1cffb34dfb1344dae6cc83bf8f0138a7321fc3f0e",
+    "group_id": "expand2-test-g10",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-020",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Go scheduler's weekly fictional clinic drifts from 08:30 to 07:30 across the clock change. Its preview now identifies the zone correctly, but that label edit did not change the generated instants. The canceled milestone mentioned a replacement engine, so the old milestone is not the continuation's scope.\n\nGenerate each occurrence from the clinic's local date and wall time in its named zone, rather than advancing the previous UTC instant by a fixed week. Compare occurrences on both sides of the clock change after the edit. This retains the current engine while changing how its inputs are derived. No live appointments or personal information are part of this exercise."
+    },
+    "model_text": "The Go scheduler's weekly fictional clinic drifts from 08:30 to 07:30 across the clock change. Its preview now identifies the zone correctly, but that label edit did not change the generated instants. The canceled milestone mentioned a replacement engine, so the old milestone is not the continuation's scope.\n\nGenerate each occurrence from the clinic's local date and wall time in its named zone, rather than advancing the previous UTC instant by a fixed week. Compare occurrences on both sides of the clock change after the edit. This retains the current engine while changing how its inputs are derived. No live appointments or personal information are part of this exercise.",
+    "input_sha256": "eca94c94e80fe3226ce8defbd1510fa72a355bc88b134d143a14065db0df1895",
+    "group_id": "expand2-test-g10",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-021",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "From: curator of the fictional teaching collection\nSubject: Packing checklist still repeats humidity range\n\nThe two objects have different limits on their detail pages. In the outgoing-loan checklist, the first object's range appears twice. The borrowing venue's short name is now correct in the title, so that part of the work is visible, but the checklist comparison still fails.\n\nThe earlier support reply suggested copying the limits into the loan record. We rejected that proposal because the limits can change before dispatch. There is no later storage decision in this thread. The outstanding acceptance condition is that each row reflects its own object. These are mock collection objects and a mock borrowing venue."
+    },
+    "model_text": "From: curator of the fictional teaching collection\nSubject: Packing checklist still repeats humidity range\n\nThe two objects have different limits on their detail pages. In the outgoing-loan checklist, the first object's range appears twice. The borrowing venue's short name is now correct in the title, so that part of the work is visible, but the checklist comparison still fails.\n\nThe earlier support reply suggested copying the limits into the loan record. We rejected that proposal because the limits can change before dispatch. There is no later storage decision in this thread. The outstanding acceptance condition is that each row reflects its own object. These are mock collection objects and a mock borrowing venue.",
+    "input_sha256": "16872d4e9d32dd9fbcd9df2f6a332292b6f24a79d37626815c65754878de6e6e",
+    "group_id": "expand2-test-g11",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-022",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Node loan portal shows the right humidity range on each object page but repeats the first range across the packing checklist. The venue-title change is complete. Copying limits into the loan record was rejected in the prior support exchange because those values may change before dispatch.\n\nFor this continuation, resolve the environmental limits from each checklist row's object at generation time. Regenerate the two-object checklist and compare both ranges with their detail pages. That gives the export the same current information the curator sees. There is no passing checklist result after the title change, and the mock borrowing venue is unrelated to any actual institution."
+    },
+    "model_text": "The Node loan portal shows the right humidity range on each object page but repeats the first range across the packing checklist. The venue-title change is complete. Copying limits into the loan record was rejected in the prior support exchange because those values may change before dispatch.\n\nFor this continuation, resolve the environmental limits from each checklist row's object at generation time. Regenerate the two-object checklist and compare both ranges with their detail pages. That gives the export the same current information the curator sees. There is no passing checklist result after the title change, and the mock borrowing venue is unrelated to any actual institution.",
+    "input_sha256": "d0668b4627b07c4fa638645d239e37b023fe14bd35c1de3ccec92df9b12c6c2b",
+    "group_id": "expand2-test-g11",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-023",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Release audit for the Rust silo dashboard:\n\nSource record: 8,400 kilograms.\nDashboard setting: metric tonnes.\nDisplayed result: 8,400 tonnes.\n\nThe import retained the source unit. The audit-view unit column was added in this session and displays kilograms correctly. The dashboard magnitude is unchanged and its comparison fails. The required unit-consistent result is missing; no conversion edit or selected conversion boundary is recorded."
+    },
+    "model_text": "Release audit for the Rust silo dashboard:\n\nSource record: 8,400 kilograms.\nDashboard setting: metric tonnes.\nDisplayed result: 8,400 tonnes.\n\nThe import retained the source unit. The audit-view unit column was added in this session and displays kilograms correctly. The dashboard magnitude is unchanged and its comparison fails. The required unit-consistent result is missing; no conversion edit or selected conversion boundary is recorded.",
+    "input_sha256": "0e01f33cd5bf62de90052217d5b9003e60b88ea9931bd35b9cdd0f5a46e6b5c2",
+    "group_id": "expand2-test-g12",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-024",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Rust silo dashboard attaches its configured tonnes heading to the kilogram magnitude from the weighbridge fixture. The imported record still contains a source unit; the audit view now displays it, but the dashboard comparison remains red.\n\nThe repair belongs at the quantity boundary: convert the source measurement into the dashboard's configured unit before formatting the value. Preserve the original measurement and unit for audit output. Include the kilogram-to-tonne case in the comparison after that change. The old import-module experiment is not a completed implementation, and the source-unit column alone does not satisfy the dashboard requirement. The records are generated agriculture data with no real weighbridge connection."
+    },
+    "model_text": "The Rust silo dashboard attaches its configured tonnes heading to the kilogram magnitude from the weighbridge fixture. The imported record still contains a source unit; the audit view now displays it, but the dashboard comparison remains red.\n\nThe repair belongs at the quantity boundary: convert the source measurement into the dashboard's configured unit before formatting the value. Preserve the original measurement and unit for audit output. Include the kilogram-to-tonne case in the comparison after that change. The old import-module experiment is not a completed implementation, and the source-unit column alone does not satisfy the dashboard requirement. The records are generated agriculture data with no real weighbridge connection.",
+    "input_sha256": "8ad0215f898b92672801389bd74b04d94f35b840c393470086c1f61905f4c712",
+    "group_id": "expand2-test-g12",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-025",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Timeline, Java appointment simulator:\n\n09:00:00 \u2014 generated request R42 accepted; reservation A created.\n09:00:03 \u2014 client records a response timeout.\n09:00:04 \u2014 client repeats R42; reservation B created.\n09:00:05 \u2014 duplicate-reservation check fails.\n\nThis is a fictional scheduling fixture without patient data. The request token was added to transport logging during the session, so both attempts can now be linked. The reservation implementation did not change. The ticket requires a repeated accepted request to leave one reservation. A past proposal to forbid retries in the client was withdrawn; the service still receives repeats. The final fixture contains both reservations."
+    },
+    "model_text": "Timeline, Java appointment simulator:\n\n09:00:00 \u2014 generated request R42 accepted; reservation A created.\n09:00:03 \u2014 client records a response timeout.\n09:00:04 \u2014 client repeats R42; reservation B created.\n09:00:05 \u2014 duplicate-reservation check fails.\n\nThis is a fictional scheduling fixture without patient data. The request token was added to transport logging during the session, so both attempts can now be linked. The reservation implementation did not change. The ticket requires a repeated accepted request to leave one reservation. A past proposal to forbid retries in the client was withdrawn; the service still receives repeats. The final fixture contains both reservations.",
+    "input_sha256": "080825da793f38fe68cbbf39d218a74a7235af5162058bbbfd0dd13e7910f2b7",
+    "group_id": "expand2-test-g13",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-026",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Continuation card: Java booking retry issue, fictional appointment tokens only.\n\nThe new transport log links both attempts to R42. It does not explain why two reservations survive. The first request was accepted before the response timed out; the second is a retry of that same request, not another desired appointment.\n\nRequired next change:\n- Recognize an already accepted request token and return its original reservation.\n- Make token recognition and reservation creation indivisible under overlapping requests.\n\nEvidence still missing: a timeout-and-retry result with one reservation, and a simultaneous-repeat result with one reservation. The old proposal to disable client retries was withdrawn and is not the service-side behavior needed here."
+    },
+    "model_text": "Continuation card: Java booking retry issue, fictional appointment tokens only.\n\nThe new transport log links both attempts to R42. It does not explain why two reservations survive. The first request was accepted before the response timed out; the second is a retry of that same request, not another desired appointment.\n\nRequired next change:\n- Recognize an already accepted request token and return its original reservation.\n- Make token recognition and reservation creation indivisible under overlapping requests.\n\nEvidence still missing: a timeout-and-retry result with one reservation, and a simultaneous-repeat result with one reservation. The old proposal to disable client retries was withdrawn and is not the service-side behavior needed here.",
+    "input_sha256": "0f1889a40736d84b58e0739adca32683588912c6961aab6ee45e246493b0bd9b",
+    "group_id": "expand2-test-g13",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-027",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Typography specimen builder, Python. The specimen bundle currently contains a preview image and its font name. The acceptance sheet also requires the font license text in the bundle. That text is present in the local fixture directory but absent from the generated bundle.\n\nThe session added the font name to the manifest and confirmed the preview still opens. No bundling logic was changed after the missing-license result. A terminal transcript lists the fixture files; the presence of the license there is only an observation about source material. The requested deliverable remains incomplete. There is no recorded decision about whether the manifest or another bundle component should carry the license information."
+    },
+    "model_text": "Typography specimen builder, Python. The specimen bundle currently contains a preview image and its font name. The acceptance sheet also requires the font license text in the bundle. That text is present in the local fixture directory but absent from the generated bundle.\n\nThe session added the font name to the manifest and confirmed the preview still opens. No bundling logic was changed after the missing-license result. A terminal transcript lists the fixture files; the presence of the license there is only an observation about source material. The requested deliverable remains incomplete. There is no recorded decision about whether the manifest or another bundle component should carry the license information.",
+    "input_sha256": "b95b5ace77d5118083a22368bbe985e99a64532651fdf68686c60e07b0b7aab4",
+    "group_id": "expand2-test-g14",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-028",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Python specimen builder exports a preview and a manifest containing the font name. The local fixture includes a license document, but the generated bundle omits it. The last successful check only established that the preview opens; it did not cover license inclusion.\n\nInclude the fixture's license document in the generated specimen bundle and add a manifest reference to that bundled document. Verify the result from an extracted bundle, so the check cannot accidentally read the source fixture. The acceptance sheet's license requirement is still outstanding. No new source license text is needed, and the existing font-name edit is already complete."
+    },
+    "model_text": "The Python specimen builder exports a preview and a manifest containing the font name. The local fixture includes a license document, but the generated bundle omits it. The last successful check only established that the preview opens; it did not cover license inclusion.\n\nInclude the fixture's license document in the generated specimen bundle and add a manifest reference to that bundled document. Verify the result from an extracted bundle, so the check cannot accidentally read the source fixture. The acceptance sheet's license requirement is still outstanding. No new source license text is needed, and the existing font-name edit is already complete.",
+    "input_sha256": "55bd9be0aa405ddba6e91ced4a077cc9bc15c46b859dc11723b9d6c481bf2ced",
+    "group_id": "expand2-test-g14",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-029",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Ruby frost dashboard replay comparison, generated orchard data.\n\nNight A had a threshold crossing, a brief recovery, and another crossing. It produced two notices for one block. Night B had a fresh qualifying crossing and produced one notice. The acceptance sheet allows one notice per block per overnight window; it also requires eligibility to return the next night.\n\nThe notice text now has the right block name. Its correction was the only code edit, and it did not alter those counts. An older suggestion to suppress every later notice was rejected because it would also remove Night B's required notice. The saved replay establishes duplicate sending within Night A, while Night B's single notice already matches the example. No suppression change was made."
+    },
+    "model_text": "Ruby frost dashboard replay comparison, generated orchard data.\n\nNight A had a threshold crossing, a brief recovery, and another crossing. It produced two notices for one block. Night B had a fresh qualifying crossing and produced one notice. The acceptance sheet allows one notice per block per overnight window; it also requires eligibility to return the next night.\n\nThe notice text now has the right block name. Its correction was the only code edit, and it did not alter those counts. An older suggestion to suppress every later notice was rejected because it would also remove Night B's required notice. The saved replay establishes duplicate sending within Night A, while Night B's single notice already matches the example. No suppression change was made.",
+    "input_sha256": "5035244e48ad5692edbc99af39c971d1e9550b8cde5e0bf71d57670c7241b9ea",
+    "group_id": "expand2-test-g15",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-030",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Ruby frost replay review:\n\nThe corrected orchard-block name is present in every notice. Night A nevertheless produces two notices after two threshold crossings in one window. Night B's one qualifying crossing produces one notice, as required. A previously rejected forever-suppression rule would have hidden that correct Night B notice.\n\nThe missing state is eligibility tied to both block and overnight window. Record that state when sending, so later crossings in the same window cannot send again and a new window has fresh eligibility. The acceptance comparison needs both nights; accepting a one-notice total across the combined replay would hide a regression. No change to eligibility has been exercised yet."
+    },
+    "model_text": "Ruby frost replay review:\n\nThe corrected orchard-block name is present in every notice. Night A nevertheless produces two notices after two threshold crossings in one window. Night B's one qualifying crossing produces one notice, as required. A previously rejected forever-suppression rule would have hidden that correct Night B notice.\n\nThe missing state is eligibility tied to both block and overnight window. Record that state when sending, so later crossings in the same window cannot send again and a new window has fresh eligibility. The acceptance comparison needs both nights; accepting a one-notice total across the combined replay would hide a regression. No change to eligibility has been exercised yet.",
+    "input_sha256": "dc80604e02cea3e3f0888bd3d7f3a80206b68dbcccd4f18622d544e8fcd50dcc",
+    "group_id": "expand2-test-g15",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-031",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "Museum image derivative worker, Go.\n\nA portrait object photograph has an orientation tag. The browser thumbnail is sideways, while the full-resolution viewer appears upright. The generated fixture carries no actual collection photograph. The worker log records the derivative dimensions but not the orientation operation. The acceptance requirement is an upright thumbnail matching the full-resolution presentation.\n\nAn early issue contained the sentence, \u201cThe worker will rotate pixels during decoding.\u201d That sentence described the expected implementation at the time, not work completed here or a current assignment. In this session, only the derivative dimensions were added to the log. The thumbnail comparison remains red. There is no evidence yet locating the orientation discrepancy within decoding, resizing, or display."
+    },
+    "model_text": "Museum image derivative worker, Go.\n\nA portrait object photograph has an orientation tag. The browser thumbnail is sideways, while the full-resolution viewer appears upright. The generated fixture carries no actual collection photograph. The worker log records the derivative dimensions but not the orientation operation. The acceptance requirement is an upright thumbnail matching the full-resolution presentation.\n\nAn early issue contained the sentence, \u201cThe worker will rotate pixels during decoding.\u201d That sentence described the expected implementation at the time, not work completed here or a current assignment. In this session, only the derivative dimensions were added to the log. The thumbnail comparison remains red. There is no evidence yet locating the orientation discrepancy within decoding, resizing, or display.",
+    "input_sha256": "92b541fc352cb1761f623ae0409c8f55561fde8faf6731c4c7e180e7ef21d0c5",
+    "group_id": "expand2-test-g16",
+    "label": "RETROSPECTIVE",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-032",
+    "family": "retrospective",
+    "complete_input": {
+      "candidate_briefing": "The Go museum derivative worker logs thumbnail dimensions now. A generated portrait fixture still appears sideways in the thumbnail and upright in the full-resolution viewer. The run has not isolated whether decoding, resizing, or display loses the orientation information.\n\nBefore changing the viewer, inspect the derivative pixels independently of the browser and compare them with the source's orientation tag. If the derivative itself is sideways, apply the orientation during derivative generation and clear the stale orientation metadata from that output. The early issue's expectation is not proof of an existing operation. The completion evidence needs an upright generated thumbnail, not just a log line with the expected dimensions."
+    },
+    "model_text": "The Go museum derivative worker logs thumbnail dimensions now. A generated portrait fixture still appears sideways in the thumbnail and upright in the full-resolution viewer. The run has not isolated whether decoding, resizing, or display loses the orientation information.\n\nBefore changing the viewer, inspect the derivative pixels independently of the browser and compare them with the source's orientation tag. If the derivative itself is sideways, apply the orientation during derivative generation and clear the stale orientation metadata from that output. The early issue's expectation is not proof of an existing operation. The completion evidence needs an upright generated thumbnail, not just a log line with the expected dimensions.",
+    "input_sha256": "41fdeac8d69c42276031b63fa2cb057145ecd9fb402b30e63d38c1b4db755825",
+    "group_id": "expand2-test-g16",
+    "label": "PLAN",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-033",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The observatory's Node exposure controller does not acknowledge the second simulated shutter close. The recorded terminal invocation was `node tools/replay-shutter.mjs --fixture twilight`, and its final output was `close acknowledgements: 1; requested: 2`. Make the acknowledgement accounting reflect each completed close without treating a repeated packet as an additional exposure. The fixture is entirely simulated; the controller has no hardware connection in this exercise."
+    },
+    "model_text": "The observatory's Node exposure controller does not acknowledge the second simulated shutter close. The recorded terminal invocation was `node tools/replay-shutter.mjs --fixture twilight`, and its final output was `close acknowledgements: 1; requested: 2`. Make the acknowledgement accounting reflect each completed close without treating a repeated packet as an additional exposure. The fixture is entirely simulated; the controller has no hardware connection in this exercise.",
+    "input_sha256": "412b564d85a820fb56dbe98d9734e9ff21a4a9ef6762f58137b368ebeee9417d",
+    "group_id": "expand2-test-g17",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-034",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Node exposure controller still reports one close acknowledgement after two simulated shutter closes. The fixture does not connect to hardware, and the current evidence does not distinguish a lost callback from an accounting error. Before touching the accounting, run `node tools/replay-shutter.mjs --fixture twilight --trace-acks` and use the resulting trace to locate the missing acknowledgement. Keep repeated packets from counting as additional exposures. The existing replay checks only the aggregate count; it does not show which close produced each acknowledgement."
+    },
+    "model_text": "The Node exposure controller still reports one close acknowledgement after two simulated shutter closes. The fixture does not connect to hardware, and the current evidence does not distinguish a lost callback from an accounting error. Before touching the accounting, run `node tools/replay-shutter.mjs --fixture twilight --trace-acks` and use the resulting trace to locate the missing acknowledgement. Keep repeated packets from counting as additional exposures. The existing replay checks only the aggregate count; it does not show which close produced each acknowledgement.",
+    "input_sha256": "d515e85de6559f2a07c8da7910ea4e8ff0e5473001846a12828f62c9e4737b5b",
+    "group_id": "expand2-test-g17",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-035",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Rust recording-rights importer currently contains `let key = raw.trim().to_uppercase();` in its identifier path. The saved trace shows that a hyphenated recording code and its compact equivalent become separate keys. The reconciliation needs equivalent permitted spellings of one recording identifier to meet at one identity, while malformed identifiers remain distinguishable as errors. The old review recommended changing identity handling, but it did not settle the implementation. Choose and verify the implementation against the importer's actual identifier rules."
+    },
+    "model_text": "The Rust recording-rights importer currently contains `let key = raw.trim().to_uppercase();` in its identifier path. The saved trace shows that a hyphenated recording code and its compact equivalent become separate keys. The reconciliation needs equivalent permitted spellings of one recording identifier to meet at one identity, while malformed identifiers remain distinguishable as errors. The old review recommended changing identity handling, but it did not settle the implementation. Choose and verify the implementation against the importer's actual identifier rules.",
+    "input_sha256": "278107c96a1468429e1074c12099cb5906984b440269b8876ff12a0c03867f25",
+    "group_id": "expand2-test-g18",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-036",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Rust importer produces separate keys for a compact recording identifier and the same identifier with separators. The current trim-and-uppercase line does not remove those separators. Use this replacement in the identifier path: `let key: String = raw.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(|c| c.to_uppercase()).collect();`. Keep malformed identifiers visible as errors, and check equivalent permitted spellings against the actual import rules. The compact and separated variants must also retain the same royalty linkage after reconciliation, rather than creating a second recording record."
+    },
+    "model_text": "The Rust importer produces separate keys for a compact recording identifier and the same identifier with separators. The current trim-and-uppercase line does not remove those separators. Use this replacement in the identifier path: `let key: String = raw.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(|c| c.to_uppercase()).collect();`. Keep malformed identifiers visible as errors, and check equivalent permitted spellings against the actual import rules. The compact and separated variants must also retain the same royalty linkage after reconciliation, rather than creating a second recording record.",
+    "input_sha256": "b6c97c66f3840ffac1a9d47a1c9d7a38def25e8f9c511797cc707c806a26557b",
+    "group_id": "expand2-test-g18",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-037",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "In the fictional medical scheduler's Java capacity service, the source already invokes `reservations.countForSlot(slotId)`. The observation is that this count includes a maintenance hold, although the hold must block the room without consuming a clinician's appointment capacity. A generated slot with capacity two and one maintenance hold currently accepts only one synthetic appointment.\n\nPreserve the maintenance block for room availability while making the appointment-capacity result reflect appointments only. There is no personal information in these fixtures, and none of these requests targets a real scheduling service."
+    },
+    "model_text": "In the fictional medical scheduler's Java capacity service, the source already invokes `reservations.countForSlot(slotId)`. The observation is that this count includes a maintenance hold, although the hold must block the room without consuming a clinician's appointment capacity. A generated slot with capacity two and one maintenance hold currently accepts only one synthetic appointment.\n\nPreserve the maintenance block for room availability while making the appointment-capacity result reflect appointments only. There is no personal information in these fixtures, and none of these requests targets a real scheduling service.",
+    "input_sha256": "79fcc1b1899474f5dbd984b6a702e5879a19e26ddde3b681c4ecab96a2f91e14",
+    "group_id": "expand2-test-g19",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-038",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The fictional Java scheduler counts a maintenance hold against the clinician's appointment capacity. Room blocking and appointment capacity have different meanings here: the hold must still prevent room use, while a capacity of two continues to mean two synthetic appointments.\n\nChange the capacity service to call `reservations.countAppointmentsForSlot(slotId)` in place of its present general count. Preserve the room-availability behavior and verify the generated maintenance-hold example. The service contains only invented slot identifiers, so the issue can be reproduced without any real appointment records."
+    },
+    "model_text": "The fictional Java scheduler counts a maintenance hold against the clinician's appointment capacity. Room blocking and appointment capacity have different meanings here: the hold must still prevent room use, while a capacity of two continues to mean two synthetic appointments.\n\nChange the capacity service to call `reservations.countAppointmentsForSlot(slotId)` in place of its present general count. Preserve the room-availability behavior and verify the generated maintenance-hold example. The service contains only invented slot identifiers, so the issue can be reproduced without any real appointment records.",
+    "input_sha256": "f5f92cbe91d390b1015d4b54a771534ba70842a364c674817221732872a44ebf",
+    "group_id": "expand2-test-g19",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-039",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Python kerning proof tool printed this exception while opening the generated typography fixture:\n\n    TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'\n\nThe source inspection found `return left.advance + pair_adjustment` in the width helper. Both the exception and that return line are observations from the current run. The fixture includes a glyph pair for which the font provides no pair-specific adjustment, as well as a pair with a genuine negative adjustment. The current proof aborts before rendering either comparison row.\n\nMake the width helper handle an absent adjustment while preserving a real negative adjustment. The first requirement is a usable proof page; silently treating all adjustments as absent would produce a page without establishing correct spacing. An earlier discussion mentioned a default value, but no replacement expression was chosen there. Select the implementation from the actual font API's representation of a missing pair and confirm both fixture rows through the renderer."
+    },
+    "model_text": "The Python kerning proof tool printed this exception while opening the generated typography fixture:\n\n    TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'\n\nThe source inspection found `return left.advance + pair_adjustment` in the width helper. Both the exception and that return line are observations from the current run. The fixture includes a glyph pair for which the font provides no pair-specific adjustment, as well as a pair with a genuine negative adjustment. The current proof aborts before rendering either comparison row.\n\nMake the width helper handle an absent adjustment while preserving a real negative adjustment. The first requirement is a usable proof page; silently treating all adjustments as absent would produce a page without establishing correct spacing. An earlier discussion mentioned a default value, but no replacement expression was chosen there. Select the implementation from the actual font API's representation of a missing pair and confirm both fixture rows through the renderer.",
+    "input_sha256": "0d45276682ee306dba185e54d769899398c636b2d13fa44ee13181e9a81f318f",
+    "group_id": "expand2-test-g20",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-040",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Python kerning proof aborts when a glyph pair has no pair-specific adjustment. A genuine negative adjustment also exists in the fixture and must remain effective. Replace the helper with the following implementation:\n\n    def pair_width(left, pair_adjustment):\n        adjustment = 0 if pair_adjustment is None else pair_adjustment\n        return left.advance + adjustment\n\nKeep the two generated proof rows, one missing an adjustment and one with a negative adjustment, in the rendering comparison. The earlier discussion of a default value did not complete the repair. A page that merely renders is insufficient if the negative adjustment has vanished, so the visible spacing still needs verification after the replacement."
+    },
+    "model_text": "The Python kerning proof aborts when a glyph pair has no pair-specific adjustment. A genuine negative adjustment also exists in the fixture and must remain effective. Replace the helper with the following implementation:\n\n    def pair_width(left, pair_adjustment):\n        adjustment = 0 if pair_adjustment is None else pair_adjustment\n        return left.advance + adjustment\n\nKeep the two generated proof rows, one missing an adjustment and one with a negative adjustment, in the rendering comparison. The earlier discussion of a default value did not complete the repair. A page that merely renders is insufficient if the negative adjustment has vanished, so the visible spacing still needs verification after the replacement.",
+    "input_sha256": "3b3a98e41caa8ac3f72465536a5b9bcc213cb1816a0bb70ab2123e95d815ff05",
+    "group_id": "expand2-test-g20",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-041",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Ruby seed-lot importer read this fixture entry: `{\"lot\":\"DEMO-7\",\"moisture\":0,\"unit\":\"percent\"}`. The audit view then displayed the moisture as unknown. Zero moisture is unusual in practical seed handling, but this synthetic boundary value is deliberately valid under the fixture's schema.\n\nKeep the distinction between an explicitly supplied zero and an absent moisture measurement. The earlier reviewer recommended separating those states; this request renews the behavioral requirement without selecting a Ruby expression or changing the agricultural validity rules. The importer must still report an actually missing measurement as unknown."
+    },
+    "model_text": "The Ruby seed-lot importer read this fixture entry: `{\"lot\":\"DEMO-7\",\"moisture\":0,\"unit\":\"percent\"}`. The audit view then displayed the moisture as unknown. Zero moisture is unusual in practical seed handling, but this synthetic boundary value is deliberately valid under the fixture's schema.\n\nKeep the distinction between an explicitly supplied zero and an absent moisture measurement. The earlier reviewer recommended separating those states; this request renews the behavioral requirement without selecting a Ruby expression or changing the agricultural validity rules. The importer must still report an actually missing measurement as unknown.",
+    "input_sha256": "ab738d1ea810fd187e98e35733477d9c09c11de79fcc1b3c8f37c10c8dbefc88",
+    "group_id": "expand2-test-g21",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-042",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Ruby seed-lot audit view turns an explicit zero moisture value into unknown. This is a valid generated boundary case under the fixture's schema, and an absent measurement must remain distinguishable from zero.\n\nUse `moisture = row.key?(\"moisture\") ? row[\"moisture\"] : nil` at the point where the import extracts the field. Retain the schema's validity rules and verify the displayed result for both a present zero and a genuinely absent field. The earlier reviewer described the distinction but supplied no working patch."
+    },
+    "model_text": "The Ruby seed-lot audit view turns an explicit zero moisture value into unknown. This is a valid generated boundary case under the fixture's schema, and an absent measurement must remain distinguishable from zero.\n\nUse `moisture = row.key?(\"moisture\") ? row[\"moisture\"] : nil` at the point where the import extracts the field. Retain the schema's validity rules and verify the displayed result for both a present zero and a genuinely absent field. The earlier reviewer described the distinction but supplied no working patch.",
+    "input_sha256": "f15a3af7627f76932d7788f1eb1a55a79b6d2057dabe233e447bddd24ba05fc5",
+    "group_id": "expand2-test-g21",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-043",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Museum search service, Go. The page structure currently declares `NextCursor string` without a serialization tag. The response inspector printed `objects=25 cursor=\"\" total=61`; its raw JSON panel names the cursor field `NextCursor`. Search stops after that first page. Make the remaining matching objects reachable through the documented response contract, with no repeated objects across pages."
+    },
+    "model_text": "Museum search service, Go. The page structure currently declares `NextCursor string` without a serialization tag. The response inspector printed `objects=25 cursor=\"\" total=61`; its raw JSON panel names the cursor field `NextCursor`. Search stops after that first page. Make the remaining matching objects reachable through the documented response contract, with no repeated objects across pages.",
+    "input_sha256": "f59304dd04696f2d1200a21ffde11b20bcd655d7e7b2c65c58c447122065a576",
+    "group_id": "expand2-test-g22",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-044",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Go museum search stops after its first twenty-five objects even though sixty-one match. Its response contract expects a lower-case cursor key. Replace the untagged field in the page structure with:\n\n    NextCursor string `json:\"next_cursor,omitempty\"`\n\nKeep subsequent matching objects reachable without returning any object twice. Check the last page as well as the first, since an exhausted cursor must still stop pagination rather than starting the search again."
+    },
+    "model_text": "The Go museum search stops after its first twenty-five objects even though sixty-one match. Its response contract expects a lower-case cursor key. Replace the untagged field in the page structure with:\n\n    NextCursor string `json:\"next_cursor,omitempty\"`\n\nKeep subsequent matching objects reachable without returning any object twice. Check the last page as well as the first, since an exhausted cursor must still stop pagination rather than starting the search again.",
+    "input_sha256": "44f233f642b26c5195b8f55ec77b28e12ed99c64ad8480c09f3f12c445201135",
+    "group_id": "expand2-test-g22",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-045",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Node publishing exporter has a contributor issue, not a missing-track issue. The generated music-release fixture contains two contributors on one track. Both names appear in the editor; the XML export contains one contributor element. The validation tool printed `Expected 2 contributor nodes, received 1`.\n\nThe current source includes `track.contributors[0]` in the export path. A retired implementation note recommended emitting every contributor; it did not include replacement code, and no change was made under that note. The current request is that the export preserve all credited contributors and their established order. Keep the editor's already-correct contributor list as the behavioral reference."
+    },
+    "model_text": "The Node publishing exporter has a contributor issue, not a missing-track issue. The generated music-release fixture contains two contributors on one track. Both names appear in the editor; the XML export contains one contributor element. The validation tool printed `Expected 2 contributor nodes, received 1`.\n\nThe current source includes `track.contributors[0]` in the export path. A retired implementation note recommended emitting every contributor; it did not include replacement code, and no change was made under that note. The current request is that the export preserve all credited contributors and their established order. Keep the editor's already-correct contributor list as the behavioral reference.",
+    "input_sha256": "1f687f5f9ae7d4fb399d8e3602de56583422e2df68626e03801e440d5746a814",
+    "group_id": "expand2-test-g23",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-046",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Two contributors appear in the Node publishing editor, but the XML export retains only the first. The generated release fixture has no missing tracks; it specifically exercises more than one credited contributor on a track. The earlier note about preserving credits never included an implementation.\n\nFor the exporter, add `const contributors = track.contributors.map(person => xml.contributor(person));` and use that result where the single contributor node is currently emitted. Preserve the editor's contributor order and compare the exported nodes with both credited people. The validation tool's last result still reported one node where two were expected."
+    },
+    "model_text": "Two contributors appear in the Node publishing editor, but the XML export retains only the first. The generated release fixture has no missing tracks; it specifically exercises more than one credited contributor on a track. The earlier note about preserving credits never included an implementation.\n\nFor the exporter, add `const contributors = track.contributors.map(person => xml.contributor(person));` and use that result where the single contributor node is currently emitted. Preserve the editor's contributor order and compare the exported nodes with both credited people. The validation tool's last result still reported one node where two were expected.",
+    "input_sha256": "d4b7e1ffda247744ebf47ed4f479874536e6748ee52086408f6741a3b67068fc",
+    "group_id": "expand2-test-g23",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-047",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Rust observatory time-table reader returned the string `refresh-leaps --source bulletin` as the value of a fixture's maintenance-note field. The fixture schema defines that field as free text, separate from the epoch rows. The parser currently tries to interpret the note as a timestamp and rejects the entire table. Keep arbitrary maintenance notes separate from epoch records so valid leap-second entries remain readable. The same table has two valid epoch rows after the note, and neither reaches the parsed result."
+    },
+    "model_text": "The Rust observatory time-table reader returned the string `refresh-leaps --source bulletin` as the value of a fixture's maintenance-note field. The fixture schema defines that field as free text, separate from the epoch rows. The parser currently tries to interpret the note as a timestamp and rejects the entire table. Keep arbitrary maintenance notes separate from epoch records so valid leap-second entries remain readable. The same table has two valid epoch rows after the note, and neither reaches the parsed result.",
+    "input_sha256": "648bc9447e28676b506c84516efafb62a45eccbcaae1f45fc5821f38adfcd2f2",
+    "group_id": "expand2-test-g24",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-048",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Rust observatory time-table reader rejects a generated leap-second table when a maintenance note looks like a timestamp candidate. Notes and epoch records need distinct treatment. Refresh the local reference first with `refresh-leaps --source bulletin --output fixtures/leaps.txt`, then repair the parser so notes cannot invalidate otherwise readable entries. The generated table includes valid epoch records after the note; those records currently disappear along with the rejected table."
+    },
+    "model_text": "The Rust observatory time-table reader rejects a generated leap-second table when a maintenance note looks like a timestamp candidate. Notes and epoch records need distinct treatment. Refresh the local reference first with `refresh-leaps --source bulletin --output fixtures/leaps.txt`, then repair the parser so notes cannot invalidate otherwise readable entries. The generated table includes valid epoch records after the note; those records currently disappear along with the rejected table.",
+    "input_sha256": "52494a87e5b2a36a42fbe30fb19122b4d1ad2abb1d19adb15ce59a386be98cdd",
+    "group_id": "expand2-test-g24",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-049",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Review comment on the Java typography shaper:\n\nThe proof has a ligature spanning three input characters. Selecting its middle character highlights the next glyph instead. Ordinary one-character glyphs select correctly. The current mapping method is named `glyphForCharacter`, and the source inside it reads `return glyphs.get(characterIndex);`. The inspector reports `characters=3 glyphs=1` for the ligature segment.\n\nThe selection requirement concerns source characters, even when shaping changes the number of glyphs. Make a selection inside a ligature resolve to the glyph covering that source span; preserve ordinary selection and do not split the ligature merely to make the counts equal. The proof editor already supplies the original source offset, so a changed user interface is not part of the requested behavior.\n\nAn older review recommended exposing a glyph index directly to the editor. That suggestion was withdrawn when the inspector output demonstrated the difference between character and glyph counts. This comment renews the source-selection requirement, with the existing method and inspector output as the location and evidence for the discrepancy."
+    },
+    "model_text": "Review comment on the Java typography shaper:\n\nThe proof has a ligature spanning three input characters. Selecting its middle character highlights the next glyph instead. Ordinary one-character glyphs select correctly. The current mapping method is named `glyphForCharacter`, and the source inside it reads `return glyphs.get(characterIndex);`. The inspector reports `characters=3 glyphs=1` for the ligature segment.\n\nThe selection requirement concerns source characters, even when shaping changes the number of glyphs. Make a selection inside a ligature resolve to the glyph covering that source span; preserve ordinary selection and do not split the ligature merely to make the counts equal. The proof editor already supplies the original source offset, so a changed user interface is not part of the requested behavior.\n\nAn older review recommended exposing a glyph index directly to the editor. That suggestion was withdrawn when the inspector output demonstrated the difference between character and glyph counts. This comment renews the source-selection requirement, with the existing method and inspector output as the location and evidence for the discrepancy.",
+    "input_sha256": "21a318e65124b2f879340652a16350347fc943be89670b14250bfca737b6db44",
+    "group_id": "expand2-test-g25",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-050",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Java typography inspector records three source characters but one shaped glyph for the ligature. Selecting the middle character currently highlights the next glyph. Ordinary one-character selections already work, and the editor passes the original source offset.\n\nUse this body for the mapping method:\n\n    Glyph glyphForCharacter(int characterIndex) {\n        for (Glyph glyph : glyphs) {\n            if (glyph.sourceStart() <= characterIndex && characterIndex < glyph.sourceEnd()) {\n                return glyph;\n            }\n        }\n        throw new IllegalArgumentException(\"No glyph covers source offset\");\n    }\n\nThe earlier proposal to expose glyph indices to the editor was withdrawn. Keep source-character selection as the interface contract, preserve the ligature as a shaped unit, and check ordinary selections alongside the middle-character case. The inspector's count discrepancy is expected for a ligature; the incorrect highlight is the behavior that needs repair."
+    },
+    "model_text": "The Java typography inspector records three source characters but one shaped glyph for the ligature. Selecting the middle character currently highlights the next glyph. Ordinary one-character selections already work, and the editor passes the original source offset.\n\nUse this body for the mapping method:\n\n    Glyph glyphForCharacter(int characterIndex) {\n        for (Glyph glyph : glyphs) {\n            if (glyph.sourceStart() <= characterIndex && characterIndex < glyph.sourceEnd()) {\n                return glyph;\n            }\n        }\n        throw new IllegalArgumentException(\"No glyph covers source offset\");\n    }\n\nThe earlier proposal to expose glyph indices to the editor was withdrawn. Keep source-character selection as the interface contract, preserve the ligature as a shaped unit, and check ordinary selections alongside the middle-character case. The inspector's count discrepancy is expected for a ligature; the incorrect highlight is the behavior that needs repair.",
+    "input_sha256": "cf1aa25312b58de1d572a5637327692a6ed1389ad561678ef668ccffe1221790",
+    "group_id": "expand2-test-g25",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-051",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Fictional clinic queue, Python: the cancellation audit currently prints `DELETE FROM pending WHERE visit_id = ?`. The recorded row counts afterward are `pending=0 active=1`. Both entries belong to the same generated visit token. Cancellation must leave no schedulable queue entry for that visit while retaining the audit history. The SQL shown here comes from the completed audit trace; the active entry is the unresolved behavior."
+    },
+    "model_text": "Fictional clinic queue, Python: the cancellation audit currently prints `DELETE FROM pending WHERE visit_id = ?`. The recorded row counts afterward are `pending=0 active=1`. Both entries belong to the same generated visit token. Cancellation must leave no schedulable queue entry for that visit while retaining the audit history. The SQL shown here comes from the completed audit trace; the active entry is the unresolved behavior.",
+    "input_sha256": "5e4086dd62666d68686d896284a5da67004926d95539273e70b4f847363d76f2",
+    "group_id": "expand2-test-g26",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-052",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "For the fictional Python clinic queue, cancellation removes the pending entry but leaves its active counterpart schedulable. Audit history must survive. Execute `DELETE FROM active_queue WHERE visit_id = ?` through the cancellation transaction using the same generated visit token. Then check that neither queue can schedule the canceled visit. Keep the audit history intact; it is separate from these live queue entries."
+    },
+    "model_text": "For the fictional Python clinic queue, cancellation removes the pending entry but leaves its active counterpart schedulable. Audit history must survive. Execute `DELETE FROM active_queue WHERE visit_id = ?` through the cancellation transaction using the same generated visit token. Then check that neither queue can schedule the canceled visit. Keep the audit history intact; it is separate from these live queue entries.",
+    "input_sha256": "8f9d05b108f2184e3f890094902c5d22a0d9651fc31a42e79c9e7854dded9986",
+    "group_id": "expand2-test-g26",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-053",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Museum reproduction-rights review, Ruby.\n\nThe rights file already contains this helper:\n\n    def reusable?(record, on_date)\n      record.expiry < on_date\n    end\n\nThe saved rights entry for the invented collection item has an expiry date equal to the requested publication date. The preview declines reuse on that date. The rights specification for this collection says expiry is inclusive for the restriction: reuse becomes possible on the following day. In that respect, the helper matches the specification.\n\nThe actual failing check concerns an entry whose expiry is unknown. That preview crashes instead of showing an unresolved-rights status. Preserve the inclusive restriction for dated entries and let an unknown expiry remain unresolved, rather than treating it as permission. The earlier reviewer recommended changing the comparison, but withdrew that advice after rereading the collection's rights terms. Concentrate the repair on the unknown-expiry behavior. The specimen entry is fictional, and this software requirement is not an interpretation of any real institution's legal agreement."
+    },
+    "model_text": "Museum reproduction-rights review, Ruby.\n\nThe rights file already contains this helper:\n\n    def reusable?(record, on_date)\n      record.expiry < on_date\n    end\n\nThe saved rights entry for the invented collection item has an expiry date equal to the requested publication date. The preview declines reuse on that date. The rights specification for this collection says expiry is inclusive for the restriction: reuse becomes possible on the following day. In that respect, the helper matches the specification.\n\nThe actual failing check concerns an entry whose expiry is unknown. That preview crashes instead of showing an unresolved-rights status. Preserve the inclusive restriction for dated entries and let an unknown expiry remain unresolved, rather than treating it as permission. The earlier reviewer recommended changing the comparison, but withdrew that advice after rereading the collection's rights terms. Concentrate the repair on the unknown-expiry behavior. The specimen entry is fictional, and this software requirement is not an interpretation of any real institution's legal agreement.",
+    "input_sha256": "1609ea38180691bb2004799b197530ca57e63c07d7c5fa643e340cfa6987925c",
+    "group_id": "expand2-test-g27",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-054",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Ruby museum reproduction-rights preview: the dated example behaves correctly, because the collection's restriction includes its expiry date. An unknown expiry currently crashes. Earlier advice to change the date comparison was withdrawn after the restriction terms were reread.\n\nReplace the helper with:\n\n    def reusable?(record, on_date)\n      return :unresolved if record.expiry.nil?\n      record.expiry < on_date\n    end\n\nKeep the current behavior on the expiry date and on the following day. The preview also needs to show the unresolved-rights status when the helper returns it, without interpreting that result as permission. Check the caller's handling as well as the helper, since a truthy status symbol alone does not establish the right display behavior. All collection entries and dates in this example are invented."
+    },
+    "model_text": "Ruby museum reproduction-rights preview: the dated example behaves correctly, because the collection's restriction includes its expiry date. An unknown expiry currently crashes. Earlier advice to change the date comparison was withdrawn after the restriction terms were reread.\n\nReplace the helper with:\n\n    def reusable?(record, on_date)\n      return :unresolved if record.expiry.nil?\n      record.expiry < on_date\n    end\n\nKeep the current behavior on the expiry date and on the following day. The preview also needs to show the unresolved-rights status when the helper returns it, without interpreting that result as permission. Check the caller's handling as well as the helper, since a truthy status symbol alone does not establish the right display behavior. All collection entries and dates in this example are invented.",
+    "input_sha256": "5b3ace9551e40a3cbca05ec8ac65cab244042d057ff1686622479bd0903c581d",
+    "group_id": "expand2-test-g27",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Ruby",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-055",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Agriculture weather ingester, Go: the saved checker output is `station gap: expected 24 hourly observations, found 23`. Its invocation in the transcript was `go test ./weather -run TestStationDay`. The fixture covers a normal day, with no clock change. Account for every supplied hourly observation and retain genuine missing-hour warnings. The failing transcript identifies the current evidence."
+    },
+    "model_text": "Agriculture weather ingester, Go: the saved checker output is `station gap: expected 24 hourly observations, found 23`. Its invocation in the transcript was `go test ./weather -run TestStationDay`. The fixture covers a normal day, with no clock change. Account for every supplied hourly observation and retain genuine missing-hour warnings. The failing transcript identifies the current evidence.",
+    "input_sha256": "995eacd6efd0d482d4b866de7b65a12a935fbad97a6430404f23521ac15bd3e1",
+    "group_id": "expand2-test-g28",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-056",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Go agricultural weather ingester drops one supplied observation on a normal twenty-four-hour day. Genuine missing-hour warnings must remain visible. After correcting ingestion, run `go test ./weather -run TestStationDay -count=1` and use its result to confirm all supplied hours survive. The previous checker result reported only twenty-three observations, and no seasonal clock change is present in this fixture."
+    },
+    "model_text": "The Go agricultural weather ingester drops one supplied observation on a normal twenty-four-hour day. Genuine missing-hour warnings must remain visible. After correcting ingestion, run `go test ./weather -run TestStationDay -count=1` and use its result to confirm all supplied hours survive. The previous checker result reported only twenty-three observations, and no seasonal clock change is present in this fixture.",
+    "input_sha256": "8742d7eb90d1d859ffd250bf237a394417a84bb8ade8f91309453839c8c7ebab",
+    "group_id": "expand2-test-g28",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Go",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-057",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Spectral reduction review for the Node astronomy pipeline.\n\nThe issue concerns two masks applied to generated spectra. One mask comes from the detector calibration and marks permanently unusable pixels. Another is produced for an individual exposure when a transient spike is detected. Both masks are visible in the saved reduction report. The extracted spectrum omits the permanent defects but retains the transient spike, even though that spike is marked in the exposure mask. The reference spectrum has no spike at that position.\n\nThe diagnostic viewer currently displays `bad pixels: detector=4 exposure=1`. The existing source declaration is `const mask = detector.mask;`. Those observations locate the discrepancy between the two reported inputs and the extraction result. They do not show a repaired extraction. Preserve the distinction in the diagnostic viewer: an operator needs to know whether a bad pixel came from the detector map or the exposure analysis.\n\nFor the extracted spectrum, however, either source of badness must prevent that pixel from contributing. A usable result must exclude the transient and permanent defects without dropping neighboring valid samples. Earlier review notes recommended combining the two masks; that recommendation was about the required extraction behavior and did not settle a representation or combination API. The generated exposure also has valid pixels that exist in neither mask, so simply rejecting the entire exposure would fail the acceptance example. Keep the viewer's separate counts meaningful while repairing extraction, and judge success from the extracted values as well as the viewer."
+    },
+    "model_text": "Spectral reduction review for the Node astronomy pipeline.\n\nThe issue concerns two masks applied to generated spectra. One mask comes from the detector calibration and marks permanently unusable pixels. Another is produced for an individual exposure when a transient spike is detected. Both masks are visible in the saved reduction report. The extracted spectrum omits the permanent defects but retains the transient spike, even though that spike is marked in the exposure mask. The reference spectrum has no spike at that position.\n\nThe diagnostic viewer currently displays `bad pixels: detector=4 exposure=1`. The existing source declaration is `const mask = detector.mask;`. Those observations locate the discrepancy between the two reported inputs and the extraction result. They do not show a repaired extraction. Preserve the distinction in the diagnostic viewer: an operator needs to know whether a bad pixel came from the detector map or the exposure analysis.\n\nFor the extracted spectrum, however, either source of badness must prevent that pixel from contributing. A usable result must exclude the transient and permanent defects without dropping neighboring valid samples. Earlier review notes recommended combining the two masks; that recommendation was about the required extraction behavior and did not settle a representation or combination API. The generated exposure also has valid pixels that exist in neither mask, so simply rejecting the entire exposure would fail the acceptance example. Keep the viewer's separate counts meaningful while repairing extraction, and judge success from the extracted values as well as the viewer.",
+    "input_sha256": "cd8a0da9c0bf67e12239fe435a4756dd5a6500dd17d5dfb1b4960bb151e7202c",
+    "group_id": "expand2-test-g29",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-058",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Node astronomy extraction uses the detector mask but leaves a transient spike that is marked in the exposure mask. The diagnostic viewer reports both sources separately, and those separate counts must remain useful to the operator. Valid neighboring samples must survive.\n\nSet the extraction mask with `const mask = detector.mask.map((bad, index) => bad || exposure.mask[index]);` before passing it to the extractor. Retain the two original masks for the diagnostic viewer. The earlier review asked for both kinds of marked pixel to be excluded but did not provide an implementation. Verify the extracted values, including valid samples that neither mask marks, rather than accepting a viewer with two plausible counts as sufficient evidence."
+    },
+    "model_text": "The Node astronomy extraction uses the detector mask but leaves a transient spike that is marked in the exposure mask. The diagnostic viewer reports both sources separately, and those separate counts must remain useful to the operator. Valid neighboring samples must survive.\n\nSet the extraction mask with `const mask = detector.mask.map((bad, index) => bad || exposure.mask[index]);` before passing it to the extractor. Retain the two original masks for the diagnostic viewer. The earlier review asked for both kinds of marked pixel to be excluded but did not provide an implementation. Verify the extracted values, including valid samples that neither mask marks, rather than accepting a viewer with two plausible counts as sufficient evidence.",
+    "input_sha256": "a50197604a7ee3548730b9231e4763723fb65325268a15ec694ef44b3a527e37",
+    "group_id": "expand2-test-g29",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Node",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-059",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Acceptance note for the Rust music-edition exporter: the printed track-list fixture has disc one with twelve tracks and disc two with three. The export log reads `disc 2: tracks 13,14,15`. Printed numbering must restart on each disc, while the release-wide playback order remains continuous. Those logged numbers are the observed defect, and both numbering concepts must survive the repair."
+    },
+    "model_text": "Acceptance note for the Rust music-edition exporter: the printed track-list fixture has disc one with twelve tracks and disc two with three. The export log reads `disc 2: tracks 13,14,15`. Printed numbering must restart on each disc, while the release-wide playback order remains continuous. Those logged numbers are the observed defect, and both numbering concepts must survive the repair.",
+    "input_sha256": "4843eebcb718e0cc7b21ab32bdd3ec6cf5960c1c2ec0fdf48f1d39d1c7071800",
+    "group_id": "expand2-test-g30",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-060",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Rust music-edition export carries continuous track numbers onto disc two of the printed list. Playback order still needs that release-wide sequence; the printed list instead restarts at one for each disc. Change the printed number expression to `let printed_number = position_within_disc + 1;` and keep the playback index separate. The fixture has twelve tracks on the first disc and three on the second. Confirm that fixing the printed list does not reorder playback."
+    },
+    "model_text": "The Rust music-edition export carries continuous track numbers onto disc two of the printed list. Playback order still needs that release-wide sequence; the printed list instead restarts at one for each disc. Change the printed number expression to `let printed_number = position_within_disc + 1;` and keep the playback index separate. The fixture has twelve tracks on the first disc and three on the second. Confirm that fixing the printed list does not reorder playback.",
+    "input_sha256": "b77d120ada301a628525d16f77942784c70ec23f801e4620888c80277c83073f",
+    "group_id": "expand2-test-g30",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Rust",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-061",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Greenhouse message review, Java service. The broker trace already contains this payload from the generated controller fixture:\n\n    {\"zone\":\"north-bed\",\"event\":\"valve_closed\",\"sequence\":8}\n\nThe dashboard interprets it as an unknown event. An older integration note recommended changing the controller spelling, but the controller contract and saved broker trace agree on the spelling shown above. Keep that contract and make the dashboard recognize the closure, including when the message arrives more than once. The acceptance behavior is one transition to closed for that sequence, with no duplicate watering total and no error banner."
+    },
+    "model_text": "Greenhouse message review, Java service. The broker trace already contains this payload from the generated controller fixture:\n\n    {\"zone\":\"north-bed\",\"event\":\"valve_closed\",\"sequence\":8}\n\nThe dashboard interprets it as an unknown event. An older integration note recommended changing the controller spelling, but the controller contract and saved broker trace agree on the spelling shown above. Keep that contract and make the dashboard recognize the closure, including when the message arrives more than once. The acceptance behavior is one transition to closed for that sequence, with no duplicate watering total and no error banner.",
+    "input_sha256": "498745d8b0c3640f8fad1292a4449168f9bc7e8f48b05468905e2c451e664ed0",
+    "group_id": "expand2-test-g31",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-062",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Java greenhouse dashboard calls a controller closure message unknown. The broker fixture uses the controller contract's established event spelling, so changing the controller is outside this repair. The dashboard must recognize one closure transition for the sequence and tolerate redelivery without adding watering time twice.\n\nCreate `config/controller-events.json` with these contents:\n\n    {\"valve_closed\":\"CLOSED\",\"valve_opened\":\"OPEN\"}\n\nWire the dashboard subscriber to that mapping and preserve duplicate-message handling. The earlier integration note had proposed changing the controller spelling; this repair instead gives the subscriber an explicit mapping. Check both a first delivery and a repeated delivery of the generated closure message."
+    },
+    "model_text": "The Java greenhouse dashboard calls a controller closure message unknown. The broker fixture uses the controller contract's established event spelling, so changing the controller is outside this repair. The dashboard must recognize one closure transition for the sequence and tolerate redelivery without adding watering time twice.\n\nCreate `config/controller-events.json` with these contents:\n\n    {\"valve_closed\":\"CLOSED\",\"valve_opened\":\"OPEN\"}\n\nWire the dashboard subscriber to that mapping and preserve duplicate-message handling. The earlier integration note had proposed changing the controller spelling; this repair instead gives the subscriber an explicit mapping. Check both a first delivery and a repeated delivery of the generated closure message.",
+    "input_sha256": "e05a56efbcd3871b4d8f30bba9a384393ae47e7d49c10477a61a300fb7f56876",
+    "group_id": "expand2-test-g31",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Java",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-063",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "Curatorial review on the Python provenance importer:\n\nThe source worksheet for the invented museum object says `circa 1890`. The preview currently shows `1890-01-01`, which creates a day-level precision the worksheet does not support. The existing parser method is named `parse_acquisition_date`. Its audit output says `qualifier=circa precision=year`, so the qualifier is being recognized somewhere before the preview is built.\n\nKeep the approximate year visible as approximate, and retain the original worksheet wording in the audit view. A date known to the day must still retain that precision. The previous reviewer recommended using a fixed first-of-year date throughout the system; that recommendation was withdrawn after the curator explained the distinction. The remaining issue is preserving the source's uncertainty through the preview rather than manufacturing a more precise acquisition date."
+    },
+    "model_text": "Curatorial review on the Python provenance importer:\n\nThe source worksheet for the invented museum object says `circa 1890`. The preview currently shows `1890-01-01`, which creates a day-level precision the worksheet does not support. The existing parser method is named `parse_acquisition_date`. Its audit output says `qualifier=circa precision=year`, so the qualifier is being recognized somewhere before the preview is built.\n\nKeep the approximate year visible as approximate, and retain the original worksheet wording in the audit view. A date known to the day must still retain that precision. The previous reviewer recommended using a fixed first-of-year date throughout the system; that recommendation was withdrawn after the curator explained the distinction. The remaining issue is preserving the source's uncertainty through the preview rather than manufacturing a more precise acquisition date.",
+    "input_sha256": "63f59fd7b585b607c1693bf420c61e0a176a7edfd4a2b0ddc916579264eb0fdc",
+    "group_id": "expand2-test-g32",
+    "label": "DESCRIBES",
+    "label_id": 0,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  },
+  {
+    "id": "expand2-test-064",
+    "family": "dictation",
+    "complete_input": {
+      "public_directive": "The Python provenance preview turns an approximate year into a precise first-of-January date. The generated worksheet and the audit view already distinguish an approximate year from a day-level date. Preserve that distinction in the museum preview and keep the original wording available for audit.\n\nApply this change in the year-only branch of `parse_acquisition_date`:\n\n    - return date(year, 1, 1)\n    + return {\"year\": year, \"precision\": \"year\", \"approximate\": qualifier == \"circa\"}\n\nThe earlier fixed-date recommendation was withdrawn. The preview needs to consume the year-level result without inventing a day, while ordinary full dates retain their existing precision. Verify both forms against the generated worksheet examples; the approximate-year case is the one that currently misleads the curator."
+    },
+    "model_text": "The Python provenance preview turns an approximate year into a precise first-of-January date. The generated worksheet and the audit view already distinguish an approximate year from a day-level date. Preserve that distinction in the museum preview and keep the original wording available for audit.\n\nApply this change in the year-only branch of `parse_acquisition_date`:\n\n    - return date(year, 1, 1)\n    + return {\"year\": year, \"precision\": \"year\", \"approximate\": qualifier == \"circa\"}\n\nThe earlier fixed-date recommendation was withdrawn. The preview needs to consume the year-level result without inventing a day, while ordinary full dates retain their existing precision. Verify both forms against the generated worksheet examples; the approximate-year case is the one that currently misleads the curator.",
+    "input_sha256": "c3998c432da1f190dfb4464b450a29e5442891d1283c25652e0036778030767c",
+    "group_id": "expand2-test-g32",
+    "label": "DICTATES",
+    "label_id": 1,
+    "partition": "SYNTHETIC_TEST",
+    "task": "synthetic-policy-boundaries",
+    "language": "Python",
+    "source_kind": "independently_reviewed_synthetic",
+    "label_provenance": "AUTHOR_PLUS_TWO_BLIND_ISOLATED_ASSISTANT_REVIEWS_NOT_HUMAN_GOLD",
+    "generation_batch": "test",
+    "parent_real_ids": [],
+    "fresh_unseen_scenario": false
+  }
+]

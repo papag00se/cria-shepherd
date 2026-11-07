@@ -61,7 +61,7 @@ The existing exporter fixes the class-slot count. Validation therefore used two 
 
 Checkpoints:
 
-- BEFORE: `training/system1-v2/train-001/reference` (gitignored repository directory).
+- BEFORE: `models/system1/train-001/reference` (retained expanded-v2 checkpoint; Git LFS).
 - AFTER: `~/.cria/training/progress-v1/final/reference`.
 - Frozen edit: `~/.cria/training/progress-v1/weight-study-20261104/candidate-weight.json`.
 

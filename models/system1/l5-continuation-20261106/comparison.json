@@ -1,0 +1,434 @@
+{
+  "REAL_TRAIN_REPLAY/dictation": {
+    "count": 18,
+    "original_native": {
+      "matched": 18,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 5,
+        "DICTATES -> DICTATES": 13
+      },
+      "seconds_mean": 1.4626201323335408,
+      "seconds_median": 1.3163175854997462,
+      "seconds_p95": 2.7470063929995376
+    },
+    "original_int4": {
+      "matched": 18,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 5,
+        "DICTATES -> DICTATES": 13
+      },
+      "seconds_mean": 1.4957589054443412,
+      "seconds_median": 1.4113610485001118,
+      "seconds_p95": 2.046090474999801
+    },
+    "candidate_native": {
+      "matched": 18,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 5,
+        "DICTATES -> DICTATES": 13
+      },
+      "seconds_mean": 1.4675394651662321,
+      "seconds_median": 1.2603322715003742,
+      "seconds_p95": 2.5681058349982777
+    },
+    "candidate_int4": {
+      "matched": 18,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 5,
+        "DICTATES -> DICTATES": 13
+      },
+      "seconds_mean": 2.455442333833465,
+      "seconds_median": 2.251162894001027,
+      "seconds_p95": 3.3764836410009593
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 0,
+      "changed_decisions": 0
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "REAL_TRAIN_REPLAY/retrospective": {
+    "count": 112,
+    "original_native": {
+      "matched": 112,
+      "confusion": {
+        "PLAN -> PLAN": 28,
+        "RETROSPECTIVE -> RETROSPECTIVE": 84
+      },
+      "seconds_mean": 3.5462423273213353,
+      "seconds_median": 2.7339635629996337,
+      "seconds_p95": 10.111276839999846
+    },
+    "original_int4": {
+      "matched": 112,
+      "confusion": {
+        "PLAN -> PLAN": 28,
+        "RETROSPECTIVE -> RETROSPECTIVE": 84
+      },
+      "seconds_mean": 3.046796590794705,
+      "seconds_median": 2.391911683500439,
+      "seconds_p95": 7.622770347999904
+    },
+    "candidate_native": {
+      "matched": 112,
+      "confusion": {
+        "PLAN -> PLAN": 28,
+        "RETROSPECTIVE -> RETROSPECTIVE": 84
+      },
+      "seconds_mean": 2.6656909683302468,
+      "seconds_median": 1.9974988835001568,
+      "seconds_p95": 7.2361553170012485
+    },
+    "candidate_int4": {
+      "matched": 112,
+      "confusion": {
+        "PLAN -> PLAN": 28,
+        "RETROSPECTIVE -> RETROSPECTIVE": 84
+      },
+      "seconds_mean": 3.4151515496696447,
+      "seconds_median": 2.9958825254998374,
+      "seconds_p95": 6.344329065999773
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 0,
+      "changed_decisions": 0
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "SYNTHETIC_TEST/dictation": {
+    "count": 32,
+    "original_native": {
+      "matched": 32,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 16,
+        "DICTATES -> DICTATES": 16
+      },
+      "seconds_mean": 1.7445317125623774,
+      "seconds_median": 1.534413021000546,
+      "seconds_p95": 3.122578980999606
+    },
+    "original_int4": {
+      "matched": 32,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 16,
+        "DICTATES -> DICTATES": 16
+      },
+      "seconds_mean": 1.8347674803441123,
+      "seconds_median": 1.6306185414996435,
+      "seconds_p95": 3.1347030280012405
+    },
+    "candidate_native": {
+      "matched": 32,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 16,
+        "DICTATES -> DICTATES": 16
+      },
+      "seconds_mean": 1.6021903308748051,
+      "seconds_median": 1.4331322529997124,
+      "seconds_p95": 2.830750665998494
+    },
+    "candidate_int4": {
+      "matched": 32,
+      "confusion": {
+        "DESCRIBES -> DESCRIBES": 16,
+        "DICTATES -> DICTATES": 16
+      },
+      "seconds_mean": 2.5877104337816945,
+      "seconds_median": 2.435364300501533,
+      "seconds_p95": 3.314784795999003
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 0,
+      "changed_decisions": 0
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "SYNTHETIC_TEST/retrospective": {
+    "count": 32,
+    "original_native": {
+      "matched": 32,
+      "confusion": {
+        "PLAN -> PLAN": 16,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 1.3471511523749768,
+      "seconds_median": 1.027825582499645,
+      "seconds_p95": 2.377441299999191
+    },
+    "original_int4": {
+      "matched": 32,
+      "confusion": {
+        "PLAN -> PLAN": 16,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 1.2522332703436518,
+      "seconds_median": 1.0580372684989925,
+      "seconds_p95": 2.123962144998586
+    },
+    "candidate_native": {
+      "matched": 32,
+      "confusion": {
+        "PLAN -> PLAN": 16,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 1.0609101871879147,
+      "seconds_median": 0.8078071790005197,
+      "seconds_p95": 2.3092310940010066
+    },
+    "candidate_int4": {
+      "matched": 32,
+      "confusion": {
+        "PLAN -> PLAN": 16,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 1.8590181944056212,
+      "seconds_median": 1.7821311669995339,
+      "seconds_p95": 2.3737862029993266
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 0,
+      "changed_decisions": 0
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "ambiguous_reserved_session/retrospective": {
+    "count": 1,
+    "original_native": {
+      "matched": 0,
+      "confusion": {
+        "RETROSPECTIVE -> PLAN": 1
+      },
+      "seconds_mean": 5.926222027999756,
+      "seconds_median": 5.926222027999756,
+      "seconds_p95": 5.926222027999756
+    },
+    "original_int4": {
+      "matched": 0,
+      "confusion": {
+        "RETROSPECTIVE -> PLAN": 1
+      },
+      "seconds_mean": 4.796052824000071,
+      "seconds_median": 4.796052824000071,
+      "seconds_p95": 4.796052824000071
+    },
+    "candidate_native": {
+      "matched": 0,
+      "confusion": {
+        "RETROSPECTIVE -> PLAN": 1
+      },
+      "seconds_mean": 3.9530471799989755,
+      "seconds_median": 3.9530471799989755,
+      "seconds_p95": 3.9530471799989755
+    },
+    "candidate_int4": {
+      "matched": 0,
+      "confusion": {
+        "RETROSPECTIVE -> PLAN": 1
+      },
+      "seconds_mean": 4.102660838998418,
+      "seconds_median": 4.102660838998418,
+      "seconds_p95": 4.102660838998418
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 0,
+      "changed_decisions": 0
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "ambiguous_train_session/retrospective": {
+    "count": 13,
+    "original_native": {
+      "matched": 5,
+      "confusion": {
+        "PLAN -> PLAN": 2,
+        "PLAN -> RETROSPECTIVE": 7,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 3
+      },
+      "seconds_mean": 4.698521494384504,
+      "seconds_median": 3.8887561520004965,
+      "seconds_p95": 13.495440852999309
+    },
+    "original_int4": {
+      "matched": 5,
+      "confusion": {
+        "PLAN -> PLAN": 2,
+        "PLAN -> RETROSPECTIVE": 7,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 3
+      },
+      "seconds_mean": 3.7896040286156607,
+      "seconds_median": 3.5614058669998485,
+      "seconds_p95": 9.482976245999453
+    },
+    "candidate_native": {
+      "matched": 4,
+      "confusion": {
+        "PLAN -> PLAN": 2,
+        "PLAN -> RETROSPECTIVE": 7,
+        "RETROSPECTIVE -> PLAN": 2,
+        "RETROSPECTIVE -> RETROSPECTIVE": 2
+      },
+      "seconds_mean": 4.346149393384762,
+      "seconds_median": 4.105009447001066,
+      "seconds_p95": 11.108898735001276
+    },
+    "candidate_int4": {
+      "matched": 4,
+      "confusion": {
+        "PLAN -> PLAN": 2,
+        "PLAN -> RETROSPECTIVE": 7,
+        "RETROSPECTIVE -> PLAN": 2,
+        "RETROSPECTIVE -> RETROSPECTIVE": 2
+      },
+      "seconds_mean": 4.819931494077396,
+      "seconds_median": 4.033775406998757,
+      "seconds_p95": 9.88367357899915
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 1,
+      "changed_decisions": 1
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "reserved/retrospective": {
+    "count": 21,
+    "original_native": {
+      "matched": 20,
+      "confusion": {
+        "PLAN -> PLAN": 4,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 6.116935554809537,
+      "seconds_median": 3.6233463960015797,
+      "seconds_p95": 23.729676918001132
+    },
+    "original_int4": {
+      "matched": 20,
+      "confusion": {
+        "PLAN -> PLAN": 4,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 4.621732291714146,
+      "seconds_median": 3.2076112180002383,
+      "seconds_p95": 16.951487208998515
+    },
+    "candidate_native": {
+      "matched": 20,
+      "confusion": {
+        "PLAN -> PLAN": 4,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 5.248923887808944,
+      "seconds_median": 2.8582087750000937,
+      "seconds_p95": 19.22259647199826
+    },
+    "candidate_int4": {
+      "matched": 20,
+      "confusion": {
+        "PLAN -> PLAN": 4,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 16
+      },
+      "seconds_mean": 4.426251514619036,
+      "seconds_median": 3.1927439450009842,
+      "seconds_p95": 14.015343962997576
+    },
+    "paired_changes_int4": {
+      "corrected": 0,
+      "new_errors": 0,
+      "changed_decisions": 0
+    },
+    "native_int4_disagreements": {
+      "original": 0,
+      "candidate": 0
+    }
+  },
+  "train/retrospective": {
+    "count": 135,
+    "original_native": {
+      "matched": 114,
+      "confusion": {
+        "PLAN -> PLAN": 24,
+        "PLAN -> RETROSPECTIVE": 16,
+        "RETROSPECTIVE -> PLAN": 5,
+        "RETROSPECTIVE -> RETROSPECTIVE": 90
+      },
+      "seconds_mean": 6.029990869962906,
+      "seconds_median": 4.200322402999518,
+      "seconds_p95": 16.19653575099983
+    },
+    "original_int4": {
+      "matched": 113,
+      "confusion": {
+        "PLAN -> PLAN": 21,
+        "PLAN -> RETROSPECTIVE": 19,
+        "RETROSPECTIVE -> PLAN": 3,
+        "RETROSPECTIVE -> RETROSPECTIVE": 92
+      },
+      "seconds_mean": 4.986149571511083,
+      "seconds_median": 3.478503528998772,
+      "seconds_p95": 10.754420844999913
+    },
+    "candidate_native": {
+      "matched": 124,
+      "confusion": {
+        "PLAN -> PLAN": 30,
+        "PLAN -> RETROSPECTIVE": 10,
+        "RETROSPECTIVE -> PLAN": 1,
+        "RETROSPECTIVE -> RETROSPECTIVE": 94
+      },
+      "seconds_mean": 4.6875076030592835,
+      "seconds_median": 3.3726124500026344,
+      "seconds_p95": 12.253161736000038
+    },
+    "candidate_int4": {
+      "matched": 123,
+      "confusion": {
+        "PLAN -> PLAN": 30,
+        "PLAN -> RETROSPECTIVE": 10,
+        "RETROSPECTIVE -> PLAN": 2,
+        "RETROSPECTIVE -> RETROSPECTIVE": 93
+      },
+      "seconds_mean": 4.795301621429449,
+      "seconds_median": 3.7888199429980887,
+      "seconds_p95": 10.84270151599776
+    },
+    "paired_changes_int4": {
+      "corrected": 11,
+      "new_errors": 1,
+      "changed_decisions": 12
+    },
+    "native_int4_disagreements": {
+      "original": 7,
+      "candidate": 1
+    }
+  }
+}

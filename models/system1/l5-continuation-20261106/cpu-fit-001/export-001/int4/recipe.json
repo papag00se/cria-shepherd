@@ -1,0 +1,28 @@
+{
+  "source_sha256": "1da5d8f33235740e3591de3e881242cf1402a9d3a24f54911efd2a24ad5805ef",
+  "bits": 4,
+  "block_size": 128,
+  "symmetric": true,
+  "block_sizes": {
+    "MatMul": 128,
+    "Gather": 128
+  },
+  "equalize_readout": false,
+  "relative_position_int4": false,
+  "operators": [
+    "MatMul",
+    "Gather"
+  ],
+  "axes": {
+    "MatMul": 0,
+    "Gather": 1
+  },
+  "accuracy_level": 1,
+  "activation_compute": "FP32; no internal input quantization/downcast",
+  "algorithm": "RTN; no task calibration data",
+  "format": "QOperator",
+  "onnx_version": "1.23.2",
+  "onnxruntime_version": "1.31.0",
+  "preprocessing": "standard eliminate_identity, ONNXModel.replace_gemm_with_matmul, semantic ONNX opset 21 conversion; native-vs-export fidelity remains required",
+  "source_module_sha256": "45c2baef2fb679d7f937ac7d2e9bdf98404a315772cd8e4288e390af57b0674d"
+}

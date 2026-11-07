@@ -1,0 +1,5683 @@
+{
+  "source": {
+    "bytes": 1761462772,
+    "sha256": "1da5d8f33235740e3591de3e881242cf1402a9d3a24f54911efd2a24ad5805ef"
+  },
+  "normalized_fp32_sha256": "4c06932e484aea4413a02be96743e73fc8a41fb7591fb39ecf72a6d121e5e473",
+  "before": {
+    "remaining_floating_weight_matrices": [
+      {
+        "name": "native.model.text_projector.linear_1.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_2.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.embeddings.word_embeddings.weight",
+        "shape": [
+          128004,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.encoder.rel_embeddings.weight",
+        "shape": [
+          512,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13062",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13066",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13112",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13113",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13114",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13115",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13119",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13123",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13167",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13168",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13169",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13170",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13174",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13178",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13222",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13223",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13224",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13225",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13229",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13233",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13277",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13278",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13279",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13280",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13284",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13288",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13332",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13333",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13334",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13335",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13339",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13343",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13387",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13388",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13389",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13390",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13394",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13398",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13442",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13443",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13444",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13445",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13449",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13453",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13497",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13498",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13499",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13500",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13504",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13508",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13552",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13553",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13554",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13555",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13559",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13563",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13607",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13608",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13609",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13610",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13614",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13618",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13662",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13663",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13664",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13665",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13669",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13673",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13717",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13718",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13719",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13720",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13724",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13728",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13772",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13773",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13774",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13775",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13779",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13783",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13827",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13828",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13829",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13830",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13834",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13838",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13882",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13883",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13884",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13885",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13889",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13893",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13937",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13938",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13939",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13940",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13944",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13948",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13992",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13993",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13994",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13995",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13999",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14003",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14047",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14048",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14049",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14050",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14054",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14102",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14103",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14104",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14105",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14109",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14113",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14157",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14158",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14159",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14160",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14164",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14168",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14212",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14213",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14214",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14215",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14219",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14223",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14267",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14268",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14269",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14270",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14274",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14278",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14322",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14323",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14324",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14325",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14329",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14333",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14377",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14378",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14379",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14380",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14381",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14382",
+        "shape": [
+          2048,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14383",
+        "shape": [
+          256,
+          128
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14384",
+        "shape": [
+          128,
+          1
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14392",
+        "shape": [
+          4102,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14393",
+        "shape": [
+          256,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14394",
+        "shape": [
+          256,
+          2
+        ]
+      }
+    ],
+    "operators": {
+      "Identity": 48,
+      "Constant": 3644,
+      "Gather": 320,
+      "LayerNormalization": 52,
+      "Unsqueeze": 769,
+      "Cast": 266,
+      "Mul": 189,
+      "Squeeze": 365,
+      "Shape": 755,
+      "Slice": 365,
+      "Range": 1,
+      "Sub": 6,
+      "Sign": 1,
+      "Less": 2,
+      "Greater": 2,
+      "And": 2,
+      "Abs": 3,
+      "Where": 79,
+      "Div": 128,
+      "Log": 2,
+      "Ceil": 1,
+      "Add": 376,
+      "LessOrEqual": 1,
+      "MatMul": 296,
+      "Concat": 388,
+      "Reshape": 385,
+      "Transpose": 240,
+      "Sqrt": 72,
+      "ConstantOfShape": 98,
+      "Expand": 100,
+      "Tile": 48,
+      "Clip": 26,
+      "Equal": 75,
+      "GatherElements": 48,
+      "Not": 26,
+      "If": 24,
+      "Neg": 30,
+      "Softmax": 24,
+      "Erf": 28,
+      "ReduceSum": 5,
+      "CumSum": 1,
+      "Einsum": 1,
+      "Gemm": 2,
+      "Relu": 2,
+      "ReduceMax": 1,
+      "Sigmoid": 2,
+      "Softplus": 2
+    },
+    "opsets": {
+      "": 17
+    },
+    "inputs": [
+      "input_ids",
+      "attention_mask"
+    ],
+    "outputs": [
+      "logits"
+    ],
+    "initializer_elements": 439790595,
+    "floating_matrix_initializers": [
+      {
+        "name": "native.model.text_projector.linear_1.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_2.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.embeddings.word_embeddings.weight",
+        "shape": [
+          128004,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.encoder.rel_embeddings.weight",
+        "shape": [
+          512,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13062",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13066",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13112",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13113",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13114",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13115",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13119",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13123",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13167",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13168",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13169",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13170",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13174",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13178",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13222",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13223",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13224",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13225",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13229",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13233",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13277",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13278",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13279",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13280",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13284",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13288",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13332",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13333",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13334",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13335",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13339",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13343",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13387",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13388",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13389",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13390",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13394",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13398",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13442",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13443",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13444",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13445",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13449",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13453",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13497",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13498",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13499",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13500",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13504",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13508",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13552",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13553",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13554",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13555",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13559",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13563",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13607",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13608",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13609",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13610",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13614",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13618",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13662",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13663",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13664",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13665",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13669",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13673",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13717",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13718",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13719",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13720",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13724",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13728",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13772",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13773",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13774",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13775",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13779",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13783",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13827",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13828",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13829",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13830",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13834",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13838",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13882",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13883",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13884",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13885",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13889",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13893",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13937",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13938",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13939",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13940",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13944",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13948",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13992",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13993",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13994",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13995",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13999",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14003",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14047",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14048",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14049",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14050",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14054",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14102",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14103",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14104",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14105",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14109",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14113",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14157",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14158",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14159",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14160",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14164",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14168",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14212",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14213",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14214",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14215",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14219",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14223",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14267",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14268",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14269",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14270",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14274",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14278",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14322",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14323",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14324",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14325",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14329",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14333",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14377",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14378",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14379",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14380",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14381",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14382",
+        "shape": [
+          2048,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14383",
+        "shape": [
+          256,
+          128
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14384",
+        "shape": [
+          128,
+          1
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14392",
+        "shape": [
+          4102,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14393",
+        "shape": [
+          256,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14394",
+        "shape": [
+          256,
+          2
+        ]
+      }
+    ]
+  },
+  "normalized": {
+    "remaining_floating_weight_matrices": [
+      {
+        "name": "native.model.encoder_model.embeddings.word_embeddings.weight",
+        "shape": [
+          128004,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.encoder.rel_embeddings.weight",
+        "shape": [
+          512,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13062",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13066",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13112",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13113",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13114",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13115",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13119",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13123",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13167",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13168",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13169",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13170",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13174",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13178",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13222",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13223",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13224",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13225",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13229",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13233",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13277",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13278",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13279",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13280",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13284",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13288",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13332",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13333",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13334",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13335",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13339",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13343",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13387",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13388",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13389",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13390",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13394",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13398",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13442",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13443",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13444",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13445",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13449",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13453",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13497",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13498",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13499",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13500",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13504",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13508",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13552",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13553",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13554",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13555",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13559",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13563",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13607",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13608",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13609",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13610",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13614",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13618",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13662",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13663",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13664",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13665",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13669",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13673",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13717",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13718",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13719",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13720",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13724",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13728",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13772",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13773",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13774",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13775",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13779",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13783",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13827",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13828",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13829",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13830",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13834",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13838",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13882",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13883",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13884",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13885",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13889",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13893",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13937",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13938",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13939",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13940",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13944",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13948",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13992",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13993",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13994",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13995",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13999",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14003",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14047",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14048",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14049",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14050",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14054",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14102",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14103",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14104",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14105",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14109",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14113",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14157",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14158",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14159",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14160",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14164",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14168",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14212",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14213",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14214",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14215",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14219",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14223",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14267",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14268",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14269",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14270",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14274",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14278",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14322",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14323",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14324",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14325",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14329",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14333",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14377",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14378",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14379",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14380",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14381",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14382",
+        "shape": [
+          2048,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14383",
+        "shape": [
+          256,
+          128
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14384",
+        "shape": [
+          128,
+          1
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14392",
+        "shape": [
+          4102,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14393",
+        "shape": [
+          256,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14394",
+        "shape": [
+          256,
+          2
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_1.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_2.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "operators": {
+      "Constant": 3645,
+      "Gather": 320,
+      "LayerNormalization": 52,
+      "Unsqueeze": 769,
+      "Cast": 266,
+      "Mul": 189,
+      "Squeeze": 365,
+      "Shape": 755,
+      "Slice": 365,
+      "Range": 1,
+      "Sub": 6,
+      "Sign": 1,
+      "Less": 2,
+      "Greater": 2,
+      "And": 2,
+      "Abs": 3,
+      "Where": 79,
+      "Div": 128,
+      "Log": 2,
+      "Ceil": 1,
+      "Add": 378,
+      "LessOrEqual": 1,
+      "MatMul": 298,
+      "Concat": 388,
+      "Reshape": 385,
+      "Transpose": 240,
+      "Sqrt": 72,
+      "ConstantOfShape": 98,
+      "Expand": 100,
+      "Tile": 48,
+      "Clip": 26,
+      "Equal": 75,
+      "GatherElements": 48,
+      "Not": 26,
+      "If": 24,
+      "Neg": 30,
+      "Softmax": 24,
+      "Erf": 28,
+      "ReduceSum": 5,
+      "CumSum": 1,
+      "Einsum": 1,
+      "Relu": 2,
+      "ReduceMax": 1,
+      "Sigmoid": 2,
+      "Softplus": 2
+    },
+    "opsets": {
+      "": 21
+    },
+    "inputs": [
+      "input_ids",
+      "attention_mask"
+    ],
+    "outputs": [
+      "logits"
+    ],
+    "initializer_elements": 439790595,
+    "floating_matrix_initializers": [
+      {
+        "name": "native.model.encoder_model.embeddings.word_embeddings.weight",
+        "shape": [
+          128004,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.encoder.rel_embeddings.weight",
+        "shape": [
+          512,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13062",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13066",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13112",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13113",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13114",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13115",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13119",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13123",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13167",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13168",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13169",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13170",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13174",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13178",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13222",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13223",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13224",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13225",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13229",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13233",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13277",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13278",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13279",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13280",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13284",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13288",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13332",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13333",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13334",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13335",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13339",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13343",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13387",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13388",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13389",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13390",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13394",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13398",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13442",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13443",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13444",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13445",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13449",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13453",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13497",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13498",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13499",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13500",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13504",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13508",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13552",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13553",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13554",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13555",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13559",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13563",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13607",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13608",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13609",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13610",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13614",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13618",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13662",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13663",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13664",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13665",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13669",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13673",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13717",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13718",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13719",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13720",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13724",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13728",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13772",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13773",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13774",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13775",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13779",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13783",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13827",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13828",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13829",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13830",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13834",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13838",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13882",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13883",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13884",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13885",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13889",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13893",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13937",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13938",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13939",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13940",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13944",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13948",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13992",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13993",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13994",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13995",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13999",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14003",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14047",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14048",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14049",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14050",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14054",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14058",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14102",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14103",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14104",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14105",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14109",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14113",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14157",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14158",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14159",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14160",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14164",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14168",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14212",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14213",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14214",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14215",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14219",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14223",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14267",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14268",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14269",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14270",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14274",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14278",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14322",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14323",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14324",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14325",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14329",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14333",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14377",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14378",
+        "shape": [
+          1024,
+          4096
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14379",
+        "shape": [
+          4096,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14380",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14381",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14382",
+        "shape": [
+          2048,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14383",
+        "shape": [
+          256,
+          128
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14384",
+        "shape": [
+          128,
+          1
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14392",
+        "shape": [
+          4102,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14393",
+        "shape": [
+          256,
+          256
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14394",
+        "shape": [
+          256,
+          2
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_1.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_2.weight",
+        "shape": [
+          1024,
+          1024
+        ]
+      }
+    ]
+  },
+  "after": {
+    "remaining_floating_weight_matrices": [
+      {
+        "name": "native.model.encoder_model.encoder.rel_embeddings.weight",
+        "shape": [
+          512,
+          1024
+        ]
+      }
+    ],
+    "operators": {
+      "Constant": 3645,
+      "GatherBlockQuantized": 1,
+      "LayerNormalization": 52,
+      "Unsqueeze": 769,
+      "Cast": 266,
+      "Mul": 189,
+      "Squeeze": 365,
+      "Shape": 755,
+      "Slice": 365,
+      "Range": 1,
+      "Sub": 6,
+      "Sign": 1,
+      "Less": 2,
+      "Greater": 2,
+      "And": 2,
+      "Abs": 3,
+      "Where": 79,
+      "Div": 128,
+      "Log": 2,
+      "Ceil": 1,
+      "Add": 378,
+      "LessOrEqual": 1,
+      "MatMulNBits": 202,
+      "Gather": 319,
+      "Concat": 388,
+      "Reshape": 385,
+      "Transpose": 240,
+      "Sqrt": 72,
+      "MatMul": 96,
+      "ConstantOfShape": 98,
+      "Expand": 100,
+      "Tile": 48,
+      "Clip": 26,
+      "Equal": 75,
+      "GatherElements": 48,
+      "Not": 26,
+      "If": 24,
+      "Neg": 30,
+      "Softmax": 24,
+      "Erf": 28,
+      "ReduceSum": 5,
+      "CumSum": 1,
+      "Einsum": 1,
+      "Relu": 2,
+      "ReduceMax": 1,
+      "Sigmoid": 2,
+      "Softplus": 2
+    },
+    "opsets": {
+      "": 21,
+      "com.microsoft": 1
+    },
+    "inputs": [
+      "input_ids",
+      "attention_mask"
+    ],
+    "outputs": [
+      "logits"
+    ],
+    "initializer_elements": 289306856,
+    "floating_matrix_initializers": [
+      {
+        "name": "native.model.encoder_model.encoder.rel_embeddings.weight",
+        "shape": [
+          512,
+          1024
+        ]
+      },
+      {
+        "name": "native.model.encoder_model.embeddings.word_embeddings.weight_scales",
+        "shape": [
+          128004,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13066_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13058_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13062_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13112_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13113_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13114_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13123_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13115_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13119_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13167_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13168_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13169_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13178_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13170_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13174_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13222_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13223_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13224_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13233_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13225_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13229_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13277_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13278_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13279_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13288_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13280_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13284_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13332_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13333_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13334_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13343_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13335_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13339_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13387_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13388_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13389_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13398_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13390_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13394_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13442_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13443_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13444_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13453_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13445_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13449_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13497_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13498_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13499_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13508_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13500_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13504_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13552_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13553_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13554_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13563_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13555_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13559_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13607_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13608_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13609_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13618_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13610_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13614_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13662_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13663_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13664_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13673_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13665_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13669_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13717_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13718_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13719_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13728_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13720_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13724_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13772_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13773_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13774_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13783_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13775_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13779_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13827_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13828_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13829_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13838_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13830_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13834_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13882_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13883_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13884_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13893_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13885_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13889_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13937_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13938_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13939_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13948_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13940_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13944_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13992_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13993_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13994_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14003_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13995_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_13999_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14047_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14048_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14049_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14058_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14050_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14054_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14102_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14103_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14104_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14113_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14105_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14109_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14157_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14158_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14159_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14168_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14160_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14164_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14212_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14213_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14214_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14223_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14215_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14219_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14267_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14268_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14269_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14278_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14270_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14274_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14322_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14323_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14324_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14333_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14325_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14329_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14377_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14378_scales",
+        "shape": [
+          4096,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14379_scales",
+        "shape": [
+          1024,
+          32
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_1.weight_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "native.model.text_projector.linear_2.weight_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14380_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14381_scales",
+        "shape": [
+          1024,
+          8
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14382_scales",
+        "shape": [
+          256,
+          16
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14383_scales",
+        "shape": [
+          128,
+          2
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14384_scales",
+        "shape": [
+          1,
+          1
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14392_scales",
+        "shape": [
+          256,
+          33
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14393_scales",
+        "shape": [
+          256,
+          2
+        ]
+      },
+      {
+        "name": "onnx::MatMul_14394_scales",
+        "shape": [
+          2,
+          2
+        ]
+      }
+    ]
+  },
+  "files": {
+    "model.onnx.data": {
+      "bytes": 236627072,
+      "sha256": "69bbc393a39da8f9c4f55f62486f476afa5a00c654a4348e94ffd22714e6f9ae"
+    },
+    "model.onnx": {
+      "bytes": 3202388,
+      "sha256": "4c33f5dcc567305a1b906ee3bb3b85a6a07583fd4d6903d63a0bf25c02eb767f"
+    }
+  },
+  "complete_bundle_bytes": 239829460,
+  "not_a_quality_or_runtime_admission": true
+}

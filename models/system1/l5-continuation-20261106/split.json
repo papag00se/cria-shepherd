@@ -1,0 +1,29 @@
+{
+  "method": "sha256(session) modulo 4 == 0 reserves whole session, independent of labels and predictions",
+  "sessions": {
+    "01a1b385-f831-70f2-993c-3ead41f28130": "train",
+    "01a1b385-f832-7d41-b518-1c13e2bc2393": "train",
+    "01a1b385-f860-7321-984c-1a3db79759fb": "train",
+    "01a1b385-f84c-7841-9620-c1797ee75f6b": "train",
+    "01a1b3a2-ceef-7871-baba-e4e43b62a4af": "train",
+    "01a1b3a2-cef0-7582-b6ee-e951d6b6b21f": "train",
+    "01a1b444-eafa-7a33-9f12-0f7021a77e5b": "train",
+    "01a1b444-eb15-7662-a2bb-8edebf83704e": "reserved",
+    "01a1b444-eb11-76d0-b2b2-929c0239eaab": "train",
+    "01a1b385-cef4-7852-9415-561fffca06ae": "train",
+    "01a1b385-cf10-72a0-98e1-7d2f5b25dbcb": "train",
+    "01a1b3a2-ce6b-7510-ab53-adbd28d1a757": "train",
+    "01a1b3af-f3de-7071-ac1d-b6d661b859e7": "train",
+    "01a1b444-bbfb-7e10-9db1-de488790ff64": "train",
+    "01a1b444-bbfb-74f0-9a1e-8dd480a84338": "reserved",
+    "01a1b46f-b0c3-7f83-b60e-af6b25594555": "train"
+  },
+  "unique_rows": {
+    "train": 135,
+    "reserved": 21,
+    "ambiguous_train_session": 13,
+    "ambiguous_reserved_session": 1,
+    "prior_overlap": 0
+  },
+  "prior_overlap_includes_train_and_old_synthetic_control": true
+}
