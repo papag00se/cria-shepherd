@@ -9,7 +9,7 @@ from read_multipart_helpers import HEX, MENU, READ_ONLY_MENU, isolated_home, pag
 
 LEGACY = ('⟦ctx:read-not-delivered⟧ The read was verified, but the complete file ({n} bytes) was not delivered: the measured complete '
           'request did not fit the context window, so none of it counts as read. The transport pages that carried it are omitted because '
-          'they are encoded pages, not file content. Do not repeat the whole-file read. Read the file in narrower pieces instead (a line '
+          'they are encoded pages, not file content. Any surrounding output is from the shell or harness, not the file; its line counts do not describe the file. Do not repeat the whole-file read. Read the file in narrower pieces instead (a line '
           'range on a read tool, `sed -n \'START,ENDp\'`, `grep -n`, `head` or `tail`) and continue.')
 UNKNOWN_PARAM = [{'type': 'function', 'function': {'name': 'read_file', 'parameters': {'type': 'object', 'properties': {
     'path': {'type': 'string'}, 'byte_offset': {'type': 'integer'}}}}}]
@@ -55,9 +55,11 @@ def test_a_binary_read_is_not_replayed_as_pages_names_a_byte_route_and_survives_
     """A non-UTF-8 body fails as a short fact-note (no encoded pages, no credit); the `od` route runs and shows the header; no shell → no route."""
     r = random.Random(9); data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + bytes(r.getrandbits(8) for _ in range(40000))
     storage = str(tmp_path / 'state'); bridge, messages, path = start(tmp_path, data, name='logo.png', storage=storage)
+    messages[-1]['content'] = 'binary shell warning\n' + messages[-1]['content']
     projected, facts = page_through(bridge, messages, MENU); note = next(m for m in projected if m.get('role') == 'tool')
     c = note['content']
     assert len(c) < 1500 and '"source_sha256"' not in c and f'({len(data):,} bytes) is not valid UTF-8 text' in c and '⟦ctx:read-not-delivered⟧' in c
+    assert 'binary shell warning\n' in c and 'its line counts do not describe the file' in c
     assert bodykeys.MULTIPART_UNVERIFIED in note and facts == ()
     cmd = next(x for x in (p.strip(' `') for p in c.split('`')) if x.startswith('od '))
     assert f'od -A d -t x1z -N 256 {path}' in c and '89 50 4e 47 0d 0a 1a 0a' in pty_run(cmd)
@@ -67,6 +69,21 @@ def test_a_binary_read_is_not_replayed_as_pages_names_a_byte_route_and_survives_
         b, m, _ = start(tmp_path, data, name='ro%s.png' % claim); p2, _ = page_through(b, m, menu)
         c2 = next(x for x in p2 if x.get('role') == 'tool')['content']
         assert ('no tool you hold reads bytes' in c2) == claim and 'od ' not in c2 and 'exec_command' not in c2 and 'is not valid UTF-8' in c2
+
+def test_unknown_fit_does_not_expose_verified_private_pages(tmp_path):
+    for name, data in [('small', b'sku,quantity\nA,1\n'), ('large', HEX.encode())]:
+        bridge, messages, _ = start(tmp_path, data, name=name)
+        messages[-1]['content'] = 'shell warning before\n' + messages[-1]['content'] + 'shell warning after\n'
+        page_through(bridge, messages, MENU)
+        bridge.withhold_for_fit('s', ['original'], 'unknown')
+        projected, calls, facts = bridge.incoming('s', messages, tools=MENU)
+        result = next(m['content'] for m in projected if m.get('role') == 'tool')
+        assert calls == [] and facts == ()
+        assert 'whether the complete request can fit could not be established' in result
+        assert 'shell warning before\n' in result and 'shell warning after\n' in result
+        assert '"source_sha256"' not in result and '"data":' not in result
+        assert data.decode() not in result
+
 
 def test_plain_text_is_read_whole_and_measure_counts_lines_and_bytes(tmp_path):
     """A text file gets no shape note; measure() counts lines/longest by bytes (numbered windows by the file's own line numbers); line-bound is strictly > half."""

@@ -100,6 +100,36 @@ def test_a_second_call_fused_into_a_write_payload_is_trimmed_whatever_kind_of_ca
     assert writeproxy.trim_fused_tail(REAL) == REAL and writeproxy.trim_fused_tail(prose) == prose and writeproxy.trim_fused_tail(big) == big
 
 
+def test_survey_follows_owned_record_even_when_command_stderr_precedes_it(tmp_path):
+    import subprocess
+    import sys
+    receipt = '0123456789abcdef'
+    record = '{"v":1,"r":"' + receipt + '","k":"landed"}'
+    cmd = "printf 'startup warning\\n' >&2; printf '%s\\n' '" + record + "'; printf 'tail\\n'"
+    wrapped = writeproxy._survey_after_first_record(cmd, "printf 'survey\\n'", receipt)
+    out = subprocess.run(['bash', '-c', wrapped], capture_output=True, text=True, check=True)
+    assert out.stdout == 'startup warning\n' + record + '\nsurvey\ntail\n'
+    missing = writeproxy._survey_after_first_record("printf 'diagnostic\\n'; exit 7", "printf 'survey\\n'", receipt)
+    out = subprocess.run(['bash', '-c', missing], capture_output=True, text=True)
+    assert out.returncode == 7 and out.stdout == 'diagnostic\n'
+
+    # Exercise the actual lowered write and inbound representation with a noisy
+    # python3 shim, without invoking mise or the network.
+    shim = tmp_path / 'bin'; shim.mkdir()
+    python = shim / 'python3'
+    python.write_text('#!/bin/sh\nprintf "shim warning\\n" >&2\nexec "' + sys.executable + '" "$@"\n')
+    python.chmod(0o755)
+    target = tmp_path / 'file.txt'
+    token = wsview.bind(wsview.View(str(tmp_path), 'noisy'))
+    try:
+        _, done, messages = do('write_file', {'path': str(target), 'content': 'written\n'}, tmp_path,
+                               root=str(tmp_path), env={'PATH': str(shim) + ':/usr/bin:/bin'})
+    finally:
+        wsview.unbind(token)
+    assert done.returncode == 0 and target.read_text() == 'written\n'
+    assert denial.landed(messages[1]) and '"k":"survey"' not in messages[1]['content']
+
+
 def test_the_workspace_survey_rides_only_on_one_line_results_never_on_a_listing():
     """144-cell ladder: list_dir (a listing capped at 9,000 bytes) carried the 6.6-10 KB survey, a ~19 KB result the harness cut in the
     middle; apply_survey refused the remains (449 refused surveys in 11 cells) and the view went stale. Writes and edits keep carrying it."""

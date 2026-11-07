@@ -52,7 +52,7 @@ _FILE_OP_NAMES = _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES | _LIST_NAMES
 FOCUS_TOOL_NAMES = frozenset({
     "write_stdin",                                    # exec_command's PTY companion
     "write_file", "edit_file", "read_file",
-    "list_dir", "view_image", "update_plan",
+    "list_dir", "grep", "glob", "view_image", "update_plan",
     "web_search", "local_web_search", "web_fetch",
     "request_permissions",
 })
@@ -72,7 +72,7 @@ _NEVER_ADVERTISED = frozenset({"apply_patch"})
 # the model sees is a real preference signal — the same lever codex-local used to curb shell-reflex.
 _FOCUS_ORDER = (
     "write_file", "edit_file",                        # writing — the default change path
-    "read_file", "list_dir", "view_image",            # reading / inspection
+    "read_file", "list_dir", "grep", "glob", "view_image",  # reading / inspection
     "web_search", "local_web_search", "web_fetch",    # the web tools
     "update_plan", "request_permissions",
     "write_stdin",                                     # shell-adjacent (paired with exec_command)
@@ -215,6 +215,9 @@ def cheatsheet(tools) -> str | None:
         lines.append(prompts.fill(frag["read_via_shell"], shell=shell["name"]))
     if "list_dir" in names:
         lines.append(prompts.fill(frag["list_dir"], arg=_path_arg(by_name["list_dir"])))
+    for name in ("grep", "glob"):
+        if name in names:
+            lines.append(frag[name])
     if "view_image" in names:
         lines.append(frag["view_image"])
     if "web_search" in names:  # advertise() renames a harness local_web_search → web_search BEFORE this,

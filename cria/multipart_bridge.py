@@ -533,6 +533,34 @@ class Bridge:
                                        window=bool(entry.spec.start_line or entry.spec.end_line))
 
     @staticmethod
+    def _verified_surroundings(entry):
+        """Retain harness output around accepted private pages, never their encoded records."""
+        spec = entry.spec
+        assembly = MultipartRead(spec.token, 'read-instead' if spec.read_instead else 'read',
+                                 'range' if spec.start_line or spec.end_line else 'whole')
+        rounds = 1
+        pieces = []
+        prefix = '{"v":1,"token":"' + spec.token + '"'
+        for cid in entry.calls:
+            if cid not in entry.received:
+                continue
+            if assembly._complete and assembly.source_changed and rounds == 1:
+                assembly = assembly.again()
+                rounds = 2
+            text = entry.received[cid]
+            env = resultnotes.exec_envelope(text)
+            start = env.record_start if env else 0
+            before = assembly.offset
+            complete = assembly.take(text[start:], bool(env and env.cut_warning))
+            if complete or assembly.offset != before:
+                pos = text.find(prefix, start)
+                end = text.find('\n', pos) + 1
+                pieces.append(text[:pos] + text[end:])
+            else:
+                pieces.append(text)
+        return ''.join(pieces)
+
+    @staticmethod
     def _changed_note(entry):
         """What is known about the path now, from the producer's own typed `now` identity (never a re-stat by cria)."""
         _, _, taken = entry.assembly.snapshot
@@ -716,20 +744,23 @@ class Bridge:
                                 # file, and replaying them costs the whole window (a 100 KB blob measured
                                 # 142,264 tokens against a 49,152-token window: the session was dead). Say
                                 # the measured fact and the byte-oriented route the menu holds.
-                                m['content'] = ''
+                                m['content'] = self._verified_surroundings(failed)
                                 explanation = readshape.binary_note(failed.assembly.identity[0], failed.spec.path, tools)
                             elif failed.fallback_kind == 'overflow':
                                 # Measured: the file cannot fit. The encoded pages are cria's own transport,
                                 # never something the coder read, and replaying them would cost the window
                                 # again (or overflow it a second time). Say what is known and how to go on.
-                                m['content'] = ''
+                                m['content'] = self._verified_surroundings(failed)
                                 explanation = prompts.render('multipart_fit_overflow',
                                                              bytes=failed.assembly.identity[0],
                                                              next=self._overflow_next(failed, tools))
                             elif failed.fallback_kind is not None:
+                                # These pages have already been verified as a complete assembly. Replay the
+                                # owned records to remove only transport, retaining shell/harness output.
+                                m['content'] = self._verified_surroundings(failed)
                                 detail = prompts.load_map('multipart_fit_unavailable_detail')[failed.fallback_kind]
                                 explanation = prompts.render('multipart_fit_unavailable', detail=detail,
-                                                             continuations=''.join(fragments))
+                                                             continuations='')
                             else:
                                 detail = prompts.fill(details[failed.failure_kind], code=failed.failure_code)
                                 explanation = prompts.render('multipart_unverified', detail=detail,
@@ -742,7 +773,7 @@ class Bridge:
                 if e.result is not None and e.fallback_kind is None and e.assembly.exit_code != 0:
                     facts.append(ResultFact(e.spec.call_id, e.assembly.exit_code))
                 record = resultpacket.read_record(e.result, 0, e.spec.receipt) if e.result is not None else None
-                if ((not e.offered or replay) and e.fallback_kind is None and not e.assembly.source_changed and record is not None and record.body is not None and record.observe in ('whole', 'range')
+                if ((not e.settled or replay) and e.fallback_kind is None and not e.assembly.source_changed and record is not None and record.body is not None and record.observe in ('whole', 'range')
                         and record.end == len(e.result)):
                     facts.append(ReadFact(e.spec.call_id, (e.assembly.identity[0], e.assembly.identity[1]),
                                           record.body, e.spec.read_instead, record.pre))

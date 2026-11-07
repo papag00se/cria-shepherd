@@ -50,7 +50,7 @@ from .callliterals import (
     _FUSED_TAIL_MAX_LINES, _PROTOCOL_TAG_LINE, _protocol_debris, trim_fused_tail,
     _TC_DEBRIS, _has_tc_debris, _ESCAPES, _repair_double_escaped, _decode_backslash_escapes)
 from .filecommands import (
-    _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _FileMutation, _prepare_file_mutation,
+    _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _SEARCH_FILE_NAMES, _FileMutation, _prepare_file_mutation,
     _targets_cria_home, _guarded_path, READ_INLINE_MAX, _ranged_read, _read_failure_branches,
     _read_command, _read_in_place_of_write)
 from .toolwire import (
@@ -266,6 +266,8 @@ def _synthetic_tools() -> dict[str, dict]:
             "parameters": {"type": "object", "properties": props, "required": required}}}
 
     return {
+        "grep": fn("grep", d["grep"], {"pattern": {"type": "string"}, "path": {"type": "string"}, "include": {"type": "string"}, "include_generated": {"type": "boolean"}}, ["pattern"]),
+        "glob": fn("glob", d["glob"], {"pattern": {"type": "string"}, "path": {"type": "string"}, "include_generated": {"type": "boolean"}}, ["pattern"]),
         "write_file": fn("write_file", d["write_file"],
                          {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
         "edit_file": fn("edit_file", d["edit_file"],
@@ -310,7 +312,7 @@ def native_search_name(tools) -> str | None:
     return None
 
 
-def advertise(body: dict, rlog=None, brave_key: str | None = None) -> set[str]:
+def advertise(body: dict, rlog=None, brave_key: str | None = None, *, search_only: bool = False) -> set[str]:
     """Add cria's synthetic tools to what the MODEL sees (only those the harness lacks), and present
     a Brave ``local_web_search`` to the model AS ``web_search``. Returns the set of names cria will
     LOWER on the way out (so a harness-native tool of the same name is left for the harness)."""
@@ -326,6 +328,12 @@ def advertise(body: dict, rlog=None, brave_key: str | None = None) -> set[str]:
         tools.append(synth[name])
         injected.add(name)
 
+    if search_only:
+        for name in ('grep', 'glob'):
+            if name not in present:
+                add(name)
+        return injected
+
     if not (present & _WRITE_NAMES):
         add("write_file")
     if not (present & _EDIT_NAMES):
@@ -334,6 +342,9 @@ def advertise(body: dict, rlog=None, brave_key: str | None = None) -> set[str]:
         add("read_file")
     if "list_dir" not in present:
         add("list_dir")
+    for name in ("grep", "glob"):
+        if name not in present:
+            add(name)
     if "web_fetch" not in present:
         add("web_fetch")
     if "web_search" not in present:
@@ -910,20 +921,33 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
 
 _STDOUT_SPILL_PY = r'''
 def bounded_stdout(raw, receipt, directory, template, placeholder, limit):
-    import hashlib, json, os, tempfile
+    import hashlib, json, os, secrets
     if stdout_size(raw) <= limit:
         return raw
-    target = directory + '/stdout-' + hashlib.sha256(raw).hexdigest() + '.txt'
-    os.makedirs(directory, exist_ok=True)
+    filename = 'stdout-' + hashlib.sha256(raw).hexdigest() + '.txt'
+    target = directory + '/' + filename
+    fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as stored:
-            temporary = stored.name
+        for part in directory.split('/'):
+            if part in ('', '.'): continue
+            if part == '..': raise OSError('invalid output directory')
+            try: os.mkdir(part, dir_fd=fd)
+            except FileExistsError: pass
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        temporary = '.ctx-stdout-' + secrets.token_hex(16)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+        with os.fdopen(descriptor, 'wb') as stored:
             stored.write(raw)
-        os.replace(temporary, target)
+        os.replace(temporary, filename, src_dir_fd=fd, dst_dir_fd=fd)
+        temporary = None
     finally:
-        if temporary is not None and os.path.exists(temporary):
-            os.unlink(temporary)
+        if temporary is not None:
+            try: os.unlink(temporary, dir_fd=fd)
+            except FileNotFoundError: pass
+        os.close(fd)
     first, separator, tail = raw.partition(b'\n')
     prefix = b''
     if receipt and separator:
@@ -943,16 +967,16 @@ def bounded_stdout(raw, receipt, directory, template, placeholder, limit):
 '''
 
 
-def _stdout_transport(*, listing: bool = False):
+def _stdout_transport(*, listing: bool = False, search: bool = False, failed: bool = False):
     """One complete-result measurement and lossless spill program for producers."""
     from . import externalization as e
     target = webfetch.SPILL_DIR + '/stdout-' + '0' * 64 + '.txt'
-    arguments = (denial.active_receipt() or '', webfetch.SPILL_DIR,
-                 webfetch.stdout_spill_pointer(target, listing=listing), target, e.STDOUT_MAX_BYTES)
+    pointer = prompts.render('content_search_spill_failed' if failed else 'content_search_spill', target=target) if search else webfetch.stdout_spill_pointer(target, listing=listing)
+    arguments = (denial.active_receipt() or '', webfetch.SPILL_DIR, pointer, target, e.STDOUT_MAX_BYTES)
     return e.STDOUT_SIZE_PY + _STDOUT_SPILL_PY, arguments
 
 
-def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: bool = False) -> str:
+def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: bool = False, search: bool = False) -> str:
     """Bound complete owned stdout, including records and possible PTY CRs.
 
     The harness runs this adapter; it never reruns the producer. Static results
@@ -962,10 +986,19 @@ def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: 
     from . import externalization as e
     if expected is not None and e.stdout_size(expected.encode()) <= e.STDOUT_MAX_BYTES:
         return command
-    program, arguments = _stdout_transport(listing=listing)
-    program += ("\nimport subprocess, sys\n"
+    program, arguments = _stdout_transport(listing=listing, search=search)
+    failed_arguments = _stdout_transport(listing=listing, search=search, failed=True)[1] if search else arguments
+    failure = prompts.load('stdout_spill_failed')
+    program += ("\nimport json, subprocess, sys\n"
                 "process = subprocess.run(['bash', '-c', sys.argv[1]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n"
-                "sys.stdout.buffer.write(bounded_stdout(process.stdout, *" + repr(arguments) + "))\n"
+                "arguments = " + repr(arguments) + " if process.returncode == 0 else " + repr(failed_arguments) + "\n"
+                "try:\n"
+                "    sys.stdout.buffer.write(bounded_stdout(process.stdout, *arguments))\n"
+                "except OSError as exc:\n"
+                "    receipt = arguments[0]\n"
+                "    if receipt: print(json.dumps({'v':1, 'r':receipt, 'k':'ran'}, separators=(',', ':')))\n"
+                "    print(" + repr(failure) + " + str(exc))\n"
+                "    sys.exit(2)\n"
                 "sys.exit(process.returncode)\n")
     return 'python3 -c ' + _qbash(program) + ' ' + _qbash(command)
 
@@ -1052,21 +1085,27 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
 COMMAND_ARG_BUDGET = content_reduce_mod.COMMAND_ARG_BUDGET
 # base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
 # needs room too.
-def _survey_after_first_record(cmd: str, ride: str) -> str:
-    """``cmd`` and its survey, composed so the survey's record is the VERY NEXT record after the command's own first record.
+def _survey_after_first_record(cmd: str, ride: str, receipt: str) -> str:
+    """Place the survey immediately after the owned record, preserving earlier shell output.
 
-    A write or edit prints its first record (`landed` / `unapplied` / ...) and then its own lines; the survey must run AFTER
-    the command (it reports the post-write tree). The command's combined output is therefore held in a shell variable, its
-    first line (record 1) is printed, the survey prints its record, and the rest of the command's own output follows — so a
-    reader never has to look past record 1 for the survey, and never searches for it. The exit status is the command's own,
-    saved before and restored last (the survey wrapper preserves it too). Only cria's OWN lowered commands are composed this
-    way; a native command is never wrapped."""
+    A shim can print to stderr before the producer runs. The first LINE is then not the
+    producer's record. Match the call-bound receipt on a whole line; if no record arrived,
+    leave the output alone and do not pretend the survey can be paired with it.
+    """
+    prefix = '{"v":1,"r":"' + receipt + '","k":'
     return ("__ctx_o=$( { " + cmd + "\n} 2>&1 )\n"
             "__ctx_ec=$?\n"
-            "printf '%s\\n' \"${__ctx_o%%$'\\n'*}\"\n"
-            "( exit $__ctx_ec )\n"
+            "__ctx_surveyed=0\n"
+            "while IFS= read -r __ctx_line; do\n"
+            "  printf '%s\\n' \"$__ctx_line\"\n"
+            "  if [ \"$__ctx_surveyed\" = 0 ]; then\n"
+            "    case \"$__ctx_line\" in " + _qbash(prefix) + "*)\n"
+            "      __ctx_surveyed=1\n"
+            "      ( exit $__ctx_ec )\n"
             + ride + "\n"
-            "case \"$__ctx_o\" in *$'\\n'*) printf '%s\\n' \"${__ctx_o#*$'\\n'}\" ;; esac\n"
+            "    ;; esac\n"
+            "  fi\n"
+            "done <<< \"$__ctx_o\"\n"
             "exit $__ctx_ec")
 
 
@@ -1433,6 +1472,9 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         return ShellCommand(command, multipart_kind='read') if command is not None else None
     elif name in _LIST_NAMES and name in request.injected:
         command = _list_command(args)
+    elif name in _SEARCH_FILE_NAMES and name in request.injected:
+        from . import contentsearch
+        command = _bounded_tool_stdout(denial.ran_command() + contentsearch.command(name, args, request.workspace_root, request.external_dir_permission, request.declared_roots), search=True)
     elif name in _FETCH_NAMES and name in request.injected:
         command = _externalize_coder(source)
     elif name == 'web_search':
@@ -1455,7 +1497,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
                        observe_externalization=None, multipart_command=None, multipart_new_id=None,
-                       observe_multipart_fallback=None) -> dict:
+                       observe_multipart_fallback=None, only_injected: bool = False) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1483,6 +1525,9 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
+            if only_injected and name not in injected:
+                rebuilt.append(tc)
+                continue
             direct_synthetic_read = name in _READ_NAMES or name in _WRITE_NAMES
             call_request = request
             from .multipartcontext import take
@@ -1580,7 +1625,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     if room >= wsview.TREE_MIN_BYTES:
                         with denial.receipt_scope(receipt, declaration):      # the survey record follows THIS call's first record
                             ride = wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)
-                        cmd = _survey_after_first_record(cmd, ride)
+                        cmd = _survey_after_first_record(cmd, ride, receipt)
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
@@ -1590,7 +1635,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     with denial.receipt_scope(receipt, declaration):
                         marks_ride = wsview.marks_ride(completionmarks.query(session, release=False), cd=workspace_root or '')
                     if marks_ride:
-                        cmd = _survey_after_first_record(cmd, marks_ride)
+                        cmd = _survey_after_first_record(cmd, marks_ride, receipt)
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
                     cmd = _seq_release(edit_seq[ti]) + cmd
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool,
@@ -1955,6 +2000,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     failed_ids = set(outcomes)          # proven: cria's own refusal ran, or its edit program reported 'not applied'
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
     strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
+    content_search_ids: set[str] = set()  # authenticated search results contain literal file text
     own_cmds: dict[str, str] = {}     # tool_call_id -> the model's OWN raw command, for the blind-pipe note
     # WHAT THIS PASS TEACHES THE WORKSPACE VIEW. cria lowered every one of these calls, so it knows
     # the path and (for a whole write) the exact bytes — the workspace's own contents, proved by the
@@ -2030,8 +2076,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 if draft.note:
                                     rejected_notes_by_id[tc.get("id")] = draft.note
                                 tc = draft.call
-                        elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
+                        elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES | _SEARCH_FILE_NAMES):
                             strip_ids.add(tc.get("id"))
+                            if orig["name"] in _SEARCH_FILE_NAMES:
+                                content_search_ids.add(tc.get("id"))
                             if orig["name"] in _READ_NAMES:
                                 rp = _parse(orig["arguments"])
                                 # A RANGED read is not the file. Only a whole read proves content;
@@ -2091,15 +2139,14 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # taken either).
                 out.append({**m, "content": _debinarized(str(m.get("content") or ""))})
                 continue
-            # A verified UTF-8 read is user file content, not terminal log
-            # decoration. Stripping ANSI or binary-looking controls would change
-            # its bytes even though the record proved them exactly.
+            # A verified UTF-8 read or authenticated search result contains user file text, not terminal log
+            # decoration. Stripping ANSI or binary-looking controls would change the returned text.
             if unverified:
                 # Keep the complete original carrier, including non-text
                 # content, without attributing any source or write fact.
                 out.append(m)
                 continue
-            if proof is not None and proof.exact and proof.text is not None and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE):
+            if (proof is not None and tid in content_search_ids and proof.kind == denial.RAN) or (proof is not None and proof.exact and proof.text is not None and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE)):
                 content = str(m.get('content') or '')
             else:
                 content = _debinarized(str(m.get("content") or ""))

@@ -1,0 +1,9 @@
+private = The search root resolves inside a private directory; the search did not run.
+outside = The search root resolves outside the permitted workspace; the search did not run.
+invalid_pattern = Invalid or missing pattern.
+invalid_arguments = Invalid search arguments.
+not_regular = The search root is not a regular file or directory.
+error = Search could not run: {detail}
+none = No matches.
+skipped = Not searched (generated directories or symbolic links):\n{paths}
+errors = Search incomplete; these paths could not be read:\n{paths}

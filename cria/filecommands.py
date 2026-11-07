@@ -29,6 +29,8 @@ _READ_NAMES = {"read_file"}
 
 _LIST_NAMES = {"list_dir"}
 
+_SEARCH_FILE_NAMES = {"grep", "glob"}
+
 
 @dataclass(frozen=True)
 class _FileMutation:
@@ -101,7 +103,7 @@ def _guarded_path(name: str, args: dict) -> str | None:
     non-path tools (web_fetch/web_search take a URL/query, not a local path)."""
     if name in _WRITE_NAMES or name in _EDIT_NAMES or name in _READ_NAMES:
         p = _tool_path(args)
-    elif name in _LIST_NAMES:
+    elif name in _LIST_NAMES or name in _SEARCH_FILE_NAMES:
         p = args.get("path") or args.get("dir") or args.get("directory")
     else:
         return None

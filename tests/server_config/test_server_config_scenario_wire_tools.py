@@ -53,6 +53,26 @@ def test_a_write_file_call_reaches_every_wire_mode_as_a_runnable_exec_command_th
         assert shown[:2] == ["⟦cria⟧ (classifier) ⋯ classifying\n", "⟦cria⟧ writing hello.txt\n"]
 
 
+def test_native_write_with_shell_keeps_native_write_and_advertises_search(tmp_path):
+    w = Wire(tmp_path, CLASSIFYING)
+    try:
+        path, body = request('chat-buffered', '__TOOL__ please write hello.txt')
+        body['tools'] = [{'type': 'function', 'function': EXEC},
+                         {'type': 'function', 'function': {'name': 'write_file', 'parameters': {'type': 'object'}}}]
+        raw = w.post(path, body)[1]
+        menus = [{t['function']['name'] for t in sent.get('tools', [])} for _, sent in w.fake.chats]
+        before = len(w.fake.chats)
+        body['tools'] = [body['tools'][1]]
+        no_shell_raw = w.post(path, body, sid='no-shell')[1]
+        no_shell_menus = [{t['function']['name'] for t in sent.get('tools', [])} for _, sent in w.fake.chats[before:]]
+    finally:
+        w.close()
+    assert [name for name, _ in tool_calls('chat-buffered', raw)] == ['write_file']
+    assert [name for name, _ in tool_calls('chat-buffered', no_shell_raw)] == ['write_file']
+    assert any({'write_file', 'exec_command', 'grep', 'glob'} <= names for names in menus)
+    assert all('grep' not in names and 'glob' not in names for names in no_shell_menus)
+
+
 def test_a_responses_stream_ends_with_a_retryable_failure_on_upstream_error_and_on_shutdown(tmp_path):
     """An upstream 500 becomes response.failed with the upstream's words, never an empty completion; a restart mid-generation drains the open stream with a codeless (retryable) response.failed."""
     w = Wire(tmp_path, heartbeat=0.05)

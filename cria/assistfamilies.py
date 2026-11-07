@@ -152,13 +152,14 @@ _LINEAGE: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F11', 'Execute synthetic tools through the harness',
         'Recovery and file safety',
-        'One lowering/round-trip family with write/edit/list/web adapters. Exclusive atomic resources, authenticated batch markers, truthful uncertain-mutation results and fact invalidation are required shared executor support, not additional assists. Matching and native-tool delegation remain explicit contracts.',
+        'One lowering/round-trip family with write/edit/list/content-search/web adapters. Exclusive atomic resources, authenticated batch markers, truthful uncertain-mutation results and fact invalidation are required shared executor support, not additional assists. Matching and native-tool delegation remain explicit contracts.',
         ('A40', 'A41', 'A42', 'A43', 'A44', 'A66', 'A116-fetch', 'A116-search'),
         (
             SourceOwner('cria/writeproxy.py', 'translate_outbound'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
             SourceOwner('cria/writeproxy.py', '_write_command'),
             SourceOwner('cria/writeproxy.py', '_edit_command'),
+            SourceOwner('cria/contentsearch.py', 'command'),
             SourceOwner('cria/editsequence.py', '_seq_release'),
             SourceOwner('cria/ownedfiles.py', 'ATOMIC_REPLACE_PROGRAM'),
             SourceOwner('cria/ownedfiles.py', 'DIRECTORY_PROGRAM'),

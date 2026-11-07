@@ -5,7 +5,7 @@ import json
 import pytest
 from cria import bodykeys, denial, resultpacket, toolwire
 from cria.upstream import MeasuredReadOverflow, ReadFitOverflow, ReadFitUnknown
-from read_multipart_helpers import HEX, Backend, Wire, isolated_home, run_call  # noqa: F401
+from read_multipart_helpers import HEX, Backend, Wire, codex_result, isolated_home, noise, run_call  # noqa: F401
 
 RAW = 'literal \x1b[31mANSI\x1b[0m \x00 NUL, CRLF\r\n caf\u00e9 \u754c\n' + HEX     # ESC/NUL/CRLF/UTF-8 must round-trip exactly
 FAILED = 'Wall time: 1 seconds\nProcess exited with code 8\nOutput:\nexact \x1b[33mdiag\x1b[0m\n'
@@ -55,7 +55,7 @@ def test_unverified_carrier_is_kept_labelled_without_read_credit_and_cannot_be_f
 @pytest.mark.parametrize('api,stream', [('chat', False), ('responses', True)])
 @pytest.mark.parametrize('reason', ['unknown', 'overflow'])
 def test_a_read_that_cannot_be_fitted_continues_once_without_credit(tmp_path, reason, api, stream):
-    """Fit unknown keeps the carriers and says so; MEASURED overflow says the file size and never replays the encoded pages;
+    """Fit unknown preserves external output without replaying verified carriers; MEASURED overflow says the file size;
     neither claims a read nor guesses a range. (ornith1.5_9b: 55,835-token request became ~40k tokens of base64 pages.)"""
     path = tmp_path / 'f'; path.write_text(HEX)
     class Fit(Backend):
@@ -72,8 +72,82 @@ def test_a_read_that_cannot_be_fitted_continues_once_without_credit(tmp_path, re
         msg, carriers = w.drive()
         text = backend.tool_results()[0]['content']
         assert len(backend.bodies) == 3 and denial.read_payload(backend.tool_results()[0]) is None and HEX not in text
-        if reason == 'unknown': assert all(c in text for c in carriers) and 'could not be established' in text and 'range' not in text
+        if reason == 'unknown': assert all(c not in text for c in carriers) and 'could not be established' in text and 'range' not in text
         else: assert not any(c in text for c in carriers) and f'({len(HEX)} bytes)' in text and 'did not fit the context window' in text
+
+
+@pytest.mark.parametrize('reason', ['overflow', 'unknown'])
+def test_fit_withholds_pages_but_preserves_noisy_harness_output(tmp_path, reason):
+    path = tmp_path / 'f'; path.write_text('source text\n')
+    class Fit(Backend):
+        def chat(self, body, rlog=None):
+            reads = body.get(bodykeys.PROTECTED_READS) or ()
+            if reads:
+                self.bodies.append(body)
+                if reason == 'unknown':
+                    raise ReadFitUnknown('measurement unavailable', reads)
+                raise ReadFitOverflow(MeasuredReadOverflow(100, 101, 5, reads, b'x'))
+            return super().chat(body, rlog)
+    def noisy(call):
+        # The genuine PTY output is in the retained tail of the harness cut.
+        raw = noise(11000).encode() + b'\nTotal output lines: 97585\n' + run_call(call).encode() + b'tail warning\n'
+        return codex_result(raw)
+    backend = Fit(path)
+    with Wire(tmp_path, backend) as w:
+        msg, _ = w.drive(noisy)
+        text = backend.tool_results()[0]['content']
+        assert msg['content'] == 'seen' and 'source text' not in text
+        assert 'Warning: truncated output' in text and 'tail warning' in text
+        assert 'Total output lines: 97585' in text  # possibly literal stdout: preserve it
+        assert 'its line counts do not describe the file' in text
+        assert '"source_sha256"' not in text and '"data":' not in text
+        assert denial.read_payload(backend.tool_results()[0]) is None
+
+
+@pytest.mark.parametrize('api,stream', [('chat', False), ('responses', True)])
+@pytest.mark.parametrize('reason', ['overflow', 'unknown'])
+def test_fit_failure_of_one_large_read_keeps_a_small_sibling(tmp_path, api, stream, reason):
+    big, small = tmp_path / 'big', tmp_path / 'small'
+    big.write_text(HEX); small.write_text('small source\n')
+    class Fit(Backend):
+        def chat(self, body, rlog=None):
+            reads = body.get(bodykeys.PROTECTED_READS) or ()
+            if any(r.exact_body == HEX.encode() for r in reads):
+                self.bodies.append(body)
+                if reason == 'unknown':
+                    raise ReadFitUnknown('measurement unavailable', reads)
+                raise ReadFitOverflow(MeasuredReadOverflow(100, 101, 5, reads, b'x'))
+            return super().chat(body, rlog)
+    backend = Fit(big, small)
+    with Wire(tmp_path, backend, api, stream) as w:
+        msg, _ = w.drive()
+        results = {m['tool_call_id']: m for m in backend.tool_results()}
+        assert 'seen' in msg['content']
+        assert results['1']['content'] == 'small source\n'
+        assert HEX not in results['0']['content']
+        assert 'not delivered' in results['0']['content']
+        assert 'could not be established' in results['0']['content']
+        assert denial.read_payload(results['1']) == 'small source\n'
+        assert [r.exact_body for r in backend.bodies[-1][bodykeys.PROTECTED_READS]] == [b'small source\n']
+
+
+def test_fit_unknown_retries_until_all_unmeasurable_siblings_are_withheld(tmp_path):
+    paths = [tmp_path / str(i) for i in range(3)]
+    for i, path in enumerate(paths):
+        path.write_text('source ' + str(i) + '\n')
+    class Fit(Backend):
+        def chat(self, body, rlog=None):
+            reads = body.get(bodykeys.PROTECTED_READS) or ()
+            if reads:
+                self.bodies.append(body)
+                raise ReadFitUnknown('measurement unavailable', reads)
+            return super().chat(body, rlog)
+    backend = Fit(*paths)
+    with Wire(tmp_path, backend) as w:
+        msg, _ = w.drive()
+        assert msg['content'] == 'seen'
+        assert all('could not be established' in m['content'] for m in backend.tool_results())
+        assert all(denial.read_payload(m) is None for m in backend.tool_results())
 
 
 @pytest.mark.parametrize('attack', ['changed_call', 'duplicate', 'unknown_id'])

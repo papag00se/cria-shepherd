@@ -69,6 +69,7 @@ from .routing import Router
 from .statusline import StatusWriter  # noqa: F401 — re-exported for tests
 from . import statusline
 from . import toolmenu
+from .shelltool import find_shell_tool
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow, InputOverflow
 from . import wsview, generation
@@ -1374,19 +1375,23 @@ class CriaHandler(BaseHTTPRequestHandler):
         else:
             raise error
         reported = {read.call_id for read in reads}
-        # Fit applies to the complete request, not an individual result. All
-        # current protected reads must be withheld for the unmeasured fallback;
-        # an error cannot nominate an unrelated client-supplied call id.
-        ids = tuple(fact.call_id for fact, _content, _prefix in getattr(self, '_multipart_offered', ()))
+        # Fit describes the entire request, not each read. Withdraw one offer at a
+        # time and retry the real wire, so a large sibling cannot hide a small one.
+        # Until one read remains, even a measured overflow says nothing about any
+        # particular read, so its individual outcome is unknown rather than overflow.
+        offered = getattr(self, '_multipart_offered', ())
+        ids = tuple(fact.call_id for fact, _content, _prefix in offered)
         if not ids or not reported.issubset(ids):
             raise error
+        selected = max(offered, key=lambda item: len(item[0].exact_body))[0].call_id
+        if len(ids) > 1:
+            kind = 'unknown'
         try:
-            self.server.multipart_bridge.withhold_for_fit(sess_key, ids, kind)
+            self.server.multipart_bridge.withhold_for_fit(sess_key, (selected,), kind)
             fallback = copy.deepcopy(self._multipart_original_body)
             messages, calls, facts = self.server.multipart_bridge.incoming(sess_key, fallback.get('messages') or [], tools=fallback.get('tools'))
-            from .multipart_bridge import ResultFact
-            if calls or any(not isinstance(f, ResultFact) for f in facts):
-                raise BridgeError('fit fallback is not settled')
+            if calls:
+                raise BridgeError('fit fallback still has pending calls')
             fallback['messages'] = messages
             self._multipart_facts = facts
             self._strip_and_reframe_inbound(fallback, sess_key, rlog)
@@ -1664,6 +1669,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         if not self.server.cfg.routing.simple_tools:
             return
         self._shell_tool = needs_translation(body.get("tools"))
+        self._search_only = self._shell_tool is None and find_shell_tool(body.get("tools")) is not None
+        if self._search_only:
+            self._shell_tool = find_shell_tool(body.get("tools"))
         self._brave_key = brave.api_key()
         # The workspace root (from the harness env-context <cwd>) — the boundary the external-dir
         # guard classifies paths against when it bounds a fledgling model on the --yolo harness.
@@ -1708,7 +1716,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._declared_roots = dirguard.declared_roots(body.get("messages", []))
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
-            self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
+            self._synthetic = advertise(body, rlog, brave_key=self._brave_key, search_only=self._search_only)
+            if self._search_only and not self._synthetic:
+                self._shell_tool = None
             # The exact-repeat fetch/search gate refuses a repeat ONLY while its result is still in
             # context — feed it the web calls STILL PRESENT, so a compacted-away result (an OpenAPI
             # spec the model needs to re-read) can be re-fetched instead of blocked forever.
@@ -1790,7 +1800,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                                multipart_command=(lambda original, effect, receipt: self.server.multipart_bridge.register(
                                    multipart_session, original, effect, self._shell_tool, receipt)) if not getattr(self, '_multipart_disabled', False) else None,
                                multipart_new_id=(lambda: 'ctxread_' + uuid.uuid4().hex) if multipart_session.startswith('anon:') else None,
-                               observe_multipart_fallback=lambda cid, call: multipart_fallbacks.__setitem__(cid, call))
+                               observe_multipart_fallback=lambda cid, call: multipart_fallbacks.__setitem__(cid, call),
+                               only_injected=getattr(self, '_search_only', False))
             if not getattr(self, '_multipart_disabled', False):
                 from .multipart_bridge import BridgeError
                 try:
@@ -2044,8 +2055,13 @@ class CriaHandler(BaseHTTPRequestHandler):
             )
             yield from wrap_stream(stream, indic)
         except (ReadFitUnknown, ReadFitOverflow) as e:
-            fallback = self._fit_fallback(e, sk, rlog)
-            completion, _ = self._produce_completion_once(fallback, rlog, sk)
+            while True:
+                fallback = self._fit_fallback(e, sk, rlog)
+                try:
+                    completion, _ = self._produce_completion_once(fallback, rlog, sk)
+                    break
+                except (ReadFitUnknown, ReadFitOverflow) as error:
+                    e = error
             yield from completion_to_sse(completion)
         except ImageUnavailable as e:
             rlog.emit("response.error", level="error", error=str(e))
@@ -2095,10 +2111,12 @@ class CriaHandler(BaseHTTPRequestHandler):
         context = workflow.capture(sess_key, body) if workflow else None
         token = _image_current.set(context)
         try:
-            return self._produce_completion_once(body, rlog, sess_key, progressive)
-        except (ReadFitUnknown, ReadFitOverflow) as error:
-            fallback = self._fit_fallback(error, sess_key, rlog)
-            return self._produce_completion_once(fallback, rlog, sess_key, progressive)
+            current = body
+            while True:
+                try:
+                    return self._produce_completion_once(current, rlog, sess_key, progressive)
+                except (ReadFitUnknown, ReadFitOverflow) as error:
+                    current = self._fit_fallback(error, sess_key, rlog)
         except InputOverflow as error:
             return self._overflow_completion(error, body, rlog), None
         finally:

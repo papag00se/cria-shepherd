@@ -1,0 +1,1 @@
+The search was incomplete. Its output exceeds the transport output limit, so no partial result is shown inline. The complete output, including errors, was saved without truncation to {{TARGET}}. Read or search that file using the tools available to you.
