@@ -29,6 +29,7 @@ class AnnotationSource(str, Enum):
     DEPENDENCY = 'dependency_annotation'
     INVENTORY = 'inventory'
     WORKSPACE_LISTING = 'workspace_listing'
+    AUTOMATIC_CHECK = 'automatic_check'
     GUIDANCE_HISTORY = 'guidance_history'
     INTERNAL_EVIDENCE = 'internal_evidence'
 

@@ -5343,6 +5343,9 @@ class Loop:
                 'guidance_history', observations='\n\n'.join(_dated_guidance(sess, prior_guidance))),
                 bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.GUIDANCE_HISTORY}]
         authority = _capture_context_facts(sess, raw)
+        # The latest issued check is an observation, not a new coder action. Preserve
+        # its session-owned identity before the model-view cleaner removes gate framing.
+        raw = probegate.mark_current_gate(raw, getattr(sess, "probe_call_id", None))
         base = _required_coder_base(raw, tools=body.get("tools"), prior_work=sess.prior_work,
             workspace_root=sess.workspace_root, gate_plan=getattr(sess, "gate_plan", None),
             suspend_cursor=bool(sess.completion_remediation_subject or sess.replan_uncovered), rlog=rlog)

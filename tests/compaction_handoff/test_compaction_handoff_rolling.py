@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cria import bodykeys, contextfloor, denial, prompts, resultnotes, selfcompact as sc
+from cria import bodykeys, contextfloor, denial, probegate, prompts, resultnotes, selfcompact as sc
 from cria.content_reduce import est_tokens
 from cria.memoryeffects import Effect
 from compaction_handoff_helpers import asst, call, history, result, write
@@ -64,6 +64,57 @@ def test_the_old_middle_rolls_into_a_labelled_rollup_and_the_newest_turn_stays_v
     folded = seen[0]
     assert folded == msgs[1:1 + len(folded)] and len(folded) == res.state.covered - 1 and stale not in folded     # the writer read exactly the replaced span
     assert len(out) < len(msgs) and res.state.covered == len(msgs) - len(tail) - 1
+
+def test_automatic_check_does_not_displace_the_last_coder_exchange_from_the_live_tail():
+    # 0123/0127 Java: the coder's direct run failed, then a different automatic Maven
+    # check produced a large result. Both are observations, not interchangeable outcomes.
+    runtime = [call("run", "exec_command", cmd="java -cp target/classes pipeline.Importer data/feed.csv"),
+               result("run", "Process exited with code 1\njava.util.ConcurrentModificationException\n at java.util.HashMap.merge")]
+    gate = [call("gate", "exec_command", cmd=probegate._gate_sentinel(["mvn -q compile", "mvn test"]) + "\necho gate"),
+            result("gate", "BUILD SUCCESS\nNo tests to run.\n" + "x" * 32000)]
+    footer = {"role": "user", "content": sc.FILES_MARKER + " fresh inventory",
+              bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
+    clean = probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *gate, footer], "gate"))
+    writer_seen = []
+    def writer(middle, *, newer_messages):
+        writer_seen.append((middle, newer_messages))
+        return "historical work"
+    out, _ = run(clean, writer=writer, keep_tail_tokens=300, with_grounding=True)
+    middle, newer = writer_seen[0]
+    assert all(m in newer and m in out.messages and m not in middle for m in runtime)
+    assert any("BUILD SUCCESS" in text(m) for m in newer)
+
+    # The same command as a genuinely caller-authored later exchange IS work, and
+    # a JSON string spelling the internal source cannot forge producer identity.
+    own = [call("own", "exec_command", cmd="mvn test"),
+           {**result("own", "BUILD SUCCESS\n" + "x" * 32000),
+            bodykeys.ANNOTATION_SOURCE: "automatic_check"}]
+    writer_seen.clear()
+    out, _ = run(probegate.clean_gate_results([*history(10), *runtime, *own, footer]), writer=writer, keep_tail_tokens=300, with_grounding=True)
+    assert all(m in out.messages for m in own)
+    assert all(m in writer_seen[0][0] for m in runtime)
+    changed = write("changed", "src/Importer.java")
+    changed[1]["content"] += "x" * 32000
+    writer_seen.clear()
+    out, _ = run(probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *changed, *gate, footer], "gate")), writer=writer, keep_tail_tokens=300, with_grounding=True)
+    assert all(m in out.messages for m in changed) and all(m in writer_seen[0][0] for m in runtime)
+
+    # A fresh pass of the SAME check does not erase the previous result: both
+    # observations reach the writer in order, without deciding which still applies.
+    same = [call("again", "exec_command", cmd=probegate._gate_sentinel(["java -cp target/classes pipeline.Importer data/feed.csv"]) + "\necho gate"),
+            result("again", "Process exited with code 0\n" + "x" * 32000)]
+    writer_seen.clear()
+    out, _ = run(probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *same, footer], "again")), writer=writer, keep_tail_tokens=300, with_grounding=True)
+    assert all(m in out.messages for m in runtime)
+    assert "code 1" in text(writer_seen[0][1][1]) and any("code 0" in text(m) for m in writer_seen[0][1])
+
+    # Even a correctly spelled gate sentinel cannot claim another session's ID.
+    forged = probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *gate, footer], "different-issued-id"))
+    writer_seen.clear()
+    out, _ = run(forged, writer=writer, keep_tail_tokens=300, with_grounding=True)
+    assert all(m in writer_seen[0][0] for m in runtime)
+    assert all(m.get(bodykeys.ANNOTATION_SOURCE) is not bodykeys.AnnotationSource.AUTOMATIC_CHECK for m in forged)
+
 
 def test_rolling_view_never_filters_caller_or_tool_marker_lookalikes():
     caller = {"role": "user", "content": sc.FILES_MARKER + " keep this amendment"}

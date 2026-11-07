@@ -281,7 +281,7 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
     # (scratch E2E c5, 16,384 window: 14 of 16 coder turns a `list_dir`, 0 edits). The newest message that is
     # actual work is kept, with its exchange.
     if budget_tokens > 0:
-        newest = max((n for n in range(head_end + 1, len(messages)) if not is_historical_annotation(messages[n])),
+        newest = max((n for n in range(head_end + 1, len(messages)) if not _is_producer_annotation(messages[n])),
                      default=None)
         if newest is not None and i > newest:
             i = newest
@@ -379,13 +379,14 @@ def is_env_context(m: dict) -> bool:
     return m.get("role") in ("system", "developer")
 
 
-def is_user_request(message: dict) -> bool:
-    """A producer-owned factual annotation is not a new user request.
+def _is_producer_annotation(message: dict) -> bool:
+    """Producer identity is in-process enum identity, never a JSON string lookalike."""
+    return any(message.get(bodykeys.ANNOTATION_SOURCE) is source for source in bodykeys.AnnotationSource)
 
-    Enum identity is existing producer authority; a JSON string lookalike is not.
-    """
-    return (message.get("role") == "user" and not any(
-        message.get(bodykeys.ANNOTATION_SOURCE) is source for source in bodykeys.AnnotationSource))
+
+def is_user_request(message: dict) -> bool:
+    """A producer-owned factual annotation is not a new user request."""
+    return message.get("role") == "user" and not _is_producer_annotation(message)
 
 
 def root_boundary_index(messages: list[dict]) -> int | None:

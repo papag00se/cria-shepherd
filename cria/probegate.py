@@ -40,7 +40,7 @@ import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import completionmarks, denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
+from . import bodykeys, completionmarks, denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
 from . import groundtruth, participation, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -2193,6 +2193,31 @@ def gate_call_ids(messages: list) -> set:
             for call in message.get("tool_calls") or [] if call.get("id") and gate_call(call)}
 
 
+def mark_current_gate(messages: list, issued_id: str | None) -> list:
+    """Carry the session's last issued gate identity through the model-view cleaner.
+
+    A gate-looking command alone is not authority. Only an unambiguous call/result
+    pair matching the session's own issued ID receives this in-process annotation.
+    """
+    if not issued_id:
+        return messages
+    calls = [(i, call) for i, message in enumerate(messages) if isinstance(message, dict)
+             and message.get("role") == "assistant" for call in message.get("tool_calls") or []
+             if call.get("id") == issued_id]
+    results = [i for i, message in enumerate(messages) if isinstance(message, dict)
+               and (message.get("role") == "tool" or message.get("type") == "function_call_output")
+               and (message.get("tool_call_id") or message.get("call_id")) == issued_id]
+    if (len(calls) != 1 or len(results) != 1 or calls[0][0] >= results[0]
+            or not gate_call(calls[0][1])):
+        return messages
+    call_index = calls[0][0]
+    marked = {results[0]}
+    if len(messages[call_index].get("tool_calls") or []) == 1:
+        marked.add(call_index)
+    return [{**m, bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
+            if i in marked else m for i, m in enumerate(messages)]
+
+
 def _strip_gate_plumbing(cmd: str) -> str:
     """A composed gate command, reduced to the probe commands the model may see.
 
@@ -2405,7 +2430,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                         drop_ids.add(tid)
                     continue
                 if tid in own_ids:
-                    out.append({"role": "user", "content": c})
+                    out.append({"role": "user", "content": c, **(
+                        {bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
+                        if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK else {})})
                 else:
                     out.append({**m, key: c})
                 continue
@@ -2446,7 +2473,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                         # Its call is gone (cria composed the whole script, so nothing in it was the
                         # model's), and a result with no call is not a result. Kept whole as a plain
                         # message — the checks block is the ground truth the gate exists to deliver.
-                        out.append({"role": "user", "content": cleaned})
+                        out.append({"role": "user", "content": cleaned, **(
+                            {bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
+                            if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK else {})})
                     else:
                         out.append({**m, key: cleaned})
                     continue
