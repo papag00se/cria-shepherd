@@ -11,7 +11,8 @@ SCRATCH = Path('/var/tmp/cria-test-runs')
 # These are generated project/build artifacts, not source deliverables.
 _GENERATED = {'.git', 'node_modules', '__pycache__', '.pytest_cache', '.mypy_cache',
               '.ruff_cache', '.gradle', '.venv', 'venv', 'target', 'dist', 'build',
-              '.cache', 'coverage', '.coverage', '.tox', '.bundle'}
+              '.cache', 'coverage', '.coverage', '.tox', '.bundle', 'vendor',
+              '.m2', '.cargo', '.npm', '.yarn', '.pnpm-store', '.next', '.nuxt'}
 
 
 def copy_workspace(source, destination):
