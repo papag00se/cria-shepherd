@@ -17,8 +17,10 @@ from pathlib import Path
 
 from cria import system1
 from cria.system1 import FAMILIES, SELFTEST_FILE, policy_file
+from suite.system1_paths import TRAINING_ROOT as NATIVE_TRAINING_ROOT
 
 TRAINING_ROOT = Path("~/.cria/training/gliclass-v4-edge-expanded-v2").expanduser()
+REFERENCE = NATIVE_TRAINING_ROOT / "reference"
 PROMPTS = Path(__file__).resolve().parent.parent / "cria" / "prompts"
 
 
@@ -52,12 +54,13 @@ def build_bundle(out: Path | str, *, training_root: Path | str = TRAINING_ROOT, 
     out = Path(out).expanduser()
     root = Path(training_root).expanduser()
     run = root / "train-001"
+    reference = REFERENCE if root == TRAINING_ROOT else run / "reference"
     sources = {
         "model.onnx": run / "export-001/int4/model.onnx",
         "model.onnx.data": run / "export-001/int4/model.onnx.data",
-        "tokenizer.json": run / "reference/tokenizer.json",
-        "tokenizer_config.json": run / "reference/tokenizer_config.json",
-        "config.json": run / "reference/config.json",
+        "tokenizer.json": reference / "tokenizer.json",
+        "tokenizer_config.json": reference / "tokenizer_config.json",
+        "config.json": reference / "config.json",
     }
     for family in FAMILIES:
         sources[policy_file(family)] = Path(prompts) / f"offline_onejev_{family}.txt"

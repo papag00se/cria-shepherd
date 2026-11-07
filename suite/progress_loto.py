@@ -34,7 +34,8 @@ from suite.progress_dataset import render_state as progress_state
 from suite.training_updates import LABEL_ORDER, sha
 
 GPU_UUID = "GPU-907a7f7a-b541-8208-2bce-e1361e3110d6"
-BASE = Path("~/.cria/training/gliclass-v4-edge-expanded-v2/train-001").expanduser()
+from suite.system1_paths import TRAINING_ROOT as BASE
+ASSESSMENT = Path("~/.cria/training/gliclass-v4-edge-expanded-v2/assessment/v2/results.jsonl").expanduser()
 OLD_V1 = Path("~/.cria/training/gliclass-v4-edge-v1/train-001").expanduser()
 TASKS = ("cart-billing-go", "feed-pipeline-java", "handles-cli-node", "orders-api-py", "rust-toml-cli", "shipping-rates-rb")
 #: the longest whole input trained or scored. MEASURED on the 24 GiB RTX 3090 (gradient checkpointing, bf16): a
@@ -402,7 +403,7 @@ def cmd_eval_onnx(args):
     timed = session(export / "int4" / "model.onnx")                     # CPU: latency only
     fp32 = session(export / "normalized-fp32.onnx", gpu=True)
     old = {(r["evaluation_scope"], r["id"]): r
-           for r in map(json.loads, (BASE.parent / "assessment/v2/results.jsonl").read_text().splitlines())}
+           for r in map(json.loads, ASSESSMENT.read_text().splitlines())}
     _c, _t, test = load_frozen_cohorts(BASE)
     _c1, _t1, replay_held = load_frozen_cohorts(OLD_V1)
     regression = {}

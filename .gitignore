@@ -31,3 +31,6 @@ suite/results/*.log
 /runs/
 walkdata/
 suite/results/.results.jsonl.lock
+
+# Private System 1 training inputs and native checkpoint (not the bundled serving model).
+/training/system1-v2/

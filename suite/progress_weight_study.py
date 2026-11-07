@@ -11,10 +11,11 @@ from pathlib import Path
 
 from suite.progress_dataset import LABELS
 from suite.progress_loto import DATA, f1_report
+from suite.system1_paths import TRAINING_ROOT
 
 OUT = DATA / "weight-study-20261104"
 GPU = "GPU-393d4998-707c-0ef0-a514-761015477256"
-BEFORE = Path("~/.cria/training/gliclass-v4-edge-expanded-v2/train-001/reference").expanduser()
+BEFORE = TRAINING_ROOT / "reference"
 AFTER = DATA / "final/reference"
 DEV = Path(__file__).parent / "progress_fresh/dev.jsonl"
 PASS_BUDGET = 50

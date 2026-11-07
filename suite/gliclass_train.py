@@ -11,6 +11,7 @@ import random
 import time
 
 from suite.gliclass_probe import load_frozen_cohorts, load_native, prepare_case
+from suite.system1_paths import contract_path
 from suite.onejev_probe import append, file_sha
 from suite.onejev_train import GPU_UUID, balanced_weights, loss_at_slots, lr_at
 from suite.training_updates import accumulated_update
@@ -99,7 +100,7 @@ def run(root):
         raise ValueError('existing attempt; preserve it and qualify a distinct run')
     contract, rows, _held = load_frozen_cohorts(root)
     for name, digest in contract['input_sha256'].items():
-        if file_sha(Path(name)) != digest:
+        if file_sha(contract_path(name)) != digest:
             raise ValueError(f'frozen source changed: {name}')
     if os.environ.get('CUDA_VISIBLE_DEVICES') != GPU_UUID or contract['gpu_uuid'] != GPU_UUID:
         raise ValueError('only the approved 3090 may be visible')

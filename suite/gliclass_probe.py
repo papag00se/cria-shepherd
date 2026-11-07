@@ -98,7 +98,8 @@ def load_frozen_cohorts(root):
     cohorts = []
     for name, count_key in [('train-cases.json', 'train_count'), ('held-cases.json', 'held_count')]:
         path = root / name
-        if file_sha(path) != contract['input_sha256'][str(path)]:
+        from suite.system1_paths import contract_key
+        if file_sha(path) != contract['input_sha256'][contract_key(path)]:
             raise ValueError('frozen admitted cases changed')
         rows = json.loads(path.read_bytes())
         count = contract[count_key]
