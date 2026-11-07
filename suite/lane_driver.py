@@ -61,7 +61,7 @@ class Driver:
         self.running = {}          # (campaign id, model, task) -> dict(proc, lane, row, campaign)
         self.retry_at = {}           # (campaign id, model, task) -> earliest relaunch time
         self.deferred = set()        # cells whose last run overflowed the context: rerun only when nothing else is pending
-        self.second_wait = {}        # lane -> earliest time to try a second server on its (busy) card again
+        self.second_wait = {}        # (lane, model, card occupants) -> earliest retry after a side server did not fit
         self.servers = {}          # lane -> server state
         self.rows = {}             # (lane, model, level) -> row dict
         self.lane_model = {}       # lane -> the model its server serves (each card switches on its own)
@@ -97,8 +97,7 @@ class Driver:
     def card_free(self, lane):
         """Free slots on the lane's card: the card's slot budget (its first lane's slots) less every cell on it."""
         group = self.card_lanes(lane)
-        budget = min(self.servers[n]['slots'] for n in group if n in self.servers) if any(
-            n in self.servers for n in group) else lanes.LANES[group[0]].slots
+        budget = lanes.LANES[group[0]].slots
         return budget - sum(self.used(n) for n in group)
 
     # ------------------------------------------------------------------ lifecycle
@@ -127,10 +126,16 @@ class Driver:
         print(json.dumps({'event': 'lane-up', 'lane': lane, 'model': model,
                           'slots': self.servers[lane]['slots'], 'window': self.servers[lane]['window']}), flush=True)
 
+    def side_retry_key(self, lane, model):
+        return lane, model, tuple(sorted((n, self.lane_model[n]) for n in self.card_lanes(lane)
+                                         if n != lane and n in self.lane_model))
+
     def next_model(self, lane, pending):
         """The model this idle card serves next: the other card's model if it fits here and has work, else the
         first roster model with pending work that fits here and is not already being served elsewhere."""
-        have = {m for _, m, _ in pending if self.fits(m, lane)}
+        busy = any(n in self.servers for n in self.card_lanes(lane) if n != lane)
+        have = {m for _, m, _ in pending if self.fits(m, lane)
+                and (not busy or time.time() >= self.second_wait.get(self.side_retry_key(lane, m), 0))}
         others = {self.lane_model.get(n) for n in self.lane_names if n != lane}
         mates = {self.lane_model.get(n) for n in self.card_lanes(lane) if n != lane}
         have -= mates   # a card never serves one model twice
@@ -207,8 +212,6 @@ class Driver:
                 model = self.next_model(lane, self.queue())
                 if model is not None and model != current:
                     busy = any(n in self.servers for n in self.card_lanes(lane) if n != lane)
-                    if busy and time.time() < self.second_wait.get(lane, 0):
-                        continue
                     try:
                         self.switch_lane(lane, model)
                     except (RuntimeError, ValueError, OSError) as exc:
@@ -217,7 +220,7 @@ class Driver:
                         # A second model beside the card's current one did not fit: the current model keeps
                         # the card; try again once its cells have released memory.
                         self.stop_lane(lane)
-                        self.second_wait[lane] = time.time() + SECOND_SERVER_RETRY_SECONDS
+                        self.second_wait[self.side_retry_key(lane, model)] = time.time() + SECOND_SERVER_RETRY_SECONDS
                         print(json.dumps({'event': 'second-server-wait', 'lane': lane, 'model': model,
                                           'error': str(exc)[:200]}), flush=True)
         for lane in self.lane_names:

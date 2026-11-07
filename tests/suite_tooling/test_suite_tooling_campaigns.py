@@ -33,6 +33,55 @@ def test_a_cell_without_a_result_runs_and_one_with_a_result_does_not(level):
     assert cmd[cmd.index("--level") + 1] == str(level) and "--restored-fleet" in cmd and "--planner" not in cmd
 
 
+def test_lane_scheduler_tries_another_model_after_a_side_server_does_not_fit(monkeypatch):
+    from suite import lane_driver, lanes
+    driver = lane_driver.Driver([], ['3090x4', '3090x4b', '3080x2'], list(campaign.MODELS), list(campaign.TASKS), None)
+    driver.servers['3090x4'] = {'slots': 4}
+    driver.lane_model = {'3090x4': 'ornith1.5_9b', '3080x2': 'bonsai2'}
+    driver.second_wait[driver.side_retry_key('3090x4b', 'bonsai2')] = 999999
+    monkeypatch.setattr(lane_driver.time, 'time', lambda: 1)
+    pending = [(None, 'bonsai2', campaign.TASKS[0]), (None, 'phi4', campaign.TASKS[0])]
+    assert driver.next_model('3090x4b', pending) == 'phi4'
+    driver.lane_model['3090x4'] = 'ling3.0_tiny'
+    assert driver.next_model('3090x4b', pending) == 'bonsai2'  # different card occupancy can fit
+    driver.servers['3090x4b'] = {'slots': 1}
+    assert driver.card_free('3090x4b') == lanes.LANES['3090x4'].slots
+
+
+def test_lane_scheduler_step_launches_an_alternative_after_a_fit_failure(monkeypatch):
+    from suite import lane_driver
+    driver = lane_driver.Driver([], ['3090x4', '3090x4b', '3080x2'], list(campaign.MODELS), list(campaign.TASKS), None)
+    driver.servers = {'3090x4': {'slots': 4}, '3080x2': {'slots': 1}}
+    driver.lane_model = {'3090x4': 'ornith1.5_9b', '3080x2': 'bonsai2'}
+    driver.running = {'ornith': {'lane': '3090x4'}, 'bonsai': {'lane': '3080x2'}}
+    from types import SimpleNamespace
+    cell = SimpleNamespace(level=5)
+    pending = [(cell, 'bonsai2', campaign.TASKS[0]), (cell, 'phi4', campaign.TASKS[0])]
+    monkeypatch.setattr(driver, 'queue', lambda model=None: [p for p in pending if model is None or p[1] == model])
+    monkeypatch.setattr(driver, 'fits', lambda *_: True)
+    monkeypatch.setattr(driver, 'reap', lambda: None)
+    monkeypatch.setattr(driver, 'stop_rows', lambda **_: None)
+    monkeypatch.setattr(lane_driver.lanes, 'check_server', lambda _: None)
+    attempted, launched = [], []
+    def switch(lane, model):
+        attempted.append(model)
+        if model == 'bonsai2':
+            raise RuntimeError('does not fit')
+        driver.servers[lane] = {'slots': 4}
+        driver.lane_model[lane] = model
+    def launch(lane, cell, model, task):
+        launched.append((lane, model, task))
+        pending.remove((cell, model, task))
+        driver.running[model] = {'lane': lane}
+    monkeypatch.setattr(driver, 'switch_lane', switch)
+    monkeypatch.setattr(driver, 'launch', launch)
+    driver.step()
+    assert attempted == ['bonsai2'] and not launched
+    driver.step()
+    assert attempted == ['bonsai2', 'phi4']
+    assert launched == [('3090x4b', 'phi4', campaign.TASKS[0])]
+
+
 def test_restored_battery_forwards_an_explicit_rust_toolchain(monkeypatch):
     calls = []
     monkeypatch.setattr(battery_run.run_guard, "other_suite_runners", lambda **_: [])
