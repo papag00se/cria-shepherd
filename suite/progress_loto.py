@@ -12,7 +12,7 @@ ones two.
     report                  leave-one-task-out table vs the majority baseline; ONNX regression + CPU latency
 
 Training runs on the RTX 3090 only (``CUDA_VISIBLE_DEVICES`` must be its UUID), through the pipeline's own
-:mod:`suite.gliclass_train` building blocks. Outputs live under ``~/.cria/training/progress-v1``, never the repo.
+:mod:`suite.gliclass_train` building blocks. Outputs live under ``~/.cria/test-runs/outputs/research/progress-v1``, never the repo.
 """
 from __future__ import annotations
 

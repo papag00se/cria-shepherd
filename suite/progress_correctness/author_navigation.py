@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-ROOT = Path.home() / '.cria/training/progress-correctness-v2/author-navigation'
+ROOT = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-navigation'
 
 def check(name, command, file, text):
     return {'name': name, 'argv': command, 'files': {file: text}, 'timeout_seconds': 10}

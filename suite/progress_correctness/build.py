@@ -26,7 +26,7 @@ from suite.progress_correctness.rationales import RATIONALES
 
 CASES = CASES + MORE_CASES
 
-OUT = Path.home() / ".cria/training/progress-correctness-v2"
+OUT = Path.home() / ".cria/test-runs/outputs/research/progress-correctness-v2"
 
 
 def diff(seed: dict[str, str], snapshot: dict[str, str]) -> str:

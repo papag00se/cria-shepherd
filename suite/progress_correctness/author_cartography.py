@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-ROOT = Path.home() / '.cria/training/progress-correctness-v2/author-cartography'
+ROOT = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-cartography'
 
 # Each entry has a requirement, a complete implementation, a meaningful incomplete
 # implementation, and independent JavaScript assertions for the ordinary and edge clauses.

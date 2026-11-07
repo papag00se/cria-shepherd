@@ -51,10 +51,9 @@ def test_failed_download_and_unexpected_archive_leave_no_bundle(tmp_path, monkey
     assert not dest.exists()
 
 
-def test_default_startup_installs_then_loads_bundle(tmp_path, monkeypatch):
+def test_default_startup_loads_the_bundled_model_without_downloading(monkeypatch):
     from cria import system1
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(system1download.ratelimit, "open_response", lambda *a, **kw: Response(archive(system1download.FILES)))
+    monkeypatch.setattr(system1download, "install", lambda *a, **kw: pytest.fail("startup must not download"))
     seen = []
     class Runtime:
         def __init__(self, root, threads, *, capture_dir):
@@ -63,7 +62,7 @@ def test_default_startup_installs_then_loads_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr(system1, "System1Runtime", Runtime)
     cfg = System1Config()
     assert isinstance(system1wiring.build(cfg), Runtime)
-    assert len(seen) == 2 and seen[-1] == cfg.bundle_path and cfg.bundle_path.is_dir()
+    assert seen == [cfg.bundle_path] and cfg.bundle_path.is_dir()
 
 
 def test_custom_missing_bundle_never_downloads(tmp_path, monkeypatch):

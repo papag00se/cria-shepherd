@@ -1011,7 +1011,7 @@ GROUPS.extend([
 
 
 if __name__ == '__main__':
-    destination = Path.home() / '.cria/training/progress-correctness-v2/author-dev-distinct/spec.json'
+    destination = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-dev-distinct/spec.json'
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps({'groups': GROUPS}, indent=2) + '\n', encoding='utf-8')
     print(destination)

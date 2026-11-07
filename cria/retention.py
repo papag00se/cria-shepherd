@@ -623,7 +623,8 @@ def select(entries, *, older_than, session, now):
 
 def _roots(home):
     home = Path(home)
-    return {'multipart': home / 'multipart', 'image': home / 'images'}
+    image = privatepaths.IMAGE_HOME if home == privatepaths.CRIA_HOME else home / 'images'
+    return {'multipart': home / 'multipart', 'image': image}
 
 
 def _tmp_root(tmp):

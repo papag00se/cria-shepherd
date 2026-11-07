@@ -4,6 +4,8 @@ from pathlib import Path
 
 # Config, credentials, logs and plan mirrors live outside the driven workspace.
 CRIA_HOME = Path('~/.cria').expanduser()
+STATE_HOME = Path(os.environ.get('XDG_STATE_HOME', '~/.local/state')).expanduser() / 'cria'
+IMAGE_HOME = STATE_HOME / 'images'
 
 
 def mkdir_private(path) -> Path:

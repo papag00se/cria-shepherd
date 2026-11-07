@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-OUT = Path.home() / '.cria/training/progress-correctness-v2/author-classicalcrypto'
+OUT = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-classicalcrypto'
 CASES = [
     dict(family='train-classical-substitution', group='caesar-preserve-case',
          requirement='Implement shift(text, amount) in cipher.js as a Caesar shift of ASCII letters by any signed integer amount. Preserve letter case and leave non-ASCII and nonletters unchanged.',

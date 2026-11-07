@@ -22,7 +22,7 @@ from dataclasses import dataclass, asdict
 from . import ratelimit
 from .envfile import env_secret
 
-CACHE_DIR = "~/.cria/repo-health"
+CACHE_DIR = os.path.join(os.environ.get('XDG_CACHE_HOME', '~/.cache'), 'cria', 'repo-health')
 TTL = 24 * 3600
 GITHUB_TIMEOUT = 4
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"     # replaced at startup by [tools].github_token_env

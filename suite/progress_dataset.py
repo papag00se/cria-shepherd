@@ -11,7 +11,7 @@ packet's prior-milestone judgments, the checkpoint minute). The labels are model
 inventory is subsumed by the diff, so the packet contributes only its BASELINE SEED TREE, used to detect a task seed
 that has changed since the checkpoint was taken (such checkpoints are skipped, not diffed against the wrong seed).
 
-Everything is written under ``~/.cria/training/progress-v1`` (never the repo):
+Everything is written under ``~/.cria/test-runs/outputs/research/progress-v1`` (never the repo):
 
     python -m suite.progress_dataset [--out DIR]
 """
@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 MILESTONES = Path.home() / ".cria" / "test-runs" / "outputs" / "milestones"
 RESULTS = REPO / "suite" / "results" / "results.jsonl"
 TASKS = REPO / "suite" / "tasks"
-OUT = Path.home() / ".cria" / "training" / "progress-v1"
+OUT = Path.home() / ".cria" / "test-runs" / "outputs" / "research" / "progress-v1"
 
 LABELS = ("DONE", "PARTIAL", "NOT_STARTED")
 STATUS_TO_LABEL = {"completed": "DONE", "partial": "PARTIAL", "not_started": "NOT_STARTED"}

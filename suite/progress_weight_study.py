@@ -1,6 +1,6 @@
 """Gradient-free diagnosis of the progress classifier; no training or deployment.
 
-Use the existing GLiClass experiment interpreter. All model calls must be on the operator-specified RTX 3080. Artifacts default to ~/.cria/training/progress-v1/weight-study-20261104. The fresh TEST set is not read by the diagnostic commands.
+Use the existing GLiClass experiment interpreter. All model calls must be on the operator-specified RTX 3080. Artifacts default to ~/.cria/test-runs/outputs/research/progress-v1/weight-study-20261104. The fresh TEST set is not read by the diagnostic commands.
 """
 from __future__ import annotations
 

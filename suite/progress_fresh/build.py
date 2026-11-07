@@ -5,7 +5,7 @@ snapshots with KNOWN labels (not_started = seed or unrelated change only, partia
 and the same diff renderer (``suite.progress_dataset.seed_diff``) as the training rows. Split by task:
 DEV_TASKS -> dev.jsonl (exploratory probing), everything else -> test.jsonl (never used to tune).
 
-    python -m suite.progress_fresh.build [--out ~/.cria/training/progress-v1/fresh]
+    python -m suite.progress_fresh.build [--out ~/.cria/test-runs/outputs/research/progress-v1/fresh]
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from pathlib import Path
 from suite.progress_dataset import seed_diff
 
 HERE = Path(__file__).resolve().parent
-OUT = Path.home() / ".cria" / "training" / "progress-v1" / "fresh"
+OUT = Path.home() / ".cria" / "test-runs" / "outputs" / "research" / "progress-v1" / "fresh"
 DEV_TASKS = ("recipes-rb", "weather-js", "wordtrim-lua", "backup-sh", "logparse-pl", "interval-clj", "ratelimit-py")
 
 

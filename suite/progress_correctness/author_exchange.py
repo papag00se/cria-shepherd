@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-OUT = Path.home() / '.cria/training/progress-correctness-v2/author-exchange'
+OUT = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-exchange'
 CASES = []
 
 

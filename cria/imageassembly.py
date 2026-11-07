@@ -52,7 +52,7 @@ class ConfiguredImages:
             return None
         with self._lock:
             if self._workflow is None:
-                store=ImageStore(privatepaths.CRIA_HOME/'images',close_authority=object())
+                store=ImageStore(privatepaths.IMAGE_HOME,close_authority=object())
                 self._workflow=ImageWorkflow(store,self.wire,ConfiguredCoderVision(self.server),workspace=self.workspace)
             workflow=self._workflow
         return workflow.capture(key,body)

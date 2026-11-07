@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-ROOT = Path.home() / '.cria/training/progress-correctness-v2/author-expressions'
+ROOT = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-expressions'
 FAMILIES = ['train-expression-lexer', 'train-expression-evaluator', 'train-expression-ast',
             'train-expression-typechecker', 'train-expression-source-spans']
 

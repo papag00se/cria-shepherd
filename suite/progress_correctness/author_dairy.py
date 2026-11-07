@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-OUT = Path.home() / '.cria/training/progress-correctness-v2/author-dairy'
+OUT = Path.home() / '.cria/test-runs/outputs/research/progress-correctness-v2/author-dairy'
 # Each entry supplies two independently checkable requirements and concrete examples.
 CASES = [
 ('curds','cut-size','Implement classifyCut(mm): return "fine" below 8 mm, "medium" from 8 through 16 mm, and "coarse" above 16 mm. Implement cutCount(length, size): return the ceiling of length divided by size.', 'classifyCut', 'mm', "return mm < 8 ? 'fine' : mm <= 16 ? 'medium' : 'coarse';", 'cutCount', 'length, size', 'return Math.ceil(length / size);', "assert.equal(m.classifyCut(7),'fine'); assert.equal(m.classifyCut(8),'medium'); assert.equal(m.classifyCut(16),'medium'); assert.equal(m.classifyCut(17),'coarse');", 'assert.equal(m.cutCount(25, 8),4); assert.equal(m.cutCount(24,8),3);'),

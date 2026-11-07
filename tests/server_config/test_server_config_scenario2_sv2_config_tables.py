@@ -41,10 +41,10 @@ def test_the_documented_defaults_are_what_an_empty_config_gives():
     assert (cfg.server.host, cfg.server.port, cfg.server.heartbeat_seconds) == ("127.0.0.1", 18085, 5.0)
     assert (cfg.upstream.base_url, cfg.upstream.timeout_seconds, cfg.upstream.context_window) == ("http://127.0.0.1:18084", 600, 0)
     log = cfg.logging
-    assert (log.level, log.dir, log.console, log.jsonl, log.capture_calls, log.capture_dir, log.capture_rendered) == ("info", "~/.cria/logs", True, True, False, "~/.cria/calls", True)
+    assert (log.level, log.dir, log.console, log.jsonl, log.capture_calls, log.capture_dir, log.capture_rendered) == ("info", "~/.cria/logs", True, True, False, "~/.cria/test-runs/calls", True)
     assert cfg.routing.engagement_level == MAX_ENGAGEMENT_LEVEL == 5 and cfg.routing.engagement_bias == "task" and cfg.routing.roles == {}
     assert cfg.safety.external_dir_permission == "none" and cfg.assists.disabled == () and cfg.assists.profile == "default"
-    assert cfg.system1.enabled is True and str(cfg.system1.bundle_path).endswith('/.cria/models/system1/expanded-v2-live') and cfg.system1.threads >= 1
+    assert cfg.system1.enabled is True and str(cfg.system1.bundle_path).endswith('/cria/system1_bundle') and cfg.system1.threads >= 1
     assert cfg.indicators.enabled and cfg.indicators.reasoning_transcript and cfg.tools.workspace_image_tool is None
 
 
