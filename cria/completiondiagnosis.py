@@ -238,6 +238,10 @@ def ground_diagnosis(source: DiagnosisInput, services: GroundingServices) -> Dia
     head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
     if head != "SUPPORTED":
         return suppress("semantic support absent or undecidable")
+    if origin == "workspace_file" and services.subject(subject) != (rel, True, source_text):
+        # The question may be in flight while the observed source is invalidated or replaced.
+        # The answer concerned the earlier source state, not merely the quoted substring.
+        return suppress("workspace file changed or became unknown during grounding")
     return supported(evidence_quote, task_quote)
 
 

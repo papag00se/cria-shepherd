@@ -2,6 +2,7 @@
 reaches the coder (Java 20260905T093156: an existing file called missing; a documented risk promoted to a requirement)."""
 
 import json
+import subprocess
 
 import pytest
 
@@ -65,6 +66,52 @@ def test_a_negative_diagnosis_is_delivered_only_when_grounded(obj, files, task, 
     else:
         assert out == "" and "loop.negative_diagnosis_suppressed" in rlog.kinds()
     assert len(ask.prompts) == asks      # deterministic facts settle first; a question is spent only when needed
+
+
+@pytest.mark.parametrize("during_ask,delivered", [
+    ("unchanged", True),
+    ("invalidated", False),
+    ("pending", False),
+    ("resurveyed-change", False),
+    ("resurveyed-unchanged", True),
+])
+def test_workspace_evidence_stays_current_across_the_semantic_question(tmp_path, during_ask, delivered):
+    path = tmp_path / "a.txt"
+    path.write_text("status: pending\n")
+    root, session = str(tmp_path), "diagnosis-freshness"
+    view = wsview.View(root, session)
+
+    def survey():
+        wsview.want_body(session, "a.txt")
+        result = subprocess.run(["sh", "-c", wsview.survey_command(session, cd=root)],
+                                capture_output=True, text=True, check=True, timeout=30)
+        assert wsview.apply_survey(view, wsview.strip_survey(result.stdout)[1])
+
+    survey()
+    token = wsview.bind(view)
+    asked = []
+    try:
+        def ask(prompt):
+            asked.append(prompt)
+            if during_ask == "pending":
+                view.observation_pending(True)
+            elif during_ask in ("invalidated", "resurveyed-change"):
+                path.write_text("status: pending\nchanged after the question began\n")
+                view.note_changed(str(path))
+                if during_ask == "resurveyed-change":
+                    survey()  # the quoted line survives, but the judged body changed
+            elif during_ask == "resurveyed-unchanged":
+                survey()
+            return "SUPPORTED"
+
+        obj = diagnosis("missing_content", source="workspace_file", evidence="status: pending", subject="a.txt",
+                        task_quote="Make a.txt contain status: ready.")
+        out = loop._negative_diagnosis_nudge(obj, task="Make a.txt contain status: ready.",
+                                             workspace_root=root, ask=ask, rlog=Rlog(), phase="test")
+        assert len(asked) == 1
+        assert bool(out) is delivered
+    finally:
+        wsview.unbind(token)
 
 
 def test_a_diagnosis_over_an_unknown_workspace_is_suppressed():
