@@ -4,7 +4,7 @@ Historical inspection, 2026-11-06. This separates three different mechanisms in 
 
 ## The trained requirement-status classifier was never deployed
 
-The experimental `progress` family predicts DONE/PARTIAL/NOT_STARTED from a requirement and seed-to-snapshot diff. It is not connected to cria's completion or periodic-review path. There are offline training and scoring results, but no deployed intervention from that family to attribute a coding result to. The production classifier remains the expanded-v2 INT4 bundle with only retrospective and dictation families.
+The experimental `progress` family predicts DONE/PARTIAL/NOT_STARTED from a requirement and seed-to-snapshot diff. It is not connected to cria's completion or periodic-review path. There are offline training and scoring results, but no deployed intervention from that family to attribute a coding result to. At this inspection the production classifier was the expanded-v2 INT4 bundle with only retrospective and dictation families. The later [real-call continuation](training/system1-l5-continuation.md) retains those same two families.
 
 This is different from the existing reasoner-based periodic whole-task review. Its revised cadence was committed as `45993acdbc61aeebb53b17e289f31b32d349e5e8` on November 4: initially eight minutes of coder work, then four, converted to turns with bounds. The November 5 rerun revision, `7a32e8b9f7465937bfbc5457ff36246157db3f23`, includes that change. Inspected lane configuration also explicitly selects eight/four and the production System 1 bundle.
 

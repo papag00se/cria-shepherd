@@ -5,8 +5,8 @@
     "input_ids_sha256": "db3b4ee6a5c83a72ab4a9b74686d7510f2596855a237ea4b7d6042b5d1f1520c",
     "label": "RETROSPECTIVE",
     "logits": [
-      5.44373083114624,
-      -6.818110942840576
+      2.7888901233673096,
+      -2.5226364135742188
     ],
     "state": {
       "candidate_briefing": "Two proofs from the Ruby typesetting preview are attached to the session. They use the same measure, size, and compound word. The reference breaks the word at an internal position allowed by the selected language; the current preview moves it intact onto the following line. The chosen language appears in the request capture. Nothing saved shows the line breaker's language setting. The required language-appropriate break is still missing."
@@ -15,17 +15,17 @@
   },
   {
     "family": "retrospective",
-    "id": "retrospective-915bdfa713cc1dc23eee2b254b4bd8dda1feb2de99fc5aa24f62b94b7d297580",
-    "input_ids_sha256": "69da6937dedb499380993d40a5f2c1e86a8750f1828282946f20b848bc5eb04e",
-    "label": "PLAN",
+    "id": "expand2-test-003",
+    "input_ids_sha256": "d7d520d722d630d065a4aa2e88e9ddabbb2e3b11a87557412994b9ffec483fae",
+    "label": "RETROSPECTIVE",
     "logits": [
-      -6.387767791748047,
-      5.130695343017578
+      2.726827621459961,
+      -3.134232997894287
     ],
     "state": {
-      "candidate_briefing": "The task is to turn the Ada Handle resolver into a command-line tool that accepts a handle as an argument, supports `--json` and `--help`, exits non-zero when the handle cannot be resolved, and outputs the resolved address, holder's address, and the number of handles the holder owns. The tool must use Node's built-in `fetch` (replacing the deprecated `request` package), run without a `node_modules` directory, include tests (including an end-to-end test against `api.handle.me`), and have a Dockerfile.\n\nWhat has been built:\n- `lookup.js` \u2014 the CLI tool that uses Node's built-in `fetch` to call `https://api.handle.me/handles/<handle>`, outputs JSON or plain text with `address`, `holder_address`, and `handle_count`.\n- `package.json` \u2014 defines the project, with `jest` added as a devDependency.\n- `test/lookup.test.js` \u2014 tests for basic lookup, JSON output, `--help`, error handling, and an end-to-end request to `api.handle.me`.\n- `Dockerfile` \u2014 Docker image based on `node:20-slim` that runs the tool without Node installed on the host.\n- `README.md` \u2014 brief documentation.\n\nWhat is broken or unfinished:\n- `package-lock.json` exists on disk (218 B) but is not listed in the task's deliverables. The task says the tool must run with no `node_modules` directory present, and `package-lock.json` is an artifact of `npm install` that should not be present.\n- The test file has a bug: the `exits non-zero when handle cannot be resolved` test uses `toThrow()` which does not work with `execSync` (it returns the output string, not throws). The test was rewritten to use `.not.toThrow()` but the assertion logic is still flawed \u2014 `execSync` does not throw on non-zero exit codes, so the test will fail.\n- The `handle_count` JSON key in the output is `handle_count` (matching the task spec), but the test was checking `data.length` which is not the correct key. The test was updated to check `data.handle_count` but the `lookup.js` code was also updated to use `handle_count` as the key.\n- The `node_modules` directory was not removed from the filesystem (it was created by a prior `npm install`). The task requires the tool to run without `node_modules`.\n- The `package-lock.json` file is present and should be removed.\n- The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern.\n\nWhat was last done:\n- The `lookup.js` code was verified to work correctly (outputs `handle_count: 5` for the `goose` handle).\n- The `package.json` was updated to include `jest` as a devDependency.\n- The `test/lookup.test.js` was rewritten with corrected assertions.\n- The `Dockerfile` was verified to exist and be correct.\n- The `node_modules` directory was not removed from the filesystem.\n- The `package-lock.json` file was not removed.\n- The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern.\n\nThe task is not yet complete because:\n1. `node_modules` still exists on disk and must be removed.\n2. `package-lock.json` still exists and should be removed.\n3. The `exits non-zero when handle cannot be resolved` test in `test/lookup.test.js` has a flawed assertion pattern that will fail.\n4. The `handle_count` JSON key in `lookup.js` was changed to `handle_count` but the test was checking `data.length` \u2014 the test was updated to check `data.handle_count` but the `lookup.js` code was also updated to use `handle_count` as the key.\n5. The `package-lock.json` file is present and should be removed.\n6. The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern.\n\nThe task is not yet complete because:\n1. `node_modules` still exists on disk and must be removed.\n2. `package-lock.json` still exists and should be removed.\n3. The `exits non-zero when handle cannot be resolved` test in `test/lookup.test.js` has a flawed assertion pattern that will fail.\n4. The `handle_count` JSON key in `lookup.js` was changed to `handle_count` but the test was checking `data.length` \u2014 the test was updated to check `data.handle_count` but the `lookup.js` code was also updated to use `handle_count` as the key.\n5. The `package-lock.json` file is present and should be removed.\n6. The `test/lookup.test.js` file was rewritten but the `exits non-zero when handle cannot be resolved` test still has a flawed assertion pattern."
+      "candidate_briefing": "Reconciliation worksheet \u2014 Python publishing import, generated quarter.\n\nInput extract:\n  usage U17, territory North, amount 18.40\n  usage U17, territory South, amount 7.60\n\nThe agreement assigns both territories to the same fictional publisher. The import preview reports two rows. The quarter statement contains one entry for U17, worth 18.40, and its total is short by 7.60. The required territorial breakdown is absent.\n\nThe statement header and currency are correct. The saved evidence covers the preview and the final statement, but contains no intermediate grouping trace. There is consequently no recorded finding about where the South entry disappeared. No reconciliation change was made during the session. The accounting request remains a separate amount for each territory, not a different statement heading."
     },
-    "tokens": 1309
+    "tokens": 263
   },
   {
     "family": "retrospective",
@@ -33,8 +33,8 @@
     "input_ids_sha256": "bc0c2700de08454df9682b2690a868a23a4d65cc4936a7fa915108b9b905ad06",
     "label": "RETROSPECTIVE",
     "logits": [
-      4.7565131187438965,
-      -6.364655494689941
+      2.613548994064331,
+      -3.303013563156128
     ],
     "state": {
       "candidate_briefing": "Timeline, Java appointment simulator:\n\n09:00:00 \u2014 generated request R42 accepted; reservation A created.\n09:00:03 \u2014 client records a response timeout.\n09:00:04 \u2014 client repeats R42; reservation B created.\n09:00:05 \u2014 duplicate-reservation check fails.\n\nThis is a fictional scheduling fixture without patient data. The request token was added to transport logging during the session, so both attempts can now be linked. The reservation implementation did not change. The ticket requires a repeated accepted request to leave one reservation. A past proposal to forbid retries in the client was withdrawn; the service still receives repeats. The final fixture contains both reservations."
@@ -43,17 +43,17 @@
   },
   {
     "family": "dictation",
-    "id": "dictation-009c6e8a26f15b3f1b6ea08202c154eff044e21705cdd272fdc9de6864d2fb19",
-    "input_ids_sha256": "a44086646e85a717efa38a390f792776b967252d865b412c2a265bf6b5462ef3",
+    "id": "expand2-test-052",
+    "input_ids_sha256": "d3e496b1d8450ae309dc4f2f36e31b47894424bb2c9dec741864b34401e22fa4",
     "label": "DICTATES",
     "logits": [
-      -6.608051300048828,
-      5.4997053146362305
+      -5.58153772354126,
+      4.3813066482543945
     ],
     "state": {
-      "public_directive": "Ensure Node's built-in fetch is available in your environment. Confirm availability by verifying typeof fetch evaluates to 'function' before making further edits."
+      "public_directive": "For the fictional Python clinic queue, cancellation removes the pending entry but leaves its active counterpart schedulable. Audit history must survive. Execute `DELETE FROM active_queue WHERE visit_id = ?` through the cancellation transaction using the same generated visit token. Then check that neither queue can schedule the canceled visit. Keep the audit history intact; it is separate from these live queue entries."
     },
-    "tokens": 335
+    "tokens": 382
   },
   {
     "family": "dictation",
@@ -61,26 +61,12 @@
     "input_ids_sha256": "d7589f8a71ceda72090e4a929e8d054012628193b8637512521f2ef5b2c9bc04",
     "label": "DESCRIBES",
     "logits": [
-      5.649437427520752,
-      -7.205904483795166
+      4.296504020690918,
+      -5.841958999633789
     ],
     "state": {
       "public_directive": "Spectral reduction review for the Node astronomy pipeline.\n\nThe issue concerns two masks applied to generated spectra. One mask comes from the detector calibration and marks permanently unusable pixels. Another is produced for an individual exposure when a transient spike is detected. Both masks are visible in the saved reduction report. The extracted spectrum omits the permanent defects but retains the transient spike, even though that spike is marked in the exposure mask. The reference spectrum has no spike at that position.\n\nThe diagnostic viewer currently displays `bad pixels: detector=4 exposure=1`. The existing source declaration is `const mask = detector.mask;`. Those observations locate the discrepancy between the two reported inputs and the extraction result. They do not show a repaired extraction. Preserve the distinction in the diagnostic viewer: an operator needs to know whether a bad pixel came from the detector map or the exposure analysis.\n\nFor the extracted spectrum, however, either source of badness must prevent that pixel from contributing. A usable result must exclude the transient and permanent defects without dropping neighboring valid samples. Earlier review notes recommended combining the two masks; that recommendation was about the required extraction behavior and did not settle a representation or combination API. The generated exposure also has valid pixels that exist in neither mask, so simply rejecting the entire exposure would fail the acceptance example. Keep the viewer's separate counts meaningful while repairing extraction, and judge success from the extracted values as well as the viewer."
     },
     "tokens": 590
-  },
-  {
-    "family": "dictation",
-    "id": "dictation-31c729f6fcab80badc2c7c771d74edc5b2644d8c9471d45b76deef2de485bbb3",
-    "input_ids_sha256": "908599378c90b2186269481d4b1da6c2a956003464918523886404894999bfec",
-    "label": "DICTATES",
-    "logits": [
-      -6.93521785736084,
-      5.5232367515563965
-    ],
-    "state": {
-      "public_directive": "Fix the test to call lookup.js with --json alice and assert that the output\u2019s resolved_address, holder_address, and handle_count match the JSON returned by the external API."
-    },
-    "tokens": 346
   }
 ]

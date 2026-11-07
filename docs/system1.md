@@ -1,6 +1,6 @@
 # Local decision classifier: technical reference
 
-System 1 is the default CPU-only, in-process GLiClass provider for two existing judgments; it does not add a planner, code author or completion authority. For the concise visual introduction, see [System 1 guide](system1-guide.md). [Training tools and methodology](training/methodology.md) explains how the artifact was made; [expanded v2 results](training/gliclass-expanded-v2.md) disclose evaluation exposure and limitations.
+System 1 is the default CPU-only, in-process GLiClass provider for two existing judgments; it does not add a planner, code author or completion authority. The default bundle is the November 2026 continuation of expanded v2; its mixed evidence, deployment and rollback are documented in [System 1 real-call continuation](training/system1-l5-continuation.md). For the concise visual introduction, see [System 1 guide](system1-guide.md). [Training tools and methodology](training/methodology.md) explains the original artifact; [expanded v2 results](training/gliclass-expanded-v2.md) disclose its evaluation exposure and limitations.
 
 ## Dependency boundary
 
@@ -42,7 +42,7 @@ Actual classifier calls must retain their complete public input, policy/labels, 
 
 ### Expanded v2 serving (2026-10-25)
 
-The standalone bundle is `expanded-v2-live`. Its graph plus external weights occupy **239,829,455 bytes**. Final-source qualification found:
+The then-standalone bundle was `expanded-v2-live`. Its graph plus external weights occupied **239,829,455 bytes**. Its historical final-source qualification found:
 
 - **194/194** saved INT4 calls reproduced their complete native inputs, token IDs and decisions, with logits checked at `rtol=atol=0.0002`; **836** canonical TRAIN packets matched native rendering/tokenization. This is fidelity, not fresh accuracy; the calls comprise 64 reserved synthetic examples and 130 TRAIN-exposed real examples.
 - On a host also running regression checks: cold load plus startup self-tests **8.22 s**; warm mean **1.11 s**, median **0.93 s**, p95 **2.45 s**; ordinary qualification peak RSS **1.19 GB** (decimal). Two callers serialized. These are observations, not a controlled latency comparison.
