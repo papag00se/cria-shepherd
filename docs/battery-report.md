@@ -1,6 +1,6 @@
 # Battery report
 
-Updated: 2026-11-05 16:01 PST
+Updated: 2026-11-06 21:50 PST
 
 ## L0 — Pure proxy — wire translation only — 44%
 
@@ -76,14 +76,14 @@ Updated: 2026-11-05 16:01 PST
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
-| qwen3.8_9b_distill | 🟢 85% | 🟢 85% | 🟡 72% | 🟠 45% | 🟡 70% | 🟡 75% | 72% | 20 | 190 | 64.6 |
+| qwen3.8_9b_distill | 🟢 85% | 🟢 85% | 🟡 75% | 🟠 45% | 🟡 70% | 🟡 75% | 72% | 23 | 185 | 60.0 |
 | gemma4_12b | 🟡 65% | 🟠 58% | 🟡 78% | 🟠 50% | 🟡 70% | 🟢 85% | 68% | 26 | 60 | 31.3 |
 | ornith1.5_9b | 🟡 75% | 🟡 72% | 🟡 80% | 🔴 0% | 🟡 82% | 🟢 88% | 66% | 25 | 101 | 53.2 |
-| k2_horizon_7b | 🟠 40% | 🟡 78% | 🟡 78% | 🔴 15% | 🟡 68% | 🟡 72% | 58% | 25 | 81 | 35.1 |
+| k2_horizon_7b | 🟠 45% | 🟡 78% | 🟡 75% | 🔴 0% | 🟡 68% | 🟢 95% | 60% | 19 | 63 | 21.1 |
 | bonsai2 | 🔴 10% | 🟡 82% | 🟡 78% | 🔴 0% | 🟡 80% | 🟢 87% | 56% | 18 | 50 | 26.7 |
-| ling3.0_tiny | 🔴 7% | 🔴 10% | 🟡 68% | 🟠 40% | 🟠 50% | 🟢 85% | 43% | 17 | 140 | 124.0 |
+| ling3.0_tiny | 🔴 15% | 🔴 20% | 🟡 75% | 🔴 30% | 🔴 30% | 🟢 85% | 42% | 26 | 134 | 175.7 |
 | nemotron-elastic | 🟠 50% | 🔴 20% | 🟡 65% | 🔴 18% | 🔴 22% | 🟠 35% | 35% | 15 | 59 | 52.9 |
-| phi4 | 🔴 1% | 🔴 2% | 🔴 30% | 🔴 1% | 🔴 1% | 🟠 62% | 16% | 14 | 60 | 24.9 |
-| **average** | 🟠 42% | 🟠 51% | 🟡 69% | 🔴 21% | 🟠 55% | 🟡 74% | 52% | 20 | 93 | 51.6 |
+| phi4 | 🔴 3% | 🔴 0% | 🔴 5% | 🔴 25% | 🔴 15% | 🔴 25% | 12% | 12 | 49 | 20.1 |
+| **average** | 🟠 44% | 🟠 52% | 🟡 66% | 🔴 21% | 🟠 55% | 🟡 72% | 52% | 20 | 88 | 55.1 |
 
 Legend: 🟢 ≥85% · 🟡 ≥65% · 🟠 ≥35% · 🔴 <35%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently inference-judged usefulness; averages include judged zeros, exclude failed/unjudged attempts.
