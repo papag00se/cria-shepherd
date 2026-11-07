@@ -969,7 +969,12 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     )
     if workspace:
         wsview.take_unanswered_reads(session)        # only the reads THIS plan makes
-        plan.candidates = proberun.select_completion_probes(workspace)
+        view = wsview.current(workspace)
+        # Checks may change the very inputs used to select them. Refresh those exact
+        # successfully read inputs in the survey AFTER the checks, rather than
+        # trusting pre-check bytes on the next request or cycling through blind plans.
+        with view.track_body_reads() as discovery_reads:
+            plan.candidates = proberun.select_completion_probes(workspace)
         plan.untested = probediscovery.undiscoverable_tests(workspace)
         plan.unanswered_reads = wsview.take_unanswered_reads(session)
         # …and the other half of the same question. `undiscoverable_tests` reports test files a
@@ -1038,6 +1043,10 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # read, for a survey that comes too late (see `groundtruth.want_judge_bodies`).
     if workspace:
         groundtruth.want_judge_bodies(workspace)
+        # Unknown judge inputs take precedence over refreshes of already-known
+        # discovery inputs within the survey's existing bounded FIFO.
+        for rel in sorted(discovery_reads.paths):
+            view.request_current_body(os.path.join(workspace, rel))
     survey_command = wsview.survey_command(session, cd=workspace, helper=helper_runner())
     # THE SESSION'S UNRESOLVED WRITES RIDE THE SAME ROUND TRIP: the worker reads their completion marks before the checks start and
     # after they end, so a write whose reply was lost is a KNOWN state before completion is judged (`completionmarks`).
@@ -2717,7 +2726,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         # survey that arrived cut, or that is about a different tree, and refusing is right — but
         # both call sites threw the answer away and `wsview` emits nothing at all, so the one failure
         # this module cannot notice from the outside was also the one nobody was told about. An
-        # unsurveyed view is what `_confirm_completion` fails open on and what leaves
+        # unsurveyed view leaves `_confirm_completion` unchecked and leaves
         # `linterprobe.collect_files` with no probes to compose.
         survey_applied = wsview.apply_survey(wsview.current(), survey)
         if not survey_applied and rlog is not None:

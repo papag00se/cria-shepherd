@@ -2,7 +2,7 @@
 text re-offered for files read/written earlier): what is selected is exactly what the model can later be said to have received."""
 from types import SimpleNamespace as NS
 import pytest
-from cria import contextrestoration as cr, evidencesummary as es, filecommands
+from cria import contextrestoration as cr, evidencesummary as es, filecommands, selfcompact
 
 BLOCK = '$ pytest -q\n  -> ' + 'FAILED tests/test_orders.py::test_total - assert 1 == 2\n  -> ' * 6 + 'done'     # >= the fold floor
 LOG = '\n'.join([BLOCK, '$ ls\n  -> a.py', BLOCK, BLOCK])
@@ -57,6 +57,7 @@ def test_restoration_offers_current_text_only_for_files_not_already_whole_in_con
     ws = WS({'a.py': b'print(1)\n', 'b.py': b'y = 2\n', 'c.bin': b'\x00\x01\x02' * 20, 'tmp/reference/spill.txt': b'z', 'big.py': big})
     r = restore(ws, ledger_paths=('a.py', 'b.py', 'big.py'), written_paths=('c.bin', 'gone.py', 'tmp/reference/spill.txt'), whole_reads=('b.py',))
     assert set(r.offered) == {'a.py'} and 'print(1)' in r.message['content'] and 'y = 2' not in r.message['content'] and 'c.bin' not in r.message['content']
+    assert not selfcompact.is_user_request(r.message)  # producer evidence, not a new caller request
     assert 'big.py' in r.message['content'] and str(len(big)) in r.message['content'] and 'x' * 100 not in r.message['content'] and 'big.py' in r.named
     assert restore(ws, ledger_paths=('a.py',), whole_writes=('a.py',)).message is None and restore(WS({}), ledger_paths=('a.py',)).message is None
 

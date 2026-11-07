@@ -1,6 +1,7 @@
 """What did a green or red command actually reach? Participation is evidence from the runner, never inference from an
 exit code; every unknown stays non-approving."""
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,25 @@ def test_source_reach_is_per_named_file_and_a_missing_section_or_red_phase_is_ne
     check = pt.report([pt.observe(cand(E.JsTs, "node --check src/index.js", pd.ProbeKind.SyntaxCheck), "", 0)])
     assert check.supports_source_file("src/index.js") and not check.supports_source_file("src/other.js")
 
+def test_workspace_read_tracking_captures_only_successful_scoped_discovery_inputs():
+    view = wsview.View('/workspace', 'tracked-discovery')
+    view.note_read('/workspace/package.json', '{"scripts":{}}')
+    view.note_read('/workspace/unconsumed.py', 'not read')
+    view.note_read('/workspace/sub/setup.cfg', '[tool]')
+    with view.track_body_reads() as reads:
+        assert view.read('/workspace/package.json') == '{"scripts":{}}'
+        assert view.read('/workspace/missing.json') is None
+        with view.track_body_reads() as nested:
+            assert view.read_bytes('/workspace/package.json') == b'{"scripts":{}}'
+        assert nested.paths == frozenset({'package.json'})
+        assert view.reroot('/workspace/sub').read('setup.cfg') == '[tool]'
+    assert reads.paths == frozenset({'package.json', 'sub/setup.cfg'})
+    assert view.read('/workspace/unconsumed.py') == 'not read'
+    assert reads.paths == frozenset({'package.json', 'sub/setup.cfg'})
+    assert view.body_pending('/workspace/missing.json')
+    assert not view.body_pending('/workspace/unconsumed.py')
+
+
 def declared(script, files):
     """The project's declared `npm test` script over a workspace holding `files`, as the harness's survey shows it."""
     root = "/workspace"
@@ -100,16 +120,38 @@ E2E_TASK = "Build a Node CLI that resolves a handle. Add an end-to-end test that
     (E2E_TASK, "REQUIRED", False),
     ("Add a --json option to the CLI.", "NOT_REQUIRED", True),
 ], ids=["test-required", "no-test-required"])
-def test_a_positive_satisfaction_verdict_cannot_promote_a_required_test_that_never_ran(task, answer, satisfied):
+def test_a_positive_satisfaction_verdict_cannot_promote_a_required_test_that_never_ran(task, answer, satisfied, tmp_path):
     """C23: the Handles run wrote test/lookup.test.js, ran only `node --check`, test participation was unknown, and
     the judge still returned satisfied=true. An unexecuted required test blocks; an unrelated task is not blocked."""
     report = pt.report([pt.observe(cand(E.JsTs, "node --check lookup.js", pd.ProbeKind.SyntaxCheck), "", 0)])
     assert report.support("test") is pt.Support.UNKNOWN
     state = loop.GuardState()
     state.last_gate_participation, state.gate_fresh = report, True
-    queue = [SATISFIED, answer]                                  # the judge's verdict, then the participation question
-    chat = lambda body, _log: json.dumps({"choices": [{"message": {"content": queue.pop(0)}}]}).encode()
-    ok, _reason, _fix = loop.judge_satisfaction(task, "Wrote lookup.js", chat, None, Log(), sess=state)
+    (tmp_path / 'lookup.js').write_text('module.exports = {};\n')
+    view = wsview.View(str(tmp_path), 'participation-approval')
+    survey = subprocess.run(['sh', '-c', wsview.survey_command('participation-approval', cd=str(tmp_path))],
+                            capture_output=True, text=True, timeout=30, check=True).stdout
+    assert wsview.apply_survey(view, wsview.strip_survey(survey)[1])
+    view.note_read(str(tmp_path / 'lookup.js'), 'module.exports = {};\n')
+    queue = [SATISFIED, answer]
+
+    def chat(body, log):
+        if log.phase == 'satisfaction-confirm':
+            if not any(message.get('role') == 'tool' for message in body['messages']):
+                msg = {'content': None, 'tool_calls': [{'id': 'read', 'type': 'function',
+                       'function': {'name': 'read_file', 'arguments': '{"path":"lookup.js"}'}}]}
+            else:
+                msg = {'content': 'CONSISTENT'}
+        else:
+            msg = {'content': queue.pop(0)}
+        return json.dumps({'choices': [{'message': msg}]}).encode()
+
+    token = wsview.bind(view)
+    try:
+        ok, _reason, _fix = loop.judge_satisfaction(task, 'Wrote lookup.js', chat, None, Log(),
+                                                   workspace_root=str(tmp_path), sess=state)
+    finally:
+        wsview.unbind(token)
     assert ok is satisfied and not queue
 
 

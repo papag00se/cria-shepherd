@@ -117,7 +117,7 @@ class PhaseParticipation:
 
 @dataclass(frozen=True)
 class TestSourceEvidence:
-    """Current bytes of a test source bound to the selected runner interface."""
+    """A test source identified by the selected runner interface."""
 
     path: str
     body: str | None
@@ -176,7 +176,7 @@ class ParticipationReport:
         return any(event.source.supports_file(path) for event in self.events)
 
     def executed_test_sources(self) -> tuple[TestSourceEvidence, ...]:
-        """Sources authoritatively bound to a test event that proved execution."""
+        """Sources associated with a passing event; current bytes may differ from executed code."""
         for event in self.events:
             if event.test.support() is Support.PROVEN and event.test_sources:
                 return event.test_sources

@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from cria import bodykeys, denial, filefacts, loop, wsview
+from cria import assistruntime, bodykeys, denial, filefacts, loop, wsview
 from loop_rest_helpers import Rlog, loop_rest_local_view  # noqa: F401
 
 TASK = 'Create probe.txt containing exactly these lines, including the final newline:\nsnow 雪\n"quoted"\nbackslash \\\n'
@@ -86,7 +86,10 @@ def extraction(quote="including the final newline", bytes_=None, ends=True, file
 
 def judge(msgs, focused=None, task=TASK, **kw):
     chat = Chat(focused or extraction(), **kw)
-    sat, reason, _ = loop.judge_satisfaction(task, loop._satisfaction_evidence(msgs), chat, None, Rlog(), workspace_root="")
+    runtime = assistruntime.AssistRuntime.select(level=5)
+    object.__setattr__(runtime, "completion_confirmation", None)  # isolate exact-form judgment from workspace inspection
+    with assistruntime.bound(runtime):
+        sat, reason, _ = loop.judge_satisfaction(task, loop._satisfaction_evidence(msgs), chat, None, Rlog(), workspace_root="")
     return sat, reason, chat
 
 

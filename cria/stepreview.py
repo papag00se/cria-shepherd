@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol
 
-from . import evidencesummary, callsyntax, groundtruth, prompts, research
+from . import completionconfirmation, evidencesummary, callsyntax, groundtruth, prompts, research
 from .assistcontract import Policy, Reference
 from .planningcontracts import EventLog
 from .jsontext import strip_think
@@ -308,12 +308,16 @@ def review_step(source: StepInput) -> StepResult:
     if obj is not None:
         done = bool(obj.get("done"))
         confirmation = None
-        if done and source.workspace_root and _confirm_applies(source):
+        if done and _confirm_applies(source):
             confirmation = source.services.confirm(ConfirmStep(
                 source.step, str(obj.get("reason") or ""), source.workspace_root,
                 source.original_task, source.participation_facts))
             if confirmation is not None:
                 source.log.emit("loop.done_confirm", step=source.index, confirmed=confirmation.confirmed)
+            if (confirmation is not None and source.trigger is StepTrigger.SCHEDULED
+                    and getattr(confirmation, "status", None) is completionconfirmation.Status.UNCHECKED):
+                return StepResult(StepStatus.UNOBSERVED, confirmation=confirmation,
+                                  effect=StepEffect(StepAction.OBSERVE_WORKSPACE), readable=True, review_done=True)
             if confirmation is not None and not confirmation.confirmed:
                 reason = source.services.confirmation_nudge(confirmation.reason or prompts.load("unverified_step"))
                 _record(source, system, user, False, reason, answer.raw)

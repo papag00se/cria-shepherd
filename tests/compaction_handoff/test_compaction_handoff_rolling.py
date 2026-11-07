@@ -45,7 +45,8 @@ def test_without_a_measured_window_only_floor_pressure_or_unreadable_evidence_co
 
 def test_the_old_middle_rolls_into_a_labelled_rollup_and_the_newest_turn_stays_verbatim():
     """The old middle folds into one labelled rollup behind the pinned task; the newest turn, order and caller's list are untouched."""
-    stale = {"role": "user", "content": f"{sc.FILES_MARKER} stale list"}
+    stale = {"role": "user", "content": f"{sc.FILES_MARKER} stale list",
+             bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
     msgs = history(20)[:-2] + [stale] + history(20)[-2:]
     before = json.dumps(msgs)
     res, seen = run(msgs, pinned_task="ORIGINAL TASK", files_list=f"{sc.FILES_MARKER} FRESH a.py (10 B)")
@@ -55,11 +56,22 @@ def test_the_old_middle_rolls_into_a_labelled_rollup_and_the_newest_turn_stays_v
     rollup = next(m for m in out if sc.SUMMARY_MARKER in text(m))
     assert text(rollup).endswith("[increment 1 of 1]\nBRIEFING") and "cria" not in text(rollup).lower()
     assert [text(m) for m in out if text(m).startswith(sc.FILES_MARKER)] == [f"{sc.FILES_MARKER} FRESH a.py (10 B)"]
+    listing = next(m for m in out if text(m).startswith(sc.FILES_MARKER))
+    assert not sc.is_user_request(listing)
+    assert sc.is_user_request({"role": "user", "content": listing["content"]})
     tail = out[out.index(rollup) + 1:]
     assert tail and tail[-1] == msgs[-1] and tail == [m for m in msgs[-len(tail) - 1:] if m is not stale]      # newest turn verbatim, in order, minus the stale list
     folded = seen[0]
     assert folded == msgs[1:1 + len(folded)] and len(folded) == res.state.covered - 1 and stale not in folded     # the writer read exactly the replaced span
     assert len(out) < len(msgs) and res.state.covered == len(msgs) - len(tail) - 1
+
+def test_rolling_view_never_filters_caller_or_tool_marker_lookalikes():
+    caller = {"role": "user", "content": sc.FILES_MARKER + " keep this amendment"}
+    tool = {"role": "tool", "tool_call_id": "c", "content": sc.FILES_MARKER + " returned by tool"}
+    messages = [{"role": "system", "content": "system"}, caller, tool]
+    out = sc._view(messages, sc.CompactState(), 1, 1, "", sc.FILES_MARKER + " actual inventory")
+    assert caller in out and tool in out
+
 
 def test_a_step_boundary_folds_all_work_and_leaves_a_view_that_fits_the_tail_alone():
     """A step boundary keeps no verbatim work tail, but never folds a view that fits the tail."""

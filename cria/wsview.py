@@ -48,6 +48,7 @@ import posixpath
 import re
 import time
 import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
 from . import completionmarks, denial, earliernames, resultpacket
@@ -85,7 +86,7 @@ _SEC_SUFFIX = "___"
 # ruby workspaces produced a survey over the bound (median 40-49 KB), and this repo surveys at
 # 55,289 bytes. Those are the two task families that have been running. A survey cut in transit is
 # rejected wholesale by `apply_survey` — correctly — so on those workspaces the view was NEVER
-# surveyed, and an unsurveyed view is what `_confirm_completion` fails open on and what makes
+# surveyed, and an unsurveyed view leaves `_confirm_completion` unchecked and makes
 # `linterprobe.collect_files` return no probes at all.
 #
 # The bound is now the same one every other tool result is held to, less room for the survey's other
@@ -227,6 +228,18 @@ def from_observation(observation, function, *args, **kwargs):
 ABSENT, UNSTATABLE = -1, -2
 
 
+class BodyReadTracker:
+    """Successful body reads inside a discovery scope, as workspace-relative paths."""
+
+    def __init__(self, view: "View") -> None:
+        self._view = view
+        self._paths: set[str] = set()
+
+    @property
+    def paths(self) -> frozenset[str]:
+        return frozenset(self._paths)
+
+
 class View:
     """The coder's workspace as cria currently knows it. Every answer is a fact somebody
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
@@ -235,7 +248,7 @@ class View:
                  "_progs", "_progs_prior", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
                  "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed",
                  "_body_freshness", "_body_revisions", "_observed_bodies", "_cache_revision",
-                 "_freshness", "_snapshot_revision")
+                 "_freshness", "_snapshot_revision", "_body_read_trackers")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -243,6 +256,7 @@ class View:
         self._dirs: set[str] = set()                     # rel dirs, "" for the root
         self._folded: set[str] = set()                   # rel dirs listed only as a count
         self._outputs: dict[str, str] = {}               # rel dir folded as a build output -> the manifest that proved it
+        self._body_read_trackers: list[BodyReadTracker] = []
         self._body_freshness = _BodyFreshness()
         self._body_revisions: dict[str, int] = {}
         self._observed_bodies: dict[str, bytes] = {}
@@ -465,6 +479,25 @@ class View:
 
     # -- content -----------------------------------------------------------
 
+    @contextmanager
+    def track_body_reads(self):
+        """Record successful body reads in this scope without altering read behavior."""
+        tracker = BodyReadTracker(self)
+        self._body_read_trackers.append(tracker)
+        try:
+            yield tracker
+        finally:
+            self._body_read_trackers.remove(tracker)
+
+    def _track_body_read(self, path) -> None:
+        rel = self.rel(path)
+        if rel is not None:
+            absolute = self.abs(rel)
+            for tracker in self._body_read_trackers:
+                tracked_rel = tracker._view.rel(absolute)
+                if tracked_rel is not None:
+                    tracker._paths.add(tracked_rel)
+
     def read(self, path) -> str | None:
         """The file's text, or None when cria has not been told it.
 
@@ -498,6 +531,7 @@ class View:
         if rel is None:
             return None
         if self._body_current(rel):
+            self._track_body_read(path)
             return self._bodies[rel]
         # ASKED AND REFUSED, AT THIS SIZE. Re-asking would spend a survey a turn on a question with
         # a known answer. The moment the file changes size it is a different question and is asked
@@ -1323,7 +1357,9 @@ class DirectView(View):
     def read_bytes(self, path) -> bytes | None:
         try:
             with open(str(path), "rb") as fh:
-                return fh.read()
+                raw = fh.read()
+            self._track_body_read(path)
+            return raw
         except OSError:
             return None
 
@@ -1452,6 +1488,7 @@ def _subview(v: View, sub: str) -> View:
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
     out._observed_bodies = {p[n:]: b for p, b in v._observed_bodies.items() if p.startswith(pre)}
     out._body_revisions = {p[n:]: r for p, r in v._body_revisions.items() if p.startswith(pre)}
+    out._body_read_trackers = v._body_read_trackers
     out._body_freshness = v._body_freshness
     out._cache_revision = v._cache_revision
     out._freshness = v._freshness

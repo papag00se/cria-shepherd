@@ -59,6 +59,7 @@ def restore(source: RestoreInput, *, enabled: bool = True) -> RestoreResult:
     if not offered and not text:
         return RestoreResult(None, {})
     return RestoreResult({"role": "user", "content": text,
+                          bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE,
                           bodykeys.RESTORED_FILES: modelview.restored_hint(text, offered, sorted(named))},
                          offered, tuple(named))
 

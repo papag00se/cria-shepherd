@@ -10,8 +10,8 @@ may delegate the old _confirm_completion policy here.
 State is invocation-local: inspection counts are replaced on each ask. No cached
 claim, pending tool id or approval survives another invocation, new task, session,
 fork or reset. Pending IDs remain transport facts, not a second registry. Both
-consumers get the same result protocol. observed=False retains the deliberate
-unavailable-workspace exception; unknown answers fail closed. Every observed
+consumers get the same result protocol. An unavailable workspace remains unknown,
+not approval. Unknown answers fail closed. Every observed
 approval needs a usable terminal reply without unanswered calls and its own
 inspection. Invalid replies withhold approval without adding a retry.
 """
@@ -176,7 +176,7 @@ def confirm(source: Input, services: Services) -> Result:
     if not source.workspace_root or not services.facts.surveyed(source.workspace_root):
         _event(source,"loop.confirm_unchecked",level="warn",
                why="no workspace root" if not source.workspace_root else "workspace not surveyed")
-        return result(Status.UNCHECKED,True,False)
+        return result(Status.UNCHECKED,False,False)
     absent = absent_artifact(source.claim,source.workspace_root,services.facts)
     if absent:
         _event(source,"loop.confirm_absent_artifact",level="info",artifact=absent)

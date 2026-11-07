@@ -210,14 +210,20 @@ class Budget:
 
 
 def distill(blocks: list[str], *, history_count: int, budget: Budget,
-            chat_fn: Callable, apply_role: Callable[[dict], None], rlog) -> list[str]:
-    """``blocks[:history_count]`` are transcript turns in order; the rest are authoritative facts
-    kept verbatim. Returns ``blocks`` unchanged when the final request fits."""
+            chat_fn: Callable, apply_role: Callable[[dict], None], rlog,
+            history_start: int = 0, history_scope: str = "") -> list[str]:
+    """Distill only the specified consecutive history span; all other blocks stay verbatim.
+
+    Prefix and suffix still consume the final request's budget. A scope label, when supplied,
+    also frames each model-made extraction so its authority survives the reduction.
+    """
     if budget.fits(blocks) or history_count < 2:
         return blocks
-    history, facts = blocks[:history_count], blocks[history_count:]
+    prefix = blocks[:history_start]
+    history = blocks[history_start:history_start + history_count]
+    facts = blocks[history_start + history_count:]
     extract_reply = windowcaps.resolve(EXTRACT_REPLY_TOKENS, budget.window)
-    avail = budget.window - budget.reply - FRAME_TOKENS - sum(est_tokens(b) for b in facts) * budget.density
+    avail = budget.window - budget.reply - FRAME_TOKENS - sum(est_tokens(b) for b in (*prefix, *facts)) * budget.density
     # Keep the newest turns verbatim, up to a third of the final request's evidence room.
     cut, tail = len(history), 0.0
     while cut > 1 and tail + est_tokens(history[cut - 1]) * budget.density <= max(avail, 0) / 3:
@@ -232,7 +238,11 @@ def distill(blocks: list[str], *, history_count: int, budget: Budget,
     def close_run():
         nonlocal run, run_turns
         if run:
-            out.append(render_state(merge(run), run_turns))
+            extracted_state = render_state(merge(run), run_turns)
+            if history_scope:
+                extracted_state = prompts.fill(prompts.load_map("compaction_grounding")[history_scope],
+                                               turn=extracted_state)
+            out.append(extracted_state)
             run, run_turns = [], 0
 
     for i, group in enumerate(groups, 1):
@@ -253,7 +263,7 @@ def distill(blocks: list[str], *, history_count: int, budget: Budget,
               extracted=extracted, kept_verbatim=failed, recent_verbatim=len(recent))
     if not extracted:
         return blocks
-    return [*out, *recent, *facts]
+    return [*prefix, *out, *recent, *facts]
 
 
 def summary_density() -> float:
@@ -268,8 +278,9 @@ def binder(chat_fn: Callable, window: int | None, reply: int, apply_role: Callab
         return None
     budget = Budget(window=window, reply=reply, density=summary_density())
 
-    def bound(blocks, history_count):
+    def bound(blocks, history_count, *, history_start=0, history_scope=""):
         return distill(blocks, history_count=history_count, budget=budget,
-                       chat_fn=chat_fn, apply_role=apply_role, rlog=rlog)
+                       chat_fn=chat_fn, apply_role=apply_role, rlog=rlog,
+                       history_start=history_start, history_scope=history_scope)
     return bound
 

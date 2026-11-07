@@ -1669,7 +1669,9 @@ def _view(messages: list[dict], state: CompactState, head_end: int, tail_start: 
     # The caller-supplied FILES LIST (operator's design): the compacted view carries what EXISTS —
     # names + sizes — not the bytes; read_file is the road back to any content. Refreshed each
     # compaction (any prior copy is filtered out of every kept segment above via _not_stale_files).
-    files = ([{"role": "user", "content": files_list}] if files_list.strip() else [])
+    files = ([{"role": "user", "content": files_list,
+               bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}]
+             if files_list.strip() else [])
     working = band + messages[tail_start:]
     working = stub_old_write_args([m for m in working if not _is_files_msg(m)])
     anchors = [m for m in anchors if not _is_files_msg(m)]
@@ -1745,7 +1747,9 @@ def _dedup_identical(items: list[tuple[object, dict]]) -> tuple[list[dict], int]
 
 
 def _is_files_msg(m: dict) -> bool:
-    """A previously injected ⟦ctx:files⟧ list — stale the moment a newer one exists; filtered so
-    exactly ONE (the fresh one) rides each compacted view."""
-    c = m.get("content")
-    return isinstance(c, str) and c.lstrip().startswith(FILES_MARKER)
+    """A producer-owned workspace listing, replaceable by the next fresh survey.
+
+    A marker in caller or tool text, including an untyped serialized lookalike, is not provenance.
+    Such text remains intact even if it resembles a listing from an earlier request.
+    """
+    return m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.WORKSPACE_LISTING

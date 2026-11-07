@@ -1255,8 +1255,8 @@ def _ground_coder_view(messages: list, workspace_root: str) -> list:
     re-derived from live disk every coder turn. LISTING ONLY: names + sizes, never file content — a
     blind touch's content grounding is editrecovery's job, and carrying bytes forward is the churn
     ddd74fd removed. Any prior ⟦ctx:files⟧ listing (last turn's footer, a stale compaction copy) is
-    folded out first, so exactly ONE authoritative copy remains — the same one-copy rule selfcompact
-    already applies to the compacted view (reuses its `_is_files_msg`). Re-derived per turn and never
+    folded out first when its producer identity is known, so one authoritative copy remains. Untyped
+    lookalikes remain untouched; the same rule applies in selfcompact (`_is_files_msg`). Re-derived per turn and never
     written to durable history, so it cannot go stale the way the reverted briefing arm did (a88e905).
     No-op without a workspace root or when the survey is empty/unavailable (`workspace_inventory`
     returns "").
@@ -1271,7 +1271,8 @@ def _ground_coder_view(messages: list, workspace_root: str) -> list:
     if not inv.strip():
         return messages
     kept = [m for m in messages if not selfcompact._is_files_msg(m)]
-    footer = {"role": "user", "content": inv}
+    footer = {"role": "user", "content": inv,
+              bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
     if not kept:
         return [footer]
     # The LAST slot belongs to the current ACTION (a fresh steer/redirect, the task, a tool result) —
@@ -1560,7 +1561,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     INSPECTS the workspace itself via the shared read-only tools rather than being handed a pasted
     listing (operator's call, twice over: a real repo's complete listing can be massive, and a judge
     that must look cannot rubber-stamp a narrative). Returns the confirmation plus whether it was
-    observed. No workspace to inspect → confirmed (nothing to check against), but unobserved.
+    observed. No workspace to inspect → unchecked and unconfirmed.
 
     An UNPARSEABLE check fails CLOSED — it does not confirm. It used to keep the verdict, on the
     reasoning that an additive brake must never become a new wedge; that is the fail-open on missing
@@ -1592,8 +1593,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     if (not isinstance(result, completionconfirmation.Result)
             or not isinstance(result.status, completionconfirmation.Status)
             or result.authority is not authority or not isinstance(result.reason, str)
-            or result.confirmed is not (result.status in (completionconfirmation.Status.CONFIRMED,
-                                                         completionconfirmation.Status.UNCHECKED))
+            or result.confirmed is not (result.status is completionconfirmation.Status.CONFIRMED)
             or type(result.observed) is not bool
             or result.status is completionconfirmation.Status.CONFIRMED and not result.observed
             or result.status in (completionconfirmation.Status.NOT_SELECTED,
@@ -1937,7 +1937,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                     raise ValueError("Completion approval replacement must return ApprovalResult")
                 if result.blocks:
                     return False, result.text or prompts.load(withheld), ""
-        if satisfied and workspace_root and not statement_only and _task_confirm_applies(task, reasoner_chat, reasoner_role, rlog):
+        if satisfied and not statement_only and _task_confirm_applies(task, reasoner_chat, reasoner_role, rlog):
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
             # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README
             # while the listing in the judge's prompt proved its absence).
@@ -3494,7 +3494,7 @@ class Loop:
                 sess.probe_call_id, sess.completion_probe_id = sess.completion_probe_id, ""
                 sess.probe_reissues = sess.probe_poll_reissues = 0
                 errors = guard_gate_verdict(sess, body, rlog)
-                if sess.gate_replan_required:
+                if sess.gate_replan_required and not errors:
                     probe_tc = guard_gate_replan_after_survey(
                         sess, body, rlog, workspace_root=sess.workspace_root)
                     if probe_tc is not None:
@@ -3881,7 +3881,8 @@ class Loop:
 
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx, rlog, *, force: bool = False,
                       pinned_task: str | None = None, protected_prefix: bool = False,
-                      frame_tokens: int = 0, floor_frame_tokens: int | None = None) -> list[dict]:
+                      frame_tokens: int = 0, floor_frame_tokens: int | None = None,
+                      root_evidence: tuple[str, ...] = ()) -> list[dict]:
         """THE self-compaction — one owner for BOTH drivers. Rolls the old work-history middle into a
         ⟦ctx:rollup⟧ summary via the shared summarize primitive. Orthogonal to sess.summary (the cheap
         completed-STEP axis in the protected system message). ``force`` (set at a step boundary)
@@ -3918,13 +3919,19 @@ class Loop:
             evidence = selfcompact.compaction_request_parts(
                 mm, inventory_for_writer, gate_plan, gate_flag, gate_age(sess),
                 newer_messages=newer_messages)
+            if root_evidence:
+                prior = [prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
+                         for text in root_evidence]
+                history[:0] = prior
+                evidence[:0] = prior
             if task_fact:
                 # The pinned task was deliberately excluded from ``mm`` so it survives verbatim in
                 # the coder view. That also made the briefing writer blind to it: both failed L5
                 # cells repeatedly redefined the task as fixing the latest compiler/module blocker.
                 history.append(task_fact)
                 evidence.append(task_fact)
-            return history, evidence
+            middle_count = len(selfcompact.compaction_evidence_messages(mm, gate_plan))
+            return history, evidence, middle_count
 
         def apply_role(body):
             if role is not None:
@@ -3934,9 +3941,11 @@ class Loop:
         distill = handoffdistill.binder(chat_fn, windowcaps.window_of(chat_fn, rlog),
                                         ROLLUP_MAX_TOKENS, apply_role, rlog)
 
-        def writer_evidence(history, evidence):
-            turns = len(history) - (1 if task_fact else 0)
-            return distill(evidence, turns) if distill is not None else evidence
+        def writer_evidence(evidence, middle_count):
+            # Prior handoffs and newer retained turns are evidence, not replacement history.
+            # Their labels and bytes must not be merged into a model-made middle extraction.
+            return (distill(evidence, middle_count, history_start=len(root_evidence), history_scope="middle")
+                    if distill is not None else evidence)
 
         # The write record may judge a briefing's change claims only over a span nothing earlier summarized:
         # a prior rollup (its state or its marker) means the briefing legitimately restates what it carried.
@@ -3947,8 +3956,8 @@ class Loop:
                       or getattr(sess, "handoff_origin", None) is not None else msgs)
 
         def make_summary(mm: list[dict], *, newer_messages: list[dict]) -> str:
-            history, evidence = evidence_for(mm, newer_messages=newer_messages)
-            evidence = writer_evidence(history, evidence)
+            history, evidence, middle_count = evidence_for(mm, newer_messages=newer_messages)
+            evidence = writer_evidence(evidence, middle_count)
             candidate = summarize(
                 chat_fn, role, prompts.load("selfcompact_summary"),
                 selfcompact.compaction_ask(), rlog,
@@ -3968,9 +3977,9 @@ class Loop:
         def refold_summary(text: str, *, newer_messages: list[dict]) -> str:
             # The accumulated summary is model-authored replacement work, not a
             # fresh source of execution truth. Refolding gets the same newer scope.
-            refold_history, refold_evidence = evidence_for(
+            refold_history, refold_evidence, middle_count = evidence_for(
                 [{"role": "assistant", "content": text}], newer_messages=newer_messages)
-            refold_evidence = writer_evidence(refold_history, refold_evidence)
+            refold_evidence = writer_evidence(refold_evidence, middle_count)
             candidate = summarize(chat_fn, role, prompts.load("selfcompact_refold"),
                                   _ASK_USER_TURN, rlog, phase="self-compact-refold",
                                   max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=refold_evidence)
@@ -3991,7 +4000,7 @@ class Loop:
         coder_window = windowcaps.window_of(self._ctx.coder_chat, rlog)
         room, evidence_room = self._compaction_room(
             rlog, chat_fn, frame_tokens,
-            facts_text="\n".join(t for t in (inventory_for_writer, checks_fact, task_fact) if t))
+            facts_text="\n".join(t for t in (*root_evidence, inventory_for_writer, checks_fact, task_fact) if t))
         result = selected.execute(selfcompact.RollingInput(
             msgs, make_summary, force=force,
             room_tokens=room,
@@ -4086,7 +4095,7 @@ class Loop:
         # itself is always true.
         prev_flag = sess.last_gate_flag
         record_gate_state(sess, outcome, gate_error_text(outcome), rlog, body.get("messages"))
-        if sess.gate_replan_required:
+        if sess.gate_replan_required and not gate_error_text(outcome):
             probe_tc = guard_gate_replan_after_survey(
                 sess, body, rlog, workspace_root=sess.workspace_root)
             if probe_tc is not None:
@@ -4368,8 +4377,7 @@ class Loop:
                   turns=sess.coder_turns, reason=_clip(verification.reason or "", 160))
         # The periodic critic has authority only when its own evaluation made it through the
         # approve-path brake after that brake inspected the surveyed workspace.  In particular,
-        # `loop.confirm_unchecked` deliberately leaves ordinary coder-claimed advancement fail-open,
-        # but it cannot grant this scheduled path new authority.
+        # `loop.confirm_unchecked` is unknown, never authority to advance.
         confirmation = verification.confirmation
         effect = step_result.effect if step_result is not None else None
         if effect is not None:
@@ -4391,7 +4399,8 @@ class Loop:
             # An unobserved positive cannot advance, but it must acquire the missing fact rather
             # than repeatedly re-frame the completed item.  This is one gate/survey round; its
             # result re-enters through `_periodic_observation_after_probe` and is judged anew.
-            if confirmation is not None and confirmation.confirmed and not confirmation.observed:
+            if (confirmation is not None and not confirmation.observed
+                    and getattr(confirmation, "status", None) is completionconfirmation.Status.UNCHECKED):
                 probe_tc = self._gate_op(body, sess, rlog)
                 if probe_tc is not None:
                     sess.periodic_observation = True
@@ -4989,7 +4998,7 @@ class Loop:
         # Consume once; retain pieces only across survey replanning.
         parts, sess.pending_done_parts = sess.pending_done_parts, ()
         errors = guard_gate_verdict(sess, body, rlog)
-        if sess.gate_replan_required:
+        if sess.gate_replan_required and not errors:
             probe = guard_gate_replan_after_survey(sess, body, rlog, workspace_root=sess.workspace_root)
             if probe is not None:
                 sess.done_probe = True
@@ -5343,13 +5352,15 @@ class Loop:
         root_indices = {i + 1 for i in base.root_indices}
         root_messages = [message for position, message in enumerate(base.messages) if position in root_indices]
         root_task = _history_root(raw)[0]
+        compactor_task, root_evidence = _compactor_root(
+            raw, getattr(sess, "handoff_origin", None), getattr(sess.plan, "task", ""))
         history = [message for position, message in enumerate(base.messages[1:], start=1)
                    if position not in root_indices]
         if self._ctx.self_compact:
             frame = [base.messages[0], *root_messages]
             history = self._self_compact(history, sess, index, rlog,
-                force=bool(not synthetic and sess.compact_pending), pinned_task=root_task,
-                protected_prefix=True,
+                force=bool(not synthetic and sess.compact_pending), pinned_task=compactor_task,
+                root_evidence=root_evidence, protected_prefix=True,
                 frame_tokens=contextfloor.est_total(frame, body.get("tools")),
                 floor_frame_tokens=contextfloor.est_total_floor_frame(frame, body.get("tools")))
         focus_bindings = runtime.bindings("coder-focus") if self._ctx.focus_trim else ()
@@ -5686,6 +5697,23 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
     mints a new key and simply looks like a new session."""
     text = selfcompact.root_text(messages)
     return (text, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()) if text is not None else ("", "")
+
+
+def _compactor_root(messages: list[dict], origin, original_task: str) -> tuple[str, tuple[str, ...]]:
+    """Separate a producer-proven handoff when the retained task is independently identifiable.
+
+    The coder's root is unchanged. A separate environment packet does not establish
+    that the task survived; without the session task in a remaining root, abstain.
+    """
+    roots = [messages[i] for i in selfcompact.root_user_indices(messages)]
+    if not isinstance(origin, _HandoffOrigin):
+        return _history_root(messages)[0], ()
+    prior = [m for m in roots if origin.matches_continuation(_msg_text_content(m))]
+    task = [m for m in roots if not origin.matches_continuation(_msg_text_content(m))]
+    task_text = "\n\n".join(_msg_text_content(m) for m in task)
+    if not prior or not original_task or original_task not in task_text:
+        return _history_root(messages)[0], ()
+    return task_text, tuple(_msg_text_content(m) for m in prior)
 
 
 def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:
@@ -9624,7 +9652,8 @@ def _render_context_facts(facts: _ContextFacts, *, visible_messages: list[dict],
     if tail and absent:
         tail += prompts.load_map("fetch_body_visibility")["anchor_tail_absent_scope"]
     return {"role": "user", "content": prompts.render(
-        "fetched_facts_anchor", marker=selfcompact.FACTS_MARKER, ledger=ledger.strip("\n"), tail=tail)}
+        "fetched_facts_anchor", marker=selfcompact.FACTS_MARKER, ledger=ledger.strip("\n"), tail=tail),
+        bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE}
 
 
 def _fetched_facts_anchor(sess, messages: list[dict] | None = None, restored: dict | None = None) -> dict | None:

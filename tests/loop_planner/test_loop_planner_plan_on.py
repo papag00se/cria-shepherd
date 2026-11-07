@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from cria import assistruntime, livingplan as lp, loop, planner, stepreview as sr, wsview
+from cria import assistruntime, completionconfirmation as cc, livingplan as lp, loop, planner, stepreview as sr, wsview
 from cria.classify import Classification
 from cria.config import Role
 from cria.plan import Plan, PlanItem
@@ -337,7 +337,8 @@ def test_an_unreadable_verdict_gets_one_reasoning_off_retry_and_a_positive_retry
 
 @pytest.mark.parametrize("confirm,status,action", [
     (Confirmed(True, True), sr.StepStatus.APPROVED, sr.StepAction.ADVANCE),
-    (Confirmed(True, False), sr.StepStatus.UNOBSERVED, sr.StepAction.OBSERVE_WORKSPACE),   # confirmed unseen: survey first
+    (Confirmed(True, False), sr.StepStatus.UNOBSERVED, sr.StepAction.OBSERVE_WORKSPACE),   # legacy provider
+    (cc.Result(cc.Status.UNCHECKED), sr.StepStatus.UNOBSERVED, sr.StepAction.OBSERVE_WORKSPACE),
     (None, sr.StepStatus.UNOBSERVED, sr.StepAction.KEEP_WORKING)])
 def test_a_scheduled_positive_never_advances_without_its_own_observed_confirmation(confirm, status, action):
     result, _, _ = review([DONE], trigger=sr.StepTrigger.SCHEDULED, confirm=confirm, workspace_root="/w")

@@ -68,6 +68,35 @@ def test_a_failed_piece_stays_verbatim_in_place_recent_turns_and_facts_are_untou
     (all_failed,) = [f for k, f in events if k == "compaction.distilled"]
     assert all_failed["extracted"] == 0 and all_failed["kept_verbatim"] == all_failed["pieces"] > 1     # nothing extracted: every piece is counted as kept, none as read
 
+def test_replacement_distillation_cannot_fold_prior_or_newer_scopes_even_when_newer_is_oversized():
+    prior = "EARLIER HANDOFF: old check failed\n" + "old " * 3000
+    middle = ["MIDDLE BEING REPLACED: earlier work " + "x " * 3000 for _ in range(3)]
+    newer = "NEWER RETAINED EVIDENCE: same check passed\n" + "new " * 10000
+    task = "ORIGINAL TASK: retain both observations"
+    seen = []
+    def chat(body, rlog):
+        seen.extend(m["content"] for m in body["messages"])
+        return chat_reply(json.dumps({"errors": ["old check failed"]}))
+    out = hd.distill([prior, *middle, newer, task], history_start=1, history_count=len(middle), history_scope="middle",
+                     budget=hd.Budget(window=9000, reply=2000, density=1.0),
+                     chat_fn=chat, apply_role=lambda b: None, rlog=LOG)
+    assert seen and not any(prior in s or newer in s for s in seen)
+    assert out[0] == prior and out[-2:] == [newer, task]
+    extracted = [block for block in out[1:-2] if hd.MARKER in block]
+    assert extracted and all(block.startswith("MIDDLE BEING REPLACED") for block in extracted)
+    assert all(contextfloor._has_protect_marker({"role": "user", "content": block}) for block in extracted)
+
+    # With no pressure nothing moves, and failed extraction leaves the same complete evidence.
+    raw = [prior, *middle, newer, task]
+    assert hd.distill(raw, history_start=1, history_count=3,
+                      budget=hd.Budget(window=200000, reply=2000, density=1),
+                      chat_fn=chat, apply_role=lambda b: None, rlog=LOG) is raw
+    hd.clear_cache()
+    assert hd.distill(raw, history_start=1, history_count=3,
+                      budget=hd.Budget(window=9000, reply=2000, density=1),
+                      chat_fn=lambda *a: chat_reply("{}"), apply_role=lambda b: None, rlog=LOG) == raw
+
+
 def test_the_production_compaction_body_fits_through_the_real_floor_without_dropping_turns():
     """The real compaction body, distilled, passes the real floor with no turn dropped and the summary reply reserve intact."""
     tokenratio.record("m#summary", 135, 100)

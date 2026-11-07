@@ -45,13 +45,28 @@ YES, NO = json.dumps({"consistent": True, "why": "saw it"}), json.dumps({"consis
     ([reply(NO, 2)], True, cc.Status.REJECTED, False),
     ([reply(json.dumps({"consistent": False, "why": "the work is complete"}), 2), reply(YES, 0)], True,
      cc.Status.UNVERIFIED, False),                                                        # a restating 'no' re-asked into an unlooked 'yes'
-    ([], False, cc.Status.UNCHECKED, True),                                               # the documented bounded exit: nothing to inspect
+    ([], False, cc.Status.UNCHECKED, False),                                              # unavailable evidence is not approval
 ], ids=["inspected-yes", "never-looked", "looked-on-reask", "undecidable", "pending-calls", "no", "reask-yes-unlooked", "unsurveyed-exit"])
 def test_completion_fails_closed_an_undecidable_or_uninspected_judge_is_not_done(replies, surveyed, status, confirmed):
     """Run 20260801T160104 call 0038: 'I cannot see the file ... I default to DONE'. An approval needs a usable terminal
-    verdict AND the judge's own inspection; the only open exit is a workspace that could not be surveyed."""
+    verdict AND the judge's own inspection; an unsurveyed workspace remains unknown."""
     result = confirm(replies, surveyed)
     assert (result.status, result.confirmed) == (status, confirmed)
+
+
+def test_unsurveyed_confirmation_can_be_retried_after_an_observation():
+    surveyed = [False]
+    log = Log()
+    services = cc.Services(cc.Facts(lambda root: surveyed[0], lambda root: ["a.py"]),
+                           lambda request: cc.InspectionReply(reply(YES, rounds=1), 1),
+                           cc.Readers(loop._completion_text, lambda t: t, loop._consistent_word, loop.verdict_from_unclosed),
+                           lambda request: "")
+    source = cc.Input("Write the implementation", "complete", "/workspace", log, "satisfaction-confirm")
+    before = cc.confirm(source, services)
+    surveyed[0] = True
+    after = cc.confirm(source, services)
+    assert (before.status, before.confirmed, before.observed) == (cc.Status.UNCHECKED, False, False)
+    assert (after.status, after.confirmed, after.observed) == (cc.Status.CONFIRMED, True, True)
 
 
 def test_the_act_first_redrive_spends_once_per_step_and_stays_silent_when_the_coder_acted():

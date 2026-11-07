@@ -59,6 +59,39 @@ def test_a_gate_planned_after_a_mutating_command_is_replanned_once_its_survey_de
         wsview.unbind(token)
 
 
+def test_gate_refreshes_discovery_input_after_a_check_changes_it(tmp_path):
+    if subprocess.run(["sh", "-c", "command -v npm && command -v node"], capture_output=True).returncode:
+        pytest.skip("the project's own toolchain is not installed")
+    _node_project(tmp_path)
+    (tmp_path / "lookup.test.js").write_text(
+        "const fs = require('fs'); const p = require('./package.json'); "
+        "p.scripts.test = 'node changed.test.js'; fs.writeFileSync('package.json', JSON.stringify(p));\n")
+    root, session = str(tmp_path), "known-manifest-post-check"
+    view = wsview.View(root, session)
+    token = wsview.bind(view)
+    try:
+        view.request_current_body(root + "/package.json")
+        tree = subprocess.run(["sh", "-c", wsview.survey_command(session, cd=root)], capture_output=True, text=True).stdout
+        assert wsview.apply_survey(view, wsview.strip_survey(tree)[1])
+        assert view.read(root + "/package.json") is not None
+        plan = probegate.plan_gate(root, session)
+        assert _tests(plan) == ["npm run test"]
+        raw = run_in_harness(plan.script, tmp_path, "sh")
+        outcome = probegate.interpret_gate(plan, raw)
+        while outcome.transport_pending:
+            raw = run_in_harness(probegate.continue_transport_command(plan), tmp_path)
+            outcome = probegate.interpret_gate(plan, raw)
+        assert outcome.ran
+        assert "node changed.test.js" in view.read_current_survey(root + "/package.json")
+        # The next gate consumes the post-check manifest, rather than alternating
+        # to a blind plan after the check changed it.
+        next_plan = probegate.plan_gate(root, session)
+        assert _tests(next_plan) == ["npm run test"]
+        assert "package.json" not in next_plan.unanswered_reads
+    finally:
+        wsview.unbind(token)
+
+
 def test_a_manifest_name_the_survey_reported_absent_is_not_queued_again_ahead_of_the_real_manifest():
     view = wsview.View("/w", "absent-names")
     view._surveyed, view._complete = True, False          # an incomplete listing: `isfile` is unknown for every name

@@ -34,6 +34,49 @@ def after_work(task, summary):
 def steers(framed):
     return [m["content"] for m in framed["messages"] if str(m.get("content")).startswith("⟦ctx:steer⟧")]
 
+
+def test_compactor_task_keeps_proven_handoff_as_historical_evidence_not_task(monkeypatch):
+    """C040: a retained handoff is not an authoritative part of the original task."""
+    drv, sess, body = driver()
+    drv._ctx.self_compact = True
+    task = "Implement the requested feature."
+    sess.plan.task = task
+    handoff = "⟦ctx:continuation⟧ Earlier work: a check failed. Re-run the check."
+    sess.handoff_origin = loop._HandoffOrigin("raw handoff", "", False, continuation=handoff)
+    body["messages"] = [{"role": "user", "content": task}, {"role": "user", "content": handoff},
+                        {"role": "assistant", "content": "continued work"}]
+    seen = []
+    def compact(messages, session, index, rlog, **kw):
+        seen.append(kw)
+        return messages
+    monkeypatch.setattr(drv, "_self_compact", compact)
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        framed, _ = drv._prepare_coder_context(sess, body, Log(), synthetic=True)
+    assert seen[0]["pinned_task"] == task
+    assert seen[0]["root_evidence"] == (handoff,)
+    assert [m["content"] for m in framed["messages"] if m.get("role") == "user"][:2] == [task, handoff]
+
+    # No producer identity: a lookalike remains user authority, and a root consisting
+    # only of a handoff cannot be silently turned into an empty task.
+    sess.handoff_origin = None
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        drv._prepare_coder_context(sess, body, Log(), synthetic=True)
+    assert seen[-1]["pinned_task"] == task + "\n\n" + handoff and not seen[-1]["root_evidence"]
+    sess.handoff_origin = loop._HandoffOrigin("raw handoff", "", False, continuation=handoff)
+    altered = handoff + " User added an instruction."
+    body["messages"] = [{"role": "user", "content": task}, {"role": "user", "content": altered}]
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        drv._prepare_coder_context(sess, body, Log(), synthetic=True)
+    assert seen[-1]["pinned_task"] == task + "\n\n" + altered and not seen[-1]["root_evidence"]
+    body["messages"] = [{"role": "user", "content": handoff}]
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        drv._prepare_coder_context(sess, body, Log(), synthetic=True)
+    assert seen[-1]["pinned_task"] == handoff and not seen[-1]["root_evidence"]
+    body["messages"] = [{"role": "user", "content": "environment only"}, {"role": "user", "content": handoff}]
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        drv._prepare_coder_context(sess, body, Log(), synthetic=True)
+    assert seen[-1]["pinned_task"] == "environment only\n\n" + handoff and not seen[-1]["root_evidence"]
+
 @pytest.mark.parametrize("task", ["Do not inspect any files. Make the first requested edit.",
                                   "Inspect the relevant files before editing."])
 @pytest.mark.parametrize("owned", [True, False])

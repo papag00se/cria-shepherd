@@ -68,7 +68,8 @@ def test_a_confirmation_answer_is_accepted_only_when_status_flag_authority_and_o
     assert confirm(good) is good and confirm(cc.Result(cc.Status.REJECTED, reason="no README")).reason == "no README"
     for wrong in ["confirmed", cc.Result("confirmed"), cc.Result(cc.Status.CONFIRMED, confirmed=True, observed=False),
                   cc.Result(cc.Status.CONFIRMED, confirmed=False, observed=True), cc.Result(cc.Status.REJECTED, confirmed=True),
-                  cc.Result(cc.Status.UNCHECKED, confirmed=True, observed=True), cc.Result(cc.Status.NOT_SELECTED, observed=True),
+                  cc.Result(cc.Status.UNCHECKED, confirmed=True, observed=True), cc.Result(cc.Status.UNCHECKED, confirmed=True),
+                  cc.Result(cc.Status.NOT_SELECTED, observed=True),
                   cc.Result(cc.Status.REJECTED, reason=3), cc.Result(cc.Status.REJECTED, authority=cc.Authority.STEP),
                   cc.Result(cc.Status.REJECTED, observed=1)]:
         with pytest.raises(ValueError, match="Completion confirmation replacement"):
