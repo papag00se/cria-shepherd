@@ -101,7 +101,7 @@ class LoggingConfig:
     # (post-framing, post-floor) to one file per call under `capture_dir`. Verbose (a long run
     # is hundreds of files); opt-in for debugging what the model actually sees.
     capture_calls: bool = False
-    capture_dir: str = "~/.cria/calls"
+    capture_dir: str = "~/.cria/test-runs/calls"
     # Also capture the RENDERED prompt — the flat string the model actually tokenizes after the
     # server applies its chat template (tool injection, role markers, reasoning prefill) — via the
     # server's /apply-template. One extra (CPU-only) round-trip per call; the true "what the model

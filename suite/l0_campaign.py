@@ -13,13 +13,14 @@ from pathlib import Path
 
 try:
     from .battery_status import TASKS
-    from . import results_store as _rs
+    from . import results_store as _rs, storage
 except ImportError:
     from battery_status import TASKS
     import results_store as _rs
+    import storage
 
 SUITE = Path(__file__).resolve().parent
-ROOT = Path.home()/'.cria/suite/_campaigns'
+ROOT = storage.OUTPUTS / 'campaigns'
 CONFIG = Path.home()/'.config/llama-fleet/models.toml'
 ROLES = CONFIG.with_name('roles.json')
 LAUNCHER = Path.home()/'.local/bin/llama-fleet'

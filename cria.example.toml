@@ -14,7 +14,7 @@ dir = "~/.cria/logs"               # JSONL record dir
 console = true
 jsonl = true
 capture_calls = false              # write exact per-call body to capture_dir
-capture_dir = "~/.cria/calls"
+capture_dir = "~/.cria/test-runs/calls"
 capture_rendered = true            # also capture the template-rendered prompt
 
 [indicators]

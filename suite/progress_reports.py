@@ -9,7 +9,7 @@ except ImportError:
     import workspace_evidence
 
 SUITE = Path(__file__).resolve().parent
-ROOT = Path.home() / ".cria" / "suite" / "_progress"
+ROOT = Path.home() / ".cria" / "test-runs" / "outputs" / "progress"
 SYSTEM = SUITE / "prompts" / "progress_judge.txt"
 
 

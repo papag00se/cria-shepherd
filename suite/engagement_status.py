@@ -32,7 +32,7 @@ try:  # the one locked reader/writer of results.jsonl
 except ImportError:
     import results_store as _rs
 
-VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
+VERDICTS = Path.home() / ".cria" / "test-runs" / "outputs" / "usefulness"
 LEVEL_TEST = REPO / "tests" / "test_engagement_levels.py"
 
 # The matrix the goal commits to: six cumulative levels over the battery's five models and six tasks.

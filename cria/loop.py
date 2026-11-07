@@ -157,7 +157,7 @@ _DROPPED_PROSE_LEAD = "the handoff summary from that turn did not survive"
 # call captures, reasoning files, the plan mirror, the critic's verify dumps — lands under
 # <runs_dir>/<session>/, keyed by the SAME session id the captures use. No more tying a
 # plan-id-named file in one tree to a session-uuid folder in another.
-_RUNS_DIR_DEFAULT = "~/.cria/calls"
+_RUNS_DIR_DEFAULT = "~/.cria/test-runs/calls"
 # Tools whose truncation corrupts a file on disk (the writeproxy lowers their content verbatim).
 # Every write route the trackers must see: the writeproxy's lowered names (write_file,
 # create_file — import shared so they can't drift), plus the edit dialects massage leaves

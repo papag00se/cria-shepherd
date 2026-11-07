@@ -49,7 +49,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from suite.capture_paths import request_identity, request_paths
 
-CALLS_ROOT = Path.home() / ".cria" / "calls"
+CALLS_ROOT = Path.home() / ".cria" / "test-runs" / "calls"
 CHUNK_BYTES_DEFAULT = 64_000
 CHUNK_LINES_DEFAULT = 1_800   # under a 2,000-line read cap, with room for the reader's own framing
 # Measured, not theoretical: a prior multi-agent walk on these same Codex-class walkers hit repeated

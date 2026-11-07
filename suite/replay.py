@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # import cria when run from anywhere
 
-CALLS = Path.home() / ".cria" / "calls"
+CALLS = Path.home() / ".cria" / "test-runs" / "calls"
 BASE = "http://127.0.0.1:18084/v1/chat/completions"
 REQUEST_TIMEOUT_S = 300
 

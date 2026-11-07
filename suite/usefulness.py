@@ -73,7 +73,7 @@ def parse(text: str) -> dict | None:
     return {"usefulness_percent": usefulness, "reason": reason.strip(), "evidence": evidence}
 
 
-VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
+VERDICTS = Path.home() / ".cria" / "test-runs" / "outputs" / "usefulness"
 
 
 def verdict_path(run_id: str) -> Path:

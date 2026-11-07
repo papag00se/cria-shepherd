@@ -27,7 +27,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-MILESTONES = Path.home() / ".cria" / "suite" / "_milestones"
+MILESTONES = Path.home() / ".cria" / "test-runs" / "outputs" / "milestones"
 RESULTS = REPO / "suite" / "results" / "results.jsonl"
 TASKS = REPO / "suite" / "tasks"
 OUT = Path.home() / ".cria" / "training" / "progress-v1"

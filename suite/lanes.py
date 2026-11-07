@@ -28,11 +28,13 @@ from pathlib import Path
 
 try:
     from .restored_roles import render as render_roles
+    from . import storage
 except ImportError:
     from restored_roles import render as render_roles
+    import storage
 
 FLEET = Path.home() / '.local/share/cria/fleet'
-ROOT = Path.home() / '.cria/suite/_lanes'
+ROOT = storage.OUTPUTS / 'runtime'
 LIVE_CONFIG = Path.home() / '.cria/cria.toml'
 CRIA_SERVICE = 'cria.service'
 HYPERQWEN = 'qwen38-27b-rtx3090-single-1'
@@ -402,8 +404,7 @@ def transport(text, *, port, endpoint, logs, calls, level):
         text = set_toml(text, section, key, json.dumps(value))
     parsed = tomllib.loads(text)
     if (parsed['engagement']['level'] != level or parsed['server']['port'] != port or parsed['logging']['dir'] != logs or parsed['logging']['capture_dir'] != calls
-            or parsed['defaults']['base_url'] != endpoint or parsed['backends']['local']['base_url'] != endpoint
-            or parsed['logging'].get('capture_calls') is not True):
+            or parsed['defaults']['base_url'] != endpoint or parsed['backends']['local']['base_url'] != endpoint):
         raise ValueError('row cria transport config did not round-trip')
     return text
 
@@ -417,7 +418,8 @@ def start_row(lane_name, model, level, roles, window, *, port):
     lane = LANES[lane_name]
     directory = lane_dir(lane_name) / 'rows' / f'{row_name(lane_name, model, level)}-{int(time.time())}'
     original = LIVE_CONFIG.read_bytes()
-    logs, calls = directory / 'logs', directory / 'calls'
+    logs = directory / 'logs'
+    calls = storage.CALLS / f'{lane_name}-{directory.name}'
     logs.mkdir(parents=True), calls.mkdir(parents=True)
     # L1-L5 make role calls (reasoner/classifier/compactor): apply the row's role sampling
     active = render_roles(original.decode(), roles).encode() if level >= 1 else original

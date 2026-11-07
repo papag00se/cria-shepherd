@@ -19,13 +19,14 @@ import sys
 from pathlib import Path
 
 try:
-    from . import workspace_evidence
+    from . import storage, workspace_evidence
 except ImportError:
+    import storage
     import workspace_evidence
 
 
 SUITE = Path(__file__).resolve().parent
-ROOT = Path.home() / ".cria" / "suite" / "_milestones"
+ROOT = storage.OUTPUTS / "milestones"
 SYSTEM = SUITE / "prompts" / "milestone_judge.txt"
 DECISIONS = {"complete", "continue", "stalled"}
 # One identity for what a checkpoint IS: a copy of the live workspace, judged asynchronously while the
@@ -49,7 +50,7 @@ def _freeze(ws: Path, snapshot: Path) -> dict:
     retried, fingerprinted or repaired — only copy failures (a file that vanished mid-copy) are disclosed."""
     errors: list[str] = []
     try:
-        shutil.copytree(ws, snapshot, symlinks=True)
+        storage.copy_workspace(ws, snapshot)
     except shutil.Error as exc:                       # per-file failures; everything else was still copied
         errors = [f"{src}: {why}" for src, _dst, why in exc.args[0]]
     except OSError as exc:                            # a directory vanished under the walk

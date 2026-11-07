@@ -55,30 +55,19 @@ except ImportError:
 # One stray 403 is a blip; a run peppered with them was throttled. Measured: the affected
 # runs carried dozens, the healthy ones none.
 THROTTLE_PROMPTS = 5
-# NOT /tmp. A run's workspace IS its evidence — the archive and every walk that reads what the coder
-# actually built — and this box runs cleaners over /tmp. One removed a workspace before archival.
-# The evidence-preservation rule one screen down — "Nothing under ~/.cria/suite is
-# ever auto-cleaned" — was already the intent; the live tree just was not covered by it.
-#
-# NOT under ~/.cria either, and that is not a style choice: `writeproxy._targets_cria_home` REFUSES
-# any absolute write that resolves into cria's own home, so a workspace there would have every write
-# the model makes refused. This is the durable place that is neither.
-#
-# AND NOT INSIDE THE REPO. It used to be `<repo>/runs`, so every workspace path the model reads —
-# its own cwd, every file:line a checker prints, every absolute path in a tool result — carried the
-# string `cria-shepherd`. The model reads that (#17 is about the model never seeing the token) and
-# on cart-billing-go x nemotron-elastic 1788241229 call 0061 minted `github.com/jesse/creashepherd`
-# from it. A neutral durable dir outside the tree removes the token from the path entirely;
-# SUITE_RUNS_DIR overrides it for anyone who wants elsewhere.
-RUNS_DIR = Path(os.environ.get("SUITE_RUNS_DIR") or (Path.home() / "suite-runs")).expanduser()
+try:
+    from . import storage
+except ImportError:
+    import storage
+
+# The harness needs an outside-cria workspace. Both workspace and installs are transient;
+# only source-like results are copied into the test-run output directory.
+RUNS_DIR = storage.SCRATCH / 'workspaces'
+CELL_INSTALLS_DIR = storage.SCRATCH / 'installs'
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
-# Per-cell package/config state is cria's artifact, not task content. Keep it beside the durable
-# archives rather than under the workspace where the model, milestone snapshot, and usefulness judge
-# mistake cache/install debris for deliverables.
-CELL_INSTALLS_DIR = Path.home() / ".cria" / "suite-installs"
 CELL_INSTALLS_DIR.mkdir(parents=True, exist_ok=True)
 
-CALLS_DIR = Path.home() / ".cria" / "calls"
+CALLS_DIR = storage.CALLS
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
 # Isolated Codex config dir that routes the harness through cria (:18085) instead of the operator's
@@ -1075,7 +1064,9 @@ def _main(scope) -> None:
     prompt = (task_dir / "prompt.txt").read_text().strip()
     run_id = f"{args.task}_{args.model}_{args.harness}_p{args.planner}_{int(time.time())}"
     ws = Path(tempfile.mkdtemp(prefix=f"suite-{run_id}-", dir=RUNS_DIR))
-    log_root = l0_campaign.campaign_dir(args.campaign_id) if args.campaign_id else SUITE / "results"
+    scope.callback(shutil.rmtree, ws, ignore_errors=True)
+    scope.callback(shutil.rmtree, _cell_install_root(ws), ignore_errors=True)
+    log_root = l0_campaign.campaign_dir(args.campaign_id) if args.campaign_id else storage.OUTPUTS / "logs"
     log_root.mkdir(parents=True, exist_ok=True)
     log_path = log_root / f"{run_id}.log"
     _cell_install_root(ws).mkdir(parents=True, exist_ok=True)   # the sandbox binds it, so it must exist first
@@ -1196,13 +1187,10 @@ def _main(scope) -> None:
     capture = collect_capture(new_sessions) if new_sessions else \
         {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
 
-    # EVIDENCE PRESERVATION (operator directive 2026-07-29): every run's artifacts are evidence
-    # for cria improvements and are kept until reviewed. The /tmp workspace is copied to a
-    # durable archive; the capture dir and harness log paths ride in the row. Nothing under
-    # ~/.cria/suite is ever auto-cleaned.
-    archive = Path.home() / ".cria" / "suite" / run_id
+    # Retain task files, not dependencies or build output; the working tree is scratch.
+    archive = storage.OUTPUTS / run_id
     archive.mkdir(parents=True, exist_ok=True)
-    sh("cp", "-r", str(ws), str(archive / "workspace"), timeout=300)
+    storage.copy_workspace(ws, archive / "workspace")
     # SAY SO WHEN THE EVIDENCE IS GONE. `sh` does not check, so a failed copy was silent and
     # indistinguishable from a model that built nothing.
     workspace_lost = not ws.is_dir() or not (archive / "workspace").is_dir()
