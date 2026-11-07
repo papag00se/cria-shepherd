@@ -1,6 +1,8 @@
 # November 6 L5-only red reruns
 
-Campaign: `red-20261106-l5`. Scope: exactly the17 operator-selected red L5 cells, planner OFF, suite sandbox, deployed source `f132382e`. Completed November6 at about21:51Pacific. No assist behavior was changed during the campaign.
+Campaign: `red-20261106-l5`. Scope: exactly the17 operator-authorized L5 cells in the retained selection file, planner OFF, suite sandbox, deployed source `f132382e`. Completed November6 at about21:51Pacific. No assist behavior was changed during the campaign.
+
+**Selection correction:** the selection used historical usefulness scores, not the latest standing L5 scores. Calling all17 cells currently red was incorrect. Higher rerun percentages must not be described as rescues of standing red cells. The standing report uses the latest valid independently judged results, including regressions; it was not adjusted to conceal them.
 
 ## Final independent usefulness judgments
 
@@ -24,6 +26,8 @@ Detailed capture paths and contemporaneous observations are retained in `~/.cria
 - **Evidence pollution:** captured tool results contain extensive unrelated mise tool-version/GitHub rate-limit warnings and truncation. These are environmental noise in review evidence, not requested implementation work.
 
 These are concrete upstream investigation leads. The campaign does not establish that a useful grounded steer improved these coding outcomes, and firing or withholding is not counted as demonstrated usefulness. No causal rate or prevalence estimate is inferred.
+
+The subsequent [combined 17-cell log review](2026-11-06-l5-log-review.md) traces selected full captures, downstream review decisions and delivered feedback across every authorized final cell. It separates confirmed defects from uncertain causal effects and records corrections to provisional investigation claims. It does not rescore this campaign.
 
 ## Operations and recovery
 
