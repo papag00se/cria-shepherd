@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cria import contextfloor, handoffdistill as hd, memoryhandoff, server, tokenratio
+from cria import contextfloor, handoffdistill as hd, memoryhandoff, server, tokenratio, selfcompact
 from cria.content_reduce import est_tokens
 from cria.loop import SUMMARIZE_MAX_TOKENS
 from compaction_handoff_helpers import call, chat_reply, result
@@ -95,6 +95,76 @@ def test_replacement_distillation_cannot_fold_prior_or_newer_scopes_even_when_ne
     assert hd.distill(raw, history_start=1, history_count=3,
                       budget=hd.Budget(window=9000, reply=2000, density=1),
                       chat_fn=lambda *a: chat_reply("{}"), apply_role=lambda b: None, rlog=LOG) == raw
+
+
+def test_harness_writer_and_each_extractor_receive_the_actual_task_not_just_an_extracted_objective():
+    task = "Keep Importer.summarize(path) compatible and report skipped rows."
+    followup = "Also retain the existing output format."
+    messages = [{"role": "user", "content": task}]
+    for n in range(130):
+        messages += [call(f"c{n}", "exec_command", cmd=f"echo {n}"), result(f"c{n}", f"out {n} " + "x " * 400)]
+    messages += [{"role": "user", "content": followup}, {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}]
+    from cria.upstream import Upstream
+    wire_owner = Upstream("http://unused", context_window=24_576)
+    sent = []
+    class Provider:
+        _window_guessed = False
+        def _resolve_window(self, rlog):
+            return 24_576
+        def chat(self, body, rlog):
+            wire, _, _ = wire_owner._prep(body, False, rlog)
+            sent.append(json.loads(wire))
+            return chat_reply(GOOD)
+    provider = Provider()
+    srv = SimpleNamespace(cfg=SimpleNamespace(routing=SimpleNamespace(roles={})))
+    framed = server._compaction_body(server._proxy_body({"model": "m", "messages": messages}),
+        definition=memoryhandoff.DEFINITION, facts=memoryhandoff.SessionFacts(original_task=task),
+        distill=server._handoff_distiller(provider, srv, LOG))
+    assert len(sent) > 1 and all(task in json.dumps(b, ensure_ascii=False) for b in sent)
+    wire, _, _ = wire_owner._prep(framed, False, LOG)
+    rendered = wire.decode() if isinstance(wire, bytes) else wire
+    assert task in rendered and followup in rendered
+    _, _, report = contextfloor.fit(framed["messages"], None, window=24_576,
+        reserve=contextfloor.reserve_for(framed), safety=tokenratio.observed_kind("summary"))
+    assert report.turns_dropped == 0 and not report.over_budget
+
+
+def test_extraction_cache_is_scoped_to_original_task_and_floor_keeps_the_task():
+    group = ["old result " * 1200]
+    bodies = []
+    def chat(body, rlog):
+        bodies.append(body)
+        return chat_reply(GOOD)
+    for task in ("Original task A", "Original task A", "Original task B"):
+        assert hd.extract(group, chat, lambda b: None, LOG, task=task)
+    assert len(bodies) == 2
+    assert "Original task A" in json.dumps(bodies[0]) and "Original task B" in json.dumps(bodies[1])
+    for body in bodies:
+        fitted, _, _ = contextfloor.fit(body["messages"], None, window=9000, reserve=1000)
+        assert any(selfcompact.TASK_MARKER in m.get("content", "") for m in fitted)
+
+
+def test_authenticated_prior_handoff_is_not_promoted_into_original_task(monkeypatch):
+    from cria.loop import _HandoffOrigin
+    monkeypatch.setattr(server, "_session_cwd", lambda *a: "")
+    monkeypatch.setattr(server, "_session_gate_plan", lambda *a: None)
+    monkeypatch.setattr(server, "_last_gate_flag", lambda *a: "")
+    monkeypatch.setattr(server, "_gate_age", lambda *a: 0)
+    monkeypatch.setattr(server, "_last_checks_note", lambda *a: "")
+    handoff = "⟦ctx:continuation⟧ False prior claim: all tests pass."
+    owner = SimpleNamespace(handoff_origin=_HandoffOrigin("briefing", "", False, continuation=handoff),
+                            plan=SimpleNamespace(task="Original actual task"))
+    def facts(messages):
+        return server._handoff_facts(None, "sid:case", {"messages": messages}, LOG, owner)
+    root = {"role": "user", "content": "Original actual task"}
+    prior = {"role": "user", "content": handoff}
+    work = {"role": "assistant", "content": "work"}
+    followup = {"role": "user", "content": "Real follow-up"}
+    assert facts([root, prior, work, followup]).original_task == "Original actual task"
+    assert facts([root, prior, followup, work]).original_task == "Original actual task"
+    assert facts([prior, work, followup]).original_task == ""
+    assert facts([{"role": "user", "content": "environment"}, prior, work, followup]).original_task == ""
+    assert facts([root, work, followup]).original_task == "Original actual task"
 
 
 def test_the_production_compaction_body_fits_through_the_real_floor_without_dropping_turns():

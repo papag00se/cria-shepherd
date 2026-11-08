@@ -145,18 +145,18 @@ _CACHE_MAX = 256
 _cache_lock = threading.Lock()
 
 
-def _piece_key(group: list[str]) -> str:
-    return hashlib.sha256("\x00".join(group).encode("utf-8", "replace")).hexdigest()
+def _piece_key(group: list[str], task: str = "") -> str:
+    return hashlib.sha256(json.dumps([task, group], ensure_ascii=False).encode("utf-8", "replace")).hexdigest()
 
 
-def extract(group: list[str], chat_fn: Callable, apply_role: Callable[[dict], None], rlog) -> dict | None:
-    key = _piece_key(group)
+def extract(group: list[str], chat_fn: Callable, apply_role: Callable[[dict], None], rlog, *, task: str = "") -> dict | None:
+    key = _piece_key(group, task)
     with _cache_lock:
         if key in _CACHE:
             _CACHE.move_to_end(key)
             rlog.emit("compaction.distill_cached", blocks=len(group))
             return _CACHE[key]
-    got = _extract(group, chat_fn, apply_role, rlog)
+    got = _extract(group, chat_fn, apply_role, rlog, task=task)
     if got is not None:
         with _cache_lock:
             _CACHE[key] = got
@@ -170,11 +170,14 @@ def clear_cache() -> None:
         _CACHE.clear()
 
 
-def _extract(group: list[str], chat_fn: Callable, apply_role: Callable[[dict], None], rlog) -> dict | None:
+def _extract(group: list[str], chat_fn: Callable, apply_role: Callable[[dict], None], rlog, *, task: str = "") -> dict | None:
     # One message per block, so the floor can still reduce (and label) an outlier piece.
+    task_context = ([selfcompact.internal_evidence_message(
+        selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_extract_task", task=task))] if task else [])
     body = {"stream": False, "max_tokens": EXTRACT_REPLY_TOKENS, bodykeys.DENSITY_KIND: "summary",
             "messages": [{"role": "system", "content": prompts.load("compaction_extract")},
                          selfcompact.internal_evidence_message(prompts.load("composed_evidence_intro")),
+                         *task_context,
                          *(selfcompact.internal_evidence_message(b) for b in group),
                          {"role": "user", "content": prompts.load("compaction_extract_ask")}]}
     apply_role(body)
@@ -211,7 +214,7 @@ class Budget:
 
 def distill(blocks: list[str], *, history_count: int, budget: Budget,
             chat_fn: Callable, apply_role: Callable[[dict], None], rlog,
-            history_start: int = 0, history_scope: str = "") -> list[str]:
+            history_start: int = 0, history_scope: str = "", task: str = "") -> list[str]:
     """Distill only the specified consecutive history span; all other blocks stay verbatim.
 
     Prefix and suffix still consume the final request's budget. A scope label, when supplied,
@@ -230,7 +233,8 @@ def distill(blocks: list[str], *, history_count: int, budget: Budget,
         cut -= 1
         tail += est_tokens(history[cut]) * budget.density
     older, recent = history[:cut], history[cut:]
-    piece = budget.window - extract_reply - 2 * FRAME_TOKENS
+    task_tokens = est_tokens(selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_extract_task", task=task)) * budget.density if task else 0
+    piece = budget.window - extract_reply - 2 * FRAME_TOKENS - task_tokens
     groups = chunk(older, max(piece, 512), budget.density)
     out, run, extracted, failed = [], [], 0, 0
     run_turns = 0
@@ -249,7 +253,7 @@ def distill(blocks: list[str], *, history_count: int, budget: Budget,
         got = None
         if i <= MAX_PIECES:
             rlog.emit("compaction.distill_piece", piece=i, pieces=len(groups), blocks=len(group))
-            got = extract(group, chat_fn, apply_role, rlog)
+            got = extract(group, chat_fn, apply_role, rlog, task=task)
         if got is None:
             failed += 1
             close_run()
@@ -278,9 +282,9 @@ def binder(chat_fn: Callable, window: int | None, reply: int, apply_role: Callab
         return None
     budget = Budget(window=window, reply=reply, density=summary_density())
 
-    def bound(blocks, history_count, *, history_start=0, history_scope=""):
+    def bound(blocks, history_count, *, history_start=0, history_scope="", task=""):
         return distill(blocks, history_count=history_count, budget=budget,
                        chat_fn=chat_fn, apply_role=apply_role, rlog=rlog,
-                       history_start=history_start, history_scope=history_scope)
+                       history_start=history_start, history_scope=history_scope, task=task)
     return bound
 

@@ -56,8 +56,8 @@ def test_compactor_task_keeps_proven_handoff_as_historical_evidence_not_task(mon
     assert seen[0]["root_evidence"] == (handoff,)
     assert [m["content"] for m in framed["messages"] if m.get("role") == "user"][:2] == [task, handoff]
 
-    # No producer identity: a lookalike remains user authority, and a root consisting
-    # only of a handoff cannot be silently turned into an empty task.
+    # No producer identity: a lookalike remains user authority. A proven handoff
+    # alone is evidence, never an independently recovered original task.
     sess.handoff_origin = None
     with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
         drv._prepare_coder_context(sess, body, Log(), synthetic=True)
@@ -71,11 +71,11 @@ def test_compactor_task_keeps_proven_handoff_as_historical_evidence_not_task(mon
     body["messages"] = [{"role": "user", "content": handoff}]
     with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
         drv._prepare_coder_context(sess, body, Log(), synthetic=True)
-    assert seen[-1]["pinned_task"] == handoff and not seen[-1]["root_evidence"]
+    assert seen[-1]["pinned_task"] == "" and seen[-1]["root_evidence"] == (handoff,)
     body["messages"] = [{"role": "user", "content": "environment only"}, {"role": "user", "content": handoff}]
     with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
         drv._prepare_coder_context(sess, body, Log(), synthetic=True)
-    assert seen[-1]["pinned_task"] == "environment only\n\n" + handoff and not seen[-1]["root_evidence"]
+    assert seen[-1]["pinned_task"] == "" and seen[-1]["root_evidence"] == ("environment only", handoff)
 
 def test_coder_preparation_passes_only_the_session_issued_gate_as_producer_owned(monkeypatch):
     drv, sess, body = driver()

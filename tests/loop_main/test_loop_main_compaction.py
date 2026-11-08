@@ -52,12 +52,12 @@ def test_compaction_writer_and_validator_receive_prior_handoff_as_evidence(monke
                                   root_evidence=(handoff,))
     assert seen and validations and distillation
     blocks, count, opts = distillation[0]
-    assert opts == {"history_start": 1, "history_scope": "middle"}
+    assert opts == {"history_start": 1, "history_scope": "middle", "task": "Build the feature."}
     assert all(block.startswith("MIDDLE BEING REPLACED") for block in blocks[1:1 + count])
     assert any(block.startswith("NEWER RETAINED EVIDENCE") for block in blocks[1 + count:])
     assert any(handoff in block for block in seen[0])
     assert any(handoff in block for block in validations[0]["transcript_blocks"])
-    task_blocks = [block for block in seen[0] if block.startswith("ORIGINAL TASK")]
+    task_blocks = [block for block in seen[0] if block.startswith("⟦ctx:task⟧\nORIGINAL TASK")]
     assert len(task_blocks) == 1 and "Build the feature." in task_blocks[0] and handoff not in task_blocks[0]
     assert validations[0]["task"] == "Build the feature."
     assert any("The coder inspected the source." in str(m.get("content")) for m in result)
@@ -73,7 +73,7 @@ def test_compaction_writer_and_validator_receive_prior_handoff_as_evidence(monke
     contents = [m.get("content", "") for m in sent[0]["messages"]]
     assert any(handoff in c for c in contents)
     assert all("cria_annotation_source" not in m for m in sent[0]["messages"])
-    assert any(c.startswith("ORIGINAL TASK") and handoff not in c for c in contents)
+    assert any(c.startswith("⟦ctx:task⟧\nORIGINAL TASK") and handoff not in c for c in contents)
 
 
 def test_a_rollup_that_launders_a_tests_pass_claim_carries_crias_measured_red_check_beside_it():

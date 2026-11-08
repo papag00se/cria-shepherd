@@ -1,0 +1,4 @@
+ORIGINAL CALLER TASK (context for interpreting the piece, not evidence that work was performed):
+{{TASK}}
+
+Extract only what the piece itself shows. Later user requests in the piece may add to or change this task; retain them as stated, not as completed work.

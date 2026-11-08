@@ -3908,7 +3908,7 @@ class Loop:
         checks_fact = selfcompact.checks_input(gate_flag, gate_age(sess))
         root_task = (pinned_task if pinned_task is not None
                      else (getattr(sess.plan, "task", "") or ""))
-        task_fact = (prompts.render("compaction_task_fact", task=root_task.strip())
+        task_fact = (selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_task_fact", task=root_task)
                      if root_task.strip() else "")
 
         def evidence_for(mm: list[dict], *, newer_messages: list[dict]):
@@ -3944,7 +3944,7 @@ class Loop:
         def writer_evidence(evidence, middle_count):
             # Prior handoffs and newer retained turns are evidence, not replacement history.
             # Their labels and bytes must not be merged into a model-made middle extraction.
-            return (distill(evidence, middle_count, history_start=len(root_evidence), history_scope="middle")
+            return (distill(evidence, middle_count, history_start=len(root_evidence), history_scope="middle", task=root_task)
                     if distill is not None else evidence)
 
         # The write record may judge a briefing's change claims only over a span nothing earlier summarized:
@@ -5703,10 +5703,10 @@ def _history_root(messages: list[dict]) -> tuple[str, str]:
 
 
 def _compactor_root(messages: list[dict], origin, original_task: str) -> tuple[str, tuple[str, ...]]:
-    """Separate a producer-proven handoff when the retained task is independently identifiable.
+    """Separate a producer-proven handoff from retained root instructions.
 
-    The coder's root is unchanged. A separate environment packet does not establish
-    that the task survived; without the session task in a remaining root, abstain.
+    The coder's root is unchanged. If the original task is not independently
+    identifiable, keep the remaining roots as evidence, not as an original task.
     """
     roots = [messages[i] for i in selfcompact.root_user_indices(messages)]
     if not isinstance(origin, _HandoffOrigin):
@@ -5714,9 +5714,14 @@ def _compactor_root(messages: list[dict], origin, original_task: str) -> tuple[s
     prior = [m for m in roots if origin.matches_continuation(_msg_text_content(m))]
     task = [m for m in roots if not origin.matches_continuation(_msg_text_content(m))]
     task_text = "\n\n".join(_msg_text_content(m) for m in task)
-    if not prior or not original_task or original_task not in task_text:
+    if not prior:
         return _history_root(messages)[0], ()
-    return task_text, tuple(_msg_text_content(m) for m in prior)
+    if original_task and task_text == original_task:
+        return original_task, tuple(_msg_text_content(m) for m in prior)
+    if original_task and any(_msg_text_content(m) == original_task for m in task):
+        return original_task, tuple(_msg_text_content(m) for m in roots
+                                    if _msg_text_content(m) != original_task)
+    return "", tuple(_msg_text_content(m) for m in roots)
 
 
 def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:

@@ -212,9 +212,13 @@ def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, select
     composed = selfcompact.compaction_request_messages(
         evidence, services.inventory(facts.workspace_root), facts.gate_plan,
         facts.gate_flag, facts.gate_age)
+    task = facts.original_task
+    if task:
+        task_fact = selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_task_fact", task=task)
+        composed.insert(-1, selfcompact.internal_evidence_message(task_fact))
     if services.distill is not None:
         history_count = len(selfcompact.compaction_evidence_messages(evidence, facts.gate_plan))
-        middle = services.distill([m["content"] for m in composed[1:-1]], history_count)
+        middle = services.distill([m["content"] for m in composed[1:-1]], history_count, task=task)
         composed = [composed[0], *(selfcompact.internal_evidence_message(p) for p in middle), composed[-1]]
     framed = {**body, "messages": [
         {"role": "system", "content": prompts.load("selfcompact_summary")}, *composed]}
@@ -345,7 +349,7 @@ class _RefusedBy:
 POLICY = Policy(
     "harness-memory-handoff", "harness-memory", 3, family_id="F49",
     prompts=("recognize_compaction_request", "selfcompact_summary", "compaction_extract",
-             "compaction_extract_ask", "compaction_extracted_state", "compaction_extracted_labels",
+             "compaction_extract_ask", "compaction_extract_task", "compaction_extracted_state", "compaction_extracted_labels",
              "compaction_withheld_note", "compaction_original_task"),
     state="session producer record; shared write-result evidence observed before facts resolution",
     services=("original task", "workspace inventory", "gate evidence", "transcript",

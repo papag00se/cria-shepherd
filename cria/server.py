@@ -526,9 +526,25 @@ def _observe_handoff_write_results(server, key, messages):
 
 def _handoff_facts(server, key, body, rlog, owner):
     messages = body.get("messages", [])
+    origin = getattr(owner, "handoff_origin", None)
+    roots = [messages[i] for i in selfcompact.root_user_indices(messages)]
+    if isinstance(origin, _HandoffOrigin):
+        # A proven prior handoff is history, even if the harness moved it into the root.
+        prior = [m for m in roots if (origin.matches_continuation(_text_of_msg(m))
+                                      or origin.matches_summary(_text_of_msg(m)))]
+        roots = [m for m in roots if m not in prior]
+    else:
+        prior = []
+    task = "\n\n".join(_text_of_msg(m) for m in roots)
+    session_task = getattr(getattr(owner, "plan", None), "task", "")
+    if prior:
+        if session_task and (task == session_task or any(_text_of_msg(m) == session_task for m in roots)):
+            task = session_task
+        else:
+            task = ""
     return memoryhandoff.SessionFacts(
         workspace_root=_session_cwd(key, messages, rlog) or "",
-        original_task=_history_root(messages)[0], task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
+        original_task=task, task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
         gate_plan=_session_gate_plan(server, key),
         gate_flag=_last_gate_flag(server, key), gate_age=_gate_age(server, key),
         checks=_last_checks_note(server, key),
