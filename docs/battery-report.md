@@ -1,6 +1,6 @@
 # Battery report
 
-Updated: 2026-11-07 13:36 PST
+Updated: 2026-11-07 19:37 PST
 
 ## L0 — Pure proxy — wire translation only — 44%
 
@@ -83,7 +83,7 @@ Updated: 2026-11-07 13:36 PST
 | k2_horizon_7b | 🟠 45% | 🟡 78% | 🟡 75% | 🔴 25% | 🟡 68% | 🟢 95% | 64% | 24 | 74 | 27.6 |
 | ling3.0_tiny | 🔴 5% | 🟠 40% | 🟡 75% | 🔴 0% | 🟠 40% | 🟢 85% | 41% | 22 | 117 | 108.4 |
 | nemotron-elastic | 🟠 50% | 🔴 10% | 🟡 65% | 🔴 15% | 🟠 35% | 🟠 35% | 35% | 17 | 84 | 68.7 |
-| phi4 | 🔴 0% | 🔴 0% | 🔴 20% | 🔴 0% | 🔴 0% | 🔴 30% | 8% | 16 | 69 | 29.6 |
-| **average** | 🟠 51% | 🟠 53% | 🟡 68% | 🔴 18% | 🟠 56% | 🟡 72% | 53% | 22 | 93 | 52.6 |
+| phi4 | 🔴 5% | 🔴 0% | 🔴 5% | 🔴 5% | 🔴 15% | 🔴 20% | 8% | 11 | 59 | 28.8 |
+| **average** | 🟠 52% | 🟠 53% | 🟡 66% | 🔴 19% | 🟠 58% | 🟡 71% | 53% | 22 | 92 | 52.5 |
 
 Legend: 🟢 ≥85% · 🟡 ≥65% · 🟠 ≥35% · 🔴 <35%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently inference-judged usefulness; averages include judged zeros, exclude failed/unjudged attempts.
