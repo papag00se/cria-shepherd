@@ -9,14 +9,14 @@ Two curation moves, both on the OUTBOUND request to the model:
    full Codex menu is ~120 (its default Apps/Connectors catalog); a 9B does far
    better with the shell/exec + file + read + web tools and none of the goal /
    MCP-discovery / connector firehose.
-2. CHEAT-SHEET (``add_cheatsheet``) — name the kept tools up front with terse usage;
-   it's a system message, not part of the harness conversation, so it doesn't
-   accumulate and cria re-adds it each turn.
+2. INSTRUCTIONS (``add_cheatsheet``) — preserve general workflow in the system frame
+   and put recognized native tool clarifications into their actual descriptions.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Iterable, Protocol
 
 from . import prompts
@@ -149,111 +149,56 @@ def focus_tools(body: dict, rlog=None) -> None:
 
 
 def cheatsheet(tools) -> str | None:
-    """The menu-derived tool hint (ports codex-local ``build_tool_hint``): a terse per-tool note
-    with argument shapes, generated FROM this turn's resolved menu — so the guidance names ONLY
-    tools the model can actually call and the prompt can never disagree with the menu. None when
-    there's nothing worth saying. The wording lives in cria/prompts/cheatsheet.txt."""
-    by_name = {n: t for t in tools or [] if (n := (((t.get("function") or t) if isinstance(t, dict) else {}).get("name")))}
-    names = set(by_name)
-    shell = find_shell_tool(tools)
-    frag = prompts.load_map("cheatsheet")
-    lines = []
-    # Call the file tools out up front — naming ONLY the write tools actually in the menu (parity).
-    # EDIT FIRST, and the reason is measured. This list is introduced to the model as "the order you
-    # should PREFER them", and it led with `write_file — {"content": "<full file text>"}`. On the
-    # targeted re-run of `rust-toml-cli x ternary-bonsai` the coder used write_file SEVEN times and
-    # edit_file ZERO — rewriting a 6.6 KB main.rs whole, five times, each version 99.1-99.9%
-    # identical to the last, and not one of the five versions compiles — verified by building them. The
-    # SAME model on the SAME task with the harness's own menu wrote the file once and made three
-    # ~285-byte edit_file patches: 20 calls, 4 of 4.
-    #
-    # It did what it was told. Changing part of a file that exists is what edit_file is for, and a
-    # whole-file rewrite is the expensive way to change one line — it regenerates every line that was
-    # already right, and each regeneration is a fresh chance to break one.
-    #
-    # THIS DOES NOT UNDO THE TWO DECISIONS AROUND IT, and both were checked before it landed.
-    #
-    # `87563ae` set this ordering, and its lesson is FILE TOOLS FIRST, SHELL LAST — the shell-reflex
-    # lever. That is untouched: the file tools still lead and the shell still trails. Which of the two
-    # file tools came first was incidental to it ("writing tools grouped first").
-    #
-    # `editrecovery`'s monotonic policy is the one that really bears on this: it escalates to a
-    # whole-file rewrite after repeated edit failures because that "commits to the action a weak model
-    # can actually complete, rather than pin an old_string it keeps mis-copying". Measured over every
-    # captured call before changing anything (#15) — 20,056 successful edits against 1,551 failures:
-    #
-    #     gemma4              272 edits,   0 failures     0%
-    #     qwen35            2,132 edits,  24 failures     1%
-    #     ternary-bonsai      153 edits,  22 failures    13%
-    #     nemotron-elastic    135 edits,  79 failures    37%
-    #     ALL              20,056 edits, 1,551 failures   7.2%   (write_file fails 3.9%)
-    #
-    # So the escalation's premise holds for ONE model and is false for the others, and 93% of edits
-    # land. The escalation is a RECOVERY, keyed on that file's own failure history, and this change
-    # leaves it exactly where it is: a model that mis-pins `old_string` three times still gets
-    # committed to a grounded whole-file rewrite. What changes is only that cria no longer starts
-    # every model, on every file, at the escalated state.
-    write_tools = []
-    if "edit_file" in names:
-        write_tools.append("edit_file (change part of a file that already exists — PREFER this)")
-    if "write_file" in names:
-        write_tools.append("write_file (create a file, or replace one wholesale)")
-    if write_tools:
-        lines.append(prompts.fill(frag["lead_write"], tools=" or ".join(write_tools)))
-    # Same preferred order as the schema (_FOCUS_ORDER): file tools first — EDIT before WRITE, see
-    # above — then reading/
-    # inspection, then web, with the shell last — so the hint mirrors the menu. apply_patch is
-    # intentionally absent (not model-facing). Arg NAMES for read_file/list_dir are read from the
-    # resolved schema, so the hint can't disagree with a harness-native tool (path vs dir_path).
-    if "edit_file" in names:
-        lines.append(frag["edit_file"])
-    if "write_file" in names:
-        lines.append(frag["write_file"])
-    if "read_file" in names:
-        lines.append(prompts.fill(frag["read_file"], arg=_path_arg(by_name["read_file"])))
-    elif shell is not None:
-        lines.append(prompts.fill(frag["read_via_shell"], shell=shell["name"]))
-    if "list_dir" in names:
-        lines.append(prompts.fill(frag["list_dir"], arg=_path_arg(by_name["list_dir"])))
-    for name in ("grep", "glob"):
-        if name in names:
-            lines.append(frag[name])
-    if "view_image" in names:
-        lines.append(frag["view_image"])
-    if "web_search" in names:  # advertise() renames a harness local_web_search → web_search BEFORE this,
-        # so keying on the callable name keeps the hint from ever naming an uncallable local_web_search.
-        # The web_fetch cross-reference is included ONLY when web_fetch is actually callable.
-        fetch_hint = frag["web_search_fetch_hint"] if "web_fetch" in names else ""
-        lines.append(prompts.fill(frag["web_search"], fetch_hint=fetch_hint))
-    if "web_fetch" in names:  # the find/cursor navigation hint — a weak model re-fetches otherwise
-        lines.append(frag["web_fetch"])
-    if "update_plan" in names:
-        lines.append(frag["update_plan"])
-    if "request_permissions" in names:
-        lines.append(frag["request_permissions"])
-    if "write_stdin" in names and shell is not None:
-        lines.append(prompts.fill(frag["write_stdin"], shell=shell["name"]))
-    if shell is not None:
-        lines.append(prompts.fill(frag["shell"], shell=shell["name"]))
-    if not lines:
+    """General cross-tool workflow only; individual usage belongs to the live schemas."""
+    if not tools:
         return None
-    # No footer recap: the header ("prefer a purpose-built tool before a raw shell command") and the
-    # shell entry ("LAST RESORT … don't use it to read/write/list when a focused tool exists") already
-    # carry the prefer-tool rule — a third restatement was the same rule a 5th way to a small model.
-    return frag["header"] + "\n" + "\n".join(lines)
+    return prompts.load_map("cheatsheet")["header"] + "\n" + prompts.load_map("native_tool_descs")["workflow"]
 
 
-def _path_arg(tool, default: str = "path") -> str:
-    """The property name a read/list tool uses for its path (path / dir_path / file_path / …),
-    read from the RESOLVED schema so the hint matches a harness-native tool instead of assuming
-    cria's synthetic `path`. Falls back to the first required/declared property, then `default`."""
-    params = (((tool or {}).get("function") or tool or {}) if isinstance(tool, dict) else {}).get("parameters") or {}
-    props = params.get("properties") or {}
-    for cand in ("path", "dir_path", "file_path", "filename", "dir", "directory"):
-        if cand in props:
-            return cand
-    req = params.get("required") or []
-    return req[0] if req else next(iter(props), default)
+def enrich_descriptions(tools):
+    """Add guidance only for recognized native names with their expected argument shapes.
+
+    Preserve all caller fields and descriptions; do not infer a contract for unfamiliar schemas.
+    """
+    fragments = prompts.load_map("native_tool_descs")
+    result = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            result.append(tool)
+            continue
+        fn = tool.get("function") or tool
+        if not isinstance(fn, dict):
+            result.append(tool)
+            continue
+        name = fn.get("name")
+        params = fn.get("parameters") or {}
+        props = params.get("properties") or {} if isinstance(params, dict) else {}
+        def typed(key, kinds):
+            return isinstance(props, dict) and isinstance(props.get(key), dict) and props[key].get("type") in kinds
+        key = None
+        # Names and JSON types do not establish a tool's semantics. These native contracts
+        # are enriched only where the harness's own property descriptions establish them.
+        if (name == "write_stdin" and typed("session_id", ("number", "integer")) and typed("chars", ("string",))
+                and props["chars"].get("description") == "Bytes to write to stdin. Defaults to empty, which polls without writing."
+                and props["session_id"].get("description") == "Identifier of the running unified exec session."):
+            key = "write_stdin"
+        elif (name == "view_image" and typed("path", ("string",))
+              and props["path"].get("description") == "Local filesystem path to an image file."):
+            key = "view_image"
+        if key is None:
+            result.append(tool)
+            continue
+        old = fn.get("description")
+        extra = fragments[key]
+        if old is not None and not isinstance(old, str):
+            result.append(tool)
+            continue
+        if extra in (old or ""):
+            result.append(tool)
+            continue
+        new_fn = {**fn, "description": ((old + " ") if old else "") + extra}
+        result.append({**tool, "function": new_fn} if "function" in tool else new_fn)
+    return result
 
 
 @dataclass(frozen=True)
@@ -306,26 +251,56 @@ def add_cheatsheet(body: dict, rlog=None) -> None:
         InstructionInput(body.get("tools"), body.get("messages") or []), rlog)
     if result.applied:
         body["messages"] = result.messages
+        body["tools"] = enrich_descriptions(body.get("tools"))
+
+
+def _legacy_cheatsheet(text: str, frag: dict[str, str]) -> bool:
+    """Recognize a complete old generated block, not a header embedded in caller prose."""
+    legacy_header = ("Tools available this turn, listed in the order you should PREFER them — "
+                     "call these exact names with these argument shapes. Reach for a purpose-built tool below before a raw shell command.")
+    lines = text.splitlines()
+    if len(lines) < 2 or lines[0] not in (legacy_header, frag["header"]):
+        return False
+    keys = ("lead_write", "edit_file", "write_file", "read_file", "list_dir", "grep", "glob",
+            "view_image", "web_search", "web_fetch", "update_plan", "request_permissions", "write_stdin", "shell", "read_via_shell")
+    patterns = []
+    for key in keys:
+        template = frag[key]
+        if key == "web_search":
+            for suffix in ("", frag["web_search_fetch_hint"]):
+                patterns.append(re.escape(prompts.fill(template, fetch_hint=suffix)))
+            continue
+        pattern = re.escape(template)
+        for token in ("TOOLS", "ARG", "SHELL"):
+            pattern = pattern.replace(re.escape("{{" + token + "}}"), r"[^\n]+?")
+        patterns.append(pattern)
+        if key == "shell":
+            patterns.append(pattern.split(re.escape(" A focused tool cannot open an archive"))[0])
+        if key == "write_stdin":
+            patterns.append(re.escape("- write_stdin — send input to a shell session started by ")
+                            + r"[^\n]+?" + re.escape(" (e.g. answer an interactive prompt). Per the tool's own argument schema."))
+    return all(any(re.fullmatch(pattern, line) for pattern in patterns) for line in lines[1:])
 
 
 def without_cheatsheet(content):
-    """``content`` with the cheat-sheet :func:`add_cheatsheet` folded onto its end removed again.
+    """Remove only a complete generated note at the end of caller content.
 
-    The fold is the harness-system-message path (`add_cheatsheet` merges into whatever system message
-    leads the request). A caller-instruction system message is KEPT by the coder frame — and the frame
-    renders the same menu hint itself, so the kept copy carried it TWICE (phi4 / feed-pipeline-java A2:
-    the `Tools available this turn` block in the coder system message at 23,858 and again at 25,744, on
-    top of the template's own tool JSON). The note is always the LAST thing `_merge_system` appends and
-    always opens with the fragment header, so it is found by that structure, never by guessing."""
-    header = prompts.load_map("cheatsheet")["header"]
+    Historical per-tool blocks are recognized against their known line templates; unrecognized
+    trailing caller text prevents removal. New workflow notes must match exactly.
+    """
+    frag = prompts.load_map("cheatsheet")
+    note = frag["header"] + "\n" + prompts.load_map("native_tool_descs")["workflow"]
+    def owned_note(text):
+        return text == note or _legacy_cheatsheet(text, frag)
     if isinstance(content, str):
-        i = content.rfind("\n\n" + header)
-        if i >= 0:
-            return content[:i]
-        return "" if content.startswith(header) else content
+        if owned_note(content):
+            return ""
+        for match in re.finditer(r"\n\n", content):
+            if owned_note(content[match.end():]):
+                return content[:match.start()]
     if isinstance(content, list) and content:
         last = content[-1]
-        if isinstance(last, dict) and str(last.get("text") or "").startswith(header):
+        if isinstance(last, dict) and isinstance(last.get("text"), str) and owned_note(last["text"]):
             return content[:-1]
     return content
 
@@ -336,8 +311,10 @@ def _merge_system(existing, note: str):
     if existing is None or existing == "":
         return note
     if isinstance(existing, str):
-        return existing + "\n\n" + note
+        return existing if existing == note or existing.endswith("\n\n" + note) else existing + "\n\n" + note
     if isinstance(existing, list):  # multimodal content parts
+        if existing and existing[-1] == {"type": "text", "text": note}:
+            return existing
         return list(existing) + [{"type": "text", "text": note}]
     return note
 
@@ -388,7 +365,7 @@ FOCUS_DEFINITION = FocusDefinition(
 )
 INSTRUCTION_DEFINITION = InstructionDefinition(
     Policy("tool-menu-instructions", "tool-menu-instructions", 2, family_id="F10",
-           prompts=("cheatsheet",), state="none; request-local note/system projection",
+           prompts=("cheatsheet", "native_tool_descs"), state="none; request-local note/system projection",
            services=("resolved tool menu", "tools.cheatsheet configuration", "system content"),
            hooks=(Reference("cria/server.py", "CriaHandler._setup_translation"),
                   Reference("cria/loop.py", "_required_coder_base"),

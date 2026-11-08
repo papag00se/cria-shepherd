@@ -1777,6 +1777,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             configured=self.server.cfg.tools.cheatsheet), rlog)
         if instructions.applied:
             body["messages"] = instructions.messages
+            body["tools"] = toolmenu.enrich_descriptions(body.get("tools"))
 
     def _defer_pasted_delivery(self, settle):
         # Invocation-local obligations, never a session cache or serialized packet.

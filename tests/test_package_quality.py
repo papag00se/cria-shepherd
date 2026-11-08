@@ -57,9 +57,7 @@ def test_a_one_release_placeholder_gem_is_compared_with_the_real_one_and_its_loa
     msgs, source = history(tmp_path, "cd app && timeout 60 gem install country 2>&1 | tail -20", "Successfully installed country-0.0.1", ask)
     rp._note_package_quality(source)
     note = msgs[-1]["content"]
-    assert "`country`: 6,150 downloads in total; 1 release: latest 0.0.1 (2010-12-07), first release 2010-12-07" in note
-    assert "`countries`: 135,458,753 downloads in total; 103 releases: latest 8.1.0 (2026-01-02)" in note
-    assert "judged `country` a poor fit (country is an empty 2010 placeholder; countries is the maintained gem) and named `countries`" in note
+    assert note == "Successfully installed country-0.0.1\n\n⟦ctx:facts⟧ ⟦ctx:reviewer-pick⟧ countries\n⟦ctx:package-candidates⟧ country, country_select"
     assert len(questions) == 1 and TASK in questions[0] and "6,150 downloads" in questions[0] and "135,458,753 downloads" in questions[0]
     rp._note_package_quality(history(tmp_path, "x", "x", ask)[1])    # a package is judged once per session
     assert len(questions) == 1
@@ -84,8 +82,7 @@ def test_a_one_release_placeholder_gem_is_compared_with_the_real_one_and_its_loa
 def test_the_reviewer_is_the_only_voice_and_every_failure_to_answer_is_silence(tmp_path, answer, expect_note):
     msgs, source = history(tmp_path, "gem install country", "ok", None if answer is None else (lambda q: answer))
     rp._note_package_quality(source)
-    assert ("poor fit" in msgs[-1]["content"]) is expect_note
-    assert ("named `" in msgs[-1]["content"]) is False
+    assert msgs[-1]["content"] == ("ok\n\n⟦ctx:facts⟧ ⟦ctx:reviewer-no-pick⟧ countries, country, country_select" if expect_note else "ok")
     assert pq.judged_poor("s", "rubygems", "country") is expect_note
 
 
@@ -98,8 +95,34 @@ def test_a_hard_red_flag_is_stated_as_a_fact_without_a_reasoner(tmp_path):
             return 200, json.dumps({"vulns": [{"id": "GHSA-aaaa"}, {"id": "GHSA-bbbb", "withdrawn": "2020-01-01"}]})
         return 404, ""
     note, poor = pq.assess("npm", "old-lib", None, TASK, None, flagged, lambda argv: "")
-    assert poor and "`old-lib` 1.0.0 is marked deprecated by its registry (use new-lib)." in note
-    assert "1 known security advisories: GHSA-aaaa" in note and "GHSA-bbbb" not in note
+    # No alternatives: only the assessed package is named, with no implied preference.
+    assert poor and note == "⟦ctx:facts⟧ ⟦ctx:package-candidates⟧ old-lib"
+    card = pq.gather("npm", "old-lib", None, flagged, True)
+    flags = "\n".join(pq.hard_flags(card))
+    assert "`old-lib` 1.0.0 is marked deprecated by its registry (use new-lib)." in flags
+    assert "1 known security advisories: GHSA-aaaa" in flags and "GHSA-bbbb" not in flags
+
+
+def test_flagged_unknown_review_lists_only_real_candidates_and_deterministic_order(monkeypatch):
+    original = pq.gather
+    def gather(registry, package, version, fetch, deep=False, http=None):
+        card = original(registry, package, version, fetch, deep, http)
+        if package == "country":
+            card.deprecated = True
+            card.deprecated_reason = "secret rationale"
+        return card
+    monkeypatch.setattr(pq, "gather", gather)
+    monkeypatch.setattr(pq, "alternatives", lambda *args: ["country_select", "countries", "countries", "missing"])
+    note, poor = pq.assess("rubygems", "country", None, TASK, None, sources, lambda argv: "")
+    assert poor and note == "⟦ctx:facts⟧ ⟦ctx:package-candidates⟧ countries, country, country_select"
+
+
+def test_selected_chosen_package_is_not_misrepresented_as_reviewer_pick():
+    chosen = pq.Card("rubygems", "country", exists=True)
+    others = [pq.Card("rubygems", "countries", exists=True), pq.Card("rubygems", "COUNTRY", exists=True)]
+    note = pq.render_note(chosen, others, [], pq.Verdict(False, "country", "irrelevant"))
+    assert note == "⟦ctx:facts⟧ ⟦ctx:reviewer-no-pick⟧ countries, country"
+    assert pq.assess("rubygems", "missing", None, TASK, lambda q: '{"reasonable": false}', sources, lambda argv: "") == ("", False)
 
 
 @pytest.mark.parametrize("command, expected", [
@@ -165,5 +188,7 @@ def test_repo_health_uses_deps_dev_first_honours_githubs_budget_caches_a_day_and
     now[0] = 1_000_000.0
     monkeypatch.setattr(repohealth, "CACHE_DIR", repohealth.CACHE_DIR + "-fresh")
     note, poor = pq.assess("npm", "old-lib", None, TASK, None, fetch, lambda argv: "", http=lambda u, h: (200, {}, json.dumps({"archived": True, "pushed_at": "2023-04-05T00:00:00Z"})))
-    assert poor and "source repository git+ssh://git@github.com/countries/countries.git is archived" in note
-    assert "repository: 1,500 stars, 700 forks, 12 open issues, license MIT, last push 2023-04-05, archived (read-only)" in note
+    assert poor and note == "⟦ctx:facts⟧ ⟦ctx:package-candidates⟧ old-lib"
+    card = pq.gather("npm", "old-lib", None, fetch, True, http=lambda u, h: (200, {}, json.dumps({"archived": True, "pushed_at": "2023-04-05T00:00:00Z"})))
+    assert "source repository git+ssh://git@github.com/countries/countries.git is archived" in "\n".join(pq.hard_flags(card))
+    assert "repository: 1,500 stars, 700 forks, 12 open issues, license MIT, last push 2023-04-05, archived (read-only)" in pq.card_line(card)

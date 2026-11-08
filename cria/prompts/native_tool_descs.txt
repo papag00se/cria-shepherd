@@ -1,0 +1,4 @@
+# Additions only where the native schema itself establishes the contract.
+workflow = When suitable tools exist, prefer a focused tool to the shell and an exact edit to rewriting a whole file for a small change. Use a whole-file write for a new file or a deliberate complete replacement. Archives and compiled binaries may require a suitable read-only command when the available file tools cannot inspect them.
+write_stdin = For a running command session, use the session ID returned by the command. Send input, or leave chars empty to wait for more output.
+view_image = View a local image file when visual inspection is needed.

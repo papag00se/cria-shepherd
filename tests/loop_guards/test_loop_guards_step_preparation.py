@@ -63,7 +63,7 @@ def test_the_step_frame_keeps_the_full_task_the_callers_rules_and_acknowledges_t
     span = system[bodykeys.CALLER_SPAN]
     assert system["content"][span["start"]:span["start"] + len(span["text"])] == PERSONA
     assert "Permissions: the writable roots" in system["content"]
-    assert system["content"].count("Earlier completed work.") == 1 and "read a file with `shell`" in system["content"]
+    assert system["content"].count("Earlier completed work.") == 1 and "prefer a focused tool" in system["content"]
     assert not any(m.get(bodykeys.CALLER_INSTRUCTIONS) or m["role"] == "developer" for m in out.messages)
     assert [m for m in rest if m["role"] in ("user", "tool") and m is not rest[-1]] == [
         history()[3], history()[4], history()[6]]

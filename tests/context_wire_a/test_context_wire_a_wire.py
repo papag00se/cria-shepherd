@@ -35,6 +35,23 @@ def text(msgs):
     return "\n".join(str(m.get("content") or "") for m in msgs)
 
 
+def test_advertised_tool_descriptions_and_workflow_reach_the_final_wire():
+    from cria import toolmenu, writeproxy
+    shell = {"type": "function", "function": {"name": "exec_command", "description": "Native executor.",
+             "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}}
+    unknown = {"type": "function", "function": {"name": "unknown", "description": "Keep me.", "parameters": {"type": "object", "properties": {}}}}
+    body = {"tools": [shell, unknown], "messages": [{"role": "user", "content": "work"}]}
+    writeproxy.advertise(body, brave_key="test")
+    toolmenu.add_cheatsheet(body)
+    sent = prep(body["messages"], tools=body["tools"])
+    tools = {t["function"]["name"]: t for t in sent["tools"]}
+    assert "User-Agent" in tools["web_fetch"]["function"]["description"]
+    assert "old_string" in tools["edit_file"]["function"]["description"]
+    assert tools["exec_command"]["function"]["description"].startswith("Native executor.")
+    assert tools["exec_command"]["function"]["parameters"] == shell["function"]["parameters"] and tools["unknown"] == unknown
+    assert "Args:" not in text(sent["messages"]) and "prefer a focused tool" in text(sent["messages"])
+
+
 class GuessedUp(upstream.Upstream):
     """A real Upstream whose /props probe failed: the window is the 8,192 fallback and flagged a guess."""
 

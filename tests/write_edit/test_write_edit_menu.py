@@ -52,21 +52,17 @@ def test_focus_never_leaves_the_coder_tool_less():
 FULL = [tool("write_file"), tool("edit_file"), tool("read_file"), tool("list_dir"), tool("exec_command", command={"type": "string"})]
 
 
-def test_the_cheatsheet_prefers_editing_over_rewriting_and_the_shell_last():
-    """rust-toml-cli / ternary-bonsai: the sheet is introduced as 'the order you should PREFER' yet led with write_file; the coder obeyed
-    (write_file 7, edit_file 0) into a five-rewrite spiral that regenerated a 6.6 KB file until a regeneration broke it."""
+def test_workflow_prefers_small_edits_and_dedicated_tools_without_a_catalog():
+    """Preserve the edit-first and shell-last workflow without duplicating tool schemas."""
     sheet = toolmenu.cheatsheet(FULL)
-    assert "order you should PREFER them" in sheet
-    assert sheet.index("- edit_file") < sheet.index("- write_file") < sheet.index("exec_command")
-    lead = next(ln for ln in sheet.splitlines() if ln.startswith("CRITICAL"))
-    assert lead.index("edit_file") < lead.index("write_file")
-    assert "regenerates every line that was already right" in sheet and "Do NOT write files by shelling out" in sheet
+    assert "prefer a focused tool" in sheet and "exact edit" in sheet and "Args:" not in sheet
+    assert all(name not in sheet for name in names(FULL))
 
 
-@pytest.mark.parametrize("present,absent", [(["write_file", "read_file"], "edit_file"), (["edit_file", "read_file"], "write_file"),
-                                            (["write_file", "shell", "apply_patch"], "apply_patch")])
-def test_the_cheatsheet_only_names_tools_that_are_on_the_menu(present, absent):
-    """A menu without edit_file never mentions it (and vice versa); the sheet carries argument shapes from the schema."""
+@pytest.mark.parametrize("present", [["write_file", "read_file"], ["edit_file", "read_file"],
+                                     ["write_file", "shell", "apply_patch"]])
+def test_workflow_does_not_invent_a_second_tool_menu(present):
     sheet = toolmenu.cheatsheet([tool(n) for n in present])
-    assert absent not in sheet and all(n in sheet for n in present if n != absent)
+    assert all(f"- {name}" not in sheet for name in present)
+    assert "Args:" not in sheet
     assert toolmenu.cheatsheet([]) is None and toolmenu.cheatsheet(None) is None

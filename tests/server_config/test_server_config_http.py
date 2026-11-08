@@ -182,6 +182,28 @@ def reply_text(mode, raw):
     return next(e["text"] for e in sse_events(raw) if e.get("type") == "response.output_text.done")
 
 
+@pytest.mark.parametrize("responses", [False, True])
+def test_tool_descriptions_reach_model_through_real_http(wire, responses):
+    shell = {"name": "exec_command", "description": "Native shell.", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}
+    stdin = {"name": "write_stdin", "description": "Native input.", "parameters": {"type": "object", "properties": {"session_id": {"type": "number", "description": "Identifier of the running unified exec session."}, "chars": {"type": "string", "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."}}, "required": ["session_id"]}}
+    create = {"name": "create_file", "description": "Create only; never overwrite.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}
+    read = {"name": "read_file", "description": "Lines are zero-based and end-exclusive.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, "required": ["path", "start_line", "end_line"]}}
+    tools = [{"type": "function", **fn} if responses else {"type": "function", "function": fn} for fn in (shell, stdin, create, read)]
+    path = "/v1/responses" if responses else "/v1/chat/completions"
+    make = resp_body if responses else chat_body
+    status, _ = wire.post(path, make(tools=tools))
+    assert status == 200
+    sent = wire.fake.chats[-1][1]
+    menu = {t["function"]["name"]: t["function"] for t in sent["tools"]}
+    assert menu["exec_command"]["description"] == "Native shell."
+    assert menu["create_file"]["description"] == create["description"]
+    assert menu["read_file"]["description"] == read["description"]
+    assert menu["write_stdin"]["description"].startswith("Native input.")
+    assert "leave chars empty" in menu["write_stdin"]["description"]
+    assert "regular expression" in menu["grep"]["description"]
+    assert "Args:" not in json.dumps(sent["messages"])
+
+
 MODES = ["chat-buffered", "chat-stream", "responses-buffered", "responses-stream"]
 
 

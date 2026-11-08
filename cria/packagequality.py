@@ -8,9 +8,9 @@ Deterministic code GATHERS (principle 1): a fact card per package from deps.dev,
 (downloads, latest version and date, release count, first release, deprecated / yanked / abandoned, advisories on the
 chosen version, size, source repository, one-line description) and the real alternatives the registry reports for the
 same name. A reasoner JUDGES: one closed question over the task and the cards. HARD red flags (deprecated, yanked,
-abandoned, an advisory on the chosen version) need no judge and are stated as facts. Unknown is unknown: a source that
-did not answer leaves a field out, never a claim; an unparseable or missing answer is no note (this is not a completion
-judgment). The output is a labelled fact beside a tool result, never an order, never a manifest edit.
+abandoned, an advisory on the chosen version) need no judge. Unknown is unknown: a source that did not answer leaves a
+field out, never a claim. The reviewer sees the full cards; the coder sees only assessed package names and reviewer-selection
+provenance, or nothing if no package could be assessed. The annotation is never an order or a manifest edit.
 
 Triggers, once per package per session: a package the coder TYPED into a manifest now on disk, a direct install command,
 a package that fails to load. A package judged poor (or flagged) is remembered so the missing-dependency note stops
@@ -399,16 +399,20 @@ def judge(task: str, chosen: Card, others: list[Card], ask) -> Verdict:
 
 def render_note(chosen: Card, others: list[Card], flags: list[str], verdict: Verdict) -> str:
     w = _words()
-    lines = list(flags)
-    lines.append(card_line(chosen))
-    if others:
-        lines.append(w["others_header"])
-        lines += [card_line(c) for c in others]
-    if verdict.reasonable is False:
-        reason = " " + prompts.fill(w["reason"], words=verdict.reason) if verdict.reason else ""
-        lines.append(prompts.fill(w["finding_pick" if verdict.better else "finding_poor"], package=chosen.package,
-                                  better=verdict.better, reason=reason))
-    return prompts.fill(w["note"], package=chosen.package, registry=de.LABEL.get(chosen.registry, chosen.registry), body="\n".join(lines))
+    names = {chosen.package.casefold(): chosen.package} if chosen.exists is True else {}
+    for card in sorted(others, key=lambda c: (c.package.casefold(), c.package)):
+        if card.exists is True:
+            names.setdefault(card.package.casefold(), card.package)
+    selected = (names.pop(verdict.better.casefold(), "")
+                if verdict.reasonable is False and verdict.better and verdict.better.casefold() != chosen.package.casefold()
+                else "")
+    lines = []
+    if selected:
+        lines.append(prompts.fill(w["reviewer_pick"], names=prompts.named_list([selected])))
+    if names:
+        key = "reviewer_no_pick" if verdict.reasonable is False and not selected else "candidates"
+        lines.append(prompts.fill(w[key], names=prompts.named_list(sorted(names.values(), key=lambda name: (name.casefold(), name)))))
+    return prompts.fill(w["candidate_note"], body="\n".join(lines)) if lines else ""
 
 
 def assess(registry: str, package: str, version: str | None, task: str, ask, fetch, run, http=None) -> tuple[str, bool]:
