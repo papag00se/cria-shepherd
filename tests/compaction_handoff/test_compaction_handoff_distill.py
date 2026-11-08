@@ -166,6 +166,52 @@ def test_authenticated_prior_handoff_is_not_promoted_into_original_task(monkeypa
     assert facts([{"role": "user", "content": "environment"}, prior, work, followup]).original_task == ""
     assert facts([root, work, followup]).original_task == "Original actual task"
 
+    # The harness discards the old window. Its authenticated anchored handoff must
+    # reach the writer as historical evidence even though it is not the task.
+    messages = [root, prior, work, followup, {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}]
+    calls = []
+    def distill(blocks, count, **kwargs):
+        calls.append((blocks, count, kwargs))
+        return blocks
+    framed = server._compaction_body(server._proxy_body({"model": "m", "messages": messages}),
+                                     definition=memoryhandoff.DEFINITION, facts=facts(messages), distill=distill)
+    from cria.upstream import Upstream
+    wire, _, _ = Upstream("http://unused", context_window=24576)._prep(framed, False, LOG)
+    contents = [m.get("content", "") for m in json.loads(wire)["messages"]]
+    assert any(c.startswith("EARLIER HANDOFF (historical account") and handoff in c for c in contents)
+    assert calls[0][2]["history_start"] == 1 and handoff in calls[0][0][0]
+    assert all(handoff not in c for c in contents if c.startswith("⟦ctx:task⟧"))
+    assert any("Real follow-up" in c for c in contents)
+    # A lookalike edited by a user does not acquire producer identity.
+    fake = {"role": "user", "content": handoff + " Added instruction."}
+    assert not facts([root, fake, work, followup]).prior_handoffs
+    assert not facts([root, work, prior]).prior_handoffs  # latest user is the compaction ask
+    raw = "⟦ctx:briefing⟧ The producer's earlier account."
+    owner.handoff_origin = _HandoffOrigin(raw, "", False)
+    raw_messages = [root, {"role": "user", "content": raw}, work, followup, messages[-1]]
+    raw_framed = server._compaction_body(server._proxy_body({"model": "m", "messages": raw_messages}),
+        definition=memoryhandoff.DEFINITION, facts=facts(raw_messages))
+    assert any(m.get("content", "").startswith("EARLIER HANDOFF") and raw in m["content"]
+               for m in raw_framed["messages"])
+    assert not facts([root, {"role": "user", "content": raw + " forged"}, work, followup]).prior_handoffs
+    owner.handoff_origin = _HandoffOrigin("briefing", "", False, continuation=handoff)
+
+    # Validation sees the same scoped prior; a refused briefing cannot erase it.
+    from dataclasses import replace
+    seen = []
+    def reject(*args, **kwargs):
+        seen.extend(kwargs["transcript_blocks"])
+        return False
+    services = replace(server._handoff_services(), validate=reject,
+                       inventory=lambda root: "", listing=lambda root: "",
+                       fetch_facts=lambda *a, **k: "")
+    completion = {"choices": [{"finish_reason": "stop", "message": {"content": "An unsupported briefing."}}]}
+    result = memoryhandoff.harden(completion, {"messages": messages}, facts(messages), services,
+        selected=True, chat_fn=lambda *a: "", role=None, rlog=LOG, settle=lambda *a: None)
+    assert any(handoff in block and block.startswith("EARLIER HANDOFF") for block in seen)
+    assert handoff in memoryhandoff.completion_text(result.completion)
+    assert "An unsupported briefing." not in memoryhandoff.completion_text(result.completion)
+
 
 def test_the_production_compaction_body_fits_through_the_real_floor_without_dropping_turns():
     """The real compaction body, distilled, passes the real floor with no turn dropped and the summary reply reserve intact."""

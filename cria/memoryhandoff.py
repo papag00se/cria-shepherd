@@ -110,6 +110,7 @@ class SessionFacts:
     """
     workspace_root: str = ""
     original_task: str = ""
+    prior_handoffs: tuple[str, ...] = ()  # authenticated anchors, historical evidence, never task authority
     task_rides_reply: bool = False    # the harness may replace the whole history with the reply, so the reply carries the task
     gate_plan: object = None
     gate_flag: str = ""
@@ -212,13 +213,17 @@ def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, select
     composed = selfcompact.compaction_request_messages(
         evidence, services.inventory(facts.workspace_root), facts.gate_plan,
         facts.gate_flag, facts.gate_age)
+    prior = [prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
+             for text in facts.prior_handoffs]
+    composed[1:1] = [selfcompact.internal_evidence_message(p) for p in prior]
     task = facts.original_task
     if task:
         task_fact = selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_task_fact", task=task)
         composed.insert(-1, selfcompact.internal_evidence_message(task_fact))
     if services.distill is not None:
         history_count = len(selfcompact.compaction_evidence_messages(evidence, facts.gate_plan))
-        middle = services.distill([m["content"] for m in composed[1:-1]], history_count, task=task)
+        middle = services.distill([m["content"] for m in composed[1:-1]], history_count,
+                                  history_start=len(prior), task=task)
         composed = [composed[0], *(selfcompact.internal_evidence_message(p) for p in middle), composed[-1]]
     framed = {**body, "messages": [
         {"role": "system", "content": prompts.load("selfcompact_summary")}, *composed]}
@@ -291,7 +296,9 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
     refused_by = _RefusedBy(rlog)
     if text:
         writer_inventory = services.inventory(facts.workspace_root)
-        transcript = selfcompact.compaction_request_parts(
+        transcript = [prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
+                      for text in facts.prior_handoffs]
+        transcript += selfcompact.compaction_request_parts(
             evidence_messages(body.get("messages", []), services), gate_plan=facts.gate_plan)
         if not services.validate(chat_fn, role, text, files=writer_inventory,
                                  checks=facts.checks, transcript_blocks=transcript,
@@ -313,7 +320,9 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
                 if not text else "")
     task = (prompts.render("compaction_original_task", task=facts.original_task.strip())
             if facts.task_rides_reply and facts.original_task.strip() else "")
-    appendices = "\n\n".join(t for t in (ledger, withheld, fetch, notes, inventory, facts.checks, task) if t)
+    prior = ("\n\n".join(prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
+                           for text in facts.prior_handoffs) if not text else "")
+    appendices = "\n\n".join(t for t in (ledger, withheld, prior, fetch, notes, inventory, facts.checks, task) if t)
     if appendices or text != completion_text(comp).strip():
         merged = (text + "\n\n" + appendices).strip()
         if not text and merged:

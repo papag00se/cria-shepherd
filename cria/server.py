@@ -542,9 +542,17 @@ def _handoff_facts(server, key, body, rlog, owner):
             task = session_task
         else:
             task = ""
+    # Only session-authenticated anchors need this separate path: ordinary history
+    # already reaches the writer, while anchored handoffs are excluded by _folded.
+    ask_index = next((i for i in range(len(messages) - 1, -1, -1)
+                      if isinstance(messages[i], dict) and messages[i].get("role") == "user"), None)
+    prior_handoffs = tuple(_text_of_msg(m) for i, m in enumerate(messages)
+        if i != ask_index and isinstance(origin, _HandoffOrigin) and isinstance(m, dict)
+        and m.get("role") == "user" and selfcompact.has_anchor(m)
+        and (origin.matches_continuation(_text_of_msg(m)) or origin.matches_summary(_text_of_msg(m))))
     return memoryhandoff.SessionFacts(
         workspace_root=_session_cwd(key, messages, rlog) or "",
-        original_task=task, task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
+        original_task=task, prior_handoffs=prior_handoffs, task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
         gate_plan=_session_gate_plan(server, key),
         gate_flag=_last_gate_flag(server, key), gate_age=_gate_age(server, key),
         checks=_last_checks_note(server, key),
