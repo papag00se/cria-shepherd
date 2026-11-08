@@ -1,6 +1,4 @@
-"""Scenario2 (LA2): a long plan-off session whose accumulated rollup has itself outgrown its share of the window is folded ONCE more -
-and only a refold that survives the validators replaces it; a rejected or empty one leaves the longer, truthful text standing.
-Real Loop._self_compact over a real CompactState; only the reasoner is scripted (by the phase it is called under)."""
+"""A prior long rollup remains historical evidence rather than being refolded by the new handoff."""
 import json
 
 import pytest
@@ -32,24 +30,21 @@ def compact(refold_verdict, refold_text, tmp_path):
     driver._compaction_room = lambda rlog, chat_fn, frame_tokens, *, facts_text="": (100, None)
     sess = synthetic("build it")
     sess.compact_state = selfcompact.CompactState(summary=OLD, covered=2, attempted=2)
-    view = [{"role": "system", "content": "sys"}, {"role": "user", "content": "build it"}] \
+    view = [{"role": "system", "content": "sys"}, {"role": "user", "content": "build it"},
+            {"role": "user", "content": "⟦ctx:rollup⟧ " + OLD}] \
         + [{"role": "assistant", "content": f"turn {i} " + "y" * 1000} for i in range(60)]
     out = driver._self_compact(view, sess, 1, Rlog())
     return out, sess, phases
 
 
-@pytest.mark.parametrize("verdict,text,refolded", [("RETROSPECTIVE", "CONDENSED: resolver built and verified.", True),
-                                                   ("PLAN", "CONDENSED: resolver built and verified.", False),
-                                                   ("RETROSPECTIVE", "", False)])
-def test_the_accumulated_rollup_is_refolded_only_when_the_refold_is_written_and_validated(verdict, text, refolded, tmp_path):
+@pytest.mark.parametrize("verdict,text", [("RETROSPECTIVE", "CONDENSED: resolver built and verified."),
+                                          ("PLAN", "CONDENSED: resolver built and verified."),
+                                          ("RETROSPECTIVE", "")])
+def test_prior_rollup_is_preserved_as_history_not_refolded_without_a_topic_judge(verdict, text, tmp_path):
     out, sess, phases = compact(verdict, text, tmp_path)
     rollup = next(m["content"] for m in out if "⟦ctx:rollup⟧" in str(m.get("content")))
-    assert "self-compact-refold" in phases
-    if refolded:      # the refold condenses the old text AND the new increment into one entry
-        assert sess.compact_state.summary == text and text in rollup and "Earlier work" not in rollup
-    else:             # too long beats gone: the old text stands, the new increment appended
-        assert sess.compact_state.summary == OLD + "\n\nThen the CLI was wired up."
-        assert "Earlier work: resolver internals" in rollup and "CONDENSED" not in rollup
+    assert OLD in rollup and "CONDENSED" not in rollup
+    assert not phases
 
 
 def test_a_rung_without_the_compaction_policy_ships_the_history_untouched_and_asks_nobody(tmp_path):

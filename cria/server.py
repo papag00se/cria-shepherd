@@ -508,7 +508,7 @@ def _handoff_services(system1=None):
     return memoryhandoff.EvidenceServices(_drop_harness_frame,
         lambda root: groundtruth.workspace_inventory(root, flavor="briefing"),
         _workspace_listing, _fetch_ground_truth, _briefing_disk_truth,
-        validate, _proxy_body, SUMMARIZE_MAX_TOKENS)
+        validate, _proxy_body, SUMMARIZE_MAX_TOKENS, topic_judge=system1)
 
 
 def _handoff_session(server, key):
@@ -538,7 +538,9 @@ def _handoff_facts(server, key, body, rlog, owner):
     task = "\n\n".join(_text_of_msg(m) for m in roots)
     session_task = getattr(getattr(owner, "plan", None), "task", "")
     if prior:
-        if session_task and (task == session_task or any(_text_of_msg(m) == session_task for m in roots)):
+        if getattr(origin, "packet", None) is not None:
+            task = origin.packet.task
+        elif session_task and (task == session_task or any(_text_of_msg(m) == session_task for m in roots)):
             task = session_task
         else:
             task = ""
@@ -548,11 +550,16 @@ def _handoff_facts(server, key, body, rlog, owner):
                       if isinstance(messages[i], dict) and messages[i].get("role") == "user"), None)
     prior_handoffs = tuple(_text_of_msg(m) for i, m in enumerate(messages)
         if i != ask_index and isinstance(origin, _HandoffOrigin) and isinstance(m, dict)
-        and m.get("role") == "user" and selfcompact.has_anchor(m)
-        and (origin.matches_continuation(_text_of_msg(m)) or origin.matches_summary(_text_of_msg(m))))
+        and m.get("role") == "user"
+        and (origin.matches_summary(_text_of_msg(m)) or
+             (selfcompact.has_anchor(m) and origin.matches_continuation(_text_of_msg(m)))))
+    if prior_handoffs and getattr(origin, "packet", None) is not None:
+        task = origin.packet.task
     return memoryhandoff.SessionFacts(
         workspace_root=_session_cwd(key, messages, rlog) or "",
-        original_task=task, prior_handoffs=prior_handoffs, task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
+        original_task=task, prior_handoffs=prior_handoffs,
+        prior_packet=getattr(origin, "packet", None) if prior_handoffs else None,
+        task_rides_reply=bool(body.get(bodykeys.CHAT_WIRE)),
         gate_plan=_session_gate_plan(server, key),
         gate_flag=_last_gate_flag(server, key), gate_age=_gate_age(server, key),
         checks=_last_checks_note(server, key),
@@ -782,7 +789,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
                 or type(dropped) is not bool):
             raise ValueError("Invalid harness handoff producer settlement")
         settlement.append((reply, ledger, dropped))
-    role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
+    role = server.cfg.routing.roles.get("reasoner")
     services = _handoff_services(getattr(server, "system1", None))
     distill = _handoff_distiller(provider, server, rlog)
     if distill is not None:
@@ -815,7 +822,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # (a record keyed to the unstripped text could never equal the stored, stripped copy).
     def as_stored(text: str) -> str:
         return strip_history([{"role": "assistant", "content": text}])[0][0]["content"]
-    origin = _HandoffOrigin(as_stored(expected[0]), *expected[1:])
+    origin = _HandoffOrigin(as_stored(expected[0]), *expected[1:], packet=result.packet)
     def commit(retained):
         # Compared WITHOUT cria's own `⟦cria⟧` lines, which every inbound reader strips before it reads
         # the stored reply: `_finalize` appends the turn-stats footer to this text answer, and comparing
@@ -1901,11 +1908,13 @@ class CriaHandler(BaseHTTPRequestHandler):
         # `compaction` is the caller's precomputed answer; the cheap marker check is repeated here
         # too so a caller that only knows the marker still gets the free recognition it always had.
         if compaction or _is_compaction_request(body.get("messages", [])):
-            role_name = "compactor" if "compactor" in server.cfg.routing.roles else "reasoner"
+            evidence_handoff = server.cfg.routing.context_fixes and _selected_handoff(server) is not None
+            role_name = "reasoner" if evidence_handoff else ("compactor" if "compactor" in server.cfg.routing.roles else "reasoner")
+            endpoint = server.reasoner_upstream if evidence_handoff else server.compactor_upstream
             rlog.emit("route.compaction", role=role_name)
-            return server.compactor_upstream, Indicator(
+            return endpoint, Indicator(
                 ic.enabled, ic.metrics,
-                model=banner_model(server.compactor_upstream, str(body.get("model") or "?")),
+                model=banner_model(endpoint, str(body.get("model") or "?")),
                 role=role_name, route=ic.route, assists=ic.assists)
 
         if server.router is None or classification is None:
@@ -2051,6 +2060,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             sk = getattr(self, '_multipart_guard_session', session_key(self.headers, body.get("messages", [])))
             owner = _observe_handoff_write_results(server, sk, body.get("messages", []))
             compaction = _recognize_compaction(body, server, rlog, definition=handoff)
+            if compaction and handoff is not None and server.cfg.routing.context_fixes:
+                # The entire answer must be judged before any part can be delivered. Use the same
+                # hardening/settlement path as buffered requests, then emit the resulting packet.
+                completion, indic = self._produce_completion_once({**body, "stream": False}, rlog, sk)
+                yield from wrap_stream(completion_to_sse(completion), indic)
+                return
             classification = self._classify(body, rlog, compaction)
             # ONE coder driver: engage the loop when it should (a known session, or a fresh turn the
             # loop would start — see _engages_loop). It drives a real multi-item plan OR the synthetic
@@ -2212,36 +2227,39 @@ class CriaHandler(BaseHTTPRequestHandler):
         pbody, _ = self._focus_trim(pbody, rlog)
         pbody = self._apply_route_role(pbody, indic, rlog)
         image_context = _image_current.get()
-        if image_context is not None:
-            role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, 'role', None) else None
-            raw = image_context.workflow.chat(provider, role, pbody, image_context, rlog)
-        elif progressive is not None and not compaction and hasattr(provider, "chat_watched"):
-            raw = self._chat_progressive(provider, pbody, progressive, rlog)
-        else:
-            raw = provider.chat(pbody, rlog)
-        _note_failover(indic, rlog)
+        evidence_handoff = self.server.cfg.routing.context_fixes and compaction and handoff is not None
         try:
-            comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
-        except (json.JSONDecodeError, TypeError) as e:
-            # A chat completion MUST be JSON; a non-JSON 200 (an intermediary's HTML 502 page, a
-            # truncated body) is an upstream error — NOT a successful empty turn. Fail closed so the
-            # caller surfaces a clean 502/failed and the client retries, instead of recording "done".
-            raise UpstreamError("upstream returned a non-JSON 200 body: "
-                                + repr(content_reduce.clip(raw, 200))) from e
+            if image_context is not None:
+                role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, 'role', None) else None
+                raw = image_context.workflow.chat(provider, role, pbody, image_context, rlog)
+            elif progressive is not None and not compaction and hasattr(provider, "chat_watched"):
+                raw = self._chat_progressive(provider, pbody, progressive, rlog)
+            else:
+                raw = provider.chat(pbody, rlog)
+            _note_failover(indic, rlog)
+            try:
+                comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
+            except (json.JSONDecodeError, TypeError) as e:
+                raise UpstreamError("upstream returned a non-JSON 200 body: "
+                                    + repr(content_reduce.clip(raw, 200))) from e
+        except Exception as e:
+            if not evidence_handoff:
+                raise
+            # The writer is optional. Preserve the actual transcript even if the upstream
+            # fails or its response is unreadable; the empty candidate cannot be published.
+            rlog.emit("context.compaction_writer_unavailable", level="warn", error=type(e).__name__)
+            comp = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}]}
         commit_handoff = None
         decided = None   # the verdict watch of a hardened handoff; None when no handoff ran
         def defer_handoff(commit):
             nonlocal commit_handoff
             commit_handoff = commit
-        if not body.get("tools") and not generation.incomplete(comp):
-            # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
-            # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
-            # or dialect-only "answer" recovers the summary from the model's reasoning.
+        if evidence_handoff:
+            decided = handoffmemo.VerdictWatch(rlog)
+            comp = _harden_compaction_reply(comp, body, provider, server, decided, sess_key,
+                definition=handoff, _defer_commit=defer_handoff, _owner=owner, _facts=facts)
+        elif not body.get("tools") and not generation.incomplete(comp):
             comp = massage.coerce_text_answer(comp, rlog)
-            if compaction:
-                decided = handoffmemo.VerdictWatch(rlog)
-                comp = _harden_compaction_reply(comp, body, provider, server, decided, sess_key,
-                    definition=handoff, _defer_commit=defer_handoff, _owner=owner, _facts=facts)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")

@@ -148,6 +148,8 @@ def _has_protect_marker(m: dict) -> bool:
     file that quotes a marker) un-reducible and un-droppable, and the floor then reported over budget for a conversation
     that was only large."""
     role = m.get("role")
+    if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INTERNAL_EVIDENCE:
+        return False  # historical evidence may quote anchors; its producer explicitly made it reducible
     if role in _USER_ROLES:
         marks = _PROTECT_MARKERS
         lines = (_content_text(m) or "").splitlines()

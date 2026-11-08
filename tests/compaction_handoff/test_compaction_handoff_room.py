@@ -58,6 +58,22 @@ def test_each_models_own_window_density_and_reserve_bound_its_own_room():
     unknown = _loop(None, None)
     assert unknown._compaction_room(_Rlog(), unknown._ctx.compactor_chat, 4000, facts_text="") == (None, None)
 
+def test_rolling_action_preserves_original_history_and_is_not_replayed_afterward():
+    calls = []
+    def chat(body, rlog):
+        calls.append(body)
+        return chat_reply("Inspect the existing cart calculation.").encode()
+    lp = _loop(49152, 49152, chat=chat)
+    lp._ctx.system1 = SimpleNamespace(judge_compaction_topic=lambda task, response, **kw: "ON_TASK")
+    sess = PlanSession(plan=Plan(id="p", task="Fix rounding", created="2026-10-30T00:00:00+00:00", items=[PlanItem("s")]))
+    msgs = history(12, 250)
+    out = lp._self_compact(msgs, sess, None, _Rlog(), force=True, pinned_task="Fix rounding")
+    assert out[:len(msgs)] == msgs
+    assert len(out) == len(msgs) + 1 and "Inspect the existing cart calculation." in out[-1]["content"]
+    assert calls and "Fix rounding" in calls[0]["messages"][-1]["content"]
+    assert lp._self_compact(msgs, sess, None, _Rlog(), pinned_task="Fix rounding") == msgs
+
+
 def test_the_first_view_that_does_not_fit_one_more_turn_is_compacted_and_every_call_reads_it_whole():
     """The writer and every validator read the whole view: at the firing point each compaction body fits its window with its reply."""
     window = 49152
@@ -68,6 +84,7 @@ def test_the_first_view_that_does_not_fit_one_more_turn_is_compacted_and_every_c
         seen.append(copy.deepcopy(body))
         return chat_reply(lens_answer(body["messages"][0]["content"], **verdict) or "Retrospective state of the work.").encode()
     lp = _loop(window, window, reserve=windowcaps.scaled(windowcaps.GEN_RESERVE, window), chat=chat)
+    lp._ctx.system1 = SimpleNamespace(judge_compaction_topic=lambda task, response, **kw: verdict.get("topic", "ON_TASK"))
     sess = PlanSession(plan=Plan(id="p", task="t", created="2026-10-30T00:00:00+00:00", items=[PlanItem("s")]))
     for turns in range(4, 400):
         seen.clear()
@@ -79,12 +96,13 @@ def test_the_first_view_that_does_not_fit_one_more_turn_is_compacted_and_every_c
     _, evidence_room = lp._compaction_room(_Rlog(), chat, 0, facts_text="t")
     evidence = sc.evidence_tokens(msgs[1:])
     assert evidence_room - 6 * 250 <= evidence <= evidence_room          # the first view whose NEXT turn would not fit (labels/facts account for the slack)
-    assert any(sc.SUMMARY_MARKER in (m.get("content") or "") for m in out)
+    assert out[:len(msgs)] == msgs and len(out) == len(msgs) + 1
     for body in seen:
-        reserve = body.get(bodykeys.OUTPUT_RESERVE) if body.get(bodykeys.OUTPUT_RESERVE) is not None else windowcaps.resolve(body.get("max_tokens"), window)
-        assert contextfloor.est_total(body["messages"], None) + reserve <= window
-        assert not any("⟦ctx:compacted⟧" in str(m.get("content")) for m in body["messages"])      # the floor dropped nothing
-    verdict["retrospective"], seen[:] = "PLAN", []                         # the same view with the briefing rejected: every turn stays verbatim, nothing latches
+        fitted, _, report = contextfloor.fit(body["messages"], None, window=window, reserve=contextfloor.reserve_for(body))
+        assert not report.over_budget
+        if report.turns_dropped or report.protected_dropped:
+            assert "compacted to fit the context window" in str(fitted)
+    verdict["topic"], seen[:] = "OFF_TOPIC", []  # both attempts off-topic: every real turn remains unchanged
     sess = PlanSession(plan=Plan(id="q", task="t", created="2026-10-30T00:00:00+00:00", items=[PlanItem("s")]))
     assert lp._self_compact(msgs, sess, None, _Rlog(), pinned_task="t") == msgs and seen and not sess.compact_state.summary
 

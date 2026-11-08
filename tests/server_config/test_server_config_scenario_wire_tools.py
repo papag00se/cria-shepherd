@@ -6,7 +6,6 @@ import subprocess
 import pytest
 
 from cria.config import Backend, Role, RoutingConfig
-from cria.indicators import PROSE_DROPPED_MARKER
 from cria.server import LOCAL_COMPACT_MARKER
 from test_server_config_http import MODES, OPEN, Wire, no_installed_opener, reply_text, request, sse_events  # noqa: F401
 
@@ -109,11 +108,77 @@ def conversation(workspace, last, task="build app.py"):
     return chat, items
 
 
-@pytest.mark.parametrize("mode", ["chat-buffered", "responses-buffered", "responses-stream"])
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("failure", ["__NONJSON__", "__500__"])
+@pytest.mark.parametrize("classifier_present", [False, True])
+def test_compaction_survives_optional_writer_failure(tmp_path, mode, failure, classifier_present):
+    w = Wire(tmp_path / "w", lambda url: RoutingConfig(
+        backends={"local": Backend("local")}, failover={"coding": ("coder",)}, engagement_level=3,
+        roles={r: Role(r, "local") for r in ("classifier", "reasoner", "coder")}))
+    class Judge:
+        def judge_compaction_topic(self, task, response, *, rlog):
+            pytest.fail("an absent writer response must not be classified")
+    if classifier_present:
+        w.cria.system1 = Judge()
+    chat, items = conversation(tmp_path, f"{LOCAL_COMPACT_MARKER} summarize", f"build app.py {failure}")
+    path, body = (("/v1/responses", {"model": "m", "prompt_cache_key": "sid-1", "input": items, "stream": mode.endswith("stream")})
+                  if mode.startswith("responses") else ("/v1/chat/completions", {"model": "m", "messages": chat, "stream": mode.endswith("stream")}))
+    try:
+        reply = reply_text(mode, w.post(path, body)[1])
+    finally:
+        w.close()
+    assert "build app.py" in reply and "print(1)" in reply and "cat app.py" in reply
+    assert "MODEL-SUGGESTED NEXT ACTION" not in reply
+
+
+@pytest.mark.parametrize("later", ["", "Use Rust instead."])
+def test_two_compactions_authenticate_prior_evidence_and_followup(tmp_path, later):
+    from cria.loop import PlanSession, reframe_compaction
+    from cria.planner import Plan, PlanItem
+    w = Wire(tmp_path / "w", lambda url: RoutingConfig(
+        backends={"local": Backend("local")}, failover={"coding": ("coder",)}, engagement_level=4,
+        roles={r: Role(r, "local") for r in ("classifier", "reasoner", "coder")}))
+    w.cria.loop._put_session("sid:sid-1", PlanSession(plan=Plan(id="p", task="build app.py", created="c", items=[PlanItem("build app.py")]), synthetic=True))
+    history, _ = conversation(tmp_path, f"{LOCAL_COMPACT_MARKER} summarize")
+    history.insert(-1, {"role": "user", "content": "Use Go for the implementation."})
+    try:
+        _, raw = w.post("/v1/chat/completions", {"model": "m", "messages": history})
+        first = reply_text("chat-buffered", raw)
+        second_history = [{"role": "user", "content": first}, {"role": "assistant", "content": "more work"}]
+        if later:
+            second_history.append({"role": "user", "content": later})
+        second_history.append({"role": "user", "content": f"{LOCAL_COMPACT_MARKER} summarize again"})
+        _, raw = w.post("/v1/chat/completions", {"model": "m", "messages": second_history})
+        second = reply_text("chat-buffered", raw)
+        origin = w.cria.loop._store.get("sid:sid-1").handoff_origin
+    finally:
+        w.close()
+    assert second.count("HISTORICAL tool (call id c1) MESSAGE:\nprint(1)") == 1
+    expected = later or "Use Go for the implementation."
+    assert expected == origin.packet.latest_user
+    expanded, _ = reframe_compaction([{"role": "user", "content": second}], origin=origin)
+    assert expanded[-1] == {"role": "user", "content": expected}
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_marked_compaction_with_tools_still_returns_packet(tmp_path, mode):
+    w = Wire(tmp_path / "w", lambda url: RoutingConfig(
+        backends={"local": Backend("local")}, failover={"coding": ("coder",)}, engagement_level=3,
+        roles={r: Role(r, "local") for r in ("classifier", "reasoner", "coder")}))
+    chat, items = conversation(tmp_path, f"{LOCAL_COMPACT_MARKER} summarize")
+    path, body = (("/v1/responses", {"model": "m", "prompt_cache_key": "sid-1", "input": items, "stream": mode.endswith("stream"), "tools": [{"type": "function", **EXEC}]})
+                  if mode.startswith("responses") else ("/v1/chat/completions", {"model": "m", "messages": chat, "stream": mode.endswith("stream"), "tools": [{"type": "function", "function": EXEC}]}))
+    try:
+        reply = reply_text(mode, w.post(path, body)[1])
+    finally:
+        w.close()
+    assert "build app.py" in reply and "print(1)" in reply and "cat app.py" in reply
+
+
+@pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("plan", [False, True])
-def test_a_compaction_request_is_rewritten_judged_and_only_a_retrospective_briefing_is_handed_back(tmp_path, mode, plan):
-    """A marked compaction turn goes to the compactor under a no-tools prompt without the marker, never to the classifier; a retrospective briefing is returned as
-    written, one prescribing a next step is replaced by the deterministic record of what the tools did (prose-dropped marker + the issued `cat app.py`)."""
+def test_compaction_preserves_task_and_tool_output_in_each_wire_mode(tmp_path, mode, plan):
+    """A compaction handoff retains the original task and actual tool output, not unjudged model prose."""
     (tmp_path / "proj").mkdir()
     (tmp_path / "proj" / "app.py").write_text("print(1)\n")
     w = Wire(tmp_path / "w", lambda url: RoutingConfig(
@@ -123,17 +188,13 @@ def test_a_compaction_request_is_rewritten_judged_and_only_a_retrospective_brief
                               "build app.py" + (" __PLAN__" if plan else ""))
     try:
         path, body = ("/v1/responses", {"model": "m", "prompt_cache_key": "sid-1", "input": items, "stream": mode.endswith("stream")}) if mode.startswith("resp") else (
-            "/v1/chat/completions", {"model": "m", "messages": chat})
+            "/v1/chat/completions", {"model": "m", "messages": chat, "stream": mode.endswith("stream")})
         reply = reply_text(mode, w.post(path, body)[1])
         skipped = "classify.skipped" in [e["kind"] for e in w.events()]
     finally:
         w.close()
-    compactor = next(b for _, b in w.fake.chats if "You are writing a briefing" in json.dumps(b["messages"]))
-    assert "tools" not in compactor and LOCAL_COMPACT_MARKER not in json.dumps(compactor)
-    assert skipped and not any("REQUEST CLASSIFIER" in json.dumps(b) for _, b in w.fake.chats)  # 131 minutes once
-    if plan:
-        assert reply.startswith(PROSE_DROPPED_MARKER) and "issued (result recorded; execution not established): cat app.py" in reply and "rewrite app.py" not in reply
-    else:
-        briefing = "The user asked for app.py. app.py now exists and prints 1; no check has failed."
-        # A chat-completions harness may replace the whole history with the reply, so the reply there ends with the user's own message.
-        assert reply == briefing if mode.startswith("resp") else (reply.startswith(briefing + "\n\n") and reply.endswith(" build app.py"))
+    writer = next(b for _, b in w.fake.chats if "Answer the final question using the provided evidence" in json.dumps(b["messages"]))
+    assert "tools" not in writer and LOCAL_COMPACT_MARKER not in json.dumps(writer)
+    assert skipped and not any("REQUEST CLASSIFIER" in json.dumps(b) for _, b in w.fake.chats)
+    assert "build app.py" in reply and "print(1)" in reply and "cat app.py" in reply
+    assert "rewrite app.py" not in reply

@@ -44,7 +44,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
-from . import callcapture
+from . import callcapture, prompts
 
 # ---- frozen contract -------------------------------------------------------------------------
 
@@ -391,6 +391,10 @@ class System1Runtime:
         """One real model call with no logging or capture. ``judge_detailed`` is this plus the record."""
         started = time.monotonic()
         prepared = self.prepare(family, state)
+        return self._infer_prepared(prepared, started)
+
+    def _infer_prepared(self, prepared: PreparedInput, started: float) -> System1Judgment:
+        family = prepared.family
         ceiling = token_ceiling(self._budget)
         if prepared.token_count > ceiling:  # before any feed is built: no allocation, no model call
             raise System1OverCeiling(family, prepared.token_count, ceiling, self._budget)
@@ -456,6 +460,50 @@ class System1Runtime:
                       input_sha256=_text_sha(result.rendered_input),
                       bundle_id=result.bundle_id, capture=path)
         return result
+
+    def judge_compaction_topic(self, task: str, response: str, *, rlog=None) -> str:
+        """Experimental out-of-distribution question; not a trained bundle family.
+
+        Uses the same tokenizer, serialized inference, window and arena as the frozen seats.
+        Its complete native input and output are captured independently when enabled.
+        """
+        family = "experimental-compaction-topic"
+        state = {"original_task": task, "response": response}
+        if not all(isinstance(v, str) and v.strip() for v in state.values()):
+            raise System1StateError("topic judgment requires the complete task and response")
+        policy = prompts.load("compaction_topic_policy") + "\n\n"
+        labels = ("ON_TASK", "OFF_TOPIC")
+        rendered = render_input(labels, policy, render_state(state))
+        started = time.monotonic()
+        prepared = None
+        try:
+            ids = tuple(self._tokenizer.encode(rendered).ids)
+            prepared = PreparedInput(family, labels, types.MappingProxyType(state), policy, rendered, ids)
+            if len(ids) > MAX_WINDOW_TOKENS:
+                raise System1NoFit(f"{family} input is {len(ids)} tokens; the frozen window is {MAX_WINDOW_TOKENS}")
+            result = self._infer_prepared(prepared, started)
+        except Exception as exc:
+            request = (self._request(family, state, prepared) if prepared is not None else
+                       {"api": "system1.onnx", "bundle_id": self.bundle_id, "family": family,
+                        "state": state, "labels": list(labels), "policy": policy, "rendered_input": rendered})
+            path = self._capture_call(family, request, {"error": type(exc).__name__, "message": str(exc)}, rlog)
+            if rlog is not None:
+                rlog.emit("system1.error", level="error", family=family, error=type(exc).__name__, message=str(exc),
+                          capture=path, experimental=True)
+            raise
+        path = self._capture_call(family, self._request(family, state, prepared), {
+            "label": result.label, "labels": list(labels), "logits": list(result.logits),
+            "probabilities": dict(result.probabilities), "tokens": result.token_count,
+            "tokenize_s": result.tokenize_s, "wait_s": result.wait_s,
+            "inference_s": result.inference_s, "elapsed_s": result.elapsed_s}, rlog)
+        if rlog is not None:
+            rlog.emit("system1.judgment", family=family, label=result.label, labels=list(labels),
+                      logits=list(result.logits), probabilities=dict(result.probabilities),
+                      tokens=result.token_count, tokenize_s=result.tokenize_s, wait_s=result.wait_s,
+                      inference_s=result.inference_s, elapsed_s=result.elapsed_s,
+                      input_sha256=_text_sha(rendered), bundle_id=result.bundle_id, capture=path,
+                      experimental=True)
+        return result.label
 
     def judge(self, family: str, state: Mapping[str, str], *, rlog=None) -> str:
         """The decision label: RETROSPECTIVE|PLAN or DESCRIBES|DICTATES. Raises :class:`System1Error`."""

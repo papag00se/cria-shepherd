@@ -1,45 +1,15 @@
-"""Harness-owned compaction lifecycle, pending server integration.
+"""Harness compaction recognition, evidence framing and authenticated settlement.
 
-Unlike internal compaction this boundary cannot retain rejected history: the
-harness has already chosen to replace it. Only re-derived appendices survive a
-rejection. Services supply shared judgments/evidence, never another hardener.
-
-Integration: _recognize_compaction -> recognize; _compaction_body (both stream
-and buffered paths) -> frame; _harden_compaction_reply -> harden. Select this
-whole lifecycle before recognition, not merely before its output transformation.
-Write-result observation is shared evidence and remains unconditional at the
-caller; the producer record is settled only for an actually hardened reply.
-Final wire privacy and retained-result settlement remain Upstream foundations.
-
-Hook adapter contract for the integration owner:
-- Keep the marked() routing handshake when selection is off; never call the
-  unmarked recognizer, frame or hardener through an alternate ungated path.
-- Before hardening, run shared _note_write_results, then resolve SessionFacts
-  with the caller's actual session key (_session_cwd, _session_gate_plan,
-  _last_gate_flag, _gate_age, _last_checks_note, _history_root and authenticated
-  _carried_ledger). Do not replace the latter with parsing a heading.
-- Supply inventory as workspace_inventory(root, flavor="briefing"), shared
-  _workspace_listing/_fetch_ground_truth/_briefing_disk_truth/_proxy_body and
-  validate_compaction_briefing. Supply SUMMARIZE_MAX_TOKENS unchanged.
-- execute receives provider.chat, compactor-or-reasoner role, and the retained
-  definition.frame as frame_hook for its retry. settle reports the produced
-  payload; the producer publishes _HandoffOrigin only after correlating the
-  typed result with its actual returned output and original current session.
-- Replace/remove the old server bodies together; the streaming path currently
-  frames but does NOT harden. Do not introduce streaming retries/validation or
-  change existing buffered no-tools/incomplete admission during migration.
-
-This is one F49 lifecycle, not helper-sized policies. F67 protects task authority,
-F70 owns internal reject-and-retain compaction, and F76 releases closing briefings;
-none acquires a second implementation here. Selection and replacement must bind
-all three callables together. migrated=False until the shared owner installs and
-proves those bindings; these source tests cannot certify production bypass.
+The harness may replace its history with the reply, so the reply carries the original
+user task and ordered historical evidence rather than an unverified model briefing.
+An optional next action is published only after a complete-response topic judgment.
+The server settles and authenticates the produced packet for later expansion; both
+buffered and streaming requests pass through the same hardening boundary.
 """
 from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Protocol
-import json
 
-from . import bodykeys, indicators, massage, prompts, selfcompact
+from . import bodykeys, compactionaction, compactionpacket, prompts, selfcompact
 from .assistcontract import ExecutableDefinition, Policy, Reference
 from .callsyntax import has_tool_call_leak, is_truncated
 from .memoryeffects import Effect
@@ -98,6 +68,7 @@ class EvidenceServices:
     # Chunked distillation of an over-budget transcript (handoffdistill.distill bound to the live
     # provider/window by the caller). None keeps the single-request evidence unchanged.
     distill: Callable[[list[str], int], list[str]] | None = None
+    topic_judge: object = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +82,7 @@ class SessionFacts:
     workspace_root: str = ""
     original_task: str = ""
     prior_handoffs: tuple[str, ...] = ()  # authenticated anchors, historical evidence, never task authority
+    prior_packet: compactionpacket.Packet | None = None
     task_rides_reply: bool = False    # the harness may replace the whole history with the reply, so the reply carries the task
     gate_plan: object = None
     gate_flag: str = ""
@@ -125,6 +97,7 @@ class HandoffResult:
     effect: Effect
     prose: str = ""
     ledger: str = ""
+    packet: compactionpacket.Packet | None = None
 
     def __post_init__(self):
         if not isinstance(self.effect, Effect):
@@ -206,29 +179,28 @@ def carried_notes(messages: list) -> str:
     return "\n\n".join(seen)
 
 
+def _packet(body: dict, facts: SessionFacts) -> compactionpacket.Packet:
+    messages = body.get("messages", [])
+    ask_index = next((i for i in range(len(messages) - 1, -1, -1)
+                      if isinstance(messages[i], dict) and messages[i].get("role") == "user"), None)
+    history = [m for i, m in enumerate(messages) if i != ask_index and isinstance(m, dict)]
+    history_blocks = compactionpacket.blocks(history, prior_handoffs=facts.prior_handoffs,
+                                             prior_packet=facts.prior_packet)
+    # Session-owned checker evidence may no longer exist in the harness's transcript. It is a
+    # dated observation, not model prose, and must travel even after the harness replaces history.
+    checks = facts.checks or selfcompact.checks_input(facts.gate_flag, facts.gate_age)
+    return compactionpacket.Packet(facts.original_task, (*history_blocks, *((checks,) if checks else ())),
+        latest_user=compactionpacket.latest_user(history, prior_handoffs=facts.prior_handoffs,
+                                                  prior_packet=facts.prior_packet))
+
+
 def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, selected: bool) -> dict:
     if not selected:
         return body
-    evidence = evidence_messages(body.get("messages", []), services)
-    composed = selfcompact.compaction_request_messages(
-        evidence, services.inventory(facts.workspace_root), facts.gate_plan,
-        facts.gate_flag, facts.gate_age)
-    prior = [prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
-             for text in facts.prior_handoffs]
-    composed[1:1] = [selfcompact.internal_evidence_message(p) for p in prior]
-    task = facts.original_task
-    if task:
-        task_fact = selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_task_fact", task=task)
-        composed.insert(-1, selfcompact.internal_evidence_message(task_fact))
-    if services.distill is not None:
-        history_count = len(selfcompact.compaction_evidence_messages(evidence, facts.gate_plan))
-        middle = services.distill([m["content"] for m in composed[1:-1]], history_count,
-                                  history_start=len(prior), task=task)
-        composed = [composed[0], *(selfcompact.internal_evidence_message(p) for p in middle), composed[-1]]
-    framed = {**body, "messages": [
-        {"role": "system", "content": prompts.load("selfcompact_summary")}, *composed]}
-    # The briefing's own room: without it the floor fills the window with evidence and the
-    # default reserve cut long briefings off mid-sentence.
+    packet = _packet(body, facts)
+    framed = {**body, "messages": compactionaction.request_messages(packet.task, packet.blocks, latest_user=packet.latest_user)}
+    for key in ("tools", "tool_choice", "parallel_tool_calls"):
+        framed.pop(key, None)
     if not isinstance(framed.get("max_tokens"), int):
         framed["max_tokens"] = services.summarize_max_tokens
     framed.setdefault(bodykeys.OUTPUT_RESERVE, framed["max_tokens"])
@@ -252,121 +224,44 @@ def completion_text(completion: dict) -> str:
 def harden(completion: dict, body: dict, facts: SessionFacts, services: EvidenceServices,
            *, selected: bool, chat_fn: Chat, role: SamplingRole | None, rlog: Log,
            settle: ProducerSettlement, frame_hook: FramingStage = frame) -> HandoffResult:
-    """One bounded retry, shared three-lens validation, then producer settlement.
-
-    Root supplies the exact retained definition.frame as frame_hook, including on
-    retries. The default preserves explicit standalone source calls only; it is
-    not a way to recover an absent production selection.
-
-    settle(reply, ledger, dropped) reports the produced payload, never authority
-    reconstructed from model-supplied text. Shared write-result
-    observation must precede resolving facts even when this policy is disabled.
-    """
+    """Publish authentic evidence and, if judged on topic, the optional next action."""
     if not selected:
         return HandoffResult(completion, Effect.NO_OP)
-    comp = completion
-    text = completion_text(comp).strip()
-    truncated = is_truncated(comp)
-    if not text or has_tool_call_leak(text) or truncated:
-        pb = services.proxy_body(dict(body))
-        pb = {**pb, "messages": [m for m in pb.get("messages", []) if m.get("role") != "system"]}
-        pb = frame_hook(pb, facts, services, selected=True)
-        if not isinstance(pb.get("max_tokens"), int):
-            pb["max_tokens"] = services.summarize_max_tokens
-        if role is not None:
-            replace(role, reasoning="off").apply(pb, rlog=rlog)
-        else:
-            pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text),
-                  truncated=truncated, max_tokens=pb["max_tokens"])
-        try:
-            comp2 = massage.coerce_text_answer(
-                massage.apply(json.loads(chat_fn(pb, rlog)), None, rlog), rlog)
-            text2 = completion_text(comp2).strip()
-            if text2 and not has_tool_call_leak(text2) and not is_truncated(comp2):
-                comp, text = comp2, text2
-            else:
-                rlog.emit("route.compaction_no_briefing", level="warn", retry_leak=bool(text2))
-                text = ""
-        except Exception:  # same best-effort retry boundary as the existing server
-            rlog.emit("route.compaction_retry_failed", level="warn")
-            text = ""
-    fetch = services.fetch_facts(body.get("messages", []), location=False)
-    inventory = services.listing(facts.workspace_root)
-    refused_by = _RefusedBy(rlog)
-    if text:
-        writer_inventory = services.inventory(facts.workspace_root)
-        transcript = [prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
-                      for text in facts.prior_handoffs]
-        transcript += selfcompact.compaction_request_parts(
-            evidence_messages(body.get("messages", []), services), gate_plan=facts.gate_plan)
-        if not services.validate(chat_fn, role, text, files=writer_inventory,
-                                 checks=facts.checks, transcript_blocks=transcript,
-                                 task=facts.original_task, rlog=refused_by,
-                                 phase="harness-compaction-validate",
-                                 messages=body.get("messages", [])):
-            text = ""
-    if text and inventory:
-        text = services.disk_truth(text, inventory, rlog)
-    ledger = (selfcompact.work_ledger(evidence_messages(body.get("messages", []), services),
-                                     carried=facts.carried_ledger, root=facts.workspace_root)
-              if not text else "")
-    notes = carried_notes(body.get("messages", []))
-    # A withheld briefing is a reduction the next window must be able to read: the check that refused it and
-    # the files read are typed facts (a read-only history has no ledger event, and without this the harness
-    # stored an EMPTY summary when no listing or check facts existed either).
-    withheld = (selfcompact.withheld_note(refused_by.lens or "none",
-                                          evidence_messages(body.get("messages", []), services), facts.workspace_root)
-                if not text else "")
-    task = (prompts.render("compaction_original_task", task=facts.original_task.strip())
-            if facts.task_rides_reply and facts.original_task.strip() else "")
-    prior = ("\n\n".join(prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
-                           for text in facts.prior_handoffs) if not text else "")
-    appendices = "\n\n".join(t for t in (ledger, withheld, prior, fetch, notes, inventory, facts.checks, task) if t)
-    if appendices or text != completion_text(comp).strip():
-        merged = (text + "\n\n" + appendices).strip()
-        if not text and merged:
-            merged = indicators.PROSE_DROPPED_MARKER + "\n" + merged
-        choices = [dict(ch) for ch in comp.get("choices") or []]
-        if choices:
-            choices[0] = {**choices[0], "message": {**(choices[0].get("message") or {}), "content": merged}}
-            comp = {**comp, "choices": choices}
-    # Validation reads normalized working text, not delivery authority. With no
-    # appendix the completion may be retained byte-for-byte (including leading
-    # or trailing whitespace); with appendices, the merged payload above removes
-    # only its outer leading whitespace from the prose prefix.
-    retained_prose = (text.lstrip() if appendices else completion_text(comp)) if text else ""
-    settle(completion_text(comp), ledger, not bool(text))
-    return HandoffResult(comp, Effect.DELIVERED if text else Effect.WITHHELD, retained_prose, ledger)
+    packet = _packet(body, facts)
+    initial = completion_text(completion)
+    choice = (completion.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    if is_truncated(completion) or has_tool_call_leak(initial) or message.get("tool_calls"):
+        initial = ""
 
+    def author(task, evidence, prior):
+        if prior is None:
+            return initial
+        return compactionaction.generate(chat_fn, role, task, evidence, prior, rlog, latest_user=packet.latest_user)
 
-class _RefusedBy:
-    """The log the briefing validator writes to, remembering which lens refused (``context.compaction_validation``'s ``lens``)."""
-
-    def __init__(self, rlog) -> None:
-        self._rlog, self.lens = rlog, ""
-
-    def emit(self, kind: str, **fields) -> None:
-        if kind == "context.compaction_validation" and fields.get("accepted") is False:
-            self.lens = str(fields.get("lens") or "")
-        self._rlog.emit(kind, **fields)
-
-    def __getattr__(self, name):
-        return getattr(self._rlog, name)
+    action = compactionaction.next_action(packet.task, packet.blocks, author, services.topic_judge, rlog)
+    packet = replace(packet, action=action)
+    text = packet.render()
+    choices = [dict(ch) for ch in completion.get("choices") or []]
+    if not choices:
+        choices = [{"index": 0}]
+    choices[0] = {**choices[0], "finish_reason": "stop", "message": {"role": "assistant", "content": text}}
+    result = {**completion, "choices": choices}
+    settle(text, "", False)
+    return HandoffResult(result, Effect.DELIVERED, text, "", packet)
 
 
 POLICY = Policy(
     "harness-memory-handoff", "harness-memory", 3, family_id="F49",
-    prompts=("recognize_compaction_request", "selfcompact_summary", "compaction_extract",
-             "compaction_extract_ask", "compaction_extract_task", "compaction_extracted_state", "compaction_extracted_labels",
-             "compaction_withheld_note", "compaction_original_task"),
+    prompts=("recognize_compaction_request", "compaction_evidence_packet", "compaction_next_action_system",
+             "compaction_next_action_task", "compaction_next_action_ask", "compaction_next_action_followup",
+             "compaction_next_action_retry", "compaction_topic_policy"),
     state="session producer record; shared write-result evidence observed before facts resolution",
-    services=("original task", "workspace inventory", "gate evidence", "transcript",
-              "three-lens validator", "provider", "authenticated carried ledger", "producer settlement"),
+    services=("original task", "gate evidence", "transcript", "topic classifier", "reasoner", "producer settlement"),
     hooks=(Reference("cria/server.py", "_recognize_compaction"),
            Reference("cria/server.py", "_compaction_body"),
            Reference("cria/server.py", "_harden_compaction_reply")),
-    regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accepted_one_ships_untouched"),
+    regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_harness_handoff_preserves_tool_evidence_instead_of_invented_briefing"),
                  ),
     migrated=False,
 )

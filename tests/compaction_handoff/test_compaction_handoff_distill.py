@@ -120,13 +120,17 @@ def test_harness_writer_and_each_extractor_receive_the_actual_task_not_just_an_e
     framed = server._compaction_body(server._proxy_body({"model": "m", "messages": messages}),
         definition=memoryhandoff.DEFINITION, facts=memoryhandoff.SessionFacts(original_task=task),
         distill=server._handoff_distiller(provider, srv, LOG))
-    assert len(sent) > 1 and all(task in json.dumps(b, ensure_ascii=False) for b in sent)
+    # The evidence is no longer rewritten by an extractor: task and follow-up stay protected
+    # in the final question, while historical turns are reduced only by the wire floor.
+    assert not sent
     wire, _, _ = wire_owner._prep(framed, False, LOG)
     rendered = wire.decode() if isinstance(wire, bytes) else wire
     assert task in rendered and followup in rendered
     _, _, report = contextfloor.fit(framed["messages"], None, window=24_576,
         reserve=contextfloor.reserve_for(framed), safety=tokenratio.observed_kind("summary"))
-    assert report.turns_dropped == 0 and not report.over_budget
+    assert not report.over_budget
+    if report.turns_dropped or report.protected_dropped:
+        assert "compacted to fit the context window" in rendered
 
 
 def test_extraction_cache_is_scoped_to_original_task_and_floor_keeps_the_task():
@@ -179,7 +183,7 @@ def test_authenticated_prior_handoff_is_not_promoted_into_original_task(monkeypa
     wire, _, _ = Upstream("http://unused", context_window=24576)._prep(framed, False, LOG)
     contents = [m.get("content", "") for m in json.loads(wire)["messages"]]
     assert any(c.startswith("EARLIER HANDOFF (historical account") and handoff in c for c in contents)
-    assert calls[0][2]["history_start"] == 1 and handoff in calls[0][0][0]
+    assert not calls  # prior accounts are carried as evidence, never re-extracted as fact
     assert all(handoff not in c for c in contents if c.startswith("⟦ctx:task⟧"))
     assert any("Real follow-up" in c for c in contents)
     # A compaction-only history must not recast its sole prior as a task, or drop it.
@@ -216,7 +220,7 @@ def test_authenticated_prior_handoff_is_not_promoted_into_original_task(monkeypa
     completion = {"choices": [{"finish_reason": "stop", "message": {"content": "An unsupported briefing."}}]}
     result = memoryhandoff.harden(completion, {"messages": messages}, facts(messages), services,
         selected=True, chat_fn=lambda *a: "", role=None, rlog=LOG, settle=lambda *a: None)
-    assert any(handoff in block and block.startswith("EARLIER HANDOFF") for block in seen)
+    assert not seen  # no free-form briefing or its validator is delivered
     assert handoff in memoryhandoff.completion_text(result.completion)
     assert "An unsupported briefing." not in memoryhandoff.completion_text(result.completion)
 
@@ -243,6 +247,8 @@ def test_the_production_compaction_body_fits_through_the_real_floor_without_drop
     srv = SimpleNamespace(cfg=SimpleNamespace(routing=SimpleNamespace(roles={})))
     framed = server._compaction_body(server._proxy_body({"model": "m", "messages": messages}), definition=memoryhandoff.DEFINITION,
                                      facts=memoryhandoff.SessionFacts(), distill=server._handoff_distiller(provider, srv, LOG))
-    assert sent and "⟦ctx:extracted⟧" in json.dumps(framed["messages"], ensure_ascii=False)
-    _, _, report = contextfloor.fit(framed["messages"], None, window=24_576, reserve=contextfloor.reserve_for(framed), safety=tokenratio.observed_kind("summary"))
-    assert report.turns_dropped == 0 and not report.over_budget and contextfloor.reserve_for(framed) == SUMMARIZE_MAX_TOKENS
+    assert not sent and "⟦ctx:extracted⟧" not in json.dumps(framed["messages"], ensure_ascii=False)
+    fitted, _, report = contextfloor.fit(framed["messages"], None, window=24_576, reserve=contextfloor.reserve_for(framed), safety=tokenratio.observed_kind("summary"))
+    assert not report.over_budget and contextfloor.reserve_for(framed) == SUMMARIZE_MAX_TOKENS
+    if report.turns_dropped or report.protected_dropped:
+        assert "compacted to fit the context window" in json.dumps(fitted, ensure_ascii=False)

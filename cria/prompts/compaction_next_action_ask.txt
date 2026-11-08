@@ -1,0 +1,1 @@
+Given the original user task, what is the single logical next task to carry forward after compaction? Output a single sentence no longer than 20 words

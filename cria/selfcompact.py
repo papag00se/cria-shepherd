@@ -98,6 +98,8 @@ def opens_in_crias_voice(m: dict, marks) -> bool:
     cria's own source switch off the change-claim guard for the rest of the session and drop the user's own sentence from the handoff
     evidence. Markers that are not ``⟦ctx:`` (a gate section prefix, a spec block) are cria-rendered payload text and keep substring matching
     in :func:`_has_anchor`; this helper is for the namespace markers only."""
+    if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INTERNAL_EVIDENCE:
+        return False
     return any(ln.lstrip().startswith(tuple(marks)) for ln in _text(m).splitlines())
 
 
@@ -161,6 +163,8 @@ def _has_anchor(m: dict) -> bool:
     the producer-stamped boundary (``payloadboundary.payload_of``); the note itself stays an anchor via
     :func:`_appended_anchor`. A boundary that no longer verifies keeps the old whole-text rule: the
     message stays verbatim, which loses nothing."""
+    if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INTERNAL_EVIDENCE:
+        return False
     own = _own_text(m)
     lines = own.splitlines()
     return any((any(ln.lstrip().startswith(mk) for ln in lines) if mk.startswith("⟦ctx:") else mk in own)

@@ -65,7 +65,7 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
-from . import briefinggrounding, contextrestoration, filepresence, ledgercopies, reorientation, steppreparation, system1wiring
+from . import briefinggrounding, compactionaction, compactionpacket, contextrestoration, filepresence, ledgercopies, reorientation, steppreparation, system1wiring
 from .toolstages import policy_log
 from .modulestate import ModuleInput, ModuleState
 from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
@@ -3883,152 +3883,59 @@ class Loop:
                       pinned_task: str | None = None, protected_prefix: bool = False,
                       frame_tokens: int = 0, floor_frame_tokens: int | None = None,
                       root_evidence: tuple[str, ...] = ()) -> list[dict]:
-        """THE self-compaction — one owner for BOTH drivers. Rolls the old work-history middle into a
-        ⟦ctx:rollup⟧ summary via the shared summarize primitive. Orthogonal to sess.summary (the cheap
-        completed-STEP axis in the protected system message). ``force`` (set at a step boundary)
-        compacts now even below the size trigger, to clear the prior step's signals. ``pinned_task``
-        overrides the plan's task — the plan-off driver pins the conversation ROOT task, detected from
-        the raw body where env-context detection still works.
+        """Keep historical messages intact; only the final wire floor may reduce them.
 
-        There were two of these, and merging them fixed two more sibling misses on the spot: the
-        plan-ON copy sent its summarize to ``reasoner_chat`` while selecting the COMPACTOR role (so a
-        configured compactor endpoint was ignored on that path), and the plan-OFF copy never appended
-        ``_briefing_gate_ground_truth`` — the override that stops a rollup laundering an unverified
-        "the tests pass" past cria's real last check state. Each had a piece the other needed. That is
-        what having two of something costs, every time."""
+        The existing rolling lifecycle supplies the measured trigger and cadence, but its candidate
+        is only an optional next action. Its reduced view is never sent to the coder. The action is
+        shown only on the turn that produced it, not replayed as current advice on later turns.
+        """
         selected = next(iter(assistruntime.current().bindings(selfcompact.DEFINITION.policy.stage)), None)
         if selected is None:
             return msgs
-        chat_fn = self._ctx.compactor_chat or self._ctx.reasoner_chat
-        role = self._ctx.compactor_role or self._ctx.reasoner_role
-        inventory_for_writer = workspace_inventory(sess.workspace_root or "", flavor="briefing")
-        inventory_for_coder = workspace_inventory(sess.workspace_root or "", flavor="coder")
-        gate_plan = getattr(sess, "gate_plan", None)
-        gate_flag = (getattr(sess, "last_gate_flag", "") or "").strip()
-        checks_fact = selfcompact.checks_input(gate_flag, gate_age(sess))
-        root_task = (pinned_task if pinned_task is not None
-                     else (getattr(sess.plan, "task", "") or ""))
-        task_fact = (selfcompact.TASK_MARKER + "\n" + prompts.render("compaction_task_fact", task=root_task)
-                     if root_task.strip() else "")
+        task = pinned_task if pinned_task is not None else (getattr(sess.plan, "task", "") or "")
+        chat_fn = self._ctx.reasoner_chat
+        role = self._ctx.reasoner_role
+        judge = self._ctx.system1
+        inventory = workspace_inventory(sess.workspace_root or "", flavor="briefing")
+        checks = selfcompact.checks_input((getattr(sess, "last_gate_flag", "") or "").strip(), gate_age(sess))
+        evidence = (*root_evidence, *compactionpacket.blocks(msgs), *(x for x in (inventory, checks) if x))
+        latest_user = compactionpacket.latest_user(msgs, prior_handoffs=root_evidence)
 
-        def evidence_for(mm: list[dict], *, newer_messages: list[dict]):
-            # One public-content producer for both scopes and both readers. Grounding
-            # qualifies the replacement work; it never expands what compact() covers.
-            history = selfcompact.compaction_request_parts(
-                mm, gate_plan=gate_plan, newer_messages=newer_messages)
-            evidence = selfcompact.compaction_request_parts(
-                mm, inventory_for_writer, gate_plan, gate_flag, gate_age(sess),
-                newer_messages=newer_messages)
-            if root_evidence:
-                prior = [prompts.fill(prompts.load_map("compaction_grounding")["prior"], turn=text)
-                         for text in root_evidence]
-                history[:0] = prior
-                evidence[:0] = prior
-            if task_fact:
-                # The pinned task was deliberately excluded from ``mm`` so it survives verbatim in
-                # the coder view. That also made the briefing writer blind to it: both failed L5
-                # cells repeatedly redefined the task as fixing the latest compiler/module blocker.
-                history.append(task_fact)
-                evidence.append(task_fact)
-            middle_count = len(selfcompact.compaction_evidence_messages(mm, gate_plan))
-            return history, evidence, middle_count
+        generated = []
+        attempted = []
+        def make_action(_middle, *, newer_messages):
+            attempted.append(True)
+            def author(original, blocks, prior):
+                return compactionaction.generate(chat_fn, role, original, blocks, prior, rlog, latest_user=latest_user)
+            action = compactionaction.next_action(task, evidence, author, judge, rlog)
+            if action:
+                generated.append(action)
+            return action
 
-        def apply_role(body):
-            if role is not None:
-                role.apply(body, internal=True, rlog=rlog)
-        # Evidence too big for one writer request is distilled in pieces (handoffdistill), not
-        # dropped by the floor. The validators below still read the full transcript.
-        distill = handoffdistill.binder(chat_fn, windowcaps.window_of(chat_fn, rlog),
-                                        ROLLUP_MAX_TOKENS, apply_role, rlog)
-
-        def writer_evidence(evidence, middle_count):
-            # Prior handoffs and newer retained turns are evidence, not replacement history.
-            # Their labels and bytes must not be merged into a model-made middle extraction.
-            return (distill(evidence, middle_count, history_start=len(root_evidence), history_scope="middle", task=root_task)
-                    if distill is not None else evidence)
-
-        # The write record may judge a briefing's change claims only over a span nothing earlier summarized:
-        # a prior rollup (its state or its marker) means the briefing legitimately restates what it carried.
-        # A harness handoff (Codex's own compaction, hardened by cria) is the same thing one level up: it is a root
-        # message OUTSIDE ``msgs`` that carries the writes of everything before it, so a span with no write calls is
-        # not the session's whole record (E2EB c7: 4 of 11 briefings refused `UNWRITTEN` over files the coder wrote).
-        whole_span = (None if sess.compact_state.summary or selfcompact.body_is_compacted(msgs)
-                      or getattr(sess, "handoff_origin", None) is not None else msgs)
-
-        def make_summary(mm: list[dict], *, newer_messages: list[dict]) -> str:
-            history, evidence, middle_count = evidence_for(mm, newer_messages=newer_messages)
-            evidence = writer_evidence(evidence, middle_count)
-            candidate = summarize(
-                chat_fn, role, prompts.load("selfcompact_summary"),
-                selfcompact.compaction_ask(), rlog,
-                phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS,
-                evidence_blocks=evidence)
-            if not validate_compaction_briefing(
-                    chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
-                    transcript_blocks=history, task=root_task, rlog=rlog,
-                    system1=self._ctx.system1, messages=whole_span):
-                return ""
-            # Deterministic existence correction remains a final additive defense. The semantic
-            # symbol matcher is deliberately gone: whether compiler output refutes a briefing is a
-            # judgment, now made by the focused validator above rather than token containment.
-            return (_briefing_disk_truth(candidate, inventory_for_coder, rlog)
-                    + _briefing_gate_ground_truth(sess))
-
-        def refold_summary(text: str, *, newer_messages: list[dict]) -> str:
-            # The accumulated summary is model-authored replacement work, not a
-            # fresh source of execution truth. Refolding gets the same newer scope.
-            refold_history, refold_evidence, middle_count = evidence_for(
-                [{"role": "assistant", "content": text}], newer_messages=newer_messages)
-            refold_evidence = writer_evidence(refold_evidence, middle_count)
-            candidate = summarize(chat_fn, role, prompts.load("selfcompact_refold"),
-                                  _ASK_USER_TURN, rlog, phase="self-compact-refold",
-                                  max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=refold_evidence)
-            if not validate_compaction_briefing(
-                    chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
-                    transcript_blocks=refold_history, task=root_task, rlog=rlog,
-                    phase="compaction-refold-validate", system1=self._ctx.system1):
-                return ""
-            return candidate
-
-        # WHEN to compact is a predicate over measured room, not a configured number: the largest view the
-        # compaction calls can read WHOLE and the coder request can hold without the floor dropping turns
-        # (_compaction_room), against one more turn of the growth this session's own recent turns measured
-        # (selfcompact.expected_growth). The working-set sizes (tail, recompact band, refold) do a different job
-        # — the coder's live working set, a throttle against re-summarizing a sliver, a bound on the standing
-        # rollup — so they stay shares of the window of the model whose VIEW is compacted (the coder's).
-        # Unknown window = no room to compute: only floor pressure compacts.
         coder_window = windowcaps.window_of(self._ctx.coder_chat, rlog)
         room, evidence_room = self._compaction_room(
-            rlog, chat_fn, frame_tokens,
-            facts_text="\n".join(t for t in (*root_evidence, inventory_for_writer, checks_fact, task_fact) if t))
+            rlog, chat_fn, frame_tokens, facts_text="\n".join((*root_evidence, inventory, checks, task)))
         result = selected.execute(selfcompact.RollingInput(
-            msgs, make_summary, force=force,
-            room_tokens=room,
-            evidence_room_tokens=evidence_room,
+            msgs, make_action, force=force, room_tokens=room, evidence_room_tokens=evidence_room,
             keep_tail_tokens=windowcaps.resolve(selfcompact.KEEP_TAIL_TOKENS, coder_window),
             recompact_tokens=windowcaps.resolve(selfcompact.RECOMPACT_TOKENS, coder_window),
             refold_tokens=windowcaps.resolve(selfcompact.REFOLD_TOKENS, coder_window),
-            # Asked by the engine about the view it would SEND without a new summary, not about the
-            # raw history in ``msgs`` (which only grows, so it read as overflow on every later turn).
             floor_pressure=lambda view: self._floor_would_drop(
                 view, rlog, frame_tokens if floor_frame_tokens is None else floor_frame_tokens),
-            # Common preparation holds required authority outside this historical scope.
-            # Standalone compatibility callers still ask the source to publish its task frame.
-            # The writer's task_fact above is grounding in either case, not output authority.
-            pinned_task="" if protected_prefix else root_task,
-            # The coder-flavored files list (operator's design): the compacted view carries the LIST
-            # of what exists; read_file is the road back to any content.
-            files_list=inventory_for_coder,
-            # The RARE fold-of-the-accumulated-summary is independently validated before adoption.
-            refold=refold_summary,
-            rlog=rlog, with_grounding=True), sess.compact_state)
+            pinned_task="" if protected_prefix else task, rlog=rlog, with_grounding=True), sess.compact_state)
         sess.compact_state = result.state
         if idx is not None:
             sess.compact_pending = result.force_pending
-        if result.applied:
-            rlog.emit("context.self_compact", reshape="compact", step=idx, before=len(msgs),
-                      after=len(result.messages), boundary=force)
-        return result.messages
+        if not attempted:
+            return msgs
+        observed = _briefing_gate_ground_truth(sess).strip()
+        additions = [selfcompact.internal_evidence_message(observed)] if observed else []
+        if generated:
+            labels = prompts.load_map("compaction_evidence_packet")
+            additions.append(selfcompact.internal_evidence_message(prompts.fill(labels["action"], action=generated[-1])))
+        rlog.emit("context.self_compact", reshape="evidence-preserved", step=idx, before=len(msgs),
+                  after=len(msgs) + len(additions), boundary=force)
+        return [*msgs, *additions]
 
     def _verify_after_probe(self, sess: PlanSession, key: str, body: dict, rlog, *, rewritten: bool = False) -> dict:
         """The ground-truth probe cria emitted last turn has run — read its result and
@@ -6080,6 +5987,7 @@ class _HandoffOrigin:
     ledger: str
     dropped: bool
     continuation: str = ""
+    packet: object = None  # exact producer-owned packet; never decoded from client text
 
     def matches_summary(self, summary: str) -> bool:
         return summary == self.reply or (self.dropped and summary == self.reply.removeprefix(_PROSE_DROPPED_MARKER + "\n"))
@@ -6130,9 +6038,13 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
     reframed = False
     for m in messages:
         text = _msg_text_content(m)  # handles list-shaped content (a chat client's structured parts)
-        if m.get("role") == "user" and text.lstrip().startswith(_COMPACTION_MARKER):
+        direct_packet = (m.get("role") == "user" and isinstance(origin, _HandoffOrigin)
+                         and origin.packet is not None and origin.matches_summary(text))
+        if m.get("role") == "user" and (text.lstrip().startswith(_COMPACTION_MARKER) or direct_packet):
             idx = text.find(_COMPACTION_BOUNDARY)  # split off the harness preamble, keep the summary tail
-            if idx != -1:
+            if direct_packet:
+                summary = text
+            elif idx != -1:
                 summary = text[idx + len(_COMPACTION_BOUNDARY):].lstrip("\n")
             else:
                 # boundary drifted/absent: strip up to the END of the marker's own line so the foreign
@@ -6147,6 +6059,23 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
             # re-derived ground truth is presented as retained fact, never as "the handoff below is an
             # ungrounded account" (#5b) — that sentence is true only when a model actually wrote one.
             known = isinstance(origin, _HandoffOrigin) and origin.matches_summary(summary)
+            if known and origin.packet is not None:
+                packet = origin.packet
+                labels = prompts.load_map("compaction_evidence_packet")
+                content = f"{CONTINUATION_MARKER} {labels['header']}"
+                origin.continuation = content
+                if packet.task:
+                    out.append({"role": "user", "content": selfcompact.TASK_MARKER + "\n" +
+                                prompts.fill(labels["task"], task=packet.task)})
+                out.append({**m, "content": content})
+                out.extend(selfcompact.internal_evidence_message(block) for block in packet.blocks)
+                if packet.action:
+                    out.append(selfcompact.internal_evidence_message(
+                        prompts.fill(labels["action"], action=packet.action)))
+                if packet.latest_user:
+                    out.append({"role": "user", "content": packet.latest_user})
+                reframed = True
+                continue
             prose_dropped = bool(known and origin.dropped)
             # The private spelling is plumbing, NOT authentication. An unknown or
             # model-authored copy cannot select the deterministic source branch.

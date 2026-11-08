@@ -23,62 +23,32 @@ def test_judge_evidence_after_a_harness_compaction_carries_the_summary_as_the_re
     assert _satisfaction_evidence(plain) == _work_log(plain)
 
 
-def test_compaction_writer_and_validator_receive_prior_handoff_as_evidence(monkeypatch):
-    from cria import loop as lp
-    seen = []
-    def summarize(chat, role, system, ask, rlog, **kwargs):
-        seen.append(kwargs["evidence_blocks"])
-        return "The coder inspected the source."
-    validations = []
-    def validate(*args, **kwargs):
-        validations.append(kwargs)
-        return True
-    real_summarize = lp.summarize
-    monkeypatch.setattr(lp, "summarize", summarize)
-    monkeypatch.setattr(lp, "validate_compaction_briefing", validate)
-    distillation = []
-    def binder(*args):
-        def distill(blocks, count, **kw):
-            distillation.append((blocks, count, kw))
-            return blocks
-        return distill
-    monkeypatch.setattr(lp.handoffdistill, "binder", binder)
-    ctx = LoopContext(planner=None, coder_chat=None, reasoner_chat=lambda *_: b"{}", runs_dir="")
-    driver = Loop(replace(ctx, reasoner_role=Role(name="reasoner", backend="local")))
-    driver._compaction_room = lambda *a, **kw: (100, None)
-    history = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "work " * 300} for _ in range(50)]
-    handoff = "⟦ctx:continuation⟧ A check failed earlier; inspect the file."
-    result = driver._self_compact(history, synthetic(), 1, Rlog(), pinned_task="Build the feature.",
-                                  root_evidence=(handoff,))
-    assert seen and validations and distillation
-    blocks, count, opts = distillation[0]
-    assert opts == {"history_start": 1, "history_scope": "middle", "task": "Build the feature."}
-    assert all(block.startswith("MIDDLE BEING REPLACED") for block in blocks[1:1 + count])
-    assert any(block.startswith("NEWER RETAINED EVIDENCE") for block in blocks[1 + count:])
-    assert any(handoff in block for block in seen[0])
-    assert any(handoff in block for block in validations[0]["transcript_blocks"])
-    task_blocks = [block for block in seen[0] if block.startswith("⟦ctx:task⟧\nORIGINAL TASK")]
-    assert len(task_blocks) == 1 and "Build the feature." in task_blocks[0] and handoff not in task_blocks[0]
-    assert validations[0]["task"] == "Build the feature."
-    assert any("The coder inspected the source." in str(m.get("content")) for m in result)
-
-    # Exercise the real summary composer and final wire, not only the callback's arguments.
+def test_compaction_writer_receives_prior_handoff_as_evidence_at_the_wire():
     from cria.upstream import Upstream
     sent = []
     def chat(body, log):
         wire, _, _ = Upstream("http://unused", context_window=100000)._prep(body, False, log)
         sent.append(json.loads(wire))
-        return json.dumps({"choices": [{"message": {"content": "Briefing"}}]}).encode()
-    assert real_summarize(chat, None, "summary", "question", Rlog(), evidence_blocks=seen[0]) == "Briefing"
+        return json.dumps({"choices": [{"message": {"content": "Inspect the source."}}]}).encode()
+    class Judge:
+        def judge_compaction_topic(self, task, response, *, rlog):
+            assert task == "Build the feature." and response == "Inspect the source."
+            return "ON_TASK"
+    ctx = LoopContext(planner=None, coder_chat=None, reasoner_chat=chat, runs_dir="", system1=Judge())
+    driver = Loop(replace(ctx, reasoner_role=Role(name="reasoner", backend="local")))
+    driver._compaction_room = lambda *a, **kw: (100, None)
+    history = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "work " * 300} for _ in range(50)]
+    handoff = "⟦ctx:continuation⟧ A check failed earlier; inspect the file."
+    result = driver._self_compact(history, synthetic(), 1, Rlog(), pinned_task="Build the feature.", root_evidence=(handoff,))
     contents = [m.get("content", "") for m in sent[0]["messages"]]
     assert any(handoff in c for c in contents)
+    assert any("Build the feature." in c and handoff not in c for c in contents)
     assert all("cria_annotation_source" not in m for m in sent[0]["messages"])
-    assert any(c.startswith("⟦ctx:task⟧\nORIGINAL TASK") and handoff not in c for c in contents)
+    assert result[:len(history)] == history and "Inspect the source." in result[-1]["content"]
 
 
-def test_a_rollup_that_launders_a_tests_pass_claim_carries_crias_measured_red_check_beside_it():
-    """The summary writer claimed 'all 7 tests now pass'; cria's own last gate was red. The claim is kept (never deleted)
-    and the exact checker line plus a dated 'had reported failures' note ride in the same briefing."""
+def test_rolling_preserves_a_measured_red_check_without_an_unjudged_completion_claim():
+    """The exact checker line and dated observation survive when no topic judge is available."""
     def reasoner(body, rlog):
         system = body["messages"][0]["content"]
         text = next((v for k, v in ACCEPT.items() if k in system), "all 7 tests now pass")
@@ -90,8 +60,10 @@ def test_a_rollup_that_launders_a_tests_pass_claim_carries_crias_measured_red_ch
     sess.last_gate_red, sess.last_gate_flag = True, "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"
     view = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
     view[1]["content"] = "pytest collected 7 tests"                       # the figure the writer's sentence rests on is in the record
-    rollup = next(m["content"] for m in loop._self_compact(view, sess, 1, Rlog()) if "⟦ctx:rollup⟧" in str(m.get("content")))
-    assert "all 7 tests now pass" in rollup and sess.last_gate_flag in rollup
-    assert "had reported failures" in rollup and "A later result from the same check supersedes" in rollup
-    assert "currently FAIL" not in rollup
+    result = loop._self_compact(view, sess, 1, Rlog())
+    assert result[:len(view)] == view
+    evidence = "\n".join(str(m.get("content")) for m in result)
+    assert sess.last_gate_flag in evidence and "had reported failures" in evidence
+    assert "A later result from the same check supersedes" in evidence
+    assert "all 7 tests now pass" not in evidence and "currently FAIL" not in evidence
 

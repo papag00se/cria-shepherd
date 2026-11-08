@@ -1,0 +1,1 @@
+ON_TASK: the response discusses next actions or other material connected to the original task. OFF_TOPIC: any portion switches to a separate unrelated subject or conversation, including after an on-topic opening. Technical discussion that relates to the task remains ON_TASK. Classify the complete response.

@@ -1,2 +1,0 @@
-The original task of this session, exactly as the user wrote it (the first user message; the summary above describes the work, it is not the task):
-{{TASK}}
