@@ -149,6 +149,8 @@ systemd-run --user --unit=lanes-ID --collect --working-directory="$PWD" \
 
 `python3 suite/lanes.py restore` is the same recovery by hand.
 
+An explicitly selected `3090x2` lane runs two native slots on the 3090 with the same per-slot context and a total context of twice that window. Its throughput factor is unmeasured, so reports retain actual wall time rather than applying the four-slot factor. Existing compute workloads on a selected GPU are recorded in runtime `hardware.json` and left running; they can compete for GPU memory and compute. The model server's actual allocation determines whether it fits. The timer and managed container are restored as before.
+
 The driver serves one model at a time, fills every free slot of its lanes with that model's pending cells across all campaigns/levels, and switches model only when every slot has drained. A cell awaiting its usefulness judgment does not hold a slot. A cell that fails or ends without a result row is run again.
 
 `suite/lane_measure.py` measures each model × lane with a fixed load (~6K-token code prompt, 600-token outputs: solo, then every slot at once) and reports the fit and the factor. **Reported wall minutes** are solo-equivalent rough estimates: measured minutes × `LANE_FACTORS[model][lane]` (per-stream tok/s at the lane's slot count ÷ solo tok/s on the same card; an unmeasured model uses the `ornith1.5_9b` factor). The factor is applied by `battery_status` from the row's `lane`; `wall_seconds` stays the measured value.

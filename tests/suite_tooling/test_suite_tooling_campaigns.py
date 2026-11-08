@@ -33,6 +33,28 @@ def test_a_cell_without_a_result_runs_and_one_with_a_result_does_not(level):
     assert cmd[cmd.index("--level") + 1] == str(level) and "--restored-fleet" in cmd and "--planner" not in cmd
 
 
+def test_two_slot_3090_lane_and_existing_compute_workload(monkeypatch, tmp_path):
+    from suite import lane_driver, lanes
+    import json
+    lane = lanes.LANES['3090x2']
+    assert (lane.gpu, lane.slots) == (lanes.GPU_3090, 2)
+    monkeypatch.setattr(lanes, 'profile_context', lambda _: 16384)
+    assert lanes.lane_window('phi4', lane.name) == 16384
+    driver = lane_driver.Driver([], [lane.name], [], [], None)
+    assert driver.card_free(lane.name) == 2
+    monkeypatch.setattr(lanes, 'ROOT', tmp_path)
+    monkeypatch.setattr(lanes, 'STATE', tmp_path / 'hardware.json')
+    monkeypatch.setattr(lanes, 'FLEET', tmp_path)
+    (tmp_path / 'profiles').mkdir()
+    (tmp_path / 'profiles/model-recipes.json').write_text('{}')
+    monkeypatch.setattr(lanes, '_active', lambda *args, **kwargs: False)
+    monkeypatch.setattr(lanes, 'compute_apps', lambda: [(lanes.GPU_3090, '123', '256')])
+    state = lanes.take_hardware([lane.name])
+    assert state['cards'] == ['3090']
+    assert state['existing_compute_apps'] == [[lanes.GPU_3090, '123', '256']]
+    assert json.loads(lanes.STATE.read_text()) == state
+
+
 def test_lane_scheduler_tries_another_model_after_a_side_server_does_not_fit(monkeypatch):
     from suite import lane_driver, lanes
     driver = lane_driver.Driver([], ['3090x4', '3090x4b', '3080x2'], list(campaign.MODELS), list(campaign.TASKS), None)

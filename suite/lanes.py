@@ -57,6 +57,7 @@ class Lane:
 
 LANES = {
     '3090x4': Lane('3090x4', '3090', GPU_3090, 4, 18194, (49152,)),
+    '3090x2': Lane('3090x2', '3090', GPU_3090, 2, 18194, (49152,)),
     '3080x2': Lane('3080x2', '3080', GPU_3080, 2, 18294, (49152, 45056, 40960, 36864)),
     # A second server on the 3090 for the next model while the first model's last cells finish (shares the card's slots).
     '3090x4b': Lane('3090x4b', '3090', GPU_3090, 4, 18195, (49152,)),
@@ -95,8 +96,8 @@ for _factors in LANE_FACTORS.values():   # a second lane on a card has that card
 
 
 def wall_factor(model, lane):
-    if lane_slots(model, lane) == 1:
-        return 1.0   # a single slot is the solo run the factor scales to
+    if lane_slots(model, lane) == 1 or lane == '3090x2':
+        return 1.0   # solo or unmeasured two-slot lane: retain actual wall time
     return (LANE_FACTORS.get(model, {}).get(lane) or LANE_FACTORS[REFERENCE_MODEL][lane])
 
 
@@ -262,9 +263,9 @@ def take_hardware(lane_names):
             subprocess.run(['docker', 'stop', HYPERQWEN], check=True, capture_output=True)
         if state['managed_units']:
             subprocess.run(['sudo', '-n', 'systemctl', 'stop', *state['managed_units']], check=True)
-        busy = [app for app in compute_apps() if app[0] in {LANES[n].gpu for n in lane_names}]
-        if busy:
-            raise ValueError(f'lane card still has compute workloads: {busy}')
+        state['existing_compute_apps'] = [list(app) for app in compute_apps()
+                                          if app[0] in {LANES[n].gpu for n in lane_names}]
+        STATE.write_text(json.dumps(state, indent=2) + '\n')
     except BaseException:
         restore_hardware()
         raise
