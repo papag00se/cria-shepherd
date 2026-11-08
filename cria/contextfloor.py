@@ -55,8 +55,8 @@ import re
 from dataclasses import dataclass, field
 
 from . import bodykeys, imageprotocol
-from . import denial, editrecovery, prompts, readshape, selfcompact, shelltool, toolargs, toolwire, windowcaps
-from .content_reduce import content_reduce, digest_reduce, est_tokens
+from . import denial, payloadboundary, prompts, readshape, selfcompact, shelltool, toolargs, toolwire, windowcaps
+from .content_reduce import content_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
 # silently deleting the oldest turns, keep a deterministic record of what they DID that still matters.
@@ -67,16 +67,10 @@ _REDUCED_MARK = "⟦ctx:reduced⟧"
 # The message-level hint `bodykeys.RESTORED_FILES` names the restored-file-text block (a literal here for
 # the same reason as _PROTECT_MARKERS: contextfloor imports no sibling; a test asserts it is in sync).
 _RESTORED_HINT = "cria_restored_files"
-# The stand-in note preserves a content_reduce()d digest of each dropped turn — not just the filenames
-# it modified — so a dropped test-failure/error output survives as a SUMMARY rather than vanishing. The
-# digest payload is allotted this share of the message budget (split across the dropped turns, each
-# with a per-turn floor). The complete note, including all labels, is measured by the drop loops.
-# content_reduce is lossless-first and guarded (never a blind slice); a turn whose content it can't
-# summarize under budget is
-# disclosed as omitted, never re-embedded verbatim (that would defeat the drop).
+# The stand-in note retains whole historical turns or paired exchanges within this shared allowance;
+# anything else is disclosed as omitted. The drop loops measure the entire note, including labels.
 _NOTE_DIGEST_FRACTION = 0.25
 _MIN_NOTE_DIGEST_TOKENS = 256   # total floor: even a tight budget leaves room for a real summary
-_MIN_PER_TURN_TOKENS = 64       # per-turn floor: each digested turn gets at least this much room
 # A share of the BUDGET alone let a note re-embed a whole dropped turn verbatim whenever that turn
 # fit under the per-turn allowance, so
 # the drop saved nothing (measured: a 1,215-token turn dropped, a 1,244-token note inserted — the
@@ -390,50 +384,6 @@ def _reduce_restored_text(messages: list[dict], msg_budget: int, *, protected_ca
     return out, n
 
 
-def _stub_reserves(dropped_msgs: list, texts: list[str]) -> list[int]:
-    """What the one-line stubs for every turn OLDER than each index will actually cost: element ``i``
-    is the sum for the turns before ``i`` (``texts[j]`` is turn ``j``'s stripped text; a turn with no
-    text has no stub).
-
-    Measured, not a constant: a reserve that guesses high refuses a digest that would have fitted
-    (it refused one by six tokens), and a reserve that guesses low is not a reserve. The turns are
-    already in hand, so the exact number is free. One running sum, not a re-sum per turn: the
-    per-turn re-sum was quadratic in the dropped turns (243,499 stub renderings for one 154-item
-    request)."""
-    reserves, running = [], 0
-    for message, text in zip(dropped_msgs, texts):
-        reserves.append(running)
-        if text:
-            running += est_tokens(_turn_stub(message, text))
-    return reserves
-
-
-def _turn_stub(m: dict, text: str) -> str:
-    """One line saying WHAT a turn was, for a turn whose content will not fit its share of the note.
-
-    Not a summary and not pretending to be: the role, and the turn's own first line, whole. The
-    bound is the SENTENCE the writer wrote, which is a structural boundary rather than a cap — a
-    first line is one line however long the turn was.
-
-    It replaces `(+N further compacted turn(s) whose content could not be summarized here.)`, which
-    told the coder a number and nothing else: 6,725 turns' worth across the capture corpus, 219
-    prompts dropping ten or more."""
-    role = (m or {}).get("role") or "turn"
-    mark = "\u203a "                     # › — the legend line above names it
-    if "\n" in text:
-        # A real first line exists — the writer's own sentence boundary, not a cap.
-        first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-        if denial.unlanded(m) and first.startswith(editrecovery.EDIT_MARK):
-            first = selfcompact.edit_note_headline(text)   # never quote a promise of a body that is not here
-        return f"{mark}[{role}] {first}" if first else ""
-    # ONE UNBROKEN BLOB has no first line to quote, and quoting part of it would be the very cut
-    # this stub exists to avoid. Say what it WAS instead — kind and size are facts about the turn,
-    # not a shortened copy of it (#5b: saying less is allowed; saying a fragment as if it were the
-    # thing is not).
-    return (f"{mark}[{role}] {len(text):,} bytes of {_sniff_content_type(text) or 'text'}"
-            if text else "")
-
-
 def _msg_text(m: dict) -> str:
     """The token-bearing text of a message: content (str or content-parts) plus any
     tool-call arguments (JSON schemas/args are real tokens too)."""
@@ -450,7 +400,7 @@ def _msg_text(m: dict) -> str:
         a = fn.get("arguments")
         a = a if isinstance(a, str) else json.dumps(a or "")
         # READABLE, because this text has two readers. Counting tokens does not care about order,
-        # but the compaction note's bullets are `digest_reduce`d from this same string and go to the
+        # but the compaction note renders this same string and sends it to the
         # MODEL — and appending the name after the arguments rendered them as
         # `• {"path":"spec/shipping_spec.rb"}read_file`, walked on `shipping-rates-rb x
         # ternary-bonsai` 1787111689. `name(args)` costs the same handful of punctuation tokens and
@@ -1315,25 +1265,35 @@ def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "", *
     live = _live_obligations(messages)
     keep = [True] * len(messages)
     dropped = 0
-    removed = []
-    note = None
+    def with_gap_notes():
+        # Every note occupies the precise contiguous removed span. In particular,
+        # a retained user instruction can never migrate between an earlier failure
+        # and a later result merely because both were folded into one front note.
+        out, gap = [], []
+        for retained, message in zip(keep, messages):
+            if retained:
+                if gap:
+                    out.append(_compacted_note(gap, len(gap), msg_budget))
+                    gap = []
+                out.append(message)
+            else:
+                gap.append(message)
+        if gap:
+            out.append(_compacted_note(gap, len(gap), msg_budget))
+        return out
+
     for i, m in enumerate(messages):
-        kept = [m for i, m in enumerate(messages) if keep[i]]
-        if _msgs_tokens(kept + ([note] if note else [])) <= msg_budget:
+        current = with_gap_notes()
+        if _msgs_tokens(current) <= msg_budget:
             break
         if prot[i]:
             continue
         if (sacrifice_budget is not None and live[i] & (_LIVE_TAIL | _LIVE_PAIR)
-                and _msgs_tokens(kept + ([note] if note else [])) <= sacrifice_budget):
-            continue  # preferred headroom cannot discard current work that fits
+                and _msgs_tokens(current) <= sacrifice_budget):
+            continue
         keep[i] = False
         dropped += 1
-        removed.append(m)
-        note = _compacted_note(removed, dropped, msg_budget)
-    kept = [m for i, m in enumerate(messages) if keep[i]]
-    if dropped:
-        kept = _insert_after_leading_system(kept, note)
-    return kept, dropped
+    return with_gap_notes(), dropped
 
 
 def _modified_files(msgs: list[dict]) -> list[str]:
@@ -1368,185 +1328,100 @@ def _note_digest_budget(dropped_tokens: int, msg_budget: int) -> int:
     return min(of_budget, of_dropped)
 
 
-_REPEAT_SUFFIX = "   [identical result, {n} times in a row]"
-
-
-# The longest repeating unit worth looking for. Period 1 is a plain run; period 2 is the
-# assistant/tool loop that made this necessary; beyond a few lines a "cycle" is not a cycle any
-# reader would recognise and the run-folding below is the honest answer.
-_MAX_CYCLE = 4
-
-
-def _fold_cycles(texts: list[str]) -> list[str] | None:
-    """One copy of a repeating cycle plus its count, or None when there is no cycle worth folding.
-
-    Order-preserving by construction: the cycle is emitted in the order it occurred, and anything
-    outside a cycle is left exactly where it was."""
-    if len(texts) < 4:
-        return None
-    out: list[str] = []
-    i = 0
-    folded_any = False
-    while i < len(texts):
-        best_p, best_n = 0, 0
-        for p in range(1, _MAX_CYCLE + 1):
-            if i + 2 * p > len(texts):
-                break
-            n = 1
-            while texts[i + n * p:i + (n + 1) * p] == texts[i:i + p]:
-                n += 1
-            if n >= 2 and n * p > best_n * best_p:
-                best_p, best_n = p, n
-        if best_n >= 2:
-            folded_any = True
-            out.extend(texts[i:i + best_p])
-            out[-1] += f"   [the {best_p} line(s) above repeated {best_n} times]" if best_p > 1 \
-                else f"   [identical, {best_n} times]"
-            i += best_p * best_n
-        else:
-            out.append(texts[i])
-            i += 1
-    return out if folded_any else None
-
-
-def _collapse_repeats(digests: list[tuple[int, str]]) -> list[str]:
-    """A repeating CYCLE of digests folded into one copy of the cycle, with the count stated.
-
-    A run of one identical line is the period-1 case and is what this always did. A loop of tool
-    calls is period 2 — `assistant, tool, assistant, tool` — so consecutive-only folding saw no
-    repeat at all: 136 turns of a shell loop produced 136 lines of two distinct texts and a note
-    that was over budget on its own. Folding a whole cycle keeps ORDER, which is information and
-    which a global dedupe would destroy (a a b a a is not a×4, b).
-
-
-    Repeating a byte-identical result N times is not a summary of anything — it costs N times the
-    context to say what one copy plus a number says exactly. This is lossless: nothing is reworded,
-    nothing is cut, and the count is on the line.
-
-    Measured on run 20260801T225200 (zaya1). One compaction note ran to 22,149 characters across 117
-    bullets of which **25 were distinct** — the single line
-
-        {"error":"route_not_found","message":"Route not found: /info", ...}
-
-    appeared **89 times**, and repeated bullets were 42% of the note's characters. The model had
-    emitted the same failing curl in a loop; cria then replayed the identical failure back at it 89
-    times."""
-    texts = [d for _, d in digests]
-    folded = _fold_cycles(texts)
-    if folded is not None:
-        return folded
-    out: list[str] = []
-    run_text, run_n = None, 0
-    for _, d in digests:
-        if d == run_text:
-            run_n += 1
-            continue
-        if run_text is not None:
-            out.append(run_text + (_REPEAT_SUFFIX.format(n=run_n) if run_n > 1 else ""))
-        run_text, run_n = d, 1
-    if run_text is not None:
-        out.append(run_text + (_REPEAT_SUFFIX.format(n=run_n) if run_n > 1 else ""))
-    return out
-
-
 def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> dict:
-    """The synthesized stand-in for the dropped turns: a content_reduce()d digest of what each turn
-    CONTAINED (so a dropped test-failure/error output survives as a summary, not just a filename) plus
-    the full list of files those turns modified. Digests are lossless-first (content_reduce, never a
-    blind slice). Digest payload is allotted a share of the budget and of what was dropped;
-    the drop loops measure the complete note, including stubs, labels and modified paths,
-    before deciding whether the resulting request fits."""
-    parts = [f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."]
+    """Retain complete turns and uniquely paired calls and results, or disclose omission.
 
-    # Per-turn digests. The payload allowance is separate from measured complete framing
-    # (share of the budget AND share of what was dropped); split it across the dropped turns, each
-    # with a per-turn floor so a digest stays usable — but never a floor larger than the whole bound.
-    note_budget = _note_digest_budget(_msgs_tokens(dropped_msgs), msg_budget)
-    # BREADTH FIRST. The share is what each turn may take on the FIRST pass, and one turn may not
-    # spend another's. `digest_reduce` is lossless-first and returns code and prose UNCHANGED — by
-    # design, after the word-stripper inverted a negation — so a single dropped `write_file` payload
-    # asked for `per_turn` tokens hands back three thousand, and the budget check below then spends
-    # the whole note on it. Measured over the capture corpus: 6,725 turns across 965 prompts left
-    # with no digest at all, 219 prompts dropping ten or more, while the note carried one verbatim
-    # test file. A turn that cannot be summarized inside its own share is worth one line saying what
-    # it was; that is what "could not be summarized" was standing in for, and a line is affordable
-    # for every turn at once.
-    per_turn = min(max(_MIN_PER_TURN_TOKENS, note_budget // max(dropped, 1)), note_budget)
-    digests: list[tuple[int, str]] = []
+    No synchronous semantic selector can know which lines are useful. Never select a
+    result without its uniquely ID-matched call.
+    """
+    # IDs are correlation, not inferred proximity: calls may be issued in parallel and
+    # their results can arrive out of order. Ambiguous or missing IDs cannot be paired.
+    calls, results = {}, {}
+    for idx, message in enumerate(dropped_msgs):
+        for call in message.get("tool_calls") or []:
+            if call.get("id"):
+                calls.setdefault(call["id"], []).append((idx, call))
+        if message.get("role") == "tool" and message.get("tool_call_id"):
+            results.setdefault(message["tool_call_id"], []).append(idx)
+
+    budget = min(max(0, msg_budget), _note_digest_budget(_msgs_tokens(dropped_msgs), msg_budget))
+    entries = [[] for _ in dropped_msgs]
+    selected_ids = set()
     spent = 0
-    omitted = 0
-    stubbed = False
-    # Newest-dropped first so a tight budget spends on the turns adjacent to the surviving active span
-    # (most relevant to the current step); reassembled into chronological order for reading.
-    texts = [_msg_text(m).strip() for m in dropped_msgs]
-    stub_reserves = _stub_reserves(dropped_msgs, texts)
-    for idx in range(len(dropped_msgs) - 1, -1, -1):
-        text = texts[idx]
-        if not text:
-            continue  # nothing to summarize (e.g. a bare tool-call frame) — not a loss to disclose
-        if spent >= note_budget:
-            omitted += 1
-            continue
-        # digest_reduce, NOT content_reduce: a dropped turn can be the TASK or cria's own
-        # instruction, and the prose tier deletes function words. See digest_reduce.
-        digest = digest_reduce(text, _sniff_content_type(text), per_turn).strip()
-        # Keep the digest only if it FITS the remaining note budget. content_reduce is lossless-first:
-        # asked for `per_turn` it returns the best it can honestly do, which for ordinary prose is the
-        # text nearly unchanged — so a cap it merely aims at is not a cap. The budget check is the
-        # enforcement, and it is what makes "the note costs less than what it replaces" true rather
-        # than aspirational. A turn that won't fit is disclosed as omitted, never re-embedded whole
-        # (its file, if it wrote one, still survives via the file list below).
-        # RESERVE A LINE FOR EVERY TURN STILL TO COME. A digest may spend what is left AFTER that
-        # reservation, so one big turn can still be summarized in full when there is room, and can
-        # never eat the note. The old rule was first-come-first-served against the whole budget, and
-        # `digest_reduce` returns code and prose UNCHANGED by design — so one dropped `write_file`
-        # payload took the lot and every older turn was counted away.
-        reserved = stub_reserves[idx]
-        allowed = note_budget - spent - reserved
-        cost = est_tokens(digest)
-        if digest and cost <= allowed:
-            digests.append((idx, digest))
-            spent += cost
-            continue
-        # It did not fit its own share. Say WHAT the turn was rather than counting it away: the role
-        # and the first line are one line's worth and they are what a reader needs to know a turn
-        # existed and what it was about (#5 — an undisclosed drop and a counted drop lose the same
-        # bytes, and only one of them tells the coder what it lost).
-        stub = _turn_stub(dropped_msgs[idx], text)
-        stubbed = stubbed or bool(stub)
-        if stub and spent + est_tokens(stub) <= note_budget:
-            digests.append((idx, stub))
-            spent += est_tokens(stub)
-        else:
-            omitted += 1
-    if digests:
-        digests.sort(key=lambda p: p[0])  # chronological
-        parts.append("Summary of what those turns contained:")
-        parts.extend("• " + d for d in _collapse_repeats(digests))
-        if stubbed:
-            # A stub is a DESCRIPTION of a turn, never a piece of it — say which lines those are,
-            # once, so a reader never mistakes one for a quote (#5b).
-            parts.append(prompts.load("compacted_turn_stub").strip())
-    if omitted:
-        parts.append(f"(+{omitted} further compacted turn(s) whose content could not be summarized here.)")
+    # Real user instructions outrank producer-held selections; other internal
+    # evidence is neither a user instruction nor allowed to crowd those out.
+    def user_priority(message):
+        if isinstance(message.get(bodykeys.HISTORY_SELECTION), bodykeys.HistorySelectionOrigin):
+            return 1
+        if message.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INTERNAL_EVIDENCE:
+            return 2
+        return 0
 
+    for priority in range(3):
+        for idx in range(len(dropped_msgs) - 1, -1, -1):
+            message = dropped_msgs[idx]
+            if message.get("role") != "user" or user_priority(message) != priority:
+                continue
+            content = _msg_text(message)
+            if content:
+                role = "user" if priority == 0 else "historical evidence"
+                rendered = prompts.render("compacted_history_turn", role=role, content=content)
+                if spent + est_tokens(rendered) <= budget:
+                    entries[idx].append((0, rendered))
+                    spent += est_tokens(rendered)
+    for idx in range(len(dropped_msgs) - 1, -1, -1):
+        message = dropped_msgs[idx]
+        if message.get("role") == "tool":
+            cid = message.get("tool_call_id")
+            if not cid or len(calls.get(cid, [])) != 1 or len(results.get(cid, [])) != 1:
+                continue
+            call_idx, call = calls[cid][0]
+            if call_idx >= idx:
+                continue
+            content = message.get("content")
+            payload = payloadboundary.payload_of(message, content) if isinstance(content, str) else None
+            if payload is None:
+                continue
+            call_text = prompts.render("compacted_history_call", id=cid, call=_msg_text({"tool_calls": [call]}))
+            result_text = prompts.render("compacted_history_result", id=cid, result=payload)
+            cost = est_tokens(call_text) + est_tokens(result_text)
+            if spent + cost <= budget:
+                order = next(n for n, original in enumerate(dropped_msgs[call_idx]["tool_calls"]) if original is call)
+                entries[call_idx].append((order, call_text))
+                entries[idx].append((0, result_text))
+                selected_ids.add(cid)
+                spent += cost
+        elif message.get("role") != "user" and not message.get("tool_calls"):
+            content = _msg_text(message)
+            if content:
+                rendered = prompts.render("compacted_history_turn", role=message.get("role") or "turn", content=content)
+                if spent + est_tokens(rendered) <= budget:
+                    entries[idx].append((0, rendered))
+                    spent += est_tokens(rendered)
+
+    omitted = sum(1 for idx, message in enumerate(dropped_msgs)
+                  if (not entries[idx] and (_msg_text(message) or message.get("role") == "tool"))
+                  or (message.get("tool_calls") and (message.get("content") or any(
+                      call.get("id") not in selected_ids for call in message["tool_calls"])))
+                  or (message.get("role") == "tool" and entries[idx]
+                      and isinstance(message.get("content"), str)
+                      and payloadboundary.payload_of(message, message["content"]) != message["content"]))
+    parts = [f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."]
+    if any(entries):
+        parts.append(prompts.load("compacted_history_selected").strip())
+        in_gap = False
+        for idx, texts in enumerate(entries):
+            if texts:
+                parts.extend(value for _, value in sorted(texts))
+                in_gap = False
+            elif (_msg_text(dropped_msgs[idx]) or dropped_msgs[idx].get("role") == "tool") and not in_gap:
+                parts.append(prompts.load("compacted_history_gap").strip())
+                in_gap = True
+    if omitted:
+        parts.append(prompts.render("compacted_history_omitted", count=omitted).strip())
     files = _modified_files(dropped_msgs)
     if files:
         parts.append(prompts.render("compacted_modified_paths", files=", ".join(files)))
-    # …AND SAY IT EVEN WHEN THE DROPPED TURNS ONLY READ. The line above fires only when the dropped
-    # span itself contains a WRITE, but staleness does not depend on that: a turn that merely READ a
-    # file is summarised here with that file's contents, and any LATER turn can have rewritten it.
-    #
-    # Walked on `shipping-rates-rb x ternary-bonsai` 1787111689. Four times in the run's last
-    # stretch this note carried the STARTING `rates.rb` — no express zone, no `zone_for`, and the
-    # `>` the model had fixed in its first edit — under the heading "Summary of what those turns
-    # contained", at the top of the prompt. Three of the four had no caveat at all, because those
-    # dropped spans held only reads. The model was chasing a stale-state bug at the time.
-    #
-    # Past observations need dated provenance, even after read-only turns. They do not prove
-    # a later mutation: compaction itself never establishes that the workspace changed.
-    if digests:
-        parts.append(prompts.load("compacted_history_provenance").strip())
     return {"role": "user", "content": "\n".join(parts),
             bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE}
 

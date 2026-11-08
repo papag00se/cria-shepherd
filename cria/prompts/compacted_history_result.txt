@@ -1,0 +1,2 @@
+Earlier result for call {{ID}}:
+{{RESULT}}

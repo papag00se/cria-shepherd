@@ -1,1 +1,1 @@
-Use the evidence already available rather than repeating a completed inspection; if a needed fact is missing or no longer current, inspect it.
+Use existing evidence; inspect missing or stale facts.

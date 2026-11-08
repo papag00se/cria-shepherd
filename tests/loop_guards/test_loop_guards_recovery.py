@@ -27,7 +27,7 @@ def last_user(chat):
 
 @pytest.mark.parametrize("verdict,has,lacks", [
     (dict(hits=8, reasoning_tokens=900, arm="second_guessing"), ["hit 8 second-guessing", "~900"], []),
-    (dict(hits=0, reasoning_tokens=4096, arm="length"), ["about 4096 tokens"], ["second-guessing"]),
+    (dict(hits=0, reasoning_tokens=4096, arm="length"), ["about 4096 reasoning tokens"], ["second-guessing"]),
     # cycle 4 (nemotron-elastic): four aborts at 0.7-2.5 markers/1k were all told "you hit N phrases"
     (dict(dead_stream=True, chunks=400), ["produced nothing"], ["second-guessing", "repeating"]),
     (dict(degenerate=True, chars=2048), ["repeating over and over"], ["second-guessing"]),
@@ -43,7 +43,7 @@ def test_each_abort_arm_is_told_what_actually_happened(verdict, has, lacks):
     assert all(s in notice for s in has) and not any(s in notice for s in lacks)
     assert "cria" not in notice.lower() and "continue from what you already know" not in notice
     assert "do not revisit" not in notice.lower()
-    assert "survive" in notice or verdict.get("window_exhausted")
+    assert "survive" in notice or "reasoning is unavailable" in notice or verdict.get("window_exhausted")
     assert chat.bodies[0]["messages"][0] == {"role": "user", "content": "task"}
     assert body["messages"] == [{"role": "user", "content": "task"}]          # the caller's body is untouched
     assert out["choices"][0]["message"]["content"] == "next real answer"

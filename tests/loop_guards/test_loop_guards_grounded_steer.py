@@ -118,4 +118,4 @@ def test_the_aborted_turns_notice_swaps_only_the_clause_and_only_when_grounded(a
     assert "smallest grounded step is an edit" in grounded and f"{ABS}:203" in grounded
     for default in (sent(session(msgs), read(1, 3)), sent(None, msgs)):
         assert "smallest grounded step is an edit" not in default and "{{" not in default
-        assert "Use the evidence already available" in default
+        assert "Use existing evidence; inspect missing or stale facts." in default

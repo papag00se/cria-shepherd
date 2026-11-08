@@ -47,6 +47,28 @@ def test_compaction_writer_receives_prior_handoff_as_evidence_at_the_wire():
     assert result[:len(history)] == history and "Inspect the source." in result[-1]["content"]
 
 
+def test_rolling_selector_preserves_call_identity_and_source_status():
+    from cria import bodykeys
+    def reasoner(body, rlog):
+        content = json.dumps({"c": [5]}) if rlog.phase == "history-selection" else ""
+        return json.dumps({"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}).encode()
+    ctx = LoopContext(planner=None, coder_chat=None, reasoner_chat=reasoner, runs_dir="")
+    driver = Loop(replace(ctx, reasoner_role=Role(name="reasoner", backend="local")))
+    driver._compaction_room = lambda *a, **kw: (100, None)
+    history = ([{"role": "user", "content": "Fix tests."}]
+        + [{"role": "assistant", "content": "filler " * 300} for _ in range(30)]
+        + [{"role": "assistant", "tool_calls": [{"id": "c", "type": "function", "function": {"name": "exec_command", "arguments": '{"cmd":"npm test"}'}}]},
+           {"role": "tool", "tool_call_id": "c", "content": "Chunk ID: aa\nWall time: 1 seconds\nProcess exited with code 1\nOutput:\nSyntaxError: broken\n"},
+           {"role": "user", "content": "Now run the integration tests."}])
+    result = driver._self_compact(history, synthetic(), 1, Rlog(), force=True, pinned_task="Fix tests.")
+    selected = [m for m in result if isinstance(m.get(bodykeys.HISTORY_SELECTION), bodykeys.HistorySelectionOrigin)]
+    assert len(selected) == 1
+    assert "call ID c" in selected[0]["content"] and "Process exited with code 1" in selected[0]["content"]
+    assert "SyntaxError: broken" in selected[0]["content"] and "npm test" in selected[0]["content"]
+    assert result.index(selected[0]) < result.index(history[-1])
+    assert [m for m in result if m not in selected] == history
+
+
 def test_rolling_preserves_a_measured_red_check_without_an_unjudged_completion_claim():
     """The exact checker line and dated observation survive when no topic judge is available."""
     def reasoner(body, rlog):

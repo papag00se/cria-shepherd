@@ -1112,6 +1112,12 @@ class Upstream:
             # Protected read tails retain their original order and paired result position.
             if action_origin is not None:
                 msgs = compactionpacket.place_current_action(msgs, action_origin)
+            # Only the coder's final presentation changes; all internal consumers retain
+            # the original user message, including workspace extraction and refeed.
+            phase = getattr(rlog, "phase", None)
+            if self._context_fixes and isinstance(phase, str) and phase.startswith("coder-"):
+                from . import environmentmarkdown
+                msgs = environmentmarkdown.wire_messages(msgs)
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -1139,6 +1145,7 @@ class Upstream:
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
                                              bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE, bodykeys.ACTION_ORIGIN,
+                                             bodykeys.HISTORY_SELECTION,
                                              bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED,
                                              *bodykeys.LEGACY_MESSAGE_KEYS)}
                                if isinstance(m, dict) else m for m in out["messages"]]

@@ -204,6 +204,26 @@ def test_tool_descriptions_reach_model_through_real_http(wire, responses):
     assert "Args:" not in json.dumps(sent["messages"])
 
 
+def test_responses_environment_reaches_coder_formatted_through_http(tmp_path):
+    xml = '<environment_context><cwd>/work</cwd><filesystem><permission_profile type="managed"><file_system type="restricted"><entry access="read"><path>/</path></entry><entry access="write"><path>/work</path></entry></file_system></permission_profile></filesystem></environment_context>'
+    body = resp_body("Fix the project and add tests __TOOL__", tools=[{"type": "function", "name": "exec_command", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}])
+    body["input"].insert(0, {"type": "message", "role": "user", "content": [{"type": "input_text", "text": xml}]})
+    w = Wire(tmp_path, routing=lambda url: RoutingConfig(
+        backends={"local": Backend("local")},
+        roles={"classifier": Role("classifier", "local"), "coder": Role("coder", "local")},
+        failover={"coding": ("coder",)}, engagement_bias="task", engagement_level=5))
+    try:
+        status, _ = w.post("/v1/responses", body)
+        assert status == 200
+        messages = w.fake.chats[-1][1]["messages"]
+        env = next(m["content"] for m in messages if isinstance(m.get("content"), str) and m["content"].startswith("# Environment context"))
+        assert '`entry` `access="read"`:\n        - `path`: `"/"`' in env
+        assert '`entry` `access="write"`:\n        - `path`: `"/work"`' in env
+        assert any(m.get("content") == "Fix the project and add tests __TOOL__" for m in messages)
+    finally:
+        w.close()
+
+
 MODES = ["chat-buffered", "chat-stream", "responses-buffered", "responses-stream"]
 
 

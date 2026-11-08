@@ -1,0 +1,2 @@
+Earlier {{ROLE}} turn:
+{{CONTENT}}

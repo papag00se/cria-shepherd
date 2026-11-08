@@ -1,0 +1,11 @@
+# Environment context
+- cwd: {{CWD}}
+- shell: {{SHELL}}
+- current_date: {{DATE}}
+- timezone: {{TIMEZONE}}
+- filesystem workspace_roots:
+{{ROOTS}}
+- permission_profile type: {{PROFILE}}
+- file_system type: {{FILESYSTEM}}
+- file_system entries (access, path):
+{{ENTRIES}}

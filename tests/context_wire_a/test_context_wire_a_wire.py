@@ -35,6 +35,21 @@ def text(msgs):
     return "\n".join(str(m.get("content") or "") for m in msgs)
 
 
+def test_floor_never_moves_a_later_result_before_a_surviving_user_instruction():
+    from cria import selfcompact
+    failure = selfcompact.internal_evidence_message("EARLY CHECK FAILED")
+    passed = selfcompact.internal_evidence_message("LATER CHECK PASSED")
+    messages = [{"role": "user", "content": "Fix the test."}, failure,
+                {"role": "assistant", "content": "filler " * 3000},
+                {"role": "user", "content": "NOW FIX THE FAILURE"}, passed,
+                {"role": "assistant", "content": "more filler " * 3000},
+                {"role": "user", "content": "Continue."}]
+    visible = text(prep(messages, window=4096, safety=1.0, max_tokens=256)["messages"])
+    assert "NOW FIX THE FAILURE" in visible
+    assert "EARLY CHECK FAILED" in visible and "LATER CHECK PASSED" in visible
+    assert visible.index("EARLY CHECK FAILED") < visible.index("NOW FIX THE FAILURE") < visible.index("LATER CHECK PASSED")
+
+
 def test_advertised_tool_descriptions_and_workflow_reach_the_final_wire():
     from cria import toolmenu, writeproxy
     shell = {"type": "function", "function": {"name": "exec_command", "description": "Native executor.",
@@ -92,8 +107,27 @@ def test_the_complete_labelled_note_fits_the_final_wire_for_the_whole_session_pa
         rlog = Rlog(session)
         wire = prep(msgs, window=1521, rlog=rlog, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})["messages"]
         assert cf.est_total(wire, None) <= 1520 and not rlog.named("context.floor")[-1]["over_budget"]
-        assert prompts.load("compacted_turn_stub").strip() in text(wire)
+        assert "omitted from this note" in text(wire) and "›" not in text(wire)
         assert msgs[-1]["content"] in text(wire)
+
+
+def test_final_wire_carries_whole_historical_result_with_its_call_when_it_fits():
+    call = {"id": "node", "type": "function", "function": {"name": "exec_command", "arguments": '{"cmd":"node -e broken"}'}}
+    result = ("Chunk ID: a07aca\nWall time: 4.6262 seconds\nProcess exited with code 1\n"
+              "Original token count: 473\nOutput:\n"
+              "/usr/bin/bash: line 1: bad substitution\nSyntaxError: Unexpected token ';'\n")
+    msgs = ([{"role": "user", "content": "Original task"}]
+            + [{"role": "assistant", "content": "older " * 1200} for _ in range(6)]
+            + [{"role": "assistant", "content": "", "tool_calls": [call]},
+               {"role": "tool", "tool_call_id": "node", "content": result}]
+            + [{"role": "assistant", "content": "newer " * 1200} for _ in range(4)]
+            + [{"role": "user", "content": "Later instruction"}])
+    wire = prep(msgs, window=3000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})["messages"]
+    sent = text(wire)
+    assert "Original task" in sent and "Later instruction" in sent
+    assert 'node -e broken' in sent and result in sent
+    assert sent.index('node -e broken') < sent.index(result)
+    assert '›' not in sent
 
 
 def test_an_input_that_cannot_fit_the_known_window_is_refused_not_sent():

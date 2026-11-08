@@ -1,3 +1,1 @@
-[REASONING GUARD] Your last turn was stopped: it spent about {{TOKENS}} tokens reasoning and had not produced a tool call or an answer, so it was cut here — on this side of the model — before it ran out of room on its own.
-
-None of that reasoning survived, but the task and tool evidence above did. Continue from that evidence and take the smallest grounded next step as a single tool call. {{RUMINATION_NEXT_STEP}} If the missing fact concerns an external library or service, obtain it with a tool before proposing a change.
+[REASONING GUARD] Your last turn stopped after about {{TOKENS}} reasoning tokens without a tool call or answer. That reasoning is unavailable. Continue from the task and tool evidence with one grounded tool call. {{RUMINATION_NEXT_STEP}} Check external library or service facts before proposing a change.

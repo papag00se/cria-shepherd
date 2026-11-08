@@ -1,0 +1,3 @@
+Selected historical evidence for call ID {{ID}}, issuing call {{CALL}}; result lines not shown were omitted. This is a past observation, not a current file state.
+Original selected result lines:
+{{RESULT}}

@@ -7,6 +7,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
+from cria import contextfloor
 from cria.config import Backend, Role, RoutingConfig
 from test_server_config_http import FakeUpstream, Wire, chat_body, no_installed_opener, request  # noqa: F401
 
@@ -49,8 +50,12 @@ def test_a_server_reported_context_overflow_is_re_fitted_once_and_the_smaller_bo
     finally:
         w.close()
     (_, first), (_, second) = w.fake.chats
-    assert json.loads(raw)["choices"][0]["message"]["content"] == "Hi" and len(second["messages"]) < len(first["messages"])
-    assert second["messages"][-1]["content"] == "latest question" and "earlier turn(s) were compacted to fit the context window" in second["messages"][0]["content"]
+    assert json.loads(raw)["choices"][0]["message"]["content"] == "Hi"
+    assert contextfloor.est_total(second["messages"], second.get("tools")) < contextfloor.est_total(first["messages"], first.get("tools"))
+    assert second["messages"][0]["content"] == history[0]["content"]
+    assert second["messages"][-1]["content"] == "latest question"
+    assert any("earlier turn(s) were compacted to fit the context window" in str(m.get("content") or "")
+               for m in second["messages"][1:-1])
     assert [e["real"] for e in w.events() if e["kind"] == "context.refit"] == [60000]
     assert sorted(p.name for p in (tmp_path / "calls" / "sid-1").glob("000?-proxy.json")) == ["0001-proxy.json", "0002-proxy.json"]
 

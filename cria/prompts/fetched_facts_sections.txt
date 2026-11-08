@@ -91,7 +91,7 @@ descriptions = this page is a catalogue — it names where each API's descriptio
 # and re-reading one is a single call; what compaction destroys is the knowledge that it looked.
 # Supported read extraction is not an exhaustive detector of conversation text (opaque shell output may
 # still contain it). A missing match, including the wire's downgrade after restoration is shed, is unknown.
-read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — this is the record that you looked, not the text itself. An entry with availability not established does not say its text is absent from the conversation.\n{{FILES}}{{MORE}}
+read_header = Files read earlier. This list does not establish whether their contents are in the current conversation:\n{{FILES}}{{MORE}}
 read_out_of_view =  — availability of its read text is not established here
 read_more = \n- …and {{COUNT}} more file(s) you have read this session.
 # The closing sentence of the durable anchor. It is about FETCHES, so it may only be said when the

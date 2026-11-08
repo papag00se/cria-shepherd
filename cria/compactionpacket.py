@@ -8,11 +8,53 @@ from . import bodykeys, prompts, resultnotes
 
 
 @dataclass(frozen=True)
+class ToolEvidence:
+    """Producer-held original call and its uniquely matched tool payload."""
+    call_id: str
+    name: str
+    arguments: str
+    result: str
+
+
+def tool_evidence(messages: list[dict]) -> tuple[ToolEvidence, ...]:
+    calls, results = {}, {}
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        for call in (message.get("tool_calls") or []) if message.get("role") == "assistant" else ():
+            if not isinstance(call, dict):
+                continue
+            cid = call.get("id")
+            if isinstance(cid, str) and cid:
+                calls.setdefault(cid, []).append((index, call))
+        cid = message.get("tool_call_id")
+        if message.get("role") == "tool" and isinstance(cid, str) and cid:
+            results.setdefault(cid, []).append((index, message))
+    evidence = []
+    for cid, occurrences in results.items():
+        if len(occurrences) != 1 or len(calls.get(cid, ())) != 1:
+            continue
+        index, result = occurrences[0]
+        call_index, call = calls[cid][0]
+        content = result.get("content")
+        payload = resultnotes.payload_of(result, content) if isinstance(content, str) else None
+        fn = call.get("function")
+        if not isinstance(fn, dict):
+            continue
+        name, args = fn.get("name"), fn.get("arguments")
+        if call_index < index and isinstance(name, str) and isinstance(args, str) and payload is not None:
+            evidence.append((index, ToolEvidence(cid, name, args, payload)))
+    return tuple(item for _, item in sorted(evidence, key=lambda item: item[0]))
+
+
+@dataclass(frozen=True)
 class Packet:
     task: str
     blocks: tuple[str, ...]
     action: str = ""
     latest_user: str = ""
+    sources: tuple[ToolEvidence, ...] = ()
+    selected: tuple[str, ...] = ()
 
     def render(self) -> str:
         labels = prompts.load_map("compaction_evidence_packet")
@@ -118,5 +160,7 @@ def blocks(messages: list[dict], *, prior_handoffs: tuple[str, ...] = (),
             content += ("\n" if content else "") + json.dumps(calls, ensure_ascii=False)
         if role == "tool" and message.get("tool_call_id"):
             role = f"tool (call id {message['tool_call_id']})"
+        elif role == "user" and message.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INTERNAL_EVIDENCE:
+            role = "producer-owned historical evidence"
         out.append(prompts.fill(labels["entry"], role=role, content=content))
     return tuple(out)

@@ -3930,13 +3930,32 @@ class Loop:
             return msgs
         observed = _briefing_gate_ground_truth(sess).strip()
         additions = [selfcompact.internal_evidence_message(observed)] if observed else []
+        from . import historyselection
+        selections = historyselection.select(compactionpacket.tool_evidence(msgs), task, chat_fn, role, rlog)
+        selected_by_id = {selection.source.call_id: selection for selection in selections}
+        in_flight, pending, ordered = set(), [], []
+        for message in msgs:
+            ordered.append(message)
+            if message.get("role") == "assistant":
+                in_flight.update(call.get("id") for call in message.get("tool_calls") or [] if call.get("id"))
+            elif message.get("role") == "tool":
+                cid = message.get("tool_call_id")
+                in_flight.discard(cid)
+                if cid in selected_by_id:
+                    selection = selected_by_id[cid]
+                    pending.append({**selfcompact.internal_evidence_message(selection.render()),
+                                    bodykeys.HISTORY_SELECTION: bodykeys.HistorySelectionOrigin()})
+            if not in_flight and pending:
+                ordered.extend(pending)
+                pending = []
+        additions.extend(pending)
         if generated:
             labels = prompts.load_map("compaction_evidence_packet")
             additions.append({**selfcompact.internal_evidence_message(prompts.fill(labels["action"], action=generated[-1])),
                               bodykeys.ACTION_ORIGIN: bodykeys.ActionOrigin()})
         rlog.emit("context.self_compact", reshape="evidence-preserved", step=idx, before=len(msgs),
-                  after=len(msgs) + len(additions), boundary=force)
-        return [*msgs, *additions]
+                  after=len(ordered) + len(additions), boundary=force)
+        return [*ordered, *additions]
 
     def _verify_after_probe(self, sess: PlanSession, key: str, body: dict, rlog, *, rewritten: bool = False) -> dict:
         """The ground-truth probe cria emitted last turn has run — read its result and
@@ -6069,7 +6088,11 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
                     out.append({"role": "user", "content": selfcompact.TASK_MARKER + "\n" +
                                 prompts.fill(labels["task"], task=packet.task)})
                 out.append({**m, "content": content})
-                out.extend(selfcompact.internal_evidence_message(block) for block in packet.blocks)
+                for block in packet.blocks:
+                    evidence = selfcompact.internal_evidence_message(block)
+                    if block in getattr(packet, "selected", ()):
+                        evidence[bodykeys.HISTORY_SELECTION] = bodykeys.HistorySelectionOrigin()
+                    out.append(evidence)
                 if packet.action:
                     out.append({**selfcompact.internal_evidence_message(
                         prompts.fill(labels["action"], action=packet.action)),

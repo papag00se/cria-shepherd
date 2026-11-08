@@ -48,7 +48,7 @@ def test_the_anchor_states_each_pages_status_where_its_body_is_and_how_each_file
     assert text.startswith("⟦ctx:facts⟧ PAGES YOU HAVE ALREADY FETCHED")
     assert "- https://api.x/openapi.json → HTTP 200; endpoints: /h" in text and "https://x/catalog.json" in text           # a catalogue names where the specs live
     assert "Its body is NOT in this conversation" in text.split(PAGE)[1].split("\n\n")[0]
-    assert text.index("SAME-HOST MISMATCH FACT") < text.index("FILES YOU HAVE ALREADY READ")
+    assert text.index("SAME-HOST MISMATCH FACT") < text.index("Files read earlier.")
     lines = text.splitlines()
     assert "- /w/a.py (3 lines)" in lines                                                                                  # its result is in the window: no note
     assert "- /w/b.py (lines 1-2 only — 2 lines) — availability of its read text is not established here" in lines
@@ -70,4 +70,4 @@ def test_the_not_in_the_conversation_scope_is_added_only_when_a_page_body_really
 def test_with_no_fetch_and_no_read_there_is_no_anchor_and_a_ledger_alone_carries_no_fetch_tail():
     assert render(facts()) is None
     only_reads = render(facts(ledger=(("/w/a.py", (6, "3 lines")),)))
-    assert "FILES YOU HAVE ALREADY READ" in only_reads and "PAGES YOU HAVE" not in only_reads and "code against THOSE" not in only_reads
+    assert "Files read earlier." in only_reads and "PAGES YOU HAVE" not in only_reads and "code against THOSE" not in only_reads

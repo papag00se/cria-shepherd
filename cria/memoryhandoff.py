@@ -189,9 +189,14 @@ def _packet(body: dict, facts: SessionFacts) -> compactionpacket.Packet:
     # Session-owned checker evidence may no longer exist in the harness's transcript. It is a
     # dated observation, not model prose, and must travel even after the harness replaces history.
     checks = facts.checks or selfcompact.checks_input(facts.gate_flag, facts.gate_age)
+    carries_prior = any(m.get("role") == "user" and m.get("content") in facts.prior_handoffs for m in history)
+    prior_sources = facts.prior_packet.sources if facts.prior_packet is not None and carries_prior else ()
+    current_sources = compactionpacket.tool_evidence(history)
+    sources = tuple(dict.fromkeys((*prior_sources, *current_sources)))
     return compactionpacket.Packet(facts.original_task, (*history_blocks, *((checks,) if checks else ())),
         latest_user=compactionpacket.latest_user(history, prior_handoffs=facts.prior_handoffs,
-                                                  prior_packet=facts.prior_packet))
+                                                  prior_packet=facts.prior_packet), sources=sources,
+        selected=facts.prior_packet.selected if facts.prior_packet is not None and carries_prior else ())
 
 
 def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, selected: bool) -> dict:
@@ -240,6 +245,29 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
         return compactionaction.generate(chat_fn, role, task, evidence, prior, rlog, latest_user=packet.latest_user)
 
     action = compactionaction.next_action(packet.task, packet.blocks, author, services.topic_judge, rlog)
+    from . import historyselection
+    selections = historyselection.select(packet.sources, packet.task, chat_fn, role, rlog)
+    if selections:
+        # Never replace useful prior excerpts with a narrower later answer. An
+        # identical producer-owned selection is carried once across handoffs.
+        selected = list(packet.selected)
+        blocks = list(packet.blocks)
+        labels = prompts.load_map("compaction_evidence_packet")
+        for selection in selections:
+            text = selection.render()
+            if text in selected:
+                continue
+            source = selection.source
+            original = prompts.fill(labels["entry"], role=f"tool (call id {source.call_id})", content=source.result)
+            try:
+                position = blocks.index(original) + 1
+                while position < len(blocks) and blocks[position] in selected:
+                    position += 1
+            except ValueError:
+                position = len(blocks)
+            blocks.insert(position, text)
+            selected.append(text)
+        packet = replace(packet, blocks=tuple(blocks), selected=tuple(selected))
     packet = replace(packet, action=action)
     text = packet.render()
     choices = [dict(ch) for ch in completion.get("choices") or []]

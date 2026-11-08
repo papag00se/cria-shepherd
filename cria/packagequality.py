@@ -48,7 +48,11 @@ NOTES: dict[str, dict[str, str]] = {}  # session -> {tool_call_id: note text}, r
 
 
 def _key(registry: str, package: str) -> tuple[str, str]:
-    return registry, package.casefold()
+    if registry == "pypi":
+        package = re.sub(r"[-_.]+", "-", package).casefold()
+    elif registry in ("nuget", "packagist"):
+        package = package.casefold()
+    return registry, package
 
 
 def _bounded(store: dict) -> None:
@@ -311,7 +315,14 @@ def alternatives(registry: str, package: str, fetch, run) -> list[str]:
     own search (and the ecosystem's installed tool) reports for the name."""
     names = [v for v in _number_variants(package) if registries.lookup(registry, v, fetch).exists]
     names += registries.suggest(registry, package, fetch, run).candidates
-    return [n for n in dict.fromkeys(names) if n.casefold() != package.casefold()][:ALTERNATIVES]
+    seen = {_key(registry, package)}
+    result = []
+    for name in names:
+        key = _key(registry, name)
+        if key not in seen:
+            seen.add(key)
+            result.append(name)
+    return result[:ALTERNATIVES]
 
 
 # --------------------------------------------------------------------------------------------- the card text
@@ -383,8 +394,10 @@ def judge(task: str, chosen: Card, others: list[Card], ask) -> Verdict:
     """The ONE closed question. An unavailable or unparseable answer is `reasonable=None` (no note)."""
     if ask is None:
         return Verdict(None)
-    question = prompts.render("package_quality_question", task=task.strip(), chosen=card_line(chosen),
-                              alternatives="\n".join(card_line(c) for c in others) or _words()["none_found"])
+    def evidence(card: Card) -> str:
+        return "\n".join([card_line(card), *hard_flags(card)])
+    question = prompts.render("package_quality_question", task=task.strip(), chosen=evidence(chosen),
+                              alternatives="\n".join(evidence(c) for c in others) or _words()["none_found"])
     try:
         obj = extract_json_object(strip_think(ask(question) or ""))
     except Exception:   # a reasoner transport failure is "no answer", never a crash of the coder turn
@@ -392,20 +405,23 @@ def judge(task: str, chosen: Card, others: list[Card], ask) -> Verdict:
     if not isinstance(obj, dict) or not isinstance(obj.get("reasonable"), bool):
         return Verdict(None)
     pick = str(obj.get("better") or "").strip().strip("`")
-    names = {c.package.casefold(): c.package for c in others}
-    return Verdict(obj["reasonable"], names.get(pick.casefold(), "") if obj["reasonable"] is False else "",
+    names = {c.package for c in others if _key(chosen.registry, c.package) != _key(chosen.registry, chosen.package)}
+    return Verdict(obj["reasonable"], pick if obj["reasonable"] is False and pick in names else "",
                    " ".join(str(obj.get("reason") or "").split()))
 
 
 def render_note(chosen: Card, others: list[Card], flags: list[str], verdict: Verdict) -> str:
     w = _words()
-    names = {chosen.package.casefold(): chosen.package} if chosen.exists is True else {}
-    for card in sorted(others, key=lambda c: (c.package.casefold(), c.package)):
+    names = {}
+    for card in [chosen, *sorted(others, key=lambda c: (c.package.casefold(), c.package))]:
         if card.exists is True:
-            names.setdefault(card.package.casefold(), card.package)
-    selected = (names.pop(verdict.better.casefold(), "")
-                if verdict.reasonable is False and verdict.better and verdict.better.casefold() != chosen.package.casefold()
-                else "")
+            names.setdefault(_key(chosen.registry, card.package), card.package)
+    selected = (verdict.better
+                if verdict.reasonable is False and verdict.better
+                and _key(chosen.registry, verdict.better) != _key(chosen.registry, chosen.package)
+                and any(c.exists is True and c.package == verdict.better for c in others) else "")
+    if selected:
+        names.pop(_key(chosen.registry, selected), None)
     lines = []
     if selected:
         lines.append(prompts.fill(w["reviewer_pick"], names=prompts.named_list([selected])))
@@ -587,7 +603,7 @@ def _typed_text(messages: list[dict]) -> str:
     for m in messages:
         if m.get("role") == "assistant":
             chunks += [str((tc.get("function") or {}).get("arguments") or "") for tc in m.get("tool_calls") or []]
-    return "\n".join(chunks).casefold()
+    return "\n".join(chunks)
 
 
 def coordinates(messages: list[dict], own_commands: dict[str, str], newest_result: str, root: str) -> list[_Coord]:
@@ -602,6 +618,7 @@ def coordinates(messages: list[dict], own_commands: dict[str, str], newest_resul
         out += install_coordinates(command)
     typed = _typed_text(messages)
     for registry, package, version in de.declared(root):
-        if re.search(rf"(?<![\w.-]){re.escape(package.casefold())}(?![\w.-])", typed):
+        flags = re.IGNORECASE if registry in ("pypi", "nuget", "packagist") else 0
+        if re.search(rf"(?<![\w.-]){re.escape(package)}(?![\w.-])", typed, flags):
             out.append((registry, package, version))
     return list(dict.fromkeys(out))

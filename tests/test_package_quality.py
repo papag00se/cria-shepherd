@@ -94,7 +94,10 @@ def test_a_hard_red_flag_is_stated_as_a_fact_without_a_reasoner(tmp_path):
         if url == "https://api.osv.dev/v1/query":
             return 200, json.dumps({"vulns": [{"id": "GHSA-aaaa"}, {"id": "GHSA-bbbb", "withdrawn": "2020-01-01"}]})
         return 404, ""
-    note, poor = pq.assess("npm", "old-lib", None, TASK, None, flagged, lambda argv: "")
+    questions = []
+    note, poor = pq.assess("npm", "old-lib", None, TASK, lambda q: questions.append(q) or '{"reasonable":true}', flagged, lambda argv: "")
+    assert "`old-lib` 1.0.0 is marked deprecated by its registry (use new-lib)." in questions[0]
+    assert "1 known security advisories: GHSA-aaaa" in questions[0] and "GHSA-bbbb" not in questions[0]
     # No alternatives: only the assessed package is named, with no implied preference.
     assert poor and note == "⟦ctx:facts⟧ ⟦ctx:package-candidates⟧ old-lib"
     card = pq.gather("npm", "old-lib", None, flagged, True)
@@ -121,8 +124,62 @@ def test_selected_chosen_package_is_not_misrepresented_as_reviewer_pick():
     chosen = pq.Card("rubygems", "country", exists=True)
     others = [pq.Card("rubygems", "countries", exists=True), pq.Card("rubygems", "COUNTRY", exists=True)]
     note = pq.render_note(chosen, others, [], pq.Verdict(False, "country", "irrelevant"))
-    assert note == "⟦ctx:facts⟧ ⟦ctx:reviewer-no-pick⟧ countries, country"
+    assert note == "⟦ctx:facts⟧ ⟦ctx:reviewer-no-pick⟧ countries, COUNTRY, country"
     assert pq.assess("rubygems", "missing", None, TASK, lambda q: '{"reasonable": false}', sources, lambda argv: "") == ("", False)
+
+
+def test_case_distinct_go_candidates_survive_lookup_review_render_and_session_tracking(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(registries, "suggest", lambda *args: SimpleNamespace(candidates=["example.org/lib", "example.org/Lib", "example.org/LIB"]))
+    def fetch(url, data=None):
+        if url in {"https://proxy.golang.org/example.org/lib/@v/list", "https://proxy.golang.org/example.org/!lib/@v/list", "https://proxy.golang.org/example.org/!l!i!b/@v/list"}:
+            return 200, "v1.0.0\n"
+        return 404, ""
+    questions = []
+    def ask(question):
+        questions.append(question)
+        return '{"reasonable":false,"better":"example.org/lib"}'
+    note, poor = pq.assess("go", "example.org/Lib", None, "task", ask, fetch, lambda argv: "")
+    assert poor and note == "⟦ctx:facts⟧ ⟦ctx:reviewer-pick⟧ example.org/lib\n⟦ctx:package-candidates⟧ example.org/LIB, example.org/Lib"
+    assert all(name in questions[0] for name in ("example.org/Lib", "example.org/lib", "example.org/LIB"))
+    pq.notes_for("go-case", [("go", "example.org/Lib", None), ("go", "example.org/lib", None)], "task", ask, fetch, lambda argv: "")
+    assert len(questions) == 3
+    assert pq.judged_poor("go-case", "go", "example.org/Lib") and pq.judged_poor("go-case", "go", "example.org/lib")
+
+
+@pytest.mark.parametrize("registry,chosen,alias", [
+    ("nuget", "newtonsoft.json", "Newtonsoft.Json"),
+    ("pypi", "my_package", "My-Package"),
+    ("packagist", "vendor/library", "Vendor/Library"),
+])
+def test_canonical_alias_is_not_offered_as_better(monkeypatch, registry, chosen, alias):
+    from types import SimpleNamespace
+    monkeypatch.setattr(registries, "suggest", lambda *args: SimpleNamespace(candidates=[alias]))
+    monkeypatch.setattr(registries, "lookup", lambda registry, package, fetch: SimpleNamespace(exists=package in (chosen, alias)))
+    assert pq.alternatives(registry, chosen, lambda *args: None, lambda argv: "") == []
+    selected = pq.Card(registry, chosen, exists=True)
+    duplicate = pq.Card(registry, alias, exists=True)
+    note = pq.render_note(selected, [duplicate], [], pq.Verdict(False, alias))
+    assert note == f"⟦ctx:facts⟧ ⟦ctx:reviewer-no-pick⟧ {chosen}"
+    assert pq._key(registry, chosen) == pq._key(registry, alias)
+
+
+@pytest.mark.parametrize("registry,chosen,alias,registry_url,body", [
+    ("nuget", "newtonsoft.json", "Newtonsoft.Json", "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/index.json", '{"versions":["1.0.0"]}'),
+    ("pypi", "my_package", "My-Package", "https://pypi.org/pypi/my_package/json", '{"info":{"version":"1.0.0"},"releases":{"1.0.0":[]}}'),
+])
+def test_registry_alias_cannot_be_recommended_end_to_end(monkeypatch, registry, chosen, alias, registry_url, body):
+    from types import SimpleNamespace
+    monkeypatch.setattr(registries, "suggest", lambda *args: SimpleNamespace(candidates=[alias]))
+    def fetch(url, data=None):
+        return (200, body) if url == registry_url else (404, "")
+    questions = []
+    def ask(q):
+        questions.append(q)
+        return json.dumps({"reasonable": False, "better": alias})
+    note, poor = pq.assess(registry, chosen, None, "task", ask, fetch, lambda argv: "")
+    assert poor and note == f"⟦ctx:facts⟧ ⟦ctx:reviewer-no-pick⟧ {chosen}"
+    assert alias not in questions[0]
 
 
 @pytest.mark.parametrize("command, expected", [
