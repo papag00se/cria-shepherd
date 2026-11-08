@@ -23,7 +23,7 @@ empty = WORKSPACE FILES in {{ROOT}}: none in this filtered inventory — omitted
 # rewrote Importer.java from scratch repeatedly (#5b: never claim what cria does not know).
 coder_header = ⟦ctx:files⟧ YOUR WORKSPACE SURVEY (names observed, newest first):
 coder_header_compacted = ⟦ctx:files⟧ YOUR WORKSPACE SURVEY (names observed, newest first — older turns were compacted; remembered or summarized content does not establish current file state):
-coder_note = Use read_file for file contents. If a file's current text is not in this conversation, read it rather than reconstructing it from memory or from the summary; if its current text is here, use that copy.
+coder_scope = This filtered inventory omits files in excluded directories (build outputs, dependencies, caches and internal metadata); install trees may be folded into counts. Unlisted files may exist; empty directories are not shown.
 planner_header = WORKSPACE FILES in {{ROOT}} (names observed in the workspace survey, newest first):
 planner_empty = WORKSPACE FILES in {{ROOT}}: none in this filtered inventory — omitted files may still exist.
 # The steer author's template heads its disk section "THE FILES IT HAS BEEN CHANGING" — and on

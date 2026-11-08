@@ -24,6 +24,32 @@ class Packet:
         return "\n\n".join(pieces)
 
 
+def movable_action(messages: list[dict]) -> bodykeys.ActionOrigin | None:
+    """Identify the newest suggestion only if nothing later has independent authority.
+
+    Decide before fitting: dropping a later user request cannot make stale advice current.
+    """
+    indexes = [i for i, message in enumerate(messages)
+               if isinstance(message.get(bodykeys.ACTION_ORIGIN), bodykeys.ActionOrigin)]
+    if not indexes:
+        return None
+    index = indexes[-1]
+    allowed = (bodykeys.AnnotationSource.INTERNAL_EVIDENCE, bodykeys.AnnotationSource.WORKSPACE_LISTING)
+    if any(message.get("role") != "user" or not any(
+            message.get(bodykeys.ANNOTATION_SOURCE) is source for source in allowed)
+            for message in messages[index + 1:]):
+        return None
+    return messages[index][bodykeys.ACTION_ORIGIN]
+
+
+def place_current_action(messages: list[dict], origin: bodykeys.ActionOrigin | None) -> list[dict]:
+    """Move that exact surviving suggestion after observations, never revive a dropped one."""
+    if origin is None or movable_action(messages) is not origin:
+        return messages
+    index = next(i for i, message in enumerate(messages) if message.get(bodykeys.ACTION_ORIGIN) is origin)
+    return [*messages[:index], *messages[index + 1:], messages[index]]
+
+
 def latest_user(messages: list[dict], *, prior_handoffs: tuple[str, ...] = (),
                 prior_packet: Packet | None = None) -> str:
     """Most recent genuine user request after work began; producer annotations are not users."""

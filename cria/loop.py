@@ -3932,7 +3932,8 @@ class Loop:
         additions = [selfcompact.internal_evidence_message(observed)] if observed else []
         if generated:
             labels = prompts.load_map("compaction_evidence_packet")
-            additions.append(selfcompact.internal_evidence_message(prompts.fill(labels["action"], action=generated[-1])))
+            additions.append({**selfcompact.internal_evidence_message(prompts.fill(labels["action"], action=generated[-1])),
+                              bodykeys.ACTION_ORIGIN: bodykeys.ActionOrigin()})
         rlog.emit("context.self_compact", reshape="evidence-preserved", step=idx, before=len(msgs),
                   after=len(msgs) + len(additions), boundary=force)
         return [*msgs, *additions]
@@ -6070,8 +6071,9 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
                 out.append({**m, "content": content})
                 out.extend(selfcompact.internal_evidence_message(block) for block in packet.blocks)
                 if packet.action:
-                    out.append(selfcompact.internal_evidence_message(
-                        prompts.fill(labels["action"], action=packet.action)))
+                    out.append({**selfcompact.internal_evidence_message(
+                        prompts.fill(labels["action"], action=packet.action)),
+                        bodykeys.ACTION_ORIGIN: bodykeys.ActionOrigin()})
                 if packet.latest_user:
                     out.append({"role": "user", "content": packet.latest_user})
                 reframed = True

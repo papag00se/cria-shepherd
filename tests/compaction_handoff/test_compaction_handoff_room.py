@@ -1,5 +1,6 @@
 """The measured compaction predicate: the room is computed from real windows/densities and fires before a compaction call stops fitting."""
 import copy
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -62,16 +63,28 @@ def test_rolling_action_preserves_original_history_and_is_not_replayed_afterward
     calls = []
     def chat(body, rlog):
         calls.append(body)
-        return chat_reply("Inspect the existing cart calculation.").encode()
+        return chat_reply("Implement the command-line tool functionality including argument parsing and error handling in Node.js.").encode()
     lp = _loop(49152, 49152, chat=chat)
     lp._ctx.system1 = SimpleNamespace(judge_compaction_topic=lambda task, response, **kw: "ON_TASK")
-    sess = PlanSession(plan=Plan(id="p", task="Fix rounding", created="2026-10-30T00:00:00+00:00", items=[PlanItem("s")]))
+    sess = PlanSession(plan=Plan(id="p", task="Build the CLI", created="2026-10-30T00:00:00+00:00", items=[PlanItem("s")]))
     msgs = history(12, 250)
-    out = lp._self_compact(msgs, sess, None, _Rlog(), force=True, pinned_task="Fix rounding")
+    msgs[-1]["content"] = "Wrote package.json\npackage.json now has 12 lines; your replacement is at lines 2-2."
+    out = lp._self_compact(msgs, sess, None, _Rlog(), force=True, pinned_task="Build the CLI")
     assert out[:len(msgs)] == msgs
-    assert len(out) == len(msgs) + 1 and "Inspect the existing cart calculation." in out[-1]["content"]
-    assert calls and "Fix rounding" in calls[0]["messages"][-1]["content"]
-    assert lp._self_compact(msgs, sess, None, _Rlog(), pinned_task="Fix rounding") == msgs
+    assert len(out) == len(msgs) + 1 and "Implement the command-line tool functionality" in out[-1]["content"]
+    assert calls and "Build the CLI" in calls[0]["messages"][-1]["content"]
+    # Sanitized phi4/Node 0012 boundary: rolling suggestion followed by the fresh survey and read ledger.
+    from cria.upstream import Upstream
+    survey = {"role": "user", "content": "⟦ctx:files⟧ package.json (225 B)",
+              bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
+    ledger = sc.internal_evidence_message("⟦ctx:facts⟧ package.json was read")
+    wire_log = SimpleNamespace(session="real-session", phase="coder-s1", emit=lambda *a, **k: None)
+    wire, _, _ = Upstream("http://unused", context_window=49152)._prep(
+        {"messages": [*out, survey, ledger]}, False, wire_log)
+    sent = json.loads(wire)
+    text = "\n".join(str(m.get("content") or "") for m in sent["messages"])
+    assert text.index("package.json was read") < text.index("MODEL-SUGGESTED NEXT ACTION")
+    assert lp._self_compact(msgs, sess, None, _Rlog(), pinned_task="Build the CLI") == msgs
 
 
 def test_the_first_view_that_does_not_fit_one_more_turn_is_compacted_and_every_call_reads_it_whole():

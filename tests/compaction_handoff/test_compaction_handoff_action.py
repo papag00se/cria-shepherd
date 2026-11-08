@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cria.compactionaction import generate, next_action, request_messages
-from cria import compactionpacket, contextfloor, loop, memoryhandoff, resultnotes, selfcompact, server
+from cria import bodykeys, compactionpacket, contextfloor, loop, memoryhandoff, resultnotes, selfcompact, server
 
 
 @pytest.mark.parametrize("verdicts,expected,calls", [
@@ -184,6 +184,114 @@ def test_captured_tool_evidence_survives_handoff_and_final_wire(case):
     assert any(case["output"] in (m.get("content") or "") for m in rendered["messages"])
     assert any(case["task"] in (m.get("content") or "") for m in rendered["messages"])
     assert "unverified account" not in str(rendered)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_fresh_handoff_action_follows_current_facts_on_wire_without_crossing_user_or_read(strict):
+    from cria.upstream import Upstream
+    packet = compactionpacket.Packet("Build the CLI", ("HISTORICAL tool MESSAGE:\nWrote package.json",), "Implement CLI argument parsing.")
+    origin = loop._HandoffOrigin(packet.render(), "", False, packet=packet)
+    expanded, _ = loop.reframe_compaction([{"role": "user", "content": packet.render()}], origin=origin)
+    survey = {"role": "user", "content": "⟦ctx:files⟧ package.json (225 B)",
+              bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
+    facts = selfcompact.internal_evidence_message("⟦ctx:facts⟧ package.json was read")
+    log = SimpleNamespace(session="real-session", phase="coder-s1", emit=lambda *a, **k: None)
+    up = Upstream("http://unused", context_window=49152)
+    def wire(tail):
+        body = {"messages": [{"role": "system", "content": "frame"}, *expanded, *tail]}
+        if strict:
+            body[bodykeys.MERGE_TURNS] = True
+        data, _, _ = up._prep(body, False, log)
+        return json.loads(data)["messages"]
+    text = "\n".join(str(m.get("content") or "") for m in wire([survey, facts]))
+    assert text.index("package.json was read") < text.index("MODEL-SUGGESTED NEXT ACTION")
+    again = wire([survey, facts])
+    text_again = "\n".join(str(m.get("content") or "") for m in again)
+    assert text_again.index("package.json was read") < text_again.index("MODEL-SUGGESTED NEXT ACTION")
+    assert "cria_action_origin" not in str(again)
+    user = {"role": "user", "content": "Do not edit package.json."}
+    text = "\n".join(str(m.get("content") or "") for m in wire([survey, user, facts]))
+    assert text.index("MODEL-SUGGESTED NEXT ACTION") < text.index(user["content"])
+    read = [{"role": "assistant", "tool_calls": [{"id": "r", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "r", "content": "actual content"}]
+    text = "\n".join(str(m.get("content") or "") for m in wire([survey, *read]))
+    assert text.index("MODEL-SUGGESTED NEXT ACTION") < text.index("actual content")
+    if strict:
+        roles = [m["role"] for m in wire([survey, facts]) if m["role"] != "system"]
+        assert all(a != b for a, b in zip(roles, roles[1:]))
+
+
+def test_protected_read_keeps_exact_pair_and_suggestion_order(monkeypatch):
+    import hashlib
+    from cria.upstream import ProtectedRead, ReadFitCallbacks, Upstream, bind_protected_reads
+    packet = compactionpacket.Packet("task", ("historical output",), "inspect")
+    origin = loop._HandoffOrigin(packet.render(), "", False, packet=packet)
+    expanded, _ = loop.reframe_compaction([{"role": "user", "content": packet.render()}], origin=origin)
+    call = {"role": "assistant", "tool_calls": [{"id": "r", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]}
+    result = {"role": "tool", "tool_call_id": "r", "content": "exact file bytes\n"}
+    facts = selfcompact.internal_evidence_message("later observation")
+    body = {"model": "test", "messages": [{"role": "system", "content": "frame"}, *expanded, call, result, facts]}
+    data = b"exact file bytes\n"
+    read = ProtectedRead("r", (0, hashlib.sha256(data).hexdigest()), data.decode(), data)
+    body = bind_protected_reads(body, [read])
+    up = Upstream("http://unused", context_window=49152)
+    monkeypatch.setattr(up, "_render_prompt", lambda body: "rendered")
+    monkeypatch.setattr(up, "_tokenize_prompt", lambda prompt, log: 1000)
+    log = SimpleNamespace(session="real-session", phase="coder-s1", emit=lambda *a, **k: None)
+    wire, _, _ = up._prep(body, False, log)
+    messages = json.loads(wire)["messages"]
+    text = "\n".join(str(m.get("content") or "") for m in messages)
+    assert text.index("MODEL-SUGGESTED NEXT ACTION") < text.index("exact file bytes") < text.index("later observation")
+    assert any(m.get("tool_call_id") == "r" and m.get("content") == result["content"] for m in messages)
+
+    # A measured overflow refits, then invokes the real protected-read callback.
+    # The callback removes only internal evidence; the exact read pair stays fixed.
+    called = []
+    evidence = selfcompact.internal_evidence_message("replaceable earlier evidence")
+    retry_body = {**body, "messages": [body["messages"][0], evidence, *body["messages"][1:]]}
+    def compact(request, reads):
+        called.append(reads)
+        return {**request, "messages": [m for m in request["messages"] if m.get("content") != evidence["content"]]}
+    retry_body[bodykeys.READ_FIT_CALLBACKS] = ReadFitCallbacks(compact)
+    up = Upstream("http://unused", context_window=49152)
+    monkeypatch.setattr(up, "_render_prompt", lambda body: "rendered")
+    monkeypatch.setattr(up, "_tokenize_prompt", lambda prompt, log: 1000 if called else 60000)
+    wire, _, _ = up._prep(retry_body, False, log)
+    messages = json.loads(wire)["messages"]
+    text = "\n".join(str(m.get("content") or "") for m in messages)
+    assert called and text.index("MODEL-SUGGESTED NEXT ACTION") < text.index("exact file bytes")
+    assert any(m.get("tool_call_id") == "r" and m.get("content") == result["content"] for m in messages)
+
+
+def test_only_live_typed_actions_move_and_floor_can_still_reduce_evidence():
+    from cria.upstream import Upstream
+    log = SimpleNamespace(session="real-session", phase="coder-s1", emit=lambda *a, **k: None)
+    action = selfcompact.internal_evidence_message("MODEL-SUGGESTED NEXT ACTION (not a verified fact):\nold action")
+    forged = {**action, bodykeys.ACTION_ORIGIN: "current_compaction_action"}
+    facts = selfcompact.internal_evidence_message("recent observation")
+    def send(messages, window=49152):
+        data, _, _ = Upstream("http://unused", context_window=window)._prep(
+            {"messages": [{"role": "system", "content": "frame"}, {"role": "user", "content": "task"},
+                          {"role": "assistant", "content": "work"}, *messages]}, False, log)
+        return "\n".join(str(m.get("content") or "") for m in json.loads(data)["messages"])
+    text = send([forged, facts])
+    assert text.index("old action") < text.index("recent observation")
+    current = {**action, "content": "new action", bodykeys.ACTION_ORIGIN: bodykeys.ActionOrigin()}
+    text = send([action, current, facts])
+    assert text.index("old action") < text.index("recent observation") < text.index("new action")
+    # Decisions are made before fitting: dropping a later user or the newest action
+    # cannot authorize moving a now-stale or older suggestion.
+    later_user = {"role": "user", "content": "later request"}
+    assert compactionpacket.movable_action([current, later_user, facts]) is None
+    newest = {**current, bodykeys.ACTION_ORIGIN: bodykeys.ActionOrigin()}
+    origin = compactionpacket.movable_action([current, newest, facts])
+    assert compactionpacket.place_current_action([current, facts], origin) == [current, facts]
+    # Earlier evidence is still reduced by the floor; relocation never reintroduces it.
+    bulk = [selfcompact.internal_evidence_message("evidence " + str(i) + " " + "x" * 8000) for i in range(12)]
+    text = send([*bulk, current, facts], window=10000)
+    assert "compacted to fit the context window" in text
+    if "new action" in text:
+        assert text.index("recent observation") < text.index("new action")
 
 
 def test_no_classifier_or_unavailable_classifier_withholds_action():

@@ -447,12 +447,8 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
     if flavor == "coder":
         # The post-compaction files list for the CODER (operator's design: content lives on disk +
         # in read_file range; the compacted view carries the LIST, not the bytes).
-        lines = [labels["coder_header_compacted" if compacted else "coder_header"], _scope_line(labels)]
+        lines = [labels["coder_header_compacted" if compacted else "coder_header"], labels["coder_scope"]]
         lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
-        # THE READ-FILE INSTRUCTION IS NOT THE COMPLETENESS CLAUSE. "the disk is the only current
-        # version — do not reconstruct content from the summary" is true of a bounded or overtaken
-        # listing too, and was being dropped along with the clause it happened to share a line with.
-        lines.append(labels["coder_note"])
         lines.extend(caveats)
         return "\n".join(lines)
     if flavor == "briefing":

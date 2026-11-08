@@ -950,6 +950,10 @@ class Upstream:
             # history. Clean only those linked calls/results at the final coder-bound wire boundary;
             # a body without one remains byte-identical.
             msgs = modelview.wire_messages(msgs)
+            action_origin = None
+            if self._context_fixes and not body.get(bodykeys.PROTECTED_READS):
+                from . import compactionpacket
+                action_origin = compactionpacket.movable_action(msgs)
             if self._context_fixes:
                 # Move exact legacy footers losslessly to a quoted tail before
                 # fitting. Unknown prose stays intact; the floor owns reduction.
@@ -1103,6 +1107,11 @@ class Upstream:
             else:
                 settlement = ()
             msgs = focustrim.settle_focus(focustrim.FocusInput(msgs), settlement).messages
+            # The action is reducible historical context through fitting. Only after fitting may
+            # its producer-owned identity move it past trailing observations, never a live turn.
+            # Protected read tails retain their original order and paired result position.
+            if action_origin is not None:
+                msgs = compactionpacket.place_current_action(msgs, action_origin)
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -1129,7 +1138,7 @@ class Upstream:
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
-                                             bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE,
+                                             bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE, bodykeys.ACTION_ORIGIN,
                                              bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED,
                                              *bodykeys.LEGACY_MESSAGE_KEYS)}
                                if isinstance(m, dict) else m for m in out["messages"]]

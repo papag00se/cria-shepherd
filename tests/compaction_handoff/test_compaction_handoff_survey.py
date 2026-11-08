@@ -14,13 +14,15 @@ def test_the_decisive_clause_is_printed_only_for_a_complete_current_survey_and_t
     """674 prompts were told 'a file not listed does not exist' by a survey that predated the install that made the file (2026-08-22); a survey that hit its own bound never reached everywhere; excluded build output (target/) was never looked at."""
     fresh = survey_text(flavor=flavor)
     assert (L["complete"] in fresh) is (flavor != "coder") and "pom.xml (980 B)" in fresh
+    if flavor == "coder":
+        assert "excluded directories" in fresh and "folded" in fresh
+        assert "node_modules" not in fresh and "Use read_file" not in fresh
     for complete, changed in ((False, False), (True, True), (False, True)):
         out = survey_text(TREE + "D\ttarget\nF\t9\t1\ttarget/out.bin\n", complete=complete, changed=changed, flavor=flavor)
-        assert "pom.xml" in out and "out.bin" not in out and "filtered inventory" in out and "not proof" in out      # what it saw stays named; omissions stay named
+        assert "pom.xml" in out and "out.bin" not in out and "filtered inventory" in out
+        assert ("excluded directories" in out if flavor == "coder" else "not proof" in out)
         assert L["complete"] not in out and "a file not listed here does not exist" not in out
         assert (L["stale"] in out) is changed and (L["partial"] in out) is (not complete)      # a bound and an overtaking are different sentences, and both can hold
-        if flavor == "coder":
-            assert L["coder_note"] in out                                                                          # the read-the-disk instruction survives either doubt
 
 def test_a_folded_install_tree_is_one_counted_line_but_committed_vendor_source_is_still_listed(tmp_path):
     """shipping-rates-rb x qwen35 (-60 pts): ~1,950 vendor/bundle files made a 65,801-token inventory against a 49,152 window; the server refused it six times."""
