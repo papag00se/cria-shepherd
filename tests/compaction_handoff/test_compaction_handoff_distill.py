@@ -182,6 +182,14 @@ def test_authenticated_prior_handoff_is_not_promoted_into_original_task(monkeypa
     assert calls[0][2]["history_start"] == 1 and handoff in calls[0][0][0]
     assert all(handoff not in c for c in contents if c.startswith("⟦ctx:task⟧"))
     assert any("Real follow-up" in c for c in contents)
+    # A compaction-only history must not recast its sole prior as a task, or drop it.
+    prior_only = [prior, work, messages[-1]]
+    prior_framed = server._compaction_body(server._proxy_body({"model": "m", "messages": prior_only}),
+        definition=memoryhandoff.DEFINITION, facts=facts(prior_only))
+    prior_wire, _, _ = Upstream("http://unused", context_window=24576)._prep(prior_framed, False, LOG)
+    prior_contents = [m.get("content", "") for m in json.loads(prior_wire)["messages"]]
+    assert any(c.startswith("EARLIER HANDOFF") and handoff in c for c in prior_contents)
+    assert not any(c.startswith("⟦ctx:task⟧") for c in prior_contents)
     # A lookalike edited by a user does not acquire producer identity.
     fake = {"role": "user", "content": handoff + " Added instruction."}
     assert not facts([root, fake, work, followup]).prior_handoffs
