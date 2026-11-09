@@ -1,0 +1,9 @@
+complete = Complete filtered list observed by the harness:
+incomplete = Observed paths from an incomplete survey; inaccessible or unobserved paths may exist:
+selected = Possible relevant paths selected by the configured reasoner; other observed paths are omitted here:
+unavailable = No reasoner-selected paths are available; observed paths are omitted here:
+none = The reasoner selected no valid inventory paths; observed paths are omitted here:
+partial = Some reasoner selection questions were unavailable; this selection is incomplete:
+scope = Excluded directory names (also excluding an internal metadata directory):
+issues = Symlinks skipped and survey errors:
+issues_spilled = Counts of skipped symlinks and survey errors; full details are available by rerunning the survey:

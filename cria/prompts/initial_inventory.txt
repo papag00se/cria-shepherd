@@ -1,0 +1,2 @@
+⟦ctx:files⟧ Initial harness workspace inventory, observed before the first coder turn. Paths and symbols are JSON strings; symbols null means extraction was unavailable, and an empty list means no symbols were extracted. Symlinks are not followed; excluded directories and inaccessible paths are reported below. This is a snapshot, not proof of later state.
+{{INVENTORY}}

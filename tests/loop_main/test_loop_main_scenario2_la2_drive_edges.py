@@ -11,7 +11,7 @@ from cria.classify import Classification
 from cria.loop import LoopStore
 from cria.upstream import UpstreamProtocolError
 
-from loop_main_helpers import Chat, Rlog, acting, body, completion, plan_off_loop, loop_main_local_view  # noqa: F401
+from loop_main_helpers import Chat, Rlog, acting, body, completion, drive_after_initial_inventory, plan_off_loop, loop_main_local_view  # noqa: F401
 from test_loop_main_scenario_pasted_file import CODING, LINES, SHELL, TASK, WRITE
 
 
@@ -21,7 +21,7 @@ def pasted_drive(tmp_path, key):
     store, held = LoopStore(), []
     loop = plan_off_loop(Chat(pasted, acting()), store=store, reasoner=reasoner, workspace_root=str(tmp_path),
                          reasoner_role=config.Role(name="reasoner", backend="local"), assists=True)
-    out = loop.drive(body(TASK, tools=[WRITE, SHELL]), key, CODING, Rlog(), pasted_delivery=held.append)
+    out = drive_after_initial_inventory(loop, body(TASK, tools=[WRITE, SHELL]), key, CODING, Rlog(), pasted_delivery=held.append)
     call = out["choices"][0]["message"]["tool_calls"][0]
     admitted = {call["id"]: SimpleNamespace(path=str(tmp_path / "app.py"), content=json.loads(call["function"]["arguments"])["content"])}
     return store, store.get(key), held[0], out, call, admitted

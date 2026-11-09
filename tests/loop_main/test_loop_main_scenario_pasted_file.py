@@ -8,7 +8,7 @@ from cria import config
 from cria.classify import Classification
 from cria.loop import LoopStore
 
-from loop_main_helpers import Chat, Rlog, body, completion, plan_off_loop, loop_main_local_view  # noqa: F401
+from loop_main_helpers import Chat, Rlog, body, completion, drive_after_initial_inventory, plan_off_loop, loop_main_local_view  # noqa: F401
 
 CODING = Classification("task", "coding", "fixture")
 WRITE = {"type": "function", "function": {"name": "write_file", "parameters": {
@@ -29,7 +29,7 @@ def test_a_file_pasted_into_chat_becomes_that_files_write_and_its_result_settles
     store, rlog, held = LoopStore(), Rlog(), []
     loop = plan_off_loop(Chat(pasted, completion(None, ("shell", {"command": ["true"]}))), store=store, reasoner=reasoner,
                          workspace_root=str(tmp_path), reasoner_role=config.Role(name="reasoner", backend="local"), assists=True)
-    out = loop.drive(body(TASK, tools=[WRITE, SHELL]), "sid:p", CODING, rlog, pasted_delivery=held.append)
+    out = drive_after_initial_inventory(loop, body(TASK, tools=[WRITE, SHELL]), "sid:p", CODING, rlog, pasted_delivery=held.append)
     call = out["choices"][0]["message"]["tool_calls"][0]
     content = json.loads(call["function"]["arguments"])["content"]
     assert call["function"]["name"] == "write_file" and content == "\n".join(LINES) + "\n"
@@ -52,7 +52,7 @@ def test_a_paste_the_judge_cannot_rule_on_is_redriven_with_its_own_words_and_the
     coder, rlog = Chat(pasted, completion(None, ("shell", {"command": ["true"]}))), Rlog()
     loop = plan_off_loop(coder, store=LoopStore(), reasoner=lambda b, r: json.dumps(completion("")).encode(), workspace_root=str(tmp_path),
                          reasoner_role=config.Role(name="reasoner", backend="local"), assists=True)
-    out = loop.drive(body(TASK, tools=[WRITE, SHELL]), "sid:u", CODING, rlog)
+    out = drive_after_initial_inventory(loop, body(TASK, tools=[WRITE, SHELL]), "sid:u", CODING, rlog)
     assert len(coder.bodies) == 2 and out["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "shell"
     carried, nudge = coder.bodies[1]["messages"][-2:]
     assert carried == {"role": "assistant", "content": pasted["choices"][0]["message"]["content"]}

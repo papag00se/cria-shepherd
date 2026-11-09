@@ -58,7 +58,7 @@ from .imageworkflow import (current as _image_current, review_view as _image_rev
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive, writerecord
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
-from . import admission
+from . import admission, initial_inventory
 from .config import CONTEXT_FIXES
 from .admission import has_actionable_tools as _has_actionable_tools
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
@@ -452,11 +452,16 @@ class GuardState:
 
 @dataclass
 class SurveyBootstrap(GuardState):
-    """One private gate round that surveys an unsurveyed workspace before planning."""
+    """One private harness round before the first coder or planner call."""
+    initial_inventory: bool = False
+    initial_call_ids: tuple[str, ...] = ()
+    initial_listing: str = ''
 
 
 @dataclass
 class PlanSession(GuardState):
+    initial_listing: str = ""
+    initial_private_ids: tuple[str, ...] = ()
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
     handoff_origin: _HandoffOrigin | None = None  # producer-owned, never decoded from client text
     # Single-item plan-off mode: the whole task is ONE implicit step. When set, the driver uses
@@ -2280,6 +2285,9 @@ class LoopStore:
         self._sessions: dict[str, GuardState] = {}
         # In-flight pre-plan survey state is not a plan and must not survive a restart.
         self._bootstraps: dict[str, SurveyBootstrap] = {}
+        # Producer-owned call IDs only, including ephemeral task: sessions. These
+        # authenticate history cleanup without carrying task state across sessions.
+        self._initial_call_groups: dict[str, tuple[str, tuple[str, ...]]] = {}
         # session key -> {fp, n, pending, done, rewrite_id}: opaque pending identity survives restart.
         # DETECTION state only — the completion briefing itself is never stored server-side; it
         # rides in the conversation (the closing message) and is re-read from history.
@@ -2321,6 +2329,21 @@ class LoopStore:
     def drop_bootstrap(self, key: str) -> None:
         with self._lock:
             self._bootstraps.pop(key, None)
+
+    def remember_initial_calls(self, key: str, call_ids: tuple[str, ...]) -> None:
+        if not call_ids:
+            return
+        with self._lock:
+            self._initial_call_groups[call_ids[0]] = (key, call_ids)
+            while len(self._initial_call_groups) > _MAX_SESSIONS:
+                self._initial_call_groups.pop(next(iter(self._initial_call_groups)))
+
+    def initial_calls_in(self, key: str, messages: list[dict]) -> tuple[str, ...]:
+        present = {call.get('id') for message in messages if message.get('role') == 'assistant'
+                   for call in message.get('tool_calls') or ()}
+        with self._lock:
+            return tuple(cid for owner, group in self._initial_call_groups.values() if owner == key
+                         for cid in group if cid in present)
 
     def put(self, key: str, sess: PlanSession) -> None:
         with self._lock:
@@ -2748,14 +2771,19 @@ class Loop:
         return source.plan_for(messages, rlog, **frame), outcome
 
     def _new_bootstrap(self, session_key: str, messages: list[dict]) -> SurveyBootstrap:
+        previous = self._store.get_bootstrap(session_key)
         state = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
-                                web_session=session_key)
-        _pin_pilot_runtime(state, self._ctx.pilot_runtime, self._store.get_bootstrap(session_key))
+                                web_session=session_key,
+                                initial_call_ids=getattr(previous, 'initial_call_ids', ()),
+                                initial_listing=getattr(previous, 'initial_listing', ''))
+        _pin_pilot_runtime(state, self._ctx.pilot_runtime, previous)
         return state
 
     def _put_session(self, key: str, sess: PlanSession) -> None:
         # Transfer existing provenance before publishing or consuming the bootstrap.
         bootstrap = self._store.get_bootstrap(key)
+        if bootstrap is not None and bootstrap.initial_call_ids:
+            sess.initial_private_ids = bootstrap.initial_call_ids
         _pin_pilot_runtime(sess, self._ctx.pilot_runtime, bootstrap)
         self._store.put(key, sess)
         if bootstrap is not None:
@@ -2883,6 +2911,12 @@ class Loop:
     def _drive_locked(self, body: dict, session_key: str, classification, rlog,
                       *, _semantic_owner=None) -> dict | None:
         messages = body.get("messages", [])
+        existing = self._store.get(session_key)
+        known = self._store.initial_calls_in(session_key, messages)
+        owned = tuple(getattr(existing, 'initial_private_ids', ())) + known if existing else known
+        if owned:
+            messages = initial_inventory.strip_calls(messages, owned)
+            body = {**body, 'messages': messages}
         # Observe a structural harness rewrite before the tool-less compaction turn is deferred.
         # The pending state is consumed only by a later actionable continuation.
         stable = _stable_session(session_key)
@@ -2932,23 +2966,88 @@ class Loop:
         # from the root, so its shapes/briefings are skipped entirely (see _stable_session — a
         # briefing under a task-text hash would leak into unrelated same-prompt conversations).
         bootstrap_finished = False
+        initial_listing = getattr(bootstrap, 'initial_listing', '')
+
+        # A fresh actionable L5 task gets one harness-executed, read-only inventory before
+        # the first coder call. Other requests and continuations keep their existing path.
+        if (sess is None and bootstrap is None and self._ctx.assists
+                and messages and messages[-1].get('role') == 'user'
+                and admission.starts_driver(body, classification, planning=initial_enabled)):
+            root = _extract_cwd(messages) or self._ctx.workspace_root or ''
+            tool = find_shell_tool(body.get('tools'))
+            if root and tool is not None:
+                bootstrap = self._new_bootstrap(session_key, messages)
+                bootstrap.initial_inventory = True
+                wait = probegate.GATE_POLL_WAIT_LONG_S if tool_declares_time_budget(tool) else probegate.GATE_POLL_WAIT_S
+                try:
+                    bootstrap.gate_plan = initial_inventory.plan(root, poll_wait_s=wait)
+                    call = {'id': 'call_' + uuid.uuid4().hex, 'type': 'function',
+                            'function': {'name': tool['name'], 'arguments': json.dumps(
+                                with_time_budget(tool, shell_args(tool, bootstrap.gate_plan.script)))}}
+                except (OSError, ValueError, UnicodeError) as exc:
+                    rlog.emit('loop.initial_inventory_unavailable', level='warn', error=str(exc))
+                    bootstrap = None
+                else:
+                    bootstrap.probe_call_id = call['id']
+                    bootstrap.initial_call_ids = (call['id'],)
+                    self._store.put_bootstrap(session_key, bootstrap)
+                    rlog.emit('loop.initial_inventory_started')
+                    return _completion_toolcalls([call])
 
         if bootstrap is not None:
             raw = _read_tool_result(messages, bootstrap.probe_call_id)
-            if rewritten:
+            if rewritten and not bootstrap.initial_inventory:
                 recovered = _reissue_repository_checks(_NamedProbeState(bootstrap, "probe_call_id"),
                     body, rlog, workspace_root=bootstrap.workspace_root, rewritten=True)
                 if recovered.call is not None:
                     rlog.emit("loop.survey_bootstrap_reissued", attempt=bootstrap.probe_reissues)
                     return _repository_completion(recovered)
-            transport_tc = guard_gate_transport(bootstrap, body, rlog, call_id=bootstrap.probe_call_id)
+            scratch_unavailable = (bootstrap.initial_inventory and isinstance(raw, str)
+                                   and initial_inventory.UNAVAILABLE in raw)
+            if scratch_unavailable:
+                probegate.fail_transport(bootstrap.gate_plan, 'inventory scratch unavailable')
+                rlog.emit('loop.initial_inventory_unavailable', level='warn')
+            transport_tc = (None if scratch_unavailable else
+                            guard_gate_transport(bootstrap, body, rlog, call_id=bootstrap.probe_call_id))
             if transport_tc is not None:
+                if bootstrap.initial_inventory:
+                    transport_tc['id'] = 'call_' + uuid.uuid4().hex
+                    bootstrap.probe_call_id = transport_tc['id']
+                    bootstrap.initial_call_ids += (transport_tc['id'],)
                 return _completion_toolcalls([transport_tc])
-            outcome = read_gate(bootstrap.gate_plan, raw, rlog)
+            if bootstrap.initial_inventory:
+                outcome = None
+                parts = probegate.transported_parts(bootstrap.gate_plan)
+                if parts:
+                    try:
+                        import base64
+                        data = json.loads(base64.b64decode(parts[0], validate=False))
+                        if not isinstance(data, dict) or not isinstance(data.get('files'), list):
+                            raise ValueError('invalid inventory')
+                        ask = None
+                        if self._ctx.reasoner_role is not None and self._ctx.reasoner_chat is not None:
+                            task = latest_user_text(messages)
+                            def ask(chunk):
+                                return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                    prompts.load('initial_inventory_judge'),
+                                    prompts.render('initial_inventory_judge_user', task=task,
+                                        chunk=json.dumps(chunk, ensure_ascii=True)), rlog,
+                                    phase='initial-inventory', retry_off=False)
+                        window = windowcaps.window_of(self._ctx.reasoner_chat, rlog) or 49152
+                        initial_listing = initial_inventory.render(data, ask, root=bootstrap.workspace_root,
+                            chunk_chars=max(2048, (window - 4096) * 2))
+                        bootstrap.initial_listing = initial_listing
+                    except (ValueError, TypeError, KeyError, UnicodeError):
+                        rlog.emit('loop.initial_inventory_unavailable', level='warn')
+            else:
+                outcome = read_gate(bootstrap.gate_plan, raw, rlog)
             # Keep provenance until a successor is published, including planner deferrals.
             bootstrap_finished = True
-            messages = probegate.clean_gate_results(messages, bootstrap.gate_plan,
-                                                    drop_private_results=True)
+            if bootstrap.initial_call_ids:
+                self._store.remember_initial_calls(session_key, bootstrap.initial_call_ids)
+                messages = initial_inventory.strip_calls(messages, bootstrap.initial_call_ids)
+            if not bootstrap.initial_inventory:
+                messages = probegate.clean_gate_results(messages, bootstrap.gate_plan, drop_private_results=True)
             body = {**body, "messages": messages}
             rlog.emit("loop.survey_bootstrap_finished",
                       surveyed=bool(getattr(outcome, "replan_after_survey", False)),
@@ -3073,6 +3172,11 @@ class Loop:
                         rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
                         self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
 
+        if bootstrap_finished and bootstrap is not None and bootstrap.initial_call_ids:
+            sess.initial_private_ids = bootstrap.initial_call_ids
+        if initial_listing:
+            sess.initial_listing = initial_listing
+
         # THE KEY WEBFETCH'S PER-SESSION GATES USE, recorded ONCE for both drivers.
         # It is the SAME key the loop drives under (server passes one `sk` to both drive() and the
         # outbound translation), so the search judge asks about exactly the prior those gates would
@@ -3123,6 +3227,7 @@ class Loop:
                                                delivery_receipts=delivery_receipts)
             if generation.incomplete(completion):
                 raise _IncompleteCoderTurn(completion)
+            sess.initial_listing = ''
             return completion
         except UpstreamProtocolError as error:
             if delivery_receipts is not None:
@@ -5359,6 +5464,20 @@ class Loop:
             framed["messages"] = _ground_coder_view(framed["messages"], workspace_root)
             _note_survey_baseline(sess, workspace_root)
             _note_first_survey_files(sess, workspace_root, raw)
+        if sess.initial_listing:
+            listing = {'role': 'user', 'content': sess.initial_listing,
+                       bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
+            prepared = framed['messages']
+            def with_listing(note):
+                return (prepared + [note] if not prepared or prepared[-1].get('role') == 'tool'
+                        else prepared[:-1] + [note, prepared[-1]])
+            frame_tokens = contextfloor.est_total([], framed.get('tools'))
+            candidate = with_listing(listing)
+            if self._floor_would_drop(current.render(candidate), rlog, frame_tokens):
+                listing['content'] = prompts.load('initial_inventory_no_room')
+                candidate = with_listing(listing)
+            if not self._floor_would_drop(current.render(candidate), rlog, frame_tokens):
+                framed['messages'] = candidate
         # Root identity is a final framing invariant, not an exemption each
         # cleaner/reducer must implement. Rewrites may erase private work, but
         # cannot promote a later user turn into the original root partition.
@@ -5520,6 +5639,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "completion_remediation_reason": sess.completion_remediation_reason,
         "completion_remediation_nonwrite_ids": list(sess.completion_remediation_nonwrite_ids),
         "completion_remediation_nonwrite_seen": sess.completion_remediation_nonwrite_seen,
+        "initial_private_ids": list(sess.initial_private_ids),
+        "initial_listing": sess.initial_listing,
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
         "plan_off": sess.plan_off,
@@ -5560,6 +5681,8 @@ def _session_from_dict(d) -> PlanSession | None:
                            completion_remediation_nonwrite_ids=tuple(str(call_id) for call_id in
                                                                      (d.get("completion_remediation_nonwrite_ids") or []) if call_id),
                            completion_remediation_nonwrite_seen=bool(d.get("completion_remediation_nonwrite_seen")),
+                           initial_private_ids=tuple(str(x) for x in d.get('initial_private_ids', []) if isinstance(x, str)),
+                           initial_listing=str(d.get('initial_listing', '')),
                            synthetic=bool(d.get("synthetic")),
                            plan_off=bool(d.get("plan_off")),
                            pilot_selection=(tuple(d["pilot_selection"])

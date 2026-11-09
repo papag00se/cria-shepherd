@@ -468,6 +468,41 @@ _INTERPRETER_SIGNAL_ALL = re.compile(r"\bos\.kill\(\s*(?:-\d+|0)\s*,|\bos\.killp
                                      r"|process\.kill\(\s*(?:-\d+|0)\b|Process\.kill\([^)]*,\s*(?:-\d+|0)\s*\)")
 _INTERPRETERS = re.compile(r"^(?:python[\d.]*|perl|ruby|node|nodejs|deno|bun|php)$")
 _FORK_BOMB = re.compile(r"([\w:.]+)\s*\(\s*\)\s*\{[^}]*\1\s*\|\s*\1\s*&")
+_FORK_BOMB_EVENT = re.compile(
+    r"(?<![\w:.])(?P<header>[\w:.]+)\s*\(\s*\)\s*\{"
+    r"|(?<![\w:.])(?P<left>[\w:.]+)\s*\|\s*(?P<right>[\w:.]+)\s*&"
+    r"|(?P<close>\})")
+
+
+def _fork_bomb(command: str) -> bool:
+    # The old backreference may match a suffix of the header and of the left
+    # operand, but the right operand must be that suffix in full. A reversed
+    # trie records all header suffixes since the last closing brace. This keeps
+    # those conservative matches without re-scanning long encoded arguments or
+    # repeatedly scanning the same body for nested/unclosed headers.
+    if not all(char in command for char in '({|&'):
+        return False
+    suffixes = {}
+    for event in _FORK_BOMB_EVENT.finditer(command):
+        header = event.group('header')
+        if header is not None:
+            node = suffixes
+            for char in reversed(header):
+                node = node.setdefault(char, {})
+        elif event.group('close') is not None:
+            suffixes = {}
+        else:
+            left, right = event.group('left'), event.group('right')
+            if not left.endswith(right):
+                continue
+            node = suffixes
+            for char in reversed(right):
+                node = node.get(char)
+                if node is None:
+                    break
+            if node is not None:
+                return True
+    return False
 _SQL_DESTROY = re.compile(r"\b(?:drop\s+(?:database|schema|table)|truncate\b|dropDatabase\s*\(|flushall\b|flushdb\b)", re.IGNORECASE)
 
 
@@ -757,7 +792,7 @@ def machine_harm_refusal(command: str) -> str | None:
     a bounded lexical backstop for an untrusted model, not a sandbox."""
     if not command:
         return None
-    if _FORK_BOMB.search(command):
+    if _fork_bomb(command):
         found = "fork_bomb"
     else:
         found = _judge_commands(command, _machine_harm_judge)
@@ -1189,6 +1224,31 @@ def _unquoted_chars(command: str):
             quote = c
         else:
             yield i, c
+
+
+def _active_word_expansion(source: str) -> bool:
+    """Whether a shell word has expansion syntax rather than quoted literal data."""
+    quote, escaped = '', False
+    for char in source:
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\' and quote != "'":
+            escaped = True
+            continue
+        if quote == "'":
+            if char == "'":
+                quote = ''
+        elif quote == '"':
+            if char == '"':
+                quote = ''
+            elif char in '$`':
+                return True
+        elif char in "'\"":
+            quote = char
+        elif char in '$`{}*?[~':
+            return True
+    return bool(quote or escaped)
 
 
 def _segment_spans(command: str) -> list[tuple[int, int]]:
@@ -3083,6 +3143,8 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
     read_only = bool(roots) and proof is None
     segments = _segment_spans(command)
     spans = _quoted_spans(command)
+    # Token spans are relative to the continuation-joined text, not the original.
+    shell_tokens = [] if '\\\n' in command else (_shell_tokens(command) or [])
     external = None
     ext_is_write = False
     for m in _PATH_TOKEN.finditer(command):
@@ -3093,6 +3155,16 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
         # search term, not a file). A quoted path that opens the quote for a FILE command (`cat "/etc/x"`)
         # is still checked. Files for grep/sed are bare path args, which the scan still catches.
         inside = next((s for s, e in spans if s <= m.start() < e), None)
+        if inside is not None and m.start() == inside:
+            # The regex stops at whitespace or a quote, but one shell word can
+            # concatenate quoted pieces. Judge its full literal argv value; never
+            # reconstruct a word containing shell expansions as a literal path.
+            word = next(((w, s, e) for w, s, e in shell_tokens if s <= m.start() < e), None)
+            if word is not None:
+                value, start, end = word
+                source = command[start:end]
+                if value.startswith(tok) and not _active_word_expansion(source):
+                    tok = value
         # The pattern exemption belongs to the SEGMENT whose command owns the quote: `cp in "/tmp/o";
         # grep x in` must not hide the cp's destination behind the grep that follows it. And a quoted
         # string that is itself a write TARGET (`grep x in > "/tmp/o"`) is a file, never a pattern.

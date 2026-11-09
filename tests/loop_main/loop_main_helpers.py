@@ -68,6 +68,28 @@ def plan_off_loop(coder, *, store=None, reasoner=None, **ctx):
                 store or LoopStore())
 
 
+def drive_after_initial_inventory(loop, request, key, classification, rlog, *, pasted_delivery=None):
+    """Run the harness-owned inventory turns before an unrelated driver scenario."""
+    history = list(request['messages'])
+    while True:
+        deliveries = []
+        result = loop.drive({**request, 'messages': history}, key, classification, rlog,
+                            pasted_delivery=deliveries.append if pasted_delivery else None)
+        bootstrap = loop._store.get_bootstrap(key)
+        if bootstrap is None or not bootstrap.initial_inventory:
+            if pasted_delivery is not None:
+                for deliver in deliveries:
+                    pasted_delivery(deliver)
+            return result
+        message = result['choices'][0]['message']
+        call = message['tool_calls'][0]
+        args = json.loads(call['function']['arguments'])
+        command = args.get('command', args.get('cmd'))
+        command = command if isinstance(command, list) else ['sh', '-c', command]
+        run = subprocess.run(command, cwd=bootstrap.workspace_root, capture_output=True, text=True, check=True)
+        history += [message, {'role': 'tool', 'tool_call_id': call['id'], 'content': run.stdout}]
+
+
 def synthetic(task="build it", pages=None):
     return PlanSession(plan=Plan(id="p", task=task, created="c", items=[PlanItem(task)]), synthetic=True, fetched_pages=pages)
 

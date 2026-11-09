@@ -1,0 +1,5 @@
+Task:
+{{TASK}}
+
+Workspace inventory chunk (JSON; symbols null means extraction was unavailable):
+{{CHUNK}}

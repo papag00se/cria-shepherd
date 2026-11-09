@@ -1,0 +1,1 @@
+⟦ctx:workspace⟧ Initial workspace inventory omitted to fit the available context. Inspect the workspace using read-only shell tools; the inventory is not a complete listing here.

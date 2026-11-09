@@ -7,7 +7,7 @@ from cria.classify import Classification
 from cria.loop import LoopStore, completion_to_sse
 from cria.probegate import GATE_SENTINEL
 
-from loop_main_helpers import Chat, Rlog, acting, body, completion, plan_off_loop, synthetic, loop_main_local_view  # noqa: F401
+from loop_main_helpers import Chat, Rlog, acting, body, completion, drive_after_initial_inventory, plan_off_loop, synthetic, loop_main_local_view  # noqa: F401
 
 CODING = Classification("task", "coding", "fixture")
 CHAT = Classification("question", "chat", "fixture")
@@ -25,7 +25,8 @@ def test_a_prose_empty_or_undecodable_coder_reply_never_ends_the_harness_turn_wh
     driver answers a done claim, an empty reply or a decode failure with cria's own ground-truth gate, a shell tool call."""
     (tmp_path / "h.py").write_text("x = 1\n")
     rlog = Rlog()
-    out = plan_off_loop(lambda b, r: coder_reply, workspace_root=str(tmp_path)).drive(body(), "sid:a", CODING, rlog)
+    driver = plan_off_loop(lambda b, r: coder_reply, workspace_root=str(tmp_path))
+    out = drive_after_initial_inventory(driver, body(), "sid:a", CODING, rlog)
     assert GATE_SENTINEL in " ".join(args_of(out)["command"])
     assert "loop.completion_probe" in rlog.kinds()
 

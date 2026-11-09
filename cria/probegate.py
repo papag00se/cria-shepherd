@@ -275,7 +275,7 @@ def helper_path_expr() -> str:
 
 def helper_runner() -> str:
     """Shell words that run the helper THROUGH the verifying loader: append the mode and its args."""
-    return f'python3 -c {shlex.quote(_helper_loader())} {helper_path_expr()}'
+    return f'python3 -I -c {shlex.quote(_helper_loader())} {helper_path_expr()}'
 
 
 def _helper_install_leg() -> str:
@@ -287,12 +287,12 @@ def _helper_install_leg() -> str:
     planted or truncated file is OVERWRITTEN by the same atomic replace. cria's own invariant code,
     named by the hash of its text."""
     h = helper_path_expr()
-    check = f'python3 -c {shlex.quote(_helper_loader(verify_only=True))} {h}'
+    check = f'python3 -I -c {shlex.quote(_helper_loader(verify_only=True))} {h}'
     source = base64.b64encode(_helper_source().encode()).decode()
     installer = (ownedfiles.ATOMIC_REPLACE_PROGRAM + 'import base64,sys\n'
                  + f'_atomic_replace(sys.argv[1],base64.b64decode({source!r}))\n')
     return (f'if ! {check} 2>/dev/null; then\n'
-            f'python3 - {h} <<\'{_HELPER_HEREDOC}\'\n{installer}{_HELPER_HEREDOC}\n'
+            f'python3 -I - {h} <<\'{_HELPER_HEREDOC}\'\n{installer}{_HELPER_HEREDOC}\n'
             'fi\n')
 
 
@@ -390,7 +390,7 @@ def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], surv
         f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' {opening} {closing}",
         'else',
         f"printf '%s\\nerror\\t' {opening}",
-        f'printf %s "$__ctx_launch_error" | python3 -c {error_encoder}',
+        f'printf %s "$__ctx_launch_error" | python3 -I -c {error_encoder}',
         f"printf '%s\\n' {closing}",
         'fi',
     ]
