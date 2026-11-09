@@ -6056,7 +6056,7 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
     template = "compaction_reframe_empty" if _workspace_is_empty(cwd) else "compaction_reframe"
     out: list[dict] = []
     reframed = False
-    for m in messages:
+    for index, m in enumerate(messages):
         text = _msg_text_content(m)  # handles list-shaped content (a chat client's structured parts)
         direct_packet = (m.get("role") == "user" and isinstance(origin, _HandoffOrigin)
                          and origin.packet is not None and origin.matches_summary(text))
@@ -6084,7 +6084,13 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
                 labels = prompts.load_map("compaction_evidence_packet")
                 content = f"{CONTINUATION_MARKER} {labels['header']}"
                 origin.continuation = content
-                if packet.task:
+                # The harness may retain the original root alongside its handoff. Compare
+                # only the exact initial user packets before this handoff, never markup or
+                # later instructions; only our own redundant copy can be omitted.
+                prefix = messages[:index]
+                roots = [_msg_text_content(prefix[i]) for i in selfcompact.root_user_indices(prefix)]
+                task_retained = packet.task and (packet.task in roots or "\n\n".join(roots) == packet.task)
+                if packet.task and not task_retained:
                     out.append({"role": "user", "content": selfcompact.TASK_MARKER + "\n" +
                                 prompts.fill(labels["task"], task=packet.task)})
                 out.append({**m, "content": content})

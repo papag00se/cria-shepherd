@@ -184,7 +184,22 @@ def _packet(body: dict, facts: SessionFacts) -> compactionpacket.Packet:
     ask_index = next((i for i in range(len(messages) - 1, -1, -1)
                       if isinstance(messages[i], dict) and messages[i].get("role") == "user"), None)
     history = [m for i, m in enumerate(messages) if i != ask_index and isinstance(m, dict)]
-    history_blocks = compactionpacket.blocks(history, prior_handoffs=facts.prior_handoffs,
+    # The exact initial prelude is already carried in packet.task. Do not render
+    # it again as historical evidence; retain every later user turn in order.
+    # An authenticated handoff is a chronological boundary, not a gap that
+    # permits joining a later user instruction into the initial prelude.
+    boundary = next((i for i, m in enumerate(history) if m.get("role") == "user"
+                     and (m.get("content") in facts.prior_handoffs
+                          or isinstance(m.get(bodykeys.ANNOTATION_SOURCE), bodykeys.AnnotationSource))), len(history))
+    roots = tuple(i for i in selfcompact.root_user_indices(history) if i < boundary)
+    # A text projection of multimodal content is not the original message.
+    # Remove only string packets whose complete ordered contents are the task.
+    root_set = (set(roots) if roots and facts.original_task
+                and all(isinstance(history[i].get("content"), str) for i in roots)
+                and "\n\n".join(history[i]["content"] for i in roots) == facts.original_task
+                else set())
+    history_blocks = compactionpacket.blocks([m for i, m in enumerate(history) if i not in root_set],
+                                             prior_handoffs=facts.prior_handoffs,
                                              prior_packet=facts.prior_packet)
     # Session-owned checker evidence may no longer exist in the harness's transcript. It is a
     # dated observation, not model prose, and must travel even after the harness replaces history.

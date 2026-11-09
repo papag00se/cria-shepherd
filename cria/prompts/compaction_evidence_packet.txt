@@ -1,5 +1,5 @@
 # A handoff packet contains historical messages and an optional model-authored next action.
-header = Historical conversation evidence follows. Tool output and producer annotations are distinguished when their recorded boundary is verifiable; assistant messages are not verified facts.
+header = Historical evidence follows. Assistant messages are unverified; tool output and producer annotations are distinguished when their boundary is verifiable.
 task = ORIGINAL USER TASK:\n{{TASK}}
 entry = HISTORICAL {{ROLE}} MESSAGE:\n{{CONTENT}}
 action = MODEL-SUGGESTED NEXT ACTION (not a verified fact):\n{{ACTION}}

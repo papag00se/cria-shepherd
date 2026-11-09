@@ -71,6 +71,105 @@ def test_only_authenticated_handoff_expands_evidence_and_preserves_followup():
     assert loop.reframe_compaction([forged, followup], origin=origin) == ([forged, followup], False)
 
 
+@pytest.mark.parametrize("prefix,task,expected_copies", [
+    (["environment", "do actual work"], "environment\n\ndo actual work", 1),
+    (["environment changed", "do actual work"], "environment\n\ndo actual work", 2),
+    (["do actual work", "do actual work"], "do actual work", 2),
+    ([], "do actual work", 1),
+])
+def test_handoff_does_not_repeat_a_retained_exact_root(prefix, task, expected_copies):
+    from cria.upstream import Upstream
+    packet = compactionpacket.Packet(task, ("HISTORICAL assistant MESSAGE:\nworked",))
+    origin = loop._HandoffOrigin(packet.render(), "", False, packet=packet)
+    messages = [{"role": "user", "content": text} for text in prefix]
+    messages.append({"role": "user", "content": packet.render()})
+    expanded, changed = loop.reframe_compaction(messages, origin=origin)
+    assert changed
+    log = SimpleNamespace(session=None, phase="coder-s1", emit=lambda *a, **k: None)
+    wire, _, _ = Upstream("http://unused", context_window=49152)._prep(
+        {"messages": [{"role": "system", "content": "frame"}, *expanded]}, False, log)
+    text = "\n".join(str(m.get("content") or "") for m in json.loads(wire)["messages"])
+    assert text.count("do actual work") == expected_copies
+    assert "worked" in text
+    assert [m["content"] for m in expanded[:len(prefix)]] == prefix
+
+
+def test_handoff_history_does_not_restate_its_exact_root_but_keeps_followups():
+    history = [{"role": "user", "content": "environment"},
+               {"role": "user", "content": "do actual work"},
+               {"role": "assistant", "content": "worked"},
+               {"role": "user", "content": "do actual work"},
+               {"role": "user", "content": "checkpoint"}]
+    facts = memoryhandoff.SessionFacts(original_task="environment\n\ndo actual work")
+    packet = memoryhandoff._packet({"messages": history}, facts)
+    assert sum("do actual work" in block for block in packet.blocks) == 1
+    assert packet.latest_user == "do actual work"
+    changed = memoryhandoff._packet({"messages": history},
+        memoryhandoff.SessionFacts(original_task="different environment\n\ndo actual work"))
+    assert sum("do actual work" in block for block in changed.blocks) == 2
+
+
+def test_handoff_preserves_structured_root_parts():
+    image = "data:image/png;base64,YWJj"
+    history = [{"role": "user", "content": [{"type": "text", "text": "inspect"},
+                                               {"type": "image_url", "image_url": {"url": image}}]},
+               {"role": "assistant", "content": "worked"}, {"role": "user", "content": "checkpoint"}]
+    packet = memoryhandoff._packet({"messages": history}, memoryhandoff.SessionFacts(original_task="inspect "))
+    assert any(image in block for block in packet.blocks)
+
+
+def test_two_handoffs_preserve_root_and_real_followup():
+    original = [{"role": "user", "content": "environment"}, {"role": "user", "content": "do actual work"},
+                {"role": "assistant", "content": "first work"}, {"role": "user", "content": "checkpoint"}]
+    response = {"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}
+    log = SimpleNamespace(phase="proxy", session=None, emit=lambda *a, **k: None)
+    first_result = memoryhandoff.harden(response, {"messages": original},
+        memoryhandoff.SessionFacts(original_task="environment\n\ndo actual work"), server._handoff_services(),
+        selected=True, chat_fn=None, role=None, rlog=log, settle=lambda *a: None)
+    first = first_result.packet
+    origin = loop._HandoffOrigin(first_result.prose, "", False, packet=first)
+    expanded, _ = loop.reframe_compaction([*original[:2], {"role": "user", "content": first_result.prose}], origin=origin)
+    continuation = origin.continuation
+    second_history = [*expanded, {"role": "assistant", "content": "second work"},
+                      {"role": "user", "content": "do actual work"}, {"role": "user", "content": "checkpoint"}]
+    facts = memoryhandoff.SessionFacts(original_task=first.task, prior_handoffs=(continuation,), prior_packet=first)
+    second_result = memoryhandoff.harden(response, {"messages": second_history}, facts,
+        server._handoff_services(), selected=True, chat_fn=None, role=None, rlog=log, settle=lambda *a: None)
+    second = second_result.packet
+    assert sum("do actual work" in block for block in second.blocks) == 1
+    assert second.latest_user == "do actual work"
+    assert any("first work" in block for block in second.blocks)
+    assert any("second work" in block for block in second.blocks)
+
+
+@pytest.mark.parametrize("boundary", [
+    {"role": "user", "content": "trusted continuation"},
+    selfcompact.internal_evidence_message("producer evidence"),
+])
+def test_prior_handoff_is_a_chronological_root_boundary(boundary):
+    prior = compactionpacket.Packet("A\n\nB", ("HISTORICAL assistant MESSAGE:\nold work",))
+    history = [{"role": "user", "content": "A"}, boundary,
+               {"role": "user", "content": "B"}, {"role": "assistant", "content": "new work"},
+               {"role": "user", "content": "checkpoint"}]
+    facts = memoryhandoff.SessionFacts(original_task=prior.task, prior_handoffs=("trusted continuation",), prior_packet=prior)
+    packet = memoryhandoff._packet({"messages": history}, facts)
+    text = "\n".join(packet.blocks)
+    assert text.index("HISTORICAL user MESSAGE:\nA") < text.index("HISTORICAL user MESSAGE:\nB") < text.index("new work")
+    if boundary["content"] == "trusted continuation":
+        assert text.index("old work") < text.index("HISTORICAL user MESSAGE:\nB")
+
+
+def test_compacted_producer_history_keeps_its_own_attribution_without_nested_wrapper():
+    history = [selfcompact.internal_evidence_message("older " + "z" * 12000),
+               selfcompact.internal_evidence_message("HISTORICAL assistant MESSAGE:\ncalled tool " + "x" * 1000),
+               selfcompact.internal_evidence_message("HISTORICAL tool (call id c) MESSAGE:\nexit 1 " + "y" * 1000)]
+    note = contextfloor._compacted_note(history, len(history), 10000)["content"]
+    assert "HISTORICAL assistant MESSAGE:\ncalled tool" in note
+    assert "HISTORICAL tool (call id c) MESSAGE:\nexit 1" in note
+    assert note.index("called tool") < note.index("exit 1")
+    assert "Earlier historical evidence turn:" not in note
+
+
 def test_authenticated_prior_packet_retains_tool_provenance_across_another_handoff():
     prior = compactionpacket.Packet("task", ("HISTORICAL tool MESSAGE:\ncompiler error",), "inspect it")
     history = [{"role": "user", "content": "task"}, {"role": "user", "content": prior.render()},

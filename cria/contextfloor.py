@@ -1365,7 +1365,14 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
             content = _msg_text(message)
             if content:
                 role = "user" if priority == 0 else "historical evidence"
-                rendered = prompts.render("compacted_history_turn", role=role, content=content)
+                # Producer-owned handoff entries already carry their own historical
+                # role and attribution. Keep those bytes, without nesting another
+                # generic historical-turn heading around them.
+                first_line = content.partition("\n")[0]
+                already_labelled = (priority != 0 and first_line.startswith("HISTORICAL ")
+                                    and first_line.endswith(" MESSAGE:"))
+                rendered = content if already_labelled else prompts.render(
+                    "compacted_history_turn", role=role, content=content)
                 if spent + est_tokens(rendered) <= budget:
                     entries[idx].append((0, rendered))
                     spent += est_tokens(rendered)
