@@ -5,5 +5,6 @@ unavailable = No reasoner-selected paths are available; observed paths are omitt
 none = The reasoner selected no valid inventory paths; observed paths are omitted here:
 partial = Some reasoner selection questions were unavailable; this selection is incomplete:
 scope = Excluded directory names (also excluding an internal metadata directory):
+indexer_unavailable = Symbol indexer unavailable:
 issues = Symlinks skipped and survey errors:
 issues_spilled = Counts of skipped symlinks and survey errors; full details are available by rerunning the survey:

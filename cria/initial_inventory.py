@@ -13,7 +13,8 @@ from . import groundtruth, jsontext, probegate, prompts
 
 
 _PROGRAM = r'''
-import ast, base64, json, os, stat, sys
+import base64, json, os, stat, sys
+# __CTX_INDEX_SETUP__
 root = sys.argv[1]
 parameters = json.loads(base64.b64decode(sys.argv[2]))
 excluded = set(parameters['excluded'])
@@ -51,28 +52,12 @@ try:
                     continue
                 item = {'path': path, 'size': info.st_size, 'symbols': None}
                 result['files'].append(item)
-                if not name.endswith('.py'):
-                    continue
-                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
-                with os.fdopen(descriptor, 'rb') as source:
-                    opened = os.fstat(source.fileno())
-                    if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                        raise OSError('file changed during survey')
-                    tree = ast.parse(source.read(), filename=path)
-                symbols = []
-                def visit(node, prefix=''):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        qualified = prefix + node.name
-                        symbols.append(qualified)
-                        prefix = qualified + '.'
-                    for child in ast.iter_child_nodes(node):
-                        visit(child, prefix)
-                visit(tree)
-                item['symbols'] = symbols
+                # __CTX_SYMBOLS__
             except (OSError, SyntaxError, ValueError, UnicodeError, RecursionError) as exc:
                 failed(path, exc)
 except OSError as exc:
     failed('.', exc)
+# __CTX_INDEX_CLOSE__
 result['files'].sort(key=lambda item: item['path'])
 result['symlinks'].sort()
 raw = json.dumps(result, ensure_ascii=True, separators=(',', ':')).encode('ascii')
@@ -85,12 +70,156 @@ print(output)
 '''
 
 
-def command(root: str, *, encoded: bool = False) -> str:
+_INDEX_SETUP = r'''
+import codecs, selectors, shutil, subprocess, time
+CHUNK = 65536
+class Indexer:
+    def __init__(self):
+        self.proc = None
+        self.ready = False
+        self.error = None
+        binary = shutil.which('ctags', path=os.defpath + ':/usr/local/bin')
+        if not binary:
+            self.error = 'indexer not found'
+        if binary:
+            try:
+                # Pattern text is never returned; limiting it bounds discarded protocol data,
+                # not source sent to the indexer or any symbol field.
+                self.proc = subprocess.Popen([binary, '--options=NONE', '--pattern-length-limit=1', '--_interactive=sandbox'],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+                os.set_blocking(self.proc.stdin.fileno(), False)
+                os.set_blocking(self.proc.stdout.fileno(), False)
+            except OSError as exc:
+                self.error = 'indexer start failed: ' + type(exc).__name__
+                self.close()
+    def close(self):
+        if self.proc is not None:
+            self.proc.kill()
+            self.proc.wait()
+            self.proc.stdin.close()
+            self.proc.stdout.close()
+            self.proc = None
+    def tags(self, name, source, size):
+        if self.proc is None:
+            return None
+        try:
+            # A filename is data, never a shell argument or a filesystem path to open.
+            pending = json.dumps({'command': 'generate-tags', 'filename': name, 'size': size}, ensure_ascii=False).encode('utf-8') + b'\n'
+            sent, remaining, reply, tags = 0, size, bytearray(), []
+            deadline = time.monotonic() + 30
+            with selectors.DefaultSelector() as sel:
+                sel.register(self.proc.stdout, selectors.EVENT_READ)
+                sel.register(self.proc.stdin, selectors.EVENT_WRITE)
+                while True:
+                    wait = deadline - time.monotonic()
+                    if wait <= 0:
+                        raise TimeoutError('indexer timed out')
+                    events = sel.select(wait)
+                    if not events:
+                        raise TimeoutError('indexer timed out')
+                    for key, _ in events:
+                        if key.fileobj is self.proc.stdin:
+                            if sent == len(pending):
+                                pending = source.read(min(CHUNK, remaining))
+                                if not pending:
+                                    raise OSError('file shortened during indexing')
+                                remaining -= len(pending)
+                                sent = 0
+                            try:
+                                count = os.write(key.fd, memoryview(pending)[sent:])
+                            except BlockingIOError:
+                                continue
+                            deadline = time.monotonic() + 30
+                            sent += count
+                            if sent == len(pending) and remaining == 0:
+                                sel.unregister(self.proc.stdin)
+                        else:
+                            try:
+                                chunk = os.read(key.fd, CHUNK)
+                            except BlockingIOError:
+                                continue
+                            if not chunk:
+                                raise OSError('indexer closed its output')
+                            deadline = time.monotonic() + 30
+                            reply.extend(chunk)
+                            while b'\n' in reply:
+                                line, _, tail = reply.partition(b'\n')
+                                reply = bytearray(tail)
+                                record = json.loads(line)
+                                if not isinstance(record, dict):
+                                    raise ValueError('invalid indexer record')
+                                kind = record.get('_type')
+                                if kind == 'program':
+                                    if record.get('name') != 'Universal Ctags':
+                                        raise ValueError('not Universal Ctags')
+                                    self.ready = True
+                                elif not self.ready:
+                                    raise ValueError('missing indexer greeting')
+                                elif kind == 'tag':
+                                    if not isinstance(record.get('name'), str) or not isinstance(record.get('kind'), str):
+                                        raise ValueError('invalid tag')
+                                    tag = {k: record[k] for k in ('name', 'kind', 'scope') if isinstance(record.get(k), str)}
+                                    tags.append(tag)
+                                elif kind == 'completed':
+                                    if remaining or sent != len(pending) or record.get('command') != 'generate-tags':
+                                        raise ValueError('invalid completion')
+                                    return tags or None
+                                elif kind == 'error':
+                                    raise ValueError('indexer error')
+        except (OSError, ValueError, TypeError, UnicodeError, TimeoutError) as exc:
+            self.error = 'indexer failed: ' + type(exc).__name__
+            self.close()
+            return None
+indexer = Indexer()
+'''
+
+_SYMBOLS = r'''                if indexer.proc is None:
+                    continue
+                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                with os.fdopen(descriptor, 'rb') as source:
+                    opened = os.fstat(source.fileno())
+                    if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise OSError('file changed during survey')
+                    def unchanged():
+                        current = os.fstat(source.fileno())
+                        return (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) == (current.st_size, current.st_mtime_ns, current.st_ctime_ns)
+                    try:
+                        name.encode('utf-8')
+                        decoder = codecs.getincrementaldecoder('utf-8')('strict')
+                        binary = False
+                        total = 0
+                        while total < opened.st_size:
+                            chunk = source.read(min(CHUNK, opened.st_size - total))
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if b'\0' in chunk:
+                                binary = True
+                                break
+                            decoder.decode(chunk)
+                        decoder.decode(b'', final=True)
+                    except UnicodeError:
+                        continue
+                    if binary:
+                        continue
+                    if total != opened.st_size or not unchanged():
+                        raise OSError('file changed during survey')
+                    source.seek(0)
+                    symbols = indexer.tags(name, source, opened.st_size)
+                    if not unchanged():
+                        raise OSError('file changed during survey')
+                    item['symbols'] = symbols'''
+
+
+def command(root: str, *, encoded: bool = False, _browse: bool = False) -> str:
     """Return a shell command; all path operations occur on the harness."""
     excluded = sorted(groundtruth._INVENTORY_EXCLUDE)
     shown = [name for name in excluded if 'cria' not in name.lower()]
     parameters = base64.b64encode(json.dumps({'excluded': excluded, 'shown': shown}).encode()).decode()
-    return ('python3 -I -c ' + shlex.quote(_PROGRAM) + ' ' + shlex.quote(root) + ' '
+    program = (_PROGRAM.replace('# __CTX_INDEX_SETUP__', '' if _browse else _INDEX_SETUP)
+               .replace('                # __CTX_SYMBOLS__', '' if _browse else _SYMBOLS)
+               .replace('# __CTX_INDEX_CLOSE__', '' if _browse else "indexer.close()\nresult['symbol_indexer_error'] = indexer.error"))
+    return ('python3 -I -c ' + shlex.quote(program) + ' ' + shlex.quote(root) + ' '
             + shlex.quote(parameters) + (' encoded' if encoded else ''))
 
 
@@ -210,7 +339,7 @@ print(raw[offset:end])
 
 def browse_command(root: str) -> str:
     """Re-survey without artifacts and page its ASCII JSON; append a character offset."""
-    return command(root) + ' | python3 -I -c ' + shlex.quote(_PAGE)
+    return command(root, _browse=True) + ' | python3 -I -c ' + shlex.quote(_PAGE)
 
 
 def render(data: dict, ask=None, *, chunk_chars: int = 12000, root: str = '.', budget_chars: int = 12000) -> str:
@@ -219,6 +348,7 @@ def render(data: dict, ask=None, *, chunk_chars: int = 12000, root: str = '.', b
     labels = prompts.load_map('initial_inventory_labels')
     dump = lambda value: json.dumps(value, ensure_ascii=True, separators=(',', ':'))
     issues = {'symlinks': data.get('symlinks', []), 'errors': data.get('errors', [])}
+    indexer_error = data.get('symbol_indexer_error')
     large = len(dump(files)) + len(dump(issues)) > budget_chars
     selected, complete = (select(files, ask, chunk_chars=chunk_chars) if large and ask else ([], False))
     if not large:
@@ -232,10 +362,13 @@ def render(data: dict, ask=None, *, chunk_chars: int = 12000, root: str = '.', b
     excluded = [name for name in data.get('excluded_names', []) if 'cria' not in name.lower()]
     if large:
         issues = {key: len(value) for key, value in issues.items()}
-    parts = [labels['scope'], dump(excluded), labels['issues_spilled' if large else 'issues'], dump(issues), heading, dump(visible)]
+    parts = [labels['scope'], dump(excluded), labels['issues_spilled' if large else 'issues'], dump(issues)]
+    if indexer_error:
+        parts.extend([labels['indexer_unavailable'], dump(indexer_error)])
+    parts.extend([heading, dump(visible)])
     if large:
         parts.extend(['Selection is from the earlier survey; its complete snapshot is not retained. '
-                      'Browse the current inventory with the read-only command below followed by offset 0. '
+                      'Browse the current inventory with the read-only command below followed by offset 0; symbols unavailable in this names-and-sizes listing. '
                       'The header gives start, next offset and total; repeat with the next offset until it equals total. '
                       'Each page re-surveys, so changes between pages may shift results:', browse_command(root)])
     return prompts.render('initial_inventory', inventory='\n'.join(parts))

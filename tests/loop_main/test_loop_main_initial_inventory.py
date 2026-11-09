@@ -36,13 +36,16 @@ def test_unsafe_scratch_fails_open_to_coder_without_workspace_writes(tmp_path, m
 
 def test_first_coder_turn_receives_harness_inventory(tmp_path):
     (tmp_path / 'seed.py').write_text('def ready():\n    pass\n')
+    (tmp_path / 'seed.go').write_text('package seed\nfunc ReadyGo() {}\n')
     coder = Chat(acting())
     driver = plan_off_loop(coder, workspace_root=str(tmp_path), assists=True)
     request = body('Implement the feature')
     framed = drive_until_coder(driver, coder, request, tmp_path)
     texts = [str(message.get('content') or '') for message in framed['messages']]
     assert 'Implement the feature' in texts
-    assert any('seed.py' in text and 'ready' in text for text in texts)
+    assert any('seed.py' in text and 'seed.go' in text for text in texts)
+    if not any('Symbol indexer unavailable' in text for text in texts):
+        assert any('ready' in text and 'ReadyGo' in text for text in texts)
 
 
 def test_large_first_inventory_asks_configured_reasoner_without_workspace_artifact(tmp_path):
@@ -54,7 +57,7 @@ def test_large_first_inventory_asks_configured_reasoner_without_workspace_artifa
                            reasoner_role=Role(name='reasoner', backend='local'))
     framed = drive_until_coder(driver, coder, body('Implement item zero'), tmp_path)
     listing = next(str(m.get('content')) for m in framed['messages'] if 'Initial harness workspace inventory' in str(m.get('content')))
-    assert reasoner.bodies and 'item_0' in json.dumps(reasoner.bodies[0])
+    assert reasoner.bodies and 'file-0000.py' in json.dumps(reasoner.bodies[0])
     assert 'Implement item zero' in json.dumps(reasoner.bodies[0])
     assert 'selected by the configured reasoner' in listing and 'file-0000.py' in listing
     assert 'file-0349.py' not in listing

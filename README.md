@@ -40,6 +40,8 @@ L0 retains proxy/wire and transport-recovery contracts without higher-level codi
 
 You need Python 3.11+, Git LFS, an OpenAI-compatible model server and a coding harness. System 1 and its CPU runtime are part of the standard installation. Fetch Git LFS objects when cloning; the service refuses to start if the required bundle is missing. System 1 can be disabled explicitly, changing its judgment path. See the [System 1 guide](docs/system1-guide.md).
 
+Optional: install Universal Ctags with interactive sandbox support on the harness host to include multi-language symbols in the initial workspace inventory. Without it, the inventory still lists files and marks symbols unavailable. Binary and invalid UTF-8 files are not indexed; see [inventory details](docs/heuristic-assists.md#context-shaping--what-the-model-sees-and-how-much).
+
 ```bash
 git clone https://github.com/papag00se/cria-shepherd.git
 cd cria-shepherd

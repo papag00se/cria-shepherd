@@ -8,6 +8,112 @@ import subprocess
 from cria import initial_inventory, probegate
 
 
+def sandboxed_ctags_available():
+    import shutil
+    binary = shutil.which('ctags', path=os.defpath + ':/usr/local/bin')
+    if not binary:
+        return False
+    probe = subprocess.run([binary, '--options=NONE', '--_interactive=sandbox'],
+                           input='{"command":"generate-tags","filename":"x.py","size":9}\ndef x():\n',
+                           capture_output=True, text=True, timeout=10)
+    return probe.returncode == 0 and 'Universal Ctags' in probe.stdout and 'completed' in probe.stdout
+
+
+def test_multilanguage_symbols_from_sandboxed_indexer(tmp_path):
+    import pytest
+    if not sandboxed_ctags_available():
+        pytest.skip('sandboxed Universal Ctags is optional')
+    sources = {
+        'sample.py': 'class PythonThing:\n    def method(self): pass\n',
+        'sample.go': 'package x\nfunc GoThing() {}\n',
+        'sample.js': 'function JsThing() {}\n',
+        'sample.ts': 'class TsThing {}\n',
+        'Sample.java': 'class JavaThing {}\n',
+        'sample.rb': 'class RubyThing\nend\n',
+        'sample.rs': 'fn rust_thing() {}\n',
+        'Sample.cs': 'class CsThing {}\n',
+        'sample.cpp': 'class CppThing {};\n',
+    }
+    for name, source in sources.items():
+        (tmp_path / name).write_text(source)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     cwd=tmp_path, capture_output=True, text=True, check=True).stdout)
+    files = {item['path']: item['symbols'] for item in data['files']}
+    for name, expected in zip(sources, ('PythonThing', 'GoThing', 'JsThing', 'TsThing', 'JavaThing', 'RubyThing', 'rust_thing', 'CsThing', 'CppThing')):
+        assert expected in str(files[name]), (name, files[name])
+
+
+def test_large_tag_rich_source_is_streamed_without_truncation(tmp_path):
+    import pytest
+    if not sandboxed_ctags_available():
+        pytest.skip('sandboxed Universal Ctags is optional')
+    source = tmp_path / 'large.py'
+    with source.open('w') as f:
+        f.write('#' + 'x' * (9 * 1024 * 1024) + '\n')
+        for i in range(20000):
+            f.write(f'def item_{i}(): pass\n')
+        f.write('def final_symbol(): pass\n')
+    (tmp_path / 'z_after.py').write_text('def after_large_file(): pass\n')
+    result = subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                            capture_output=True, text=True, check=True, timeout=90)
+    data = json.loads(result.stdout)
+    files = {item['path']: item['symbols'] for item in data['files']}
+    symbols = files['large.py']
+    assert files['z_after.py'][0]['name'] == 'after_large_file'
+    assert len(symbols) == 20001
+    assert symbols[0]['name'] == 'item_0'
+    assert symbols[-1]['name'] == 'final_symbol'
+    assert not data['errors'] and data['symbol_indexer_error'] is None
+
+
+def test_indexer_unavailable_is_uniform_and_browser_remains_usable(tmp_path, monkeypatch):
+    monkeypatch.setattr(initial_inventory, '_INDEX_SETUP', initial_inventory._INDEX_SETUP.replace(
+        "shutil.which('ctags', path=os.defpath + ':/usr/local/bin')", 'None'))
+    for name in ('file.py', 'file.go'):
+        (tmp_path / name).write_text('def example(): pass\n')
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    assert all(item['symbols'] is None for item in data['files'])
+    assert data['symbol_indexer_error'] == 'indexer not found'
+    assert 'Symbol indexer unavailable' in initial_inventory.render(data)
+    assert not data['errors']
+
+
+def test_indexer_sandbox_rejection_is_not_retried_unsandboxed(tmp_path, monkeypatch):
+    import pytest
+    if not sandboxed_ctags_available():
+        pytest.skip('sandboxed Universal Ctags is optional')
+    monkeypatch.setattr(initial_inventory, '_INDEX_SETUP', initial_inventory._INDEX_SETUP.replace(
+        "'--_interactive=sandbox'", "'--_interactive=not-supported'"))
+    (tmp_path / 'file.py').write_text('def example(): pass\n')
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    assert data['files'][0]['symbols'] is None
+    assert data['symbol_indexer_error'].startswith('indexer failed:')
+
+
+def test_indexer_ignores_workspace_configuration_and_unsafe_inputs(tmp_path):
+    import pytest
+    if not sandboxed_ctags_available():
+        pytest.skip('sandboxed Universal Ctags is optional')
+    (tmp_path / '.ctags').write_text('--_xcmd-Python=touch config-executed\n')
+    (tmp_path / '.ctags.d').mkdir()
+    (tmp_path / '.ctags.d' / 'hostile.ctags').write_text('--_xcmd-Python=touch config-executed\n')
+    (tmp_path / 'odd name\n.py').write_text('def safe_name(): pass\n')
+    (tmp_path / 'binary.py').write_bytes(b'def forged(): pass\x00')
+    (tmp_path / 'invalid.py').write_bytes(b'def forged(): pass\n\xff')
+    (tmp_path / 'link.py').symlink_to(tmp_path / 'odd name\n.py')
+    result = subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))], cwd=tmp_path,
+                            capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+    files = {item['path']: item['symbols'] for item in data['files']}
+    assert files['odd name\n.py'][0]['name'] == 'safe_name'
+    assert all(files[name] is None for name in ('binary.py', 'invalid.py'))
+    assert 'link.py' in data['symlinks'] and 'link.py' not in files
+    assert not (tmp_path / 'config-executed').exists()
+    assert 'def safe_name' not in result.stdout
+
+
 def test_inventory_command_is_read_only_and_reports_symbols_and_gaps(tmp_path):
     (tmp_path / 'src').mkdir()
     (tmp_path / 'src' / 'odd\nname.py').write_text('class Widget:\n    def run(self):\n        def inner(): pass\n        return inner\nif True:\n    def conditional(): pass\n')
@@ -20,12 +126,29 @@ def test_inventory_command_is_read_only_and_reports_symbols_and_gaps(tmp_path):
     data = json.loads(result.stdout)
     files = {item['path']: item for item in data['files']}
     assert set(files) == {'src/odd\nname.py', 'src/other.rs'}
-    assert files['src/odd\nname.py']['symbols'] == ['Widget', 'Widget.run', 'Widget.run.inner', 'conditional']
-    assert files['src/other.rs']['symbols'] is None
+    if sandboxed_ctags_available():
+        symbols = files['src/odd\nname.py']['symbols']
+        assert [(s.get('scope'), s['name']) for s in symbols] == [(None, 'Widget'), ('Widget', 'run'), ('Widget.run', 'inner'), (None, 'conditional')]
+        assert files['src/other.rs']['symbols'][0]['name'] == 'run'
+    else:
+        assert all(item['symbols'] is None for item in files.values())
     assert '.git' in data['excluded_names']
     assert 'link' in data['symlinks']
     assert not data['errors']
     assert before == sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob('*'))
+
+
+def test_browser_lists_names_without_parsing_source_and_passes_guard(tmp_path):
+    from cria import dirguard
+    (tmp_path / 'broken.py').write_text('def incomplete(\n')
+    command = initial_inventory.browse_command(str(tmp_path)) + ' 0'
+    assert dirguard.command_refusal(command, 'none', str(tmp_path)) is None
+    output = subprocess.run(['bash', '-c', command], cwd=tmp_path, capture_output=True, text=True, check=True).stdout
+    data = json.loads(output.split('\n', 1)[1])
+    assert data['files'] == [{'path': 'broken.py', 'size': len('def incomplete(\n'), 'symbols': None}]
+    assert not data['errors']
+    assert 'symbols unavailable' in initial_inventory.render({'files': [{'path': str(i), 'symbols': None} for i in range(10)]},
+                                                              root=str(tmp_path), budget_chars=1).lower()
 
 
 def test_symlink_workspace_root_is_not_followed(tmp_path):
