@@ -9,7 +9,7 @@ from cria.plan import Plan, PlanItem
 from loop_main_helpers import Chat, Rlog, acting, body, completion, loop_main_local_view, plan_off_loop  # noqa: F401
 
 
-def drive_until_coder(driver, coder, request, root):
+def drive_until_coder(driver, coder, request, root, followup=None):
     history = list(request['messages'])
     classification = Classification('task', 'coding', 'fixture')
     for _ in range(100):
@@ -22,6 +22,9 @@ def drive_until_coder(driver, coder, request, root):
         raw = subprocess.run(command if isinstance(command, list) else ['sh', '-c', command],
                              cwd=root, capture_output=True, text=True, check=True).stdout
         history.extend([msg, {'role': 'tool', 'tool_call_id': call['id'], 'content': raw}])
+        if followup is not None:
+            history.append({'role': 'user', 'content': followup})
+            followup = None
     raise AssertionError('coder was not reached')
 
 
@@ -51,14 +54,25 @@ def test_first_coder_turn_receives_harness_inventory(tmp_path):
 def test_large_first_inventory_asks_configured_reasoner_without_workspace_artifact(tmp_path):
     for i in range(350):
         (tmp_path / f'file-{i:04}.py').write_text(f'def item_{i}():\n    pass\n')
-    reasoner = Chat(completion('{"selected":[0,999999]}'))
+    def reply(decision):
+        result = completion(None, ('verdict', {'decision': decision}))
+        result['choices'][0]['finish_reason'] = 'tool_calls'
+        return result
+    reasoner = Chat(reply('RELEVANT'), *[reply('UNRELATED') for _ in range(349)])
     coder = Chat(acting())
     driver = plan_off_loop(coder, workspace_root=str(tmp_path), assists=True, reasoner=reasoner,
                            reasoner_role=Role(name='reasoner', backend='local'))
-    framed = drive_until_coder(driver, coder, body('Implement item zero'), tmp_path)
+    framed = drive_until_coder(driver, coder, body('Implement item zero'), tmp_path, followup='Additional instruction')
     listing = next(str(m.get('content')) for m in framed['messages'] if 'Initial harness workspace inventory' in str(m.get('content')))
-    assert reasoner.bodies and 'file-0000.py' in json.dumps(reasoner.bodies[0])
-    assert 'Implement item zero' in json.dumps(reasoner.bodies[0])
+    assert len(reasoner.bodies) == 350
+    first = reasoner.bodies[0]
+    assert first['messages'] == [{'role': 'user', 'content': (
+        'Classify whether the candidate existing file is relevant to performing the coding task. Consider only the task and the candidate information provided. RELEVANT means it is useful for implementing or verifying the requested work; UNRELATED means it is not.\n\n'
+        'task: Implement item zero\ncandidate: file-0000.py | ' +
+        ('symbols available | item_0' if 'item_0' in first['messages'][0]['content'] else 'symbols unavailable') +
+        '\n\nRecord your judgment with the verdict tool.')}]
+    assert first['tool_choice'] == 'required' and first['stream'] is False
+    assert first['tools'] == [{'type': 'function', 'function': {'name': 'verdict', 'description': 'Record the candidate file relevance decision.', 'parameters': {'type': 'object', 'properties': {'decision': {'type': 'string', 'enum': ['RELEVANT', 'UNRELATED']}}, 'required': ['decision'], 'additionalProperties': False}}}]
     assert 'selected by the configured reasoner' in listing and 'file-0000.py' in listing
     assert 'file-0349.py' not in listing
     assert 'current inventory' in listing and 'snapshot is not retained' in listing

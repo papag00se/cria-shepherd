@@ -57,6 +57,10 @@ class FakeUpstream(BaseHTTPRequestHandler):
             return self._reply({"prompt": json.dumps(body["messages"])})
         self.server.chats.append((dict(self.headers), body))
         text = json.dumps(body["messages"])
+        if body.get('tool_choice') == 'required' and any(t.get('function', {}).get('name') == 'verdict' for t in body.get('tools', [])):
+            decision = 'RELEVANT' if 'candidate: seed.py |' in text else 'UNRELATED'
+            call = {'id': 'decision', 'type': 'function', 'function': {'name': 'verdict', 'arguments': json.dumps({'decision': decision})}}
+            return self._reply({'choices': [{'message': {'role': 'assistant', 'tool_calls': [call]}, 'finish_reason': 'tool_calls'}]})
         if "__SLOW__" in text:  # a long prefill: hold the reply until the test saw a heartbeat
             self.server.release.wait(10)
         if "REQUEST CLASSIFIER" in text:
@@ -84,8 +88,8 @@ class FakeUpstream(BaseHTTPRequestHandler):
             return
         if "__500__" in text:
             return self._reply({"error": {"message": "template rejected"}}, code=500)
-        if "__TOOL__" in text or "__EDIT__" in text:  # the model asks to write (or edit) a file, as a buffered completion or as streamed argument deltas
-            name, args = (("write_file", {"path": "hello.txt", "content": "hi there\n"}) if "__TOOL__" in text else
+        if "__TOOL__" in text or "__EDIT__" in text or "Make these four changes to the orders service:" in text:  # the model asks to write (or edit) a file, as a buffered completion or as streamed argument deltas
+            name, args = (("write_file", {"path": "hello.txt", "content": "hi there\n"}) if "__TOOL__" in text or "Make these four changes to the orders service:" in text else
                           ("edit_file", {"path": "hello.txt", "old_string": "hi", "new_string": "bye"}))
             call = {"id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
             if not body.get("stream"):

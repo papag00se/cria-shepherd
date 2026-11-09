@@ -9,7 +9,7 @@ import base64
 import json
 import shlex
 
-from . import groundtruth, jsontext, probegate, prompts
+from . import groundtruth, probegate, prompts
 
 
 _PROGRAM = r'''
@@ -293,35 +293,52 @@ def strip_calls(messages: list[dict], call_ids) -> list[dict]:
     return out
 
 
-def select(files: list[dict], ask, *, chunk_chars: int) -> tuple[list[int], bool]:
-    """Ask about every whole record; accept only IDs present in that question.
+def candidate(item: dict) -> str:
+    """Render only observed names; escape control characters in untrusted filenames/tags."""
+    def safe(value):
+        return json.dumps(value, ensure_ascii=True)[1:-1].replace('|', r'\u007c').replace(',', r'\u002c')
+    symbols = item.get('symbols')
+    names = [tag['name'] for tag in symbols or [] if isinstance(tag, dict) and isinstance(tag.get('name'), str)]
+    status = 'symbols available' if names else 'symbols unavailable'
+    return safe(item['path']) + ' | ' + status + (' | ' + ', '.join(map(safe, names)) if names else '')
 
-    An unreadable answer is not an exclusion judgment. The returned completeness
-    bit allows callers to label a partial selection or abstain entirely.
-    """
-    chunks, chunk, size = [], [], 0
-    for index, item in enumerate(files):
-        record = {'id': index, 'path': item['path'], 'symbols': item.get('symbols')}
-        length = len(json.dumps(record, ensure_ascii=True))
-        if chunk and size + length > chunk_chars:
-            chunks.append(chunk)
-            chunk, size = [], 0
-        chunk.append(record)
-        size += length
-    if chunk:
-        chunks.append(chunk)
+
+def verdict(completion: dict) -> str | None:
+    """Accept exactly the scored tool protocol, without repairing ambiguous responses."""
+    try:
+        choices = completion['choices']
+        if len(choices) != 1 or choices[0]['finish_reason'] != 'tool_calls':
+            return None
+        calls = choices[0]['message']['tool_calls']
+        if len(calls) != 1 or calls[0]['function']['name'] != 'verdict':
+            return None
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('duplicate key')
+                result[key] = value
+            return result
+        args = json.loads(calls[0]['function']['arguments'], object_pairs_hook=unique)
+        if isinstance(args, dict) and set(args) == {'decision'} and args['decision'] in ('RELEVANT', 'UNRELATED'):
+            return args['decision']
+    except (KeyError, TypeError, ValueError, IndexError):
+        pass
+    return None
+
+
+def select(files: list[dict], ask) -> tuple[list[int], bool]:
+    """One judgment per observed file; an unreadable answer is not an exclusion."""
     selected, complete = [], True
-    for chunk in chunks:
+    for index, item in enumerate(files):
         try:
-            answer = jsontext.extract_json_object(jsontext.strip_think(ask(chunk) or ''))
-            ids = answer['selected']
-            if not isinstance(ids, list):
-                raise ValueError('invalid selection')
-        except Exception:  # an unavailable reasoner is not an exclusion judgment
+            answer = ask(item)
+        except Exception:
+            answer = None
+        if answer == 'RELEVANT':
+            selected.append(index)
+        elif answer != 'UNRELATED':
             complete = False
-            continue
-        available = {record['id'] for record in chunk}
-        selected.extend(i for i in ids if type(i) is int and i in available and i not in selected)
     return selected, complete
 
 
@@ -342,7 +359,7 @@ def browse_command(root: str) -> str:
     return command(root, _browse=True) + ' | python3 -I -c ' + shlex.quote(_PAGE)
 
 
-def render(data: dict, ask=None, *, chunk_chars: int = 12000, root: str = '.', budget_chars: int = 12000) -> str:
+def render(data: dict, ask=None, *, root: str = '.', budget_chars: int = 12000) -> str:
     """Show whole small inventories or a labelled bounded selection, with a re-survey route."""
     files = data['files']
     labels = prompts.load_map('initial_inventory_labels')
@@ -350,7 +367,7 @@ def render(data: dict, ask=None, *, chunk_chars: int = 12000, root: str = '.', b
     issues = {'symlinks': data.get('symlinks', []), 'errors': data.get('errors', [])}
     indexer_error = data.get('symbol_indexer_error')
     large = len(dump(files)) + len(dump(issues)) > budget_chars
-    selected, complete = (select(files, ask, chunk_chars=chunk_chars) if large and ask else ([], False))
+    selected, complete = (select(files, ask) if large and ask else ([], False))
     if not large:
         heading, visible = labels['incomplete' if data.get('errors') else 'complete'], files
     elif not complete:

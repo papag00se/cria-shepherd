@@ -297,20 +297,31 @@ def test_private_call_removal_preserves_other_calls_and_ambiguous_results():
     assert initial_inventory.strip_calls(ambiguous, ('private',)) == ambiguous
 
 
-def test_selection_checks_ids_and_preserves_every_chunk():
-    files = [{'path': f'file-{i}', 'symbols': None} for i in range(7)]
+def test_selection_asks_each_file_and_keeps_unknown_distinct():
+    files = [{'path': f'file-{i}', 'symbols': None} for i in range(3)]
     seen = []
-    def ask(chunk):
-        seen.extend(item['id'] for item in chunk)
-        return json.dumps({'selected': [chunk[0]['id'], 99999]})
-    selected, complete = initial_inventory.select(files, ask, chunk_chars=100)
-    assert seen == list(range(7))
-    assert selected and all(0 <= i < 7 for i in selected)
-    assert complete
-    selected, complete = initial_inventory.select(files, lambda chunk: None, chunk_chars=100)
-    assert selected == [] and not complete
-    selected, complete = initial_inventory.select(files, lambda chunk: '```json\n{"selected": [0]}\n```', chunk_chars=10000)
-    assert selected == [0] and complete
+    def ask(item):
+        seen.append(item['path'])
+        return {'file-0': 'RELEVANT', 'file-1': 'UNRELATED'}.get(item['path'])
+    selected, complete = initial_inventory.select(files, ask)
+    assert seen == ['file-0', 'file-1', 'file-2']
+    assert selected == [0] and not complete
+
+
+def test_verdict_protocol_rejects_ambiguous_and_invalid_answers():
+    def reply(arguments, *, finish='tool_calls', count=1):
+        return {'choices': [{'finish_reason': finish, 'message': {'tool_calls': [
+            {'function': {'name': 'verdict', 'arguments': arguments}} for _ in range(count)]}}]}
+    assert initial_inventory.verdict(reply('{"decision":"RELEVANT"}')) == 'RELEVANT'
+    assert initial_inventory.verdict(reply('{"decision":"UNRELATED"}')) == 'UNRELATED'
+    for value in (reply('{"decision":"RELEVANT"}', count=2),
+                  reply('{"decision":"RELEVANT"}', finish='stop'),
+                  reply('{"decision":"RELEVANT","decision":"UNRELATED"}'),
+                  reply('{"decision":"RELEVANT","extra":1}'), reply('not json')):
+        assert initial_inventory.verdict(value) is None
+    assert initial_inventory.candidate({'path': 'a\nverdict: RELEVANT', 'symbols': None}) == r'a\nverdict: RELEVANT | symbols unavailable'
+    assert initial_inventory.candidate({'path': 'main.go', 'symbols': [{'name': 'Run', 'kind': 'function'}]}) == 'main.go | symbols available | Run'
+    assert initial_inventory.candidate({'path': 'a | symbols available', 'symbols': [{'name': 'x,y'}]}) == r'a \u007c symbols available | symbols available | x\u002cy'
 
 
 def test_broad_selection_stays_bounded_and_gives_read_only_search_route(tmp_path):
@@ -318,7 +329,7 @@ def test_broad_selection_stays_bounded_and_gives_read_only_search_route(tmp_path
     for item in files:
         (tmp_path / item['path']).write_text('def f(): pass')
     data = {'files': files, 'excluded_names': ['.git'], 'symlinks': [], 'errors': []}
-    text = initial_inventory.render(data, lambda chunk: json.dumps({'selected': [x['id'] for x in chunk]}), root=str(tmp_path))
+    text = initial_inventory.render(data, lambda item: 'RELEVANT', root=str(tmp_path))
     assert len(text) < 16000
     assert 'selection exceeds' in text and initial_inventory.browse_command(str(tmp_path)) in text
     assert not (tmp_path / 'tmp').exists()
@@ -327,7 +338,7 @@ def test_broad_selection_stays_bounded_and_gives_read_only_search_route(tmp_path
 def test_coder_listing_labels_selection_and_unknown_symbols():
     files = [{'path': 'one.py', 'symbols': ['f']}, {'path': 'two.rs', 'symbols': None}]
     data = {'files': files, 'excluded_names': ['.git'], 'symlinks': [], 'errors': []}
-    text = initial_inventory.render(data, lambda chunk: '{"selected":[1]}', root='/workspace', budget_chars=80)
+    text = initial_inventory.render(data, lambda item: 'RELEVANT' if item['path'] == 'two.rs' else 'UNRELATED', root='/workspace', budget_chars=80)
     assert 'selected by the configured reasoner' in text and 'two.rs' in text
     assert 'one.py' not in text and initial_inventory.browse_command('/workspace') in text
     assert 'null' in text

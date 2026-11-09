@@ -1,5 +1,6 @@
-Task:
-{{TASK}}
+Classify whether the candidate existing file is relevant to performing the coding task. Consider only the task and the candidate information provided. RELEVANT means it is useful for implementing or verifying the requested work; UNRELATED means it is not.
 
-Workspace inventory chunk (JSON; symbols null means extraction was unavailable):
-{{CHUNK}}
+task: {{TASK}}
+candidate: {{CANDIDATE}}
+
+Record your judgment with the verdict tool.

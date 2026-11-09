@@ -982,6 +982,22 @@ class CriaServer(ThreadingHTTPServer):
                 return _up.chat_watched(body, rlog, watch=detector.check if detector is not None else None)
             coder_chat.upstream = _ep("coder")  # the window owner, for pre-floor sizing in the loop
 
+            def reasoner_buffered_chat(body, rlog):
+                route = self.router.internal_route('reasoner', rlog) if self.router is not None else None
+                if route is None:
+                    raise RuntimeError('reasoner route unavailable')
+                if route.role != 'reasoner':
+                    origin = body.get(bodykeys.ROLE_ORIGIN)
+                    target_role = roles.get(route.role)
+                    if isinstance(origin, config.RoleOrigin) and target_role is not None:
+                        origin.restore(body)
+                        target_role.apply(body, internal=True, rlog=rlog)
+                if route.model:
+                    body['model'] = route.model
+                else:
+                    body.pop('model', None)
+                return route.provider.chat(body, rlog)
+
             self.loop = Loop(
                 LoopContext(
                     planner=Planner(_ep("reasoner"), role=roles.get("reasoner"),
@@ -1002,6 +1018,7 @@ class CriaServer(ThreadingHTTPServer):
                     # coder has guard_rumination, but it keys on the CODER's finish_reason; nothing
                     # watched the supervisor. Same mechanism, same owner, one more call path.
                     reasoner_chat=_ep("reasoner").chat_watched,
+                    reasoner_buffered_chat=reasoner_buffered_chat,
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,

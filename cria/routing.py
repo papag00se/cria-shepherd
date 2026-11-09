@@ -142,6 +142,24 @@ class Router:
         tail = chain[chain.index(role) + 1:] if role in chain else chain
         return self._walkable(lane, role, plain, tail, _Silent, http_only=True)
 
+    def internal_route(self, role: str, rlog) -> Route | None:
+        """Resolve an internal role and its configured HTTP failover, including its wire model."""
+        lane = _LANES.get(role)
+        chain = self._cfg.failover.get(lane, ()) if lane else ()
+        tail = chain[chain.index(role) + 1:] if role in chain else chain
+        candidates = (role, *(name for name in tail if name != role))
+        for index, name in enumerate(candidates):
+            found = self._provider_for(name, rlog)
+            if found is None or found[2].transport != 'http':
+                rlog.emit('route.skip', role=name, reason='unresolvable')
+                continue
+            provider, model, _ = found
+            resolved_model = model(rlog)
+            provider = self._walkable(lane or role, name, provider, candidates[index + 1:], rlog, http_only=True)
+            return Route(provider, resolved_model, name, 'internal role')
+        rlog.emit('route.exhausted', level='warn', task_type=lane or role, chain=list(candidates))
+        return None
+
     def _plain_endpoint(self, role: str) -> Upstream:
         r = self._cfg.roles.get(role)
         if r is None:

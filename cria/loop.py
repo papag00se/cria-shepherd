@@ -456,6 +456,7 @@ class SurveyBootstrap(GuardState):
     initial_inventory: bool = False
     initial_call_ids: tuple[str, ...] = ()
     initial_listing: str = ''
+    initial_task: str = ''
 
 
 @dataclass
@@ -2572,6 +2573,7 @@ class LoopContext:
     # server's loaded model (cria never pins an alias — the single-loaded-model posture).
     coder_role: object = None  # Role | None — per-request sampling/reasoning for the coder
     reasoner_role: object = None  # Role | None — for the critic
+    reasoner_buffered_chat: object = None  # raw buffered reasoner protocol for exact tool verdicts
     # Compaction/summarization sampling (temp 0.6, reasoning on) — the [roles.compactor] role,
     # falling back to the reasoner. Distinct from reasoner_role so the SUMMARIZE callers (self-compact,
     # completion rollup) can't accidentally ride the coder's act-temp. The redirect/critic keep the
@@ -2978,6 +2980,7 @@ class Loop:
             if root and tool is not None:
                 bootstrap = self._new_bootstrap(session_key, messages)
                 bootstrap.initial_inventory = True
+                bootstrap.initial_task = latest_user_text(messages)
                 wait = probegate.GATE_POLL_WAIT_LONG_S if tool_declares_time_budget(tool) else probegate.GATE_POLL_WAIT_S
                 try:
                     bootstrap.gate_plan = initial_inventory.plan(root, poll_wait_s=wait)
@@ -3025,17 +3028,23 @@ class Loop:
                         if not isinstance(data, dict) or not isinstance(data.get('files'), list):
                             raise ValueError('invalid inventory')
                         ask = None
-                        if self._ctx.reasoner_role is not None and self._ctx.reasoner_chat is not None:
-                            task = latest_user_text(messages)
-                            def ask(chunk):
-                                return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                    prompts.load('initial_inventory_judge'),
+                        if self._ctx.reasoner_role is not None and self._ctx.reasoner_buffered_chat is not None:
+                            task = bootstrap.initial_task or latest_user_text(messages)
+                            def ask(item):
+                                call = {'stream': False, 'messages': [{'role': 'user', 'content':
                                     prompts.render('initial_inventory_judge_user', task=task,
-                                        chunk=json.dumps(chunk, ensure_ascii=True)), rlog,
-                                    phase='initial-inventory', retry_off=False)
-                        window = windowcaps.window_of(self._ctx.reasoner_chat, rlog) or 49152
-                        initial_listing = initial_inventory.render(data, ask, root=bootstrap.workspace_root,
-                            chunk_chars=max(2048, (window - 4096) * 2))
+                                                   candidate=initial_inventory.candidate(item))}],
+                                    'tools': [{'type': 'function', 'function': {
+                                        'name': 'verdict',
+                                        'description': prompts.load('initial_inventory_verdict_description').strip(),
+                                        'parameters': {'type': 'object', 'properties': {
+                                            'decision': {'type': 'string', 'enum': ['RELEVANT', 'UNRELATED']}},
+                                            'required': ['decision'], 'additionalProperties': False}}}],
+                                    'tool_choice': 'required'}
+                                self._ctx.reasoner_role.apply(call, internal=True, rlog=rlog)
+                                rlog.phase = 'initial-inventory'
+                                return initial_inventory.verdict(_parse_completion(self._ctx.reasoner_buffered_chat(call, rlog)))
+                        initial_listing = initial_inventory.render(data, ask, root=bootstrap.workspace_root)
                         bootstrap.initial_listing = initial_listing
                     except (ValueError, TypeError, KeyError, UnicodeError):
                         rlog.emit('loop.initial_inventory_unavailable', level='warn')

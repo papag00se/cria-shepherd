@@ -64,7 +64,8 @@ def acting():
 
 def plan_off_loop(coder, *, store=None, reasoner=None, **ctx):
     """A Loop wired the way production wires plan-off (planner_enabled left at its default)."""
-    return Loop(LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner or coder, runs_dir="", **ctx),
+    return Loop(LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner or coder,
+                            reasoner_buffered_chat=reasoner or coder, runs_dir="", **ctx),
                 store or LoopStore())
 
 
