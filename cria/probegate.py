@@ -288,9 +288,11 @@ def _helper_install_leg() -> str:
     named by the hash of its text."""
     h = helper_path_expr()
     check = f'python3 -I -c {shlex.quote(_helper_loader(verify_only=True))} {h}'
-    source = base64.b64encode(_helper_source().encode()).decode()
-    installer = (ownedfiles.ATOMIC_REPLACE_PROGRAM + 'import base64,sys\n'
-                 + f'_atomic_replace(sys.argv[1],base64.b64decode({source!r}))\n')
+    # The harness may wrap the whole command in its own shell snapshot. Keep the shared helper
+    # lossless but compact enough not to exhaust the OS's per-argument limit in that wrapper.
+    source = base64.b64encode(zlib.compress(_helper_source().encode())).decode()
+    installer = (ownedfiles.ATOMIC_REPLACE_PROGRAM + 'import base64,sys,zlib\n'
+                 + f'_atomic_replace(sys.argv[1],zlib.decompress(base64.b64decode({source!r})))\n')
     return (f'if ! {check} 2>/dev/null; then\n'
             f'python3 -I - {h} <<\'{_HELPER_HEREDOC}\'\n{installer}{_HELPER_HEREDOC}\n'
             'fi\n')

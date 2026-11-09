@@ -6,6 +6,7 @@ escaped path strings, including names containing newlines or undecodable bytes.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import shlex
 
@@ -261,26 +262,70 @@ def plan(root: str, *, poll_wait_s: float = probegate.GATE_POLL_WAIT_S) -> probe
     return result
 
 
-def strip_calls(messages: list[dict], call_ids) -> list[dict]:
-    """Remove only this session's own survey calls and their paired results."""
-    wanted = set(call_ids)
+def call_identity(call: dict) -> str | None:
+    """Identify the issued function and JSON arguments, independent of JSON formatting."""
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate JSON key')
+            result[key] = value
+        return result
+    try:
+        function = call['function']
+        if call.get('type') != 'function' or not isinstance(function['name'], str):
+            return None
+        arguments = function['arguments']
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments, object_pairs_hook=unique,
+                                   parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+        if not isinstance(arguments, dict):
+            return None
+        canonical = json.dumps([function['name'], arguments], sort_keys=True, ensure_ascii=True,
+                               separators=(',', ':'), allow_nan=False).encode()
+        return hashlib.sha256(canonical).hexdigest()
+    except (AttributeError, KeyError, TypeError, ValueError, UnicodeError, RecursionError):
+        return None
+
+
+def strip_calls(messages: list[dict], issued: dict[str, str]) -> list[dict]:
+    """Remove only uniquely paired calls matching this session's issued survey calls."""
     calls, results = {}, {}
     for index, message in enumerate(messages):
         if message.get('role') == 'assistant':
             for call in message.get('tool_calls') or ():
-                if call.get('id') in wanted:
-                    calls.setdefault(call['id'], []).append(index)
-        elif message.get('role') == 'tool' and message.get('tool_call_id') in wanted:
+                if isinstance(call, dict) and isinstance(call.get('id'), str) and call['id'] in issued:
+                    calls.setdefault(call['id'], []).append((index, call_identity(call)))
+        elif (message.get('role') == 'tool' and isinstance(message.get('tool_call_id'), str)
+              and message['tool_call_id'] in issued):
             results.setdefault(message['tool_call_id'], []).append(index)
-    ids = {cid for cid in wanted if len(calls.get(cid, ())) == 1
-           and len(results.get(cid, ())) <= 1
-           and (not results.get(cid) or calls[cid][0] < results[cid][0])}
+    def paired(cid, identity):
+        if not identity or len(calls.get(cid, ())) != 1 or len(results.get(cid, ())) != 1:
+            return False
+        start, actual = calls[cid][0]
+        end = results[cid][0]
+        if actual != identity or end <= start:
+            return False
+        batch = [call.get('id') if isinstance(call, dict) else None
+                 for call in messages[start].get('tool_calls') or ()]
+        if any(not isinstance(call_id, str) for call_id in batch) or len(batch) != len(set(batch)):
+            return False
+        seen = set()
+        for message in messages[start + 1:end + 1]:
+            mid = message.get('tool_call_id')
+            if message.get('role') != 'tool' or not isinstance(mid, str) or mid not in batch or mid in seen:
+                return False
+            seen.add(mid)
+        return True
+    ids = {cid for cid, identity in issued.items() if paired(cid, identity)}
     out = []
     for message in messages:
-        if message.get('role') == 'tool' and message.get('tool_call_id') in ids:
+        if (message.get('role') == 'tool' and isinstance(message.get('tool_call_id'), str)
+                and message['tool_call_id'] in ids):
             continue
         if message.get('role') == 'assistant' and message.get('tool_calls'):
-            calls = [call for call in message['tool_calls'] if call.get('id') not in ids]
+            calls = [call for call in message['tool_calls']
+                     if not isinstance(call, dict) or not isinstance(call.get('id'), str) or call['id'] not in ids]
             if len(calls) != len(message['tool_calls']):
                 if not calls and not message.get('content'):
                     continue

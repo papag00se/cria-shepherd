@@ -149,17 +149,19 @@ def test_refused_survey_keeps_user_messages_and_does_not_claim_checks_ran(tmp_pa
 def test_inventory_provenance_is_scoped_to_its_session():
     store = loop.LoopStore()
     messages = [{'role': 'assistant', 'tool_calls': [{'id': 'call_owned'}]}]
-    store.remember_initial_calls('sid:first', ('call_owned',))
-    assert store.initial_calls_in('sid:first', messages) == ('call_owned',)
-    assert store.initial_calls_in('sid:other', messages) == ()
+    store.remember_initial_calls('sid:first', {'call_owned': 'identity'})
+    assert store.initial_calls_in('sid:first', messages) == {'call_owned': 'identity'}
+    assert store.initial_calls_in('sid:other', messages) == {}
 
 
 def test_pending_inventory_and_owned_ids_survive_session_reconstruction():
     session = loop.PlanSession(plan=Plan(id='p', task='task', created='now', items=[PlanItem('task')]),
-                               initial_listing='survey evidence', initial_private_ids=('call_1',))
+                               initial_listing='survey evidence', initial_private_ids=('call_1',),
+                               initial_private_calls={'call_1': 'identity'})
     restored = loop._session_from_dict(loop._session_to_dict(session))
     assert restored.initial_listing == 'survey evidence'
     assert restored.initial_private_ids == ('call_1',)
+    assert restored.initial_private_calls == {'call_1': 'identity'}
 
 
 def test_unstable_session_does_not_represent_refused_private_survey_as_a_coder_tool(tmp_path):

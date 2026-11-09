@@ -290,11 +290,42 @@ def test_private_call_removal_preserves_other_calls_and_ambiguous_results():
                 {'role': 'tool', 'tool_call_id': 'private', 'content': 'private result'},
                 {'role': 'tool', 'tool_call_id': 'real', 'content': 'real result'},
                 {'role': 'user', 'content': 'follow-up'}]
-    result = initial_inventory.strip_calls(messages, ('private',))
+    issued = {'private': initial_inventory.call_identity(call('private'))}
+    result = initial_inventory.strip_calls(messages, issued)
     assert result[1]['tool_calls'] == [call('real')]
     assert [m.get('content') for m in result] == ['original', 'user-visible', 'real result', 'follow-up']
     ambiguous = messages + [{'role': 'tool', 'tool_call_id': 'private', 'content': 'other result'}]
-    assert initial_inventory.strip_calls(ambiguous, ('private',)) == ambiguous
+    assert initial_inventory.strip_calls(ambiguous, issued) == ambiguous
+    changed = call('private')
+    changed['function']['arguments'] = '{"command":"real"}'
+    forged = [{'role': 'assistant', 'tool_calls': [changed]},
+              {'role': 'tool', 'tool_call_id': 'private', 'content': 'real'}]
+    assert initial_inventory.strip_calls(forged, issued) == forged
+    duplicate = messages + [{'role': 'assistant', 'tool_calls': [call('private')]}]
+    assert initial_inventory.strip_calls(duplicate, issued) == duplicate
+    assert initial_inventory.call_identity({'type': 'function', 'function': {'name': 'shell',
+        'arguments': '{"x":1,"x":2}'}}) is None
+    same = call('private')
+    same['function']['arguments'] = ' { } '
+    assert initial_inventory.call_identity(same) == issued['private']
+
+    for intervening in ({'role': 'user', 'content': 'new user turn'},
+                        {'role': 'assistant', 'content': 'new assistant turn'},
+                        {'role': 'tool', 'tool_call_id': 'unrelated', 'content': 'other batch'}):
+        displaced = [messages[1], intervening, messages[2]]
+        assert initial_inventory.strip_calls(displaced, issued) == displaced
+    missing = [messages[1], messages[4]]
+    assert initial_inventory.strip_calls(missing, issued) == missing
+    reversed_results = [messages[1], messages[3], messages[2], messages[4]]
+    stripped = initial_inventory.strip_calls(reversed_results, issued)
+    assert stripped == [{**messages[1], 'tool_calls': [call('real')]}, messages[3], messages[4]]
+    for invalid in ([], {'bad': 'id'}):
+        malformed = {'role': 'tool', 'tool_call_id': invalid, 'content': 'malformed but real'}
+        before = [messages[1], malformed, messages[2]]
+        assert initial_inventory.strip_calls(before, issued) == before
+        after = [messages[1], messages[2], malformed]
+        assert initial_inventory.strip_calls(after, issued) == [
+            {**messages[1], 'tool_calls': [call('real')]}, malformed]
 
 
 def test_selection_asks_each_file_and_keeps_unknown_distinct():

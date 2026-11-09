@@ -455,6 +455,7 @@ class SurveyBootstrap(GuardState):
     """One private harness round before the first coder or planner call."""
     initial_inventory: bool = False
     initial_call_ids: tuple[str, ...] = ()
+    initial_calls: dict[str, str] = field(default_factory=dict)
     initial_listing: str = ''
     initial_task: str = ''
 
@@ -463,6 +464,7 @@ class SurveyBootstrap(GuardState):
 class PlanSession(GuardState):
     initial_listing: str = ""
     initial_private_ids: tuple[str, ...] = ()
+    initial_private_calls: dict[str, str] = field(default_factory=dict)
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
     handoff_origin: _HandoffOrigin | None = None  # producer-owned, never decoded from client text
     # Single-item plan-off mode: the whole task is ONE implicit step. When set, the driver uses
@@ -2288,7 +2290,7 @@ class LoopStore:
         self._bootstraps: dict[str, SurveyBootstrap] = {}
         # Producer-owned call IDs only, including ephemeral task: sessions. These
         # authenticate history cleanup without carrying task state across sessions.
-        self._initial_call_groups: dict[str, tuple[str, tuple[str, ...]]] = {}
+        self._initial_call_groups: dict[str, tuple[str, dict[str, str]]] = {}
         # session key -> {fp, n, pending, done, rewrite_id}: opaque pending identity survives restart.
         # DETECTION state only — the completion briefing itself is never stored server-side; it
         # rides in the conversation (the closing message) and is re-read from history.
@@ -2331,20 +2333,21 @@ class LoopStore:
         with self._lock:
             self._bootstraps.pop(key, None)
 
-    def remember_initial_calls(self, key: str, call_ids: tuple[str, ...]) -> None:
-        if not call_ids:
+    def remember_initial_calls(self, key: str, calls: dict[str, str]) -> None:
+        if not calls:
             return
         with self._lock:
-            self._initial_call_groups[call_ids[0]] = (key, call_ids)
+            self._initial_call_groups[next(iter(calls))] = (key, dict(calls))
             while len(self._initial_call_groups) > _MAX_SESSIONS:
                 self._initial_call_groups.pop(next(iter(self._initial_call_groups)))
 
-    def initial_calls_in(self, key: str, messages: list[dict]) -> tuple[str, ...]:
-        present = {call.get('id') for message in messages if message.get('role') == 'assistant'
-                   for call in message.get('tool_calls') or ()}
+    def initial_calls_in(self, key: str, messages: list[dict]) -> dict[str, str]:
+        present = {call['id'] for message in messages if message.get('role') == 'assistant'
+                   for call in message.get('tool_calls') or ()
+                   if isinstance(call, dict) and isinstance(call.get('id'), str)}
         with self._lock:
-            return tuple(cid for owner, group in self._initial_call_groups.values() if owner == key
-                         for cid in group if cid in present)
+            return {cid: identity for owner, group in self._initial_call_groups.values() if owner == key
+                    for cid, identity in group.items() if cid in present}
 
     def put(self, key: str, sess: PlanSession) -> None:
         with self._lock:
@@ -2777,6 +2780,7 @@ class Loop:
         state = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
                                 web_session=session_key,
                                 initial_call_ids=getattr(previous, 'initial_call_ids', ()),
+                                initial_calls=dict(getattr(previous, 'initial_calls', {})),
                                 initial_listing=getattr(previous, 'initial_listing', ''))
         _pin_pilot_runtime(state, self._ctx.pilot_runtime, previous)
         return state
@@ -2786,6 +2790,7 @@ class Loop:
         bootstrap = self._store.get_bootstrap(key)
         if bootstrap is not None and bootstrap.initial_call_ids:
             sess.initial_private_ids = bootstrap.initial_call_ids
+            sess.initial_private_calls = dict(bootstrap.initial_calls)
         _pin_pilot_runtime(sess, self._ctx.pilot_runtime, bootstrap)
         self._store.put(key, sess)
         if bootstrap is not None:
@@ -2839,6 +2844,7 @@ class Loop:
                         sess = self._store.get(session_key)
                         if sess is None or not getattr(error, 'coder_turn', False):
                             raise
+                        body = self._without_initial_calls(body, session_key)
                         out = self._protocol_refused(sess, session_key, body, error, rlog)
                 except _IncompleteCoderTurn as result:
                     out = result.completion
@@ -2910,15 +2916,17 @@ class Loop:
                         owner.pasted_consumed = None
                         owner.living_pending = None
 
-    def _drive_locked(self, body: dict, session_key: str, classification, rlog,
-                      *, _semantic_owner=None) -> dict | None:
-        messages = body.get("messages", [])
+    def _without_initial_calls(self, body: dict, session_key: str) -> dict:
+        messages = body.get('messages', [])
         existing = self._store.get(session_key)
         known = self._store.initial_calls_in(session_key, messages)
-        owned = tuple(getattr(existing, 'initial_private_ids', ())) + known if existing else known
-        if owned:
-            messages = initial_inventory.strip_calls(messages, owned)
-            body = {**body, 'messages': messages}
+        owned = {**getattr(existing, 'initial_private_calls', {}), **known} if existing else known
+        return {**body, 'messages': initial_inventory.strip_calls(messages, owned)} if owned else body
+
+    def _drive_locked(self, body: dict, session_key: str, classification, rlog,
+                      *, _semantic_owner=None) -> dict | None:
+        body = self._without_initial_calls(body, session_key)
+        messages = body.get('messages', [])
         # Observe a structural harness rewrite before the tool-less compaction turn is deferred.
         # The pending state is consumed only by a later actionable continuation.
         stable = _stable_session(session_key)
@@ -2993,6 +3001,7 @@ class Loop:
                 else:
                     bootstrap.probe_call_id = call['id']
                     bootstrap.initial_call_ids = (call['id'],)
+                    bootstrap.initial_calls = {call['id']: initial_inventory.call_identity(call)}
                     self._store.put_bootstrap(session_key, bootstrap)
                     rlog.emit('loop.initial_inventory_started')
                     return _completion_toolcalls([call])
@@ -3017,6 +3026,7 @@ class Loop:
                     transport_tc['id'] = 'call_' + uuid.uuid4().hex
                     bootstrap.probe_call_id = transport_tc['id']
                     bootstrap.initial_call_ids += (transport_tc['id'],)
+                    bootstrap.initial_calls[transport_tc['id']] = initial_inventory.call_identity(transport_tc)
                 return _completion_toolcalls([transport_tc])
             if bootstrap.initial_inventory:
                 outcome = None
@@ -3053,8 +3063,8 @@ class Loop:
             # Keep provenance until a successor is published, including planner deferrals.
             bootstrap_finished = True
             if bootstrap.initial_call_ids:
-                self._store.remember_initial_calls(session_key, bootstrap.initial_call_ids)
-                messages = initial_inventory.strip_calls(messages, bootstrap.initial_call_ids)
+                self._store.remember_initial_calls(session_key, bootstrap.initial_calls)
+                messages = initial_inventory.strip_calls(messages, bootstrap.initial_calls)
             if not bootstrap.initial_inventory:
                 messages = probegate.clean_gate_results(messages, bootstrap.gate_plan, drop_private_results=True)
             body = {**body, "messages": messages}
@@ -3183,6 +3193,7 @@ class Loop:
 
         if bootstrap_finished and bootstrap is not None and bootstrap.initial_call_ids:
             sess.initial_private_ids = bootstrap.initial_call_ids
+            sess.initial_private_calls = dict(bootstrap.initial_calls)
         if initial_listing:
             sess.initial_listing = initial_listing
 
@@ -5649,6 +5660,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "completion_remediation_nonwrite_ids": list(sess.completion_remediation_nonwrite_ids),
         "completion_remediation_nonwrite_seen": sess.completion_remediation_nonwrite_seen,
         "initial_private_ids": list(sess.initial_private_ids),
+        "initial_private_calls": dict(sess.initial_private_calls),
         "initial_listing": sess.initial_listing,
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
@@ -5691,6 +5703,8 @@ def _session_from_dict(d) -> PlanSession | None:
                                                                      (d.get("completion_remediation_nonwrite_ids") or []) if call_id),
                            completion_remediation_nonwrite_seen=bool(d.get("completion_remediation_nonwrite_seen")),
                            initial_private_ids=tuple(str(x) for x in d.get('initial_private_ids', []) if isinstance(x, str)),
+                           initial_private_calls={k: v for k, v in (d.get('initial_private_calls') or {}).items()
+                                                  if isinstance(k, str) and isinstance(v, str)},
                            initial_listing=str(d.get('initial_listing', '')),
                            synthetic=bool(d.get("synthetic")),
                            plan_off=bool(d.get("plan_off")),
