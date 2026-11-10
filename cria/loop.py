@@ -434,6 +434,7 @@ class GuardState:
     # punt-floor was a deterministic fallback behind a reasoner call — both are what the doctrine forbids
     # (principles #1, #2, #4). The search gate still REFUSES a near-duplicate search and steers "read the
     # source you named" — a steer the coder can disregard, not an action taken for it.
+    content_fingerprints: dict = None  # view-relative path -> call id -> SHA-256 of verified delivered/landed bytes
     read_ledger_seen: set = None   # tool-call ids already folded into read_files (events apply once, in order)
     read_files: dict = None     # path -> (bytes, "N bytes, M lines"): DURABLE record of the WORKSPACE files the
     # coder has already read. The fetch ledger below survives compaction and this did not, so a
@@ -3420,7 +3421,17 @@ class Loop:
                               turn_index=sess.coder_timed_turns)
                 return ""
             rel = view.rel(path)
+            _track_content_fingerprints(sess, messages, view)
             seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
+            if seen:
+                fingerprint = _retained_content_fingerprint(sess, messages, view, rel)
+                current = view.capture_edit_preimage(rel)
+                if fingerprint is None or current is None:
+                    if rlog is not None:
+                        rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
+                                  turn_index=sess.coder_timed_turns, reason='content_fingerprint_unavailable')
+                elif _content_digest(current[0]) != fingerprint:
+                    seen = False
             return unread_target_fact(sess, view, path, messages, seen=seen)
         return check
 
@@ -5672,6 +5683,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
                       for it in sess.plan.items],
         },
         "summary": sess.summary,
+        "content_fingerprints": sess.content_fingerprints or {},
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
         "generation_errors": sess.generation_errors,
@@ -5714,7 +5726,13 @@ def _session_from_dict(d) -> PlanSession | None:
                   if isinstance(d.get("refusal_events"), dict) else None)
         legacy = {str(name) for name in (d.get("refused_names") or [])}
         uncovered = tuple(str(item) for item in (d.get("replan_uncovered") or []) if item)
-        return PlanSession(plan=plan, summary=str(d.get("summary", "")),
+        fingerprints = d.get('content_fingerprints') or {}
+        fingerprints = {path: {cid: digest for cid, digest in calls.items()
+                                if isinstance(cid, str) and isinstance(digest, str)
+                                and re.fullmatch(r'[0-9a-f]{64}', digest)}
+                        for path, calls in fingerprints.items()
+                        if isinstance(path, str) and isinstance(calls, dict)} if isinstance(fingerprints, dict) else {}
+        return PlanSession(plan=plan, summary=str(d.get("summary", "")), content_fingerprints=fingerprints,
                            generation_errors=list(d.get("generation_errors") or []),
                            unexecuted_nudges=int(d.get("generation_refusal_count", 0)),
                            prior_work=str(d.get("prior_work", "")),
@@ -6707,7 +6725,7 @@ def _coder_has_seen_current(view, rel: str, sess, messages: list[dict]) -> bool:
     current = view.capture_edit_preimage(rel)
     reads = [(idx, text) for idx, _, path, start, end, text in _read_results_ordered(messages)
              if view.rel(path) == rel and not start and not end and isinstance(text, str)]
-    if current is not None and reads and reads[-1][0] == position and reads[-1][1].encode('utf-8') != current[0]:
+    if current is not None and reads and reads[-1][0] == position and _content_digest(reads[-1][1]) != _content_digest(current[0]):
         return False
     # Tool results are ordered in the transcript, but peers in one assistant batch may run in parallel.
     # The result's position cannot place its read after a peer mutation. Reuse the same target classifier
@@ -6722,14 +6740,14 @@ def _coder_has_seen_current(view, rel: str, sess, messages: list[dict]) -> bool:
             if targets is _ANY_PATH or any(view.rel(target) == rel for target in targets):
                 # A freshly validated current body matching the exact read can settle an otherwise
                 # unordered overlap. A shell envelope is used only when its exit and payload are known.
-                exact = next((text.encode('utf-8') for idx, text in reads if idx == position), None)
+                exact = next((_content_digest(text) for idx, text in reads if idx == position), None)
                 if exact is None and observed_id in shell_reads:
                     from .resultnotes import exec_envelope
                     result = messages[position].get('content')
                     envelope = exec_envelope(result) if isinstance(result, str) else None
                     if envelope is not None and envelope.exit_code == 0:
-                        exact = result[envelope.payload_start:].encode('utf-8')
-                if current is None or exact is None or exact != current[0]:
+                        exact = _content_digest(result[envelope.payload_start:])
+                if current is None or exact is None or exact != _content_digest(current[0]):
                     return False
     return True
 
@@ -9556,11 +9574,62 @@ def _ledger_key(sess):
     return lambda p: view.rel(p) or p
 
 
+def _content_digest(content) -> str:
+    """Hash without a second file-sized byte allocation; text is encoded in bounded chunks."""
+    digest = hashlib.sha256()
+    if isinstance(content, str):
+        for i in range(0, len(content), 65536):
+            digest.update(content[i:i + 65536].encode('utf-8'))
+    else:
+        data = memoryview(content)
+        for i in range(0, len(data), 65536):
+            digest.update(data[i:i + 65536])
+    return digest.hexdigest()
+
+
+def _track_content_fingerprints(sess, messages, view):
+    """Keep private hashes bound to a proved call; records never by themselves confer read credit."""
+    from . import denial
+    records = sess.content_fingerprints
+    if records is None:
+        records = sess.content_fingerprints = {}
+    results = {m.get('tool_call_id'): m for m in messages or [] if isinstance(m, dict) and m.get('role') == 'tool'}
+    calls = {tc.get('id'): tc for m in messages or [] if isinstance(m, dict)
+             for tc in m.get('tool_calls') or [] if isinstance(tc, dict)}
+    def record(path, tid, text):
+        rel = view.rel(path)
+        if rel and tid and isinstance(text, str) and tid not in records.get(rel, {}):
+            try:
+                records.setdefault(rel, {})[tid] = _content_digest(text)
+            except UnicodeEncodeError:
+                pass
+    for _, tid, path, start, end, _ in _read_results_ordered(messages):
+        result = results.get(tid)
+        if not start and not end and result is not None:
+            record(path, tid, denial.read_payload(result))
+    for _, tid, path, *_ in _write_events(messages):
+        fn = (calls.get(tid) or {}).get('function') or {}
+        record(path, tid, _args_of(fn.get('arguments')).get('content'))
+
+
+def _retained_content_fingerprint(sess, messages, view, rel):
+    candidates = [(idx, tid) for idx, tid, path, start, end, text in _read_results_ordered(messages)
+                  if view.rel(path) == rel and not start and not end and isinstance(text, str)]
+    candidates += [(idx, tid) for idx, tid, path, *_ in _write_events(messages) if view.rel(path) == rel]
+    if not candidates:
+        return None
+    _, tid = max(candidates, key=lambda item: item[0])
+    return (sess.content_fingerprints or {}).get(rel, {}).get(tid)
+
+
 def _track_read_files(sess, messages: list[dict]) -> None:
     """Accumulate the workspace files the coder has read, durably — the sibling of
     :func:`_track_fetched_pages`, for the half of its research that lives on disk."""
     if sess is None:
         return
+    root = getattr(sess, 'workspace_root', None)
+    if root:
+        _track_content_fingerprints(sess, messages, wsview.current(root))
     if getattr(sess, "read_files", None) is None:
         sess.read_files = {}
     if getattr(sess, "read_ledger_seen", None) is None:

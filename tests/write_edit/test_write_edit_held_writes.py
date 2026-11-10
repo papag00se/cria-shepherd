@@ -205,6 +205,102 @@ def test_own_write_credit_requires_retained_history(tmp_path, retained, mutated,
         wsview.unbind(token)
 
 
+@pytest.mark.parametrize('evidence', ['read', 'write'])
+@pytest.mark.parametrize('state,held', [('same', False), ('changed', True), ('restored', False), ('unknown', False)])
+def test_retained_evidence_requires_matching_current_fingerprint_when_available(tmp_path, evidence, state, held):
+    from cria import writeproxy
+    from write_edit_helpers import ENVELOPE, lower, run
+    path = tmp_path / 'x.txt'
+    path.write_text('original\n')
+    original = call('read_file', {'path': 'x.txt'}, 'evidence') if evidence == 'read' else call(
+        'write_file', {'path': 'x.txt', 'content': 'original\n'}, 'evidence')
+    first = lower([original], injected=('read_file', 'write_file'), root=str(tmp_path))[0]
+    done = run(first, tmp_path)
+    result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
+                               'content': ENVELOPE.format(rc=proc.returncode) + proc.stdout}
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:hash-history'))
+    try:
+        history = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
+                                               workspace_root=str(tmp_path))
+    finally:
+        wsview.unbind(token)
+    if state in ('changed', 'restored'):
+        assert run(call('exec_command', {'cmd': "printf 'changed\\n' > x.txt"}, 'hidden'), tmp_path).returncode == 0
+    if state == 'restored':
+        assert run(call('exec_command', {'cmd': "printf 'original\\n' > x.txt"}, 'restore'), tmp_path).returncode == 0
+    view = wsview.View(str(tmp_path), 'sid:hash-current')
+    token = wsview.bind(view)
+    try:
+        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                         capture_output=True, text=True, check=True).stdout)
+        assert view.apply_initial_inventory(data, str(tmp_path))
+        if state != 'unknown':
+            current = run(call('exec_command', {'cmd': 'cat x.txt'}, 'probe'), tmp_path)
+            view.note_read('x.txt', current.stdout)
+        events = []
+        log = SimpleNamespace(emit=lambda name, **fields: events.append((name, fields)))
+        driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                           runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+        session = loop._plan_off_session(loop._synthetic_plan('task'), '')
+        driver._put_session('sid:hash', session)
+        check = driver.unread_target_check('sid:hash', history, str(tmp_path), log)
+        check('x.txt')  # records the verified evidence before the history is compacted
+        compacted = driver.unread_target_check('sid:hash', [], str(tmp_path), log)
+        assert compacted('x.txt')  # a surviving digest cannot supply missing visible evidence
+        lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
+                        root=str(tmp_path), unread_target=check)[0]
+        reply = run(lowered, tmp_path)
+        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
+                                             workspace_root=str(tmp_path))
+        assert denial.refused(shown[1]) is held
+        assert any(name == 'loop.unread_target_state' and item['state'] == 'state_unknown'
+                   for name, item in events) is (state == 'unknown')
+        assert session.content_fingerprints
+        assert loop._session_from_dict(loop._session_to_dict(session)).content_fingerprints == session.content_fingerprints
+    finally:
+        wsview.unbind(token)
+
+
+def test_fingerprint_check_does_not_follow_inventory_skipped_symlink(tmp_path):
+    target = tmp_path / 'target.txt'
+    target.write_text('current\n')
+    (tmp_path / 'link.txt').symlink_to(target)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    assert 'link.txt' in data['symlinks']
+    view = wsview.View(str(tmp_path), 'sid:link')
+    assert view.apply_initial_inventory(data, str(tmp_path))
+    token = wsview.bind(view)
+    try:
+        assert view.blank_state('link.txt') is None
+        events = []
+        driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                           runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+        session = loop._plan_off_session(loop._synthetic_plan('task'), '')
+        driver._put_session('sid:link', session)
+        check = driver.unread_target_check('sid:link', [], str(tmp_path),
+                    SimpleNamespace(emit=lambda name, **fields: events.append((name, fields))))
+        assert check('link.txt') == ''
+        assert events[0][1]['state'] == 'state_unknown'
+        assert not session.content_fingerprints
+    finally:
+        wsview.unbind(token)
+
+
+def test_large_content_fingerprinting_is_streamed_without_truncation():
+    import hashlib
+    import tracemalloc
+    content = 'x' * (16 * 1024 * 1024) + 'é'
+    expected = hashlib.sha256(content.encode()).hexdigest()
+    tracemalloc.start()
+    try:
+        assert loop._content_digest(content) == expected
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1024 * 1024
+
+
 @pytest.mark.parametrize('peer,batch,held', [
     ('same-shell', 'same', True), ('same-shell', 'later', True), ('same-edit', 'same', True),
     ('other-write', 'same', False), ('other-shell', 'same', False), ('same-restored', 'same', False),
