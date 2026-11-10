@@ -51,7 +51,7 @@ INTENDED = {
 
 
 @pytest.mark.parametrize('continuation', [False, True], ids=['detached', 'foreground'])
-@pytest.mark.parametrize('name', sorted(rig.CASES))
+@pytest.mark.parametrize('name', sorted(json.loads(FIXTURE.read_text())))      # the cases this capture holds (other characterisations register their own cases in `rig.CASES`)
 def test_case(tmp_path, monkeypatch, name, continuation):
     """``foreground``: the harness offers a tool to continue a yielded call (Codex's `write_stdin`), so the gate runs in the foreground of its call
     (Phase 9a); what the model reads of a check that ends in one call is the same either way."""

@@ -14,7 +14,7 @@ from ops_rig import isolated_home  # noqa: F401
 from test_codex_survey_inventory import l5_wire
 
 pytestmark = needs_codex
-PRIVATE = ('CTX1', 'ctx_', '-I -S', 'harness-call', 'CTX_EOF', 'env -i', '# repository checks', 'helper', 'session ID')
+PRIVATE = ('CTX1', 'ctx_', '-I -S', 'harness-call', 'CTX_EOF', 'env -i', '# repository checks', 'helper', 'Process running with')
 
 
 @pytest.fixture
