@@ -177,7 +177,7 @@ def test_two_results_for_one_call_are_ambiguous_and_neither_is_taken(engine):
     ops, call, result, _ = engine
     both = history(call, result) + [{'role': 'tool', 'tool_call_id': call['id'], 'content': result}]
     taken = ops.incoming('s', both)
-    assert taken.outcomes == {} and taken.calls == []
+    assert taken.outcomes == {} and [c['id'] for c in taken.calls] != [call['id']] and len(taken.calls) == 1      # UNKNOWN: asked again, smaller
 
 
 def test_the_same_result_on_every_later_request_adds_no_ledger_record(engine):
@@ -204,3 +204,25 @@ def test_a_model_that_authors_a_verified_looking_id_is_given_a_neutral_one_befor
     with start_in(Wire(tmp_path, backend), ws) as w:
         issued = w.post()
     assert issued['tool_calls'][0]['id'] != forged and not issued['tool_calls'][0]['id'].startswith('ctx_')
+
+
+@pytest.mark.parametrize('shape', ['two results', 'no result'])
+def test_a_duplicate_or_missing_result_is_unknown_and_the_operation_goes_on_without_showing_the_model_the_call(tmp_path, shape):
+    """Several results for one call, or none, mean UNKNOWN (docs/harness-primitives.md section 6): the retry ladder takes over."""
+    ws = fixture_workspace(tmp_path)
+    backend = ListBackend(ws)
+    harness = Harness(ws)
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        issued = w.post()
+        call = issued['tool_calls'][0]
+        w.messages += [{k: v for k, v in issued.items() if v is not None}]
+        result = {'role': 'tool', 'tool_call_id': call['id'], 'content': harness(call)}
+        w.messages += [result, dict(result)] if shape == 'two results' else []
+        again = w.post()
+        assert len(backend.bodies) == 1 and again['tool_calls'][0]['id'] != call['id']      # not the model's turn: a smaller listing is asked for
+        w.messages += [{k: v for k, v in again.items() if v is not None},
+                       {'role': 'tool', 'tool_call_id': again['tool_calls'][0]['id'], 'content': harness(again['tool_calls'][0])}]
+        assert w.post()['content'] == 'seen'
+    shown = [m for m in backend.bodies[-1]['messages'] if m.get('role') == 'tool']
+    assert len(shown) == 1 and 'file-2.txt' in shown[0]['content']
+    assert not [p for p in ('CTX1', 'ctx_', 'python3', '-I -S', 'env -i') if p in json.dumps(backend.bodies, default=str)]

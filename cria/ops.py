@@ -212,8 +212,12 @@ class Ops:
             frames = []
             for cid, (op, s) in verified.items():
                 step = ledger_ops[op].steps[s]
-                if step.frame is None and cid in results and ledger_ops[op].final is None:
-                    frames.append(self._frame_record(op, s, results[cid]))
+                if step.frame is None and ledger_ops[op].final is None:
+                    if cid in results:
+                        frames.append(self._frame_record(op, s, results[cid]))
+                    else:      # none or several results: UNKNOWN (never "did not run", never "ran"), so the retry ladder or the final takes over
+                        frames.append({'t': 'frame', 'op': op, 's': s, 'text': '', 'hdr': {'ok': -1, 'unknown': (
+                            'no result for this call' if not self._result_count(messages, cid) else 'several results for this call')}})
             if frames:
                 self.ledger.append(session, *frames)
             calls = self._advance(session, {op for op, _ in verified.values()}, set(verified), log)
@@ -247,6 +251,10 @@ class Ops:
                     if step is not None and step.id == cid and step.cmd == hashlib.sha256(command.encode()).hexdigest():
                         out[cid] = found
         return out
+
+    @staticmethod
+    def _result_count(messages: list, cid: str) -> int:
+        return sum(1 for m in messages if isinstance(m, dict) and m.get('role') == 'tool' and m.get('tool_call_id') == cid)
 
     @staticmethod
     def _results(messages: list) -> dict:
@@ -436,8 +444,8 @@ class Ops:
                 elif kept or m.get('content'):
                     out.append({**{k: v for k, v in m.items() if k != 'tool_calls'}, **({'tool_calls': kept} if kept else {})})
             elif role == 'tool' and m.get('tool_call_id') in finished:
-                op, s = finished[m['tool_call_id']]
-                if s == 0:
+                op, _ = finished[m['tool_call_id']]
+                if ops[op].call['id'] not in outcomes:         # the operation's answer, once: where its first result sits
                     final = ops[op].final
                     original = ops[op].call['id']
                     outcomes[original] = final['outcome']
