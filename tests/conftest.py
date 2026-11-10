@@ -26,7 +26,7 @@ def _fake_wire_servers_do_not_load_system1(request, monkeypatch):
     depend on a developer's private bundle or CPU runtime installation.
     """
     path = request.node.path
-    if path.parent.name == "read_multipart" or path.name in {
+    if path.parent.name in {"read_multipart", "harness_primitives"} or path.name in {
         "test_loop_planner_off_by_default.py", "test_server_config_http.py",
         "test_server_config_scenario2_sv2_http_edges.py", "test_server_config_scenario_cli.py",
         "test_server_config_scenario_routing.py", "test_server_config_scenario_wire_tools.py",

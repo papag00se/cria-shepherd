@@ -45,7 +45,7 @@ from . import proberun
 from .privatepaths import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
-from . import filecommands
+from . import filecommands, harnessprims, ops
 # Canonical pure helpers; transport/service composition remains in this facade.
 from .callliterals import (
     _FUSED_TAIL_MAX_LINES, _PROTOCOL_TAG_LINE, _protocol_debris, trim_fused_tail,
@@ -981,16 +981,16 @@ def bounded_stdout(raw, receipt, directory, template, placeholder, limit):
 '''
 
 
-def _stdout_transport(*, listing: bool = False, search: bool = False, failed: bool = False):
+def _stdout_transport(*, search: bool = False, failed: bool = False):
     """One complete-result measurement and lossless spill program for producers."""
     from . import externalization as e
     target = webfetch.SPILL_DIR + '/stdout-' + '0' * 64 + '.txt'
-    pointer = prompts.render('content_search_spill_failed' if failed else 'content_search_spill', target=target) if search else webfetch.stdout_spill_pointer(target, listing=listing)
+    pointer = prompts.render('content_search_spill_failed' if failed else 'content_search_spill', target=target) if search else webfetch.stdout_spill_pointer(target)
     arguments = (denial.active_receipt() or '', webfetch.SPILL_DIR, pointer, target, e.STDOUT_MAX_BYTES)
     return e.STDOUT_SIZE_PY + _STDOUT_SPILL_PY, arguments
 
 
-def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: bool = False, search: bool = False) -> str:
+def _bounded_tool_stdout(command: str, expected: str | None = None, *, search: bool = False) -> str:
     """Bound complete owned stdout, including records and possible PTY CRs.
 
     The harness runs this adapter; it never reruns the producer. Static results
@@ -1000,8 +1000,8 @@ def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: 
     from . import externalization as e
     if expected is not None and e.stdout_size(expected.encode()) <= e.STDOUT_MAX_BYTES:
         return command
-    program, arguments = _stdout_transport(listing=listing, search=search)
-    failed_arguments = _stdout_transport(listing=listing, search=search, failed=True)[1] if search else arguments
+    program, arguments = _stdout_transport(search=search)
+    failed_arguments = _stdout_transport(search=search, failed=True)[1] if search else arguments
     failure = prompts.load('stdout_spill_failed')
     program += ("\nimport json, subprocess, sys\n"
                 "process = subprocess.run(['bash', '-c', sys.argv[1]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n"
@@ -1015,19 +1015,6 @@ def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: 
                 "    sys.exit(2)\n"
                 "sys.exit(process.returncode)\n")
     return 'python3 -I -c ' + _qbash(program) + ' ' + _qbash(command)
-
-
-def _list_command(args: dict) -> str:
-    path = args.get("path") or args.get("dir") or args.get("directory") or "."
-    q = _qbash(path)
-    # Gather once; the complete listing and its record share the exact transport
-    # limit. Large listings are saved intact rather than refused at a raw 9 KB.
-    # `ls -la -- <path>`: a directory named `-R` or `-l` is a NAME, not an option (it listed the current directory, or recursed).
-    command = (f'__o=$(ls -la -- {q} 2>&1); __ec=$?; '
-               f'if [ "$__ec" -eq 0 ]; then {denial.ran_command()}:; '
-               f'else printf %s {_qbash(denial.frame(denial.REFUSED))}; fi; '
-               'printf \'%s\\n\' "$__o"; exit "$__ec"')
-    return _bounded_tool_stdout(command, listing=True)
 
 
 def _fetch_command(args: dict, session: str | None = None, workspace_root: str | None = None) -> str | None:
@@ -1485,7 +1472,14 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         command = _read_command(args)
         return ShellCommand(command, multipart_kind='read') if command is not None else None
     elif name in _LIST_NAMES and name in request.injected:
-        command = _list_command(args)
+        if request.issue_list_dir is None:
+            return None
+        try:
+            return request.issue_list_dir(source.call, args)
+        except ops.OpsUnavailable as exc:
+            if source.log is not None:
+                source.log.emit('ops.unavailable', level='error', error=str(exc))
+            return ShellCommand(_refusal_command(prompts.load('ops_unavailable')))
     elif name in _SEARCH_FILE_NAMES and name in request.injected:
         from . import contentsearch
         command = _bounded_tool_stdout(denial.ran_command() + contentsearch.command(name, args, request.workspace_root, request.external_dir_permission, request.declared_roots), search=True)
@@ -1511,7 +1505,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
                        observe_externalization=None, multipart_command=None, multipart_new_id=None,
-                       observe_multipart_fallback=None, only_injected: bool = False) -> dict:
+                       observe_multipart_fallback=None, only_injected: bool = False, issue_list_dir=None,
+                       safe_path: str = harnessprims.SAFE_PATH) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1528,7 +1523,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     request = LoweringRequest(frozenset(injected), brave_key, native_search, session, workspace_root,
         external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
         externalization_owner, assistruntime.current().externalization, observe_externalization,
-        (assistruntime.current().document_guidance, webfetch.guidance_services()))
+        (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path)
 
     for choice in completion.get("choices", []):
         tool_calls = (choice.get("message") or {}).get("tool_calls")
@@ -1661,7 +1656,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
-                elif name in _READ_NAMES | _LIST_NAMES and not read_in_place and not bridged and isinstance(cmd, str):
+                elif name in _READ_NAMES and not read_in_place and not bridged and isinstance(cmd, str):
                     # A READ-ONLY call learns what a lost-reply write did: the session's unreplied writes' completion marks ride
                     # the survey slot as a body-less record (`wsview.marks_ride`), only when something is outstanding.
                     with denial.receipt_scope(receipt, declaration):
@@ -2009,7 +2004,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None, private_readonly_calls=frozenset()) -> list[dict]:
+                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -2023,7 +2018,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     it that mechanism never fires (no identity to remember delivery against). ``tools_present=False``
     marks a harness compaction/summarize turn (empty tool menu) -- C40 skips those entirely.
     ``window`` is the coder's measured window (None = unknown): the dependency-note budgets are shares of it.
-    ``ask`` is the one closed-question seat to the reasoner (None = no reasoner), for the history assists that judge."""
+    ``ask`` is the one closed-question seat to the reasoner (None = no reasoner), for the history assists that judge.
+    ``ledger_outcomes`` maps a tool call id to the typed outcome cria's own ledger recorded for an operation it carried out
+    through the harness primitives (`cria.ops`): the outcome is a field of cria's record, never read out of result text."""
     # Retired client-supplied hint spellings are never provenance, regardless
     # of message role. Only the typed current owner marker can withhold proof.
     messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
@@ -2204,6 +2201,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation
             elif tid in lowered_ids:
                 m[bodykeys.RESULT_OUTCOME] = denial.UNKNOWN   # cria lowered this call and cannot prove its branch
+            elif ledger_outcomes and tid in ledger_outcomes:
+                m[bodykeys.RESULT_OUTCOME] = ledger_outcomes[tid]
             unverified = isinstance(m.pop(bodykeys.MULTIPART_UNVERIFIED, None), UnverifiedCarrier)
             if tid in ambiguous and not unverified:
                 # AMBIGUOUS: nothing call-attributed is cached, stripped or rendered, and no recovery or

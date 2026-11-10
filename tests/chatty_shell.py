@@ -21,10 +21,11 @@ def codex_result(raw: bytes, code: int = 0) -> str:
     return (head + 'Warning: truncated output (original token count: %d)\nTotal output lines: %d\n\n' % (tokens, raw.count(b'\n'))
             + text[:5000] + '…%d chars truncated…' % (len(text) - 10000) + text[-5000:])
 
-def chatty_pty(command, cwd, before_out=0, before_err=0, after=0, env=None):
+def chatty_pty(command, cwd, before_out=0, before_err=0, after=0, env=None, home=None):
     """Run `command` in a REAL `bash -lc` on a REAL PTY whose profile prints noise on stdout and stderr before the program and from an
-    EXIT trap after it; returns (raw bytes, exit code). The profile lives in a private HOME under `cwd`; `env` adds variables (a TMPDIR for a gate)."""
-    home = os.path.join(cwd, 'shellhome'); os.makedirs(home, exist_ok=True)
+    EXIT trap after it; returns (raw bytes, exit code). The profile lives in a private HOME under `cwd`; `env` adds variables (a TMPDIR for a gate).
+    `home` moves that private HOME out of `cwd` (a test whose workspace must hold nothing but its own files)."""
+    home = home or os.path.join(cwd, 'shellhome'); os.makedirs(home, exist_ok=True)
     with open(os.path.join(home, '.bash_profile'), 'w') as f:
         f.write('printf %s "$N_OUT"; printf %s "$N_ERR" >&2; trap \'printf %s "$N_AFTER"\' EXIT\n')
     env = dict(os.environ, HOME=home, N_OUT=noise(before_out), N_ERR=noise(before_err), N_AFTER=noise(after), **(env or {}))

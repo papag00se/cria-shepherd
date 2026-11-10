@@ -1,0 +1,1 @@
+[listing incomplete: only the first {{COUNT}} entries of {{PATH}} fit in one result and the directory holds more. Entries after these are unknown, not absent.]

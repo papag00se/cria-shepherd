@@ -642,6 +642,20 @@ class SafetyConfig:
 
 
 @dataclass(frozen=True)
+class HarnessConfig:
+    """``[harness]`` - how cria's fixed primitives (docs/harness-primitives.md) are launched where the files are.
+    ``safe_path`` is the ``PATH`` ``python3`` is looked up through under ``env -i``: absolute system directories only,
+    never a relative entry, so a planted ``python3`` in the workspace can never be the interpreter."""
+
+    safe_path: str = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+
+    def __post_init__(self):
+        parts = self.safe_path.split(":") if isinstance(self.safe_path, str) else []
+        if not parts or any(not p.startswith("/") or p != p.strip() or "'" in p for p in parts):
+            raise ValueError(f"[harness] safe_path must be absolute directories joined by ':', got {self.safe_path!r}")
+
+
+@dataclass(frozen=True)
 class RetentionConfig:
     """``[retention]`` - the OPERATOR's standing authority to delete cria's retained private state
     (multipart reads under ~/.cria/multipart, image sessions under XDG state/cria/images). cria has no trusted
@@ -762,6 +776,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    harness: HarnessConfig = field(default_factory=HarnessConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     assists: AssistConfig = field(default_factory=AssistConfig)
@@ -814,6 +829,7 @@ class Config:
             tools=ToolsConfig(**_table("tools", data.get("tools", {}), ToolsConfig)),
             context=ContextConfig(**_table("context", _context(data.get("context", {})), ContextConfig)),
             safety=_safety(data.get("safety", {})),
+            harness=HarnessConfig(**_table("harness", data.get("harness", {}), HarnessConfig)),
             retention=_retention(data.get("retention", {})),
             assists=_assists(data.get("assists", {})),
             system1=_system1(data.get("system1", {})),
@@ -879,7 +895,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 #: Every top-level entry a cria config may carry (the scalar ``env_file`` and one table per subsystem).
 _TOP_LEVEL_KEYS = frozenset({"env_file", "server", "defaults", "logging", "indicators", "tools", "context", "safety",
-                             "retention", "planner", "engagement", "assists", "system1", "backends", "roles",
+                             "harness", "retention", "planner", "engagement", "assists", "system1", "backends", "roles",
                              "failover"})
 #: The ``[failover]`` chain names: the task types the router reads (``Router._chain_for``) and the lane of each loop role.
 _FAILOVER_CHAINS = frozenset({"coding", "reasoning", "question", "classification", "compaction"})

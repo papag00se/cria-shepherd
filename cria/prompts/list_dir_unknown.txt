@@ -1,0 +1,1 @@
+The listing of {{PATH}} did not come back intact, so its contents are unknown. That does not mean the directory is empty or missing; ask again, or list a subdirectory.

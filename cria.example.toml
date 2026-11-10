@@ -39,6 +39,12 @@ cheatsheet = true                  # inject per-tool usage note
 # a backstop for a fledgling, untrusted model. Governs FILE access outside the workspace:
 external_dir_permission = "none"   # none = no external reads/writes | read = external reads only | write = unrestricted
 
+[harness]
+# cria asks the harness to run only a few fixed, readable programs (docs/harness-primitives.md), each launched as
+# `env -i PATH=<safe_path> python3 -I -S -c ...` so nothing in the workspace can stand in for the interpreter or its modules.
+# safe_path is the PATH python3 is looked up through: absolute system directories only.
+safe_path = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+
 [retention]
 # cria keeps private state for multipart reads (~/.cria/multipart) and image sessions (~/.cria/images). No harness
 # sends a trustworthy "conversation over" signal (measured against real Codex), so by default cria deletes NOTHING;

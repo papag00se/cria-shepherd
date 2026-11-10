@@ -1,0 +1,1 @@
+The path given to list_dir is {{SIZE}} bytes long; a path past {{LIMIT}} bytes cannot be carried to the harness. Nothing was listed. Give a shorter path.

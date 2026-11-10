@@ -70,6 +70,8 @@ class LoweringRequest:
     externalization_definition: object | None = None
     observe_externalization: Callable | None = None
     document_guidance: object | None = None
+    issue_list_dir: Callable[[dict, dict], dict] | None = None   # (the model's call, its arguments) -> the harness call (cria.ops)
+    safe_path: str = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'   # [harness] safe_path: where `python3` is looked up
 
 
 @dataclass(frozen=True)

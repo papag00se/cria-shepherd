@@ -82,7 +82,6 @@ def test_candidate_safety_stale_check_does_not_import_workspace_modules(tmp_path
     assert 'changed or could not be read after this edit was reviewed' in done.stdout                  # control: the stale branch still compares real bytes
 
 
-@pytest.mark.xfail(strict=True, reason='interpreter lookup through the harness PATH is closed by phase 3 (env -i PATH=<system dirs>), docs/harness-programs.md F1(c)')
 def test_candidate_safety_check_does_not_resolve_python3_through_a_planted_path_entry(tmp_path):
     workspace = _hostile_workspace(tmp_path)
     planted = workspace / 'bin' / 'python3'

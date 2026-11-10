@@ -31,7 +31,7 @@ from . import imageassembly
 from . import upstream as _image_wire
 from .imageprotocol import ImageUnavailable
 
-from . import bodykeys, repohealth, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
+from . import bodykeys, callauth, repohealth, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify, loweringoptions
@@ -980,6 +980,8 @@ class CriaServer(ThreadingHTTPServer):
         from .multipart_bridge import Bridge
         from . import privatepaths   # ONE private root for multipart, images and retention
         self.multipart_bridge = Bridge(str(privatepaths.CRIA_HOME / 'multipart'))
+        from .ops import Ops
+        self.ops = Ops(safe_path=cfg.harness.safe_path)   # operations carried out through the harness primitives (ledger under ~/.cria/ops)
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
         # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
         self.active_streams: dict = {}
@@ -1093,7 +1095,7 @@ class CriaServer(ThreadingHTTPServer):
     def secret_values(self) -> list[str]:
         """cria's own credentials as currently set in the environment (read per call: the env file is loaded
         after the config), for redaction from everything retained or shown to the model."""
-        return [v for name in sorted(self.cfg.secret_env_vars()) if (v := envfile.env_secret(name))]
+        return [v for name in sorted(self.cfg.secret_env_vars()) if (v := envfile.env_secret(name))] + callauth.secret_values()
 
     def session_started(self, sess_key: str) -> float:
         """Unix-epoch start time for a session — the ticker's TOTAL running clock. A Codex session
@@ -1387,6 +1389,15 @@ class CriaHandler(BaseHTTPRequestHandler):
 
     def _multipart_inbound(self, body, sess_key, rlog, *, api, stream):
         from .multipart_bridge import BridgeError
+        # cria's own operations first: verify each primitive call in the history against the key and the ledger, take the
+        # frame each one returned, decide the next step from the ledger, and project finished operations to the model's own
+        # call and cria's final text. What the harness has not yet seen goes back to it without asking the model.
+        before = body.get('messages') or []
+        taken = self.server.ops.incoming(sess_key, before, rlog)
+        body['messages'] = taken.messages
+        self._ops_outcomes = taken.outcomes
+        if taken.messages is not before and isinstance(getattr(self, '_multipart_original_body', None), dict):
+            self._multipart_original_body['messages'] = copy.deepcopy(taken.messages)   # a fallback restarts from the projected history
         self._multipart_input_fingerprint = hashlib.sha256(json.dumps(body.get('messages') or [], sort_keys=True,
             ensure_ascii=False, separators=(',', ':')).encode()).digest()
         try:
@@ -1424,6 +1435,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         body['messages'] = messages
         self._multipart_session = sess_key
         self._multipart_facts = facts
+        calls = [*taken.calls, *calls]
         if not calls:
             return False
         completion = {'id':'multipart_' + uuid.uuid4().hex, 'object':'chat.completion',
@@ -1800,7 +1812,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                               workspace_root=getattr(self, "_workspace_root", None),
                               sess_key=sess_key, tools_present=_c40_active,
                               window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog),
-                              ask=self._reasoner_question(rlog), private_readonly_calls=private_readonly),
+                              ask=self._reasoner_question(rlog), private_readonly_calls=private_readonly,
+                              ledger_outcomes=getattr(self, '_ops_outcomes', None)),
             self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness
@@ -1876,7 +1889,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
-        completion = generation.safe_completion(completion)
+        completion = callauth.neutralize(generation.safe_completion(completion))
         research = any((tc.get('function') or {}).get('name') in ('web_fetch', 'web_search')
                        for choice in completion.get('choices', [])
                        for tc in (choice.get('message') or {}).get('tool_calls') or [])
@@ -1908,7 +1921,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                                    multipart_session, original, effect, self._shell_tool, receipt)) if not getattr(self, '_multipart_disabled', False) else None,
                                multipart_new_id=(lambda: 'ctxread_' + uuid.uuid4().hex) if multipart_session.startswith('anon:') else None,
                                observe_multipart_fallback=lambda cid, call: multipart_fallbacks.__setitem__(cid, call),
-                               only_injected=getattr(self, '_search_only', False))
+                               only_injected=getattr(self, '_search_only', False), safe_path=self.server.cfg.harness.safe_path,
+                               issue_list_dir=lambda call, args: self.server.ops.issue_list_dir(
+                                   sess_key, self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),
+                                   level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())))
             if not getattr(self, '_multipart_disabled', False):
                 from .multipart_bridge import BridgeError
                 try:

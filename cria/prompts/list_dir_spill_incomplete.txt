@@ -1,0 +1,2 @@
+The listing of {{PATH}} is long. It is saved to {{TARGET}}, but it is NOT complete: only the first {{COUNT}} entries fit in one result and the directory holds more. Entries after these are unknown, not absent.
+Read the saved part with read_file on {{TARGET}} using start_line/end_line ranges, or with grep -n on {{TARGET}}.
