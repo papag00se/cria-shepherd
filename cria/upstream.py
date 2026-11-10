@@ -284,58 +284,6 @@ class ReadFitOverflow(UpstreamError):
         self.measurement, self.guidance = measurement, guidance
 
 
-class InputOverflow(UpstreamError):
-    """The request cannot fit the window and holds nothing the floor may drop. ``tokens`` is the whole request's size,
-    ``measured`` says whether the server's own tokenizer produced it (else it is the floor's estimate)."""
-
-    def __init__(self, message, tokens, window, reserve, measured, other, frame=None, requested=None):
-        super().__init__(message)
-        self.tokens, self.window, self.reserve, self.measured = int(tokens), int(window), int(reserve), measured
-        # The reply reserve the request ASKED for (``FloorReport.reserve_requested``): ``reserve`` is what the floor was
-        # left holding, which for an input that already exceeds the window is only its last MIN_MSG_BUDGET tokens.
-        self.requested = int(reserve if requested is None else requested)
-        # Tokens everything EXCEPT the final input takes in this request (measured when the server can, else estimated):
-        # what the sender has to leave room for, so the notice can name the size the input must stay under.
-        self.other = int(other)
-        # (tool-menu tokens, remaining message tokens) when the turn answers a TOOL RESULT: every lever has run
-        # (older turns and the live tail dropped, results withheld), so what is left is the irreducible frame.
-        self.frame = frame
-
-    def reply_room(self) -> int:
-        """The reply room the request asked for, as the floor holds it for an input that fits (the same bound
-        :func:`contextfloor.clamp_reserve` applies; the live input's own size is what is being measured here)."""
-        return contextfloor.clamp_reserve(self.requested, self.window, 0)
-
-    def input_limit(self) -> int:
-        """The most tokens the final input could have been and still fit: the window less everything else in the request and the reply room it asked for.
-        NOT ``window - reserve``: when the input alone exceeds the window the floor clamps the reserve to the window's last
-        MIN_MSG_BUDGET tokens, and "leaves 512 tokens" told a sender with a 23K-token paste and a 16K window nothing about how small is small enough."""
-        return max(self.window - self.other - self.reply_room(), 0)
-
-    def notice(self) -> str:
-        """What the sender is told, in place of a bare error: the size, the room, that nothing was dropped."""
-        size = (f"measured {self.tokens:,} tokens" if self.measured else f"is estimated at about {self.tokens:,} tokens")
-        fields = dict(size=size, window=f"{self.window:,}", room=f"{max(self.window - self.reply_room(), 0):,}",
-                      other=f"{self.other:,}", reply=f"{self.reply_room():,}", limit=f"{self.input_limit():,}")
-        if self.frame is not None:
-            return prompts.render("input_overflow_frame", tools=f"{self.frame[0]:,}", rest=f"{self.frame[1]:,}", **fields)
-        return prompts.render("input_overflow", **fields)
-
-
-def _frame_of(out, factor):
-    """(tool-menu tokens, message tokens) of a request that overflows on a TOOL-RESULT turn, else None: a user message
-    that overflows is the person's to shorten; a tool-result turn has nobody to ask, so the notice names the frame.
-    Both are in the unit of the SIZE the notice states beside them: the chars/4 estimate of the body actually sent, times
-    ``factor`` (the measured tokens per estimated token when the server measured it, else the density the floor fitted at).
-    Left as estimates they read as half the request they were part of (3,274 stated, a 1,637 frame)."""
-    msgs = out.get('messages') if isinstance(out, dict) else None
-    if isinstance(msgs, list) and msgs and isinstance(msgs[-1], dict) and msgs[-1].get('role') == 'tool':
-        tools = out.get('tools')
-        return (math.ceil(contextfloor.est_tokens(json.dumps(tools)) * factor) if tools else 0,
-                math.ceil(contextfloor.est_total(msgs, None) * factor))
-    return None
-
-
 _READ_FIT_SCOPE = __import__('contextvars').ContextVar('protected_read_fit', default=False)
 
 
@@ -890,8 +838,12 @@ class Upstream:
                       to_style="openai", enable_thinking=enable, reasoning_effort=body["reasoning_effort"])
 
     def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None,
-              _previous_fit: bytes | None = None, _wire_overhead: int = 0) -> tuple[bytes, int, str | None]:
-        """Prepare at the sole wire boundary, serializing each session's fitting state."""
+              _previous_fit: bytes | None = None, _wire_overhead: int = 0,
+              _reduce_user: bool = False) -> tuple[bytes, int, str | None]:
+        """Prepare at the sole wire boundary, serializing each session's fitting state.
+
+        ``_reduce_user`` authorizes the floor's last lever (the labelled cut of an oversized user-role message): only
+        after a measurement proved the overflow, or when none can be had. An estimate alone never destroys user text."""
         if body.get(bodykeys.PROTECTED_READS) and not _READ_FIT_SCOPE.get():
             return self._prep_protected_reads(body, stream, rlog, safety_override, _previous_fit, _wire_overhead)
         session = getattr(rlog, 'session', None)
@@ -907,18 +859,18 @@ class Upstream:
                     self._prefix_sessions.popitem(last=False)
         if state is None:
             return self._prep_wire(body, stream, rlog, safety_override, _previous_fit,
-                                   _wire_overhead=_wire_overhead)
+                                   _wire_overhead=_wire_overhead, _reduce_user=_reduce_user)
         with state.lock:
             fitting = state.roles.pop(role, None) or _RoleFit()
             state.roles[role] = fitting
             while len(state.roles) > _MAX_PREFIX_SESSIONS:
                 state.roles.popitem(last=False)
             return self._prep_wire(body, stream, rlog, safety_override, _previous_fit, state, fitting,
-                                   _wire_overhead)
+                                   _wire_overhead, _reduce_user)
 
     def _prep_wire(self, body: dict, stream: bool, rlog, safety_override=None,
                    _previous_fit=None, prefix_state=None, fitting=None,
-                   _wire_overhead=0) -> tuple[bytes, int, str | None]:
+                   _wire_overhead=0, _reduce_user=False) -> tuple[bytes, int, str | None]:
         """Serialize the request and return ``(bytes, sent_estimate)``: apply the CONTEXT FLOOR
         (guarantee it fits the window, budgeting with the model's LEARNED density ratio), force the
         stream flag, and MERGE adjacent assistant messages. Codex splits one assistant turn into a
@@ -1030,6 +982,8 @@ class Upstream:
                     fit_options['protected_call_ids'] = tuple(read.call_id for read in protected_reads(body))
                 if _wire_overhead:
                     fit_options['wire_overhead'] = _wire_overhead
+                if _reduce_user:
+                    fit_options['reduce_user_input'] = True
                 # THE ONE-COPY FOLD (modelview.fold_evidence) NEVER RUNS BEFORE THE FLOOR DECIDES
                 # WHAT SURVIVES. A pointer says "the full copy is further down"; the floor may drop
                 # or shrink that copy (an unprotected ⟦ctx:checks⟧ result is a lever-3/4 candidate
@@ -1067,6 +1021,10 @@ class Upstream:
                     lvl = "warning" if rep.over_budget else "info"
                     rlog.emit("context.floor", reshape="floor-trim", level=lvl, safety=round(safety, 2),
                               **rep.as_event())
+                if rep.user_reduced:
+                    rlog.emit("context.overflow_reduced", level="warning", messages=rep.user_reduced,
+                              omitted_chars=rep.user_omitted_chars, est_tokens_before=rep.msg_tokens_before,
+                              est_tokens_after=rep.msg_tokens_after, window=window, reserve=rep.reserve)
                 if tools != out.get('tools') and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
             # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
@@ -1218,30 +1176,39 @@ class Upstream:
                 if real > window - held:
                     if read_bindings and data == _previous_fit:
                         raise ReadFitOverflow(MeasuredReadOverflow(window, real, held, read_bindings, data))
-                    if data == _previous_fit:
-                        raise InputOverflow("Measured input cannot fit the context window without losing protected input",
-                                            real, window, rep.reserve, True, self._other_tokens(out, safety, rlog), frame=_frame_of(out, real / max(sent_estimate, 1)),
-                                            requested=rep.reserve_requested)
-                    tighter = max(safety, real / max(sent_estimate, 1))
-                    return self._prep(body, stream, rlog, safety_override=tighter,
-                                      _previous_fit=data, _wire_overhead=_wire_overhead)
+                    if data == _previous_fit and _reduce_user:
+                        # Every lever, the user-input reduction included, has run and the measured prompt
+                        # still exceeds the window: the frame alone does. Never a stop message (principle 14):
+                        # say so and send the minimal fit; the server's own refusal is a retryable error.
+                        rlog.emit("context.overflow_unfittable", level="error", measured=True, tokens=real,
+                                  window=window, reserve=rep.reserve)
+                    else:
+                        tighter = max(safety, real / max(sent_estimate, 1))
+                        return self._prep(body, stream, rlog, safety_override=tighter,
+                                          _previous_fit=data, _wire_overhead=_wire_overhead,
+                                          _reduce_user=_reduce_user or data == _previous_fit)
         if read_bindings and self._context_fixes and real is None:
             raise ReadFitUnknown('native_measurement_unavailable', read_bindings)
         if (isinstance(msgs, list) and window and real is None and not visual_unknown
                 and sent_estimate * safety > window - rep.reserve):
             # All protocol repairs, settlements and labels have now run. Never
             # POST or capture a request the one floor still knows cannot fit.
-            if rep.over_budget or data == _previous_fit:
-                raise InputOverflow("Input cannot fit the context window without losing protected input",
-                                    sent_estimate * safety, window, rep.reserve, False, self._other_tokens(out, safety, rlog), frame=_frame_of(out, safety),
-                                            requested=rep.reserve_requested)
-            # Structural wire growth is measured in the same estimate space,
-            # separately from model density and the role's generation reserve.
-            overhead = max(_wire_overhead, sent_estimate - fitted_estimate)
-            rlog.emit('context.wire_refit', reshape=None, wire_overhead=overhead,
-                      fitted_estimate=fitted_estimate, final_estimate=sent_estimate)
-            return self._prep(body, stream, rlog, safety_override=safety,
-                              _previous_fit=data, _wire_overhead=overhead)
+            if (rep.over_budget or data == _previous_fit) and _reduce_user:
+                rlog.emit("context.overflow_unfittable", level="error", measured=False,
+                          tokens=int(sent_estimate * safety), window=window, reserve=rep.reserve)
+            elif rep.over_budget or data == _previous_fit:
+                # Nothing could measure this body and the estimate says no lever fits it: only now may the
+                # last lever cut the user's oldest text (labelled).
+                return self._prep(body, stream, rlog, safety_override=safety,
+                                  _previous_fit=data, _wire_overhead=_wire_overhead, _reduce_user=True)
+            else:
+                # Structural wire growth is measured in the same estimate space,
+                # separately from model density and the role's generation reserve.
+                overhead = max(_wire_overhead, sent_estimate - fitted_estimate)
+                rlog.emit('context.wire_refit', reshape=None, wire_overhead=overhead,
+                          fitted_estimate=fitted_estimate, final_estimate=sent_estimate)
+                return self._prep(body, stream, rlog, safety_override=safety,
+                                  _previous_fit=data, _wire_overhead=overhead, _reduce_user=_reduce_user)
         phase = getattr(rlog, "phase", None)
         # Observe exact surviving offered notes only after final fitting and role
         # repair. The caller commits these only when this transport returns.
@@ -1358,7 +1325,8 @@ class Upstream:
         sends = 0
 
         def prepare(safety):
-            return capacitypolicy.Prepared(*self._prep(body, stream, rlog, safety_override=safety))
+            return capacitypolicy.Prepared(*self._prep(body, stream, rlog, safety_override=safety,
+                                                       _reduce_user=safety is not None))
 
         def send(prepared):
             nonlocal sends
@@ -1464,16 +1432,6 @@ class Upstream:
                         pass
                 return capacitypolicy.Rejection(e, isinstance(e, urllib.error.HTTPError),
                                                 real, window, not failed_custody)
-
-    def _other_tokens(self, out: dict, safety: float, rlog) -> int:
-        """Tokens everything but the FINAL message takes in ``out``: measured through the server's own template and tokenizer
-        when it can be, else the floor's estimate at ``safety``. What an overflow notice must say the final input has to leave room for."""
-        rest = {**out, "messages": (out.get("messages") or [])[:-1]}
-        rendered = self._render_prompt(rest) if self._api_key is None else None
-        real = self._tokenize_prompt(rendered, rlog) if rendered is not None else None
-        if real is not None:
-            return real
-        return int(contextfloor.est_total(rest["messages"], rest.get("tools")) * safety) + 1
 
     def _render_prompt(self, body: dict) -> str | None:
         """Ask the server to render the chat body into the flat prompt string the model actually

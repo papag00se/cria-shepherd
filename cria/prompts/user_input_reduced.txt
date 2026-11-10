@@ -1,0 +1,1 @@
+⟦ctx:reduced⟧ {{OMITTED_CHARS}} characters ({{OMITTED_LINES}} lines, about {{OMITTED_TOKENS}} tokens) of this message were omitted to fit the {{WINDOW}}-token context window: everything after its first {{HEAD_CHARS}} characters, up to the newest {{KEPT_CHARS}} characters, which follow.

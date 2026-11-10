@@ -151,8 +151,10 @@ def test_two_compactions_authenticate_prior_evidence_and_followup(tmp_path, late
         _, raw = w.post("/v1/chat/completions", {"model": "m", "messages": second_history})
         second = reply_text("chat-buffered", raw)
         origin = w.cria.loop._store.get("sid:sid-1").handoff_origin
+        recorded = [e["kind"] for e in w.events() if e["kind"].startswith("handoff.origin_")]
     finally:
         w.close()
+    assert recorded == ["handoff.origin_recorded"] * 2      # the identity a later continuation is matched against is logged
     assert second.count("HISTORICAL tool (call id c1) MESSAGE:\nprint(1)") == 1
     expected = later or "Use Go for the implementation."
     assert expected == origin.packet.latest_user

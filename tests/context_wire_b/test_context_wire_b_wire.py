@@ -8,7 +8,7 @@ import pytest
 
 from context_wire_b_helpers import Rlog, rows
 from cria import assistruntime, bodykeys, selfcompact, tokenratio
-from cria.upstream import Upstream, UpstreamError
+from cria.upstream import Upstream
 
 render = lambda payload: json.dumps(payload["messages"])
 
@@ -94,20 +94,22 @@ def test_a_body_that_fits_natively_keeps_all_caller_input_and_strips_private_hin
     assert all(m in sent["messages"] for m in original["messages"]) and server.ops == ["render", "count"]
     assert bodykeys.PINNED_TASK not in sent and body == original
 
-@rows([(5000, False), ({"tokens": []}, False), ({"tokens": [True]}, False), ({"tokens": [-1]}, False), ({"tokens": ["42"]}, False), (2000, True)])
-def test_caller_input_is_refused_not_deleted_when_it_cannot_be_proven_to_fit(tokens, no_render):
-    """A true overflow, or a missing/malformed measurement (or no rendered prompt), refuses before any generation POST and leaves the body intact: unknown stays unknown."""
+@rows([(lambda text: len(text) // 3, False), ({"tokens": []}, False), ({"tokens": [True]}, False), ({"tokens": [-1]}, False), ({"tokens": ["42"]}, False), (2000, True)])
+def test_caller_input_is_cut_oldest_first_and_labelled_only_when_overflow_is_proven_or_unmeasurable(tokens, no_render):
+    """A true overflow, or a missing/malformed measurement (or no rendered prompt) cuts the OLDEST part of the largest user message, labelled, and sends it: never a refusal, the caller's body is untouched, and the other messages ride whole."""
     up = upstream(4096)
-    server, body = Server(up, lambda text: tokens), native_request()
+    server, body = Server(up, lambda text: tokens(text) if callable(tokens) else tokens), native_request()
     if no_render:
         up._render_prompt = lambda body: None
     original = deepcopy(body)
-    with pytest.raises(UpstreamError, match="without losing protected input"):
-        up.chat(body, Rlog())
-    assert server.posts == [] and body == original and up._window == 4096
+    up.chat(body, Rlog())
+    (sent,) = server.posts
+    cut = sent["messages"][0]["content"]
+    assert cut.startswith("Keep this preceding constraint. ") and "⟦ctx:reduced⟧" in cut and cut.endswith("FINAL_CONSTRAINT_BYTE")
+    assert sent["messages"][1:] == original["messages"][1:] and body == original and up._window == 4096
 
 def test_typed_history_is_reduced_with_a_label_but_caller_messages_are_not():
-    """Cria's own evidence turns may be compacted (labelled) under native overflow; genuine user turns never are."""
+    """Cria's own evidence turns may be compacted (labelled) under native overflow before any user message is touched."""
     up = upstream(4096, {})
     server = Server(up, lambda text: 9000 if "Old observation" in text else 2000)
     body = {"model": "typed", bodykeys.PINNED_TASK: "Original task", bodykeys.OUTPUT_RESERVE: 64, "messages": [

@@ -40,7 +40,7 @@ def classify_exception(e: BaseException) -> Optional[failover.Failure]:
     ``None`` when the exception is NOT a chain-walking failure and must surface unchanged.
 
     Not walked, each for a stated reason: a typed capacity rejection (``ContextRefitNoChange`` /
-    ``InputOverflow`` / ``ReadFit*`` — the window owner's refit path settles those, a bigger window
+    ``ReadFit*`` — the window owner's refit path settles those, a bigger window
     elsewhere is not its answer), a typed generation/protocol error (the reply arrived and was bad:
     a QUALITY matter, not transport), a request-shaped rejection (HTTP 400/413/422 — the same body is
     rejected the same way elsewhere), and anything that is not an upstream error at all

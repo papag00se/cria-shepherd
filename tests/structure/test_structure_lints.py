@@ -18,6 +18,7 @@ BENIGN_SLICES = {  # (file, expression): display tables, ids, parsing, both halv
     ("webfetch.py", "d[:DESCRIPTION_CHARS - 1]"), ("webfetch.py", "s[:keep]"), ("webfetch.py", "s[-4:]"),
     ("dedup.py", "us[cur:]"), ("dedup.py", "us[cur:a]"), ("callliterals.py", "lines[:cut]"),
     ("writeproxy.py", "raw[i:i + width]"), ("outboundpolicies.py", "command.lstrip().splitlines()[:2]"),
+    ("contextfloor.py", "text[tail_start:]"),   # the newest part of a user message, beside the label stating what was omitted
 }
 
 def sliced_into_text():

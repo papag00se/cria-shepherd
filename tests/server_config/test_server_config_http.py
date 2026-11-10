@@ -282,14 +282,16 @@ def test_a_failing_upstream_is_a_clean_error_never_a_fake_success(wire, stream):
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_a_final_input_larger_than_the_window_is_answered_not_a_502(wire, mode):
-    """An oversized input gets a notice, without claiming that earlier floor reductions did not happen."""
+def test_a_final_input_larger_than_the_window_is_reduced_and_answered_never_stopped(wire, mode):
+    """A ~70k-token last user message used to end the session with a stop message. Its oldest part is now omitted, labelled, and the model answers the request."""
     status, raw = wire.post(*request(mode, "summarise:\n" + BIG))
     text = reply_text(mode, raw)
-    assert status == 200 and wire.fake.chats == []  # nothing was sent upstream
-    assert text.startswith("⟦ctx:input-not-delivered⟧") and f"{WINDOW:,}-token context window" in text
-    assert "Nothing was cut, summarised or dropped" not in text
-    assert "not processed by the model" in text
+    assert status == 200 and "input-not-delivered" not in text and text
+    (sent,) = [body for _, body in wire.fake.chats if "w29999" in json.dumps(body["messages"])]
+    cut = sent["messages"][-1]["content"]
+    assert cut.startswith("summarise:\n⟦ctx:reduced⟧") and cut.endswith("w29999") and "w00000" not in cut
+    event = next(e for e in wire.events() if e["kind"] == "context.overflow_reduced")
+    assert event["omitted_chars"] > 0 and event["est_tokens_after"] < event["est_tokens_before"]
 
 
 def tool_result_request(mode, result, task="count the ERROR lines in logs/app.log", **kw):

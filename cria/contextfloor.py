@@ -67,6 +67,8 @@ _REDUCED_MARK = "⟦ctx:reduced⟧"
 # The message-level hint `bodykeys.RESTORED_FILES` names the restored-file-text block (a literal here for
 # the same reason as _PROTECT_MARKERS: contextfloor imports no sibling; a test asserts it is in sync).
 _RESTORED_HINT = "cria_restored_files"
+# The reframed harness handoff (a user-role replay of a packet cria produced; literal like _PROTECT_MARKERS, a test pins it).
+_CONTINUATION_MARK = "⟦ctx:continuation⟧"
 # The stand-in note retains whole historical turns or paired exchanges within this shared allowance;
 # anything else is disclosed as omitted. The drop loops measure the entire note, including labels.
 _NOTE_DIGEST_FRACTION = 0.25
@@ -244,6 +246,8 @@ class FloorReport:
     restored_reduced: int = 0   # lever 2c: the restored file-text block swapped for a labelled stand-in
     caller_reduced: int = 0     # lever 2b: harness-instruction spans swapped for a labelled stand-in
     results_withheld: int = 0   # lever 6: a tool result no lever could fit, swapped for a labelled not-delivered note
+    user_reduced: int = 0       # lever 8: a user-role message cut oldest-part-first to the room left, labelled
+    user_omitted_chars: int = 0  # the characters lever 8 omitted, in all
     image_tokens_unknown: bool = False  # text fitting cannot measure vision embeddings
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
     wire_overhead: int = 0     # measured estimate-space growth from subsequent wire transforms
@@ -262,6 +266,8 @@ class FloorReport:
             **({"caller_reduced": self.caller_reduced} if self.caller_reduced else {}),
             **({"restored_reduced": self.restored_reduced} if self.restored_reduced else {}),
             **({"results_withheld": self.results_withheld} if self.results_withheld else {}),
+            **({"user_reduced": self.user_reduced, "user_omitted_chars": self.user_omitted_chars}
+               if self.user_reduced else {}),
             **({"wire_overhead": self.wire_overhead} if self.wire_overhead else {}),
         }
 
@@ -478,7 +484,7 @@ def reply_room_floor(reserve: int, window: int) -> int:
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
         safety: float = SAFETY_FACTOR, pinned_task: str = "",
         headroom: bool = False, wire_overhead: int = 0,
-        protected_call_ids: tuple[str, ...] = ()) -> tuple[list[dict], object, FloorReport]:
+        protected_call_ids: tuple[str, ...] = (), reduce_user_input: bool = False) -> tuple[list[dict], object, FloorReport]:
     """Return ``(messages, tools, report)`` reshaped to fit ``window`` (accounting for the
     ``tools`` schema and a generation ``reserve``). Pure — does not mutate the inputs;
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
@@ -616,8 +622,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # content_reduce will not cut, and the active span never drops it). Ending the session over it
         # (an assistant "not delivered" message) is the one outcome a non-interactive harness cannot
         # survive, so the result is swapped for a labelled not-delivered note and the coder, which
-        # holds the tools, goes on by reading a part. A USER message is never touched here: a person
-        # is there to answer it (Upstream raises InputOverflow, a truthful message with sizes).
+        # holds the tools, goes on by reading a part. A USER message is lever 8's.
         work, more = _withhold_oversized_results(
             work, tools, window=window, reserve=reserve, safety=safety,
             overhead=rep.wire_overhead, notes=notes, **protected)
@@ -643,6 +648,18 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
                 work, tools, window=window, reserve=reserve, safety=safety,
                 overhead=rep.wire_overhead, notes=notes, **protected)
             over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
+    if over and reduce_user_input and not protected_call_ids:
+        # --- Lever 8 (the very last): what remains is a USER-role message nothing above can shrink (a harness's
+        # replayed handoff, a paste). Ending the session over it with a "not delivered" assistant message is the
+        # outcome principle 14 forbids whoever wrote the message, so its OLDEST part is omitted, labelled with
+        # the sizes, and the newest part is delivered. Never silent, never a stop message. The caller authorizes it
+        # (``reduce_user_input``) only once a measurement proved the overflow, or none can be had: an estimate
+        # alone never cuts a user's text.
+        work, rep.user_reduced, rep.user_omitted_chars = _reduce_user_input(
+            work, tools, window=window, reserve=reserve, safety=safety, overhead=rep.wire_overhead)
+        if rep.user_reduced:
+            rep.msg_tokens_after = _msgs_tokens(work)
+            over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
     if over:
         required = math.ceil((est_total(work, tools) + rep.wire_overhead) * safety)
         if required <= window:
@@ -650,11 +667,85 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
             over = False
     # What the event says is what the body carries: a note lever 7 later dropped with its turn is not "withheld".
     rep.results_withheld = sum(1 for m in work if any(m is note for note in notes))
-    rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested or bool(notes)
+    rep.applied = (not fits_at_start or rep.reserve != rep.reserve_requested or bool(notes)
+                   or bool(rep.user_reduced))
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
     rep.over_budget = over
     return work, tools, rep
+
+
+# The first characters of a reduced user message that always stay: its opening line (an instruction such as
+# "summarise:" leads the paste it governs), never more than this many characters.
+_USER_HEAD_CHARS = 500
+
+
+def _reduce_user_input(messages: list[dict], tools, *, window: int, reserve: int, safety: float,
+                       overhead: int) -> tuple[list[dict], int, int]:
+    """Cut the OLDEST part of the largest user-role message(s) until the request fits, labelled.
+
+    The last lever, for what no other lever may touch: a user-role message that alone outgrows the window. It
+    does not matter who wrote it (a person, or a harness replaying a handoff cria produced): handing the session
+    back with a stop message is forbidden (principle 14), and the remedy for too much is to carry the newest
+    part. The message keeps its opening line (at most :data:`_USER_HEAD_CHARS` characters), then a label stating
+    how many characters, lines and tokens were omitted and how many of the newest characters follow; the tail
+    begins at a line boundary when one is near. The kept tail is the LARGEST that fits (a search on the floor's
+    own estimate), so nothing is omitted that the room could carry. cria's own anchors (the briefing, task, facts, rollup, steer) are left alone, so are a message with
+    non-text parts and one a stand-in could not shorten; only the reframed harness handoff, the one anchor a harness
+    replays at any size, is reducible; when the frame alone exceeds the
+    window every user message is cut to its head plus label and the report stays ``over_budget``.
+
+    Returns ``(messages, messages_reduced, characters_omitted)``."""
+    budget = window - reserve
+    fits = lambda w: (est_total(w, tools) + overhead) * safety <= budget   # noqa: E731
+    out, reduced, omitted = list(messages), 0, 0
+    done: set[int] = set()
+    while not fits(out):
+        sized = [(len(m["content"]), i) for i, m in enumerate(out)
+                 if m.get("role") == "user" and isinstance(m.get("content"), str)
+                 and i not in done
+                 and (not _has_protect_marker(m) or selfcompact.opens_in_crias_voice(m, (_CONTINUATION_MARK,)))]
+        if not sized:
+            break
+        _, i = max(sized)
+        done.add(i)
+        m = out[i]
+        text = m["content"]
+        newline = text.find("\n")
+        head_end = min(len(text) if newline < 0 else newline, _USER_HEAD_CHARS)
+        head = text[:head_end]
+        def build(tail_start):
+            cut = text[head_end:tail_start]
+            note = prompts.render("user_input_reduced", omitted_chars=f"{len(cut):,}",
+                                  omitted_lines=f"{cut.count(chr(10)):,}", omitted_tokens=f"{est_tokens(cut):,}",
+                                  window=f"{window:,}", head_chars=f"{len(head):,}",
+                                  kept_chars=f"{len(text) - tail_start:,}").strip()
+            return {**m, "content": f"{head}\n{note}\n{text[tail_start:]}"}, len(cut)
+        def start_after(k):    # the tail beginning at the first line boundary at or after text position k
+            nl = text.find("\n", k, k + 2000)
+            return nl + 1 if nl >= 0 else k
+        def trial(tail_start):
+            candidate = list(out)
+            candidate[i], _ = build(tail_start)
+            return candidate
+        lo, hi, best = head_end, len(text), None       # tail_start: larger = more omitted; find the smallest that fits
+        if not fits(trial(len(text))):
+            best = len(text)                           # even head + label alone does not fit: nothing of the tail rides
+        else:
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if fits(trial(start_after(mid))):
+                    hi = mid
+                else:
+                    lo = mid + 1
+            best = start_after(lo)
+        replacement, cut = build(best)
+        if cut <= 0 or est_tokens(replacement["content"]) >= est_tokens(text):
+            continue                                   # a stand-in must save something
+        out[i] = replacement
+        reduced += 1
+        omitted += cut
+    return out, reduced, omitted
 
 
 def _withhold_oversized_results(messages: list[dict], tools, *, window: int, reserve: int, safety: float,

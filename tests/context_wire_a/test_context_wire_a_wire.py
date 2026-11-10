@@ -148,10 +148,21 @@ def test_final_wire_carries_whole_historical_result_with_its_call_when_it_fits()
     assert '›' not in sent
 
 
-def test_an_input_that_cannot_fit_the_known_window_is_refused_not_sent():
-    msgs = [{"role": "user", "content": "Required input. " * 400}]
-    with pytest.raises(upstream.UpstreamError, match="context"):
-        prep(msgs, window=1000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})
+def test_an_input_that_cannot_fit_the_known_window_is_reduced_and_labelled_never_refused():
+    """A user-role message over the window used to end the session with a stop message. Its oldest part is
+    omitted instead, labelled with the sizes; the opening line and the newest part ride."""
+    body = "Summarise this:\n" + "".join(f"record {i:05d} " + "x" * 40 + "\n" for i in range(400))
+    rlog = Rlog()
+    sent = prep([{"role": "user", "content": body}], window=1000, safety=1, rlog=rlog,
+                **{bodykeys.OUTPUT_RESERVE: 1})["messages"]
+    out = sent[0]["content"]
+    assert out.startswith("Summarise this:\n⟦ctx:reduced⟧") and "were omitted to fit the 1,000-token" in out
+    assert body.splitlines()[-1] in out and body.splitlines()[1] not in out and cf.est_total(sent, None) <= 999
+    event = rlog.named("context.overflow_reduced")[0]
+    assert event["messages"] == 1 and event["omitted_chars"] > 0 and event["est_tokens_after"] < event["est_tokens_before"]
+    assert not rlog.named("context.overflow_unfittable")
+    fits = "Summarise this:\nshort"
+    assert prep([{"role": "user", "content": fits}], window=1000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})["messages"][0]["content"] == fits
 
 
 BLOCK = "".join(f"[ERROR] /w/src/Main.java:[{i},3] cannot find symbol number {i}\n" for i in range(40))
@@ -173,20 +184,20 @@ def test_a_repeat_pointer_never_outlives_the_copy_it_points_at_while_the_floor_t
     """B1: the one-copy fold ran BEFORE the floor; the kept newest copy (an unprotected checks result) was then
     dropped while the protected continuation kept its 'shown in full further down' pointer - the diagnostic was
     in the body zero times. Sweep the window across the trim range: a pointer only ever has its copy, and
-    irreducible windows are refused, never shipped oversized."""
+    windows the frame alone exceeds are reported unfittable and sent minimal, never refused with a stop message."""
     note = prompts.load("repeated_message_note").strip()
-    trimmed = refused = 0
+    trimmed = refused = reduced = 0
     for window in range(520, 4000, 40):
-        try:
-            sent = prep(pointer_body(), window=window)["messages"]
-        except upstream.UpstreamError as exc:
-            assert "context window" in str(exc)
+        rlog = Rlog()
+        sent = prep(pointer_body(), window=window, rlog=rlog)["messages"]
+        if rlog.named("context.overflow_unfittable"):
             refused += 1
-            continue
-        assert cf.est_total(sent, None) * cf.SAFETY_FACTOR <= window
+        else:
+            assert cf.est_total(sent, None) * cf.SAFETY_FACTOR <= window
         trimmed += "⟦ctx:compacted⟧" in text(sent)
+        reduced += bool(rlog.named("context.overflow_reduced"))
         assert DIAG in text(sent) or note not in text(sent), window
-    assert trimmed and refused
+    assert trimmed and reduced and not refused
     folded = prep(pointer_body()[:5], window=1_000_000)["messages"]
     assert note in text(folded) and text(folded).count(DIAG) == 1            # the fold fires when nothing is trimmed
     for level in (config.PURE_PROXY, config.TOOL_CALL_FIXES, config.SIMPLE_TOOLS):   # no context surgery below L3
@@ -263,11 +274,11 @@ def overflow(n_ctx=49152, real=94788):
     return urllib.error.HTTPError("http://x/v1/chat/completions", 400, "Bad Request", {}, io.BytesIO(body.encode()))
 
 
-@pytest.mark.parametrize("shape,sends", [("long history", 2), ("tiny body", 1), ("composed two-message", 1)])
+@pytest.mark.parametrize("shape,sends", [("long history", 2), ("tiny body", 1), ("composed two-message", 2)])
 def test_a_context_rejection_is_re_sent_only_if_the_re_fit_changed_the_bytes(shape, sends):
     """cria re-sent 3.2M prompt tokens to a 400 it already had: 59 refits, 59 identical 400s (a composed
-    two-message prompt has no whole turn to drop, so re-prepping returns the same bytes). A body that really
-    shrinks is still retried; one that cannot is never put on the wire twice."""
+    two-message prompt had no whole turn to drop, so re-prepping returned the same bytes). A body that really
+    shrinks (its user message now loses its oldest part, labelled) is still retried; one that cannot is never put on the wire twice."""
     msgs = {"long history": [{"role": "system", "content": "frame"}] + [
                 {"role": "user" if i % 2 == 0 else "assistant", "content": "x" * 4000} for i in range(12)]
             + [{"role": "user", "content": "now"}],

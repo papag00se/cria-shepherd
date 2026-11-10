@@ -71,7 +71,7 @@ from . import statusline
 from . import toolmenu
 from .shelltool import find_shell_tool
 from .turnstats import StatsStore
-from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow, InputOverflow
+from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow
 from . import wsview, generation
 from .writeproxy import (advertise, native_search_name, needs_translation, redact_secrets,
                          represent_inbound, translate_outbound, retain_externalizations,
@@ -835,9 +835,20 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         # the stored reply: `_finalize` appends the turn-stats footer to this text answer, and comparing
         # the decorated copy recorded no producer for any decorated drop (ornith1.5_9b / Java run 4,
         # 0042: the coder then read cria's own ledger framed as an ungrounded handoff).
-        if (owner is not None and _handoff_session(server, sk) is owner
-                and as_stored(_completion_text(retained)) == origin.reply):
+        if owner is None:
+            why = "no_session"
+        elif _handoff_session(server, sk) is not owner:
+            why = "session_replaced"
+        elif as_stored(_completion_text(retained)) != origin.reply:
+            why = "reply_changed_in_finalization"
+        else:
             owner.handoff_origin = origin
+            rlog.emit("handoff.origin_recorded", reply_chars=len(origin.reply),
+                      blocks=len(result.packet.blocks) if result.packet is not None else 0)
+            return
+        # The identity a later continuation is matched against was NOT recorded: that continuation will stay an
+        # unexpanded, unreducible user message. Say which input differed (2026-11-10 phi4: the fifth handoff).
+        rlog.emit("handoff.origin_unrecorded", level="warn", why=why, reply_chars=len(origin.reply))
     if _defer_commit is None:
         commit(result.completion)  # compatibility caller receives this exact returned result
     else:
@@ -868,7 +879,7 @@ def _terminal_upstream_error(e: BaseException) -> bool:
     error) replace the evidence with a fresh answer the buffered path would not have produced."""
     from .upstream import ContextRefitNoChange, CallerContextRetryNoChange, UpstreamProtocolError
     return isinstance(e, (ContextRefitNoChange, CallerContextRetryNoChange, ReadFitUnknown, ReadFitOverflow,
-                          InputOverflow, UpstreamProtocolError)) or generation.is_protocol_error(
+                          UpstreamProtocolError)) or generation.is_protocol_error(
                               getattr(e, "response_error", None))
 
 
@@ -1691,7 +1702,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             if stripped:
                 rlog.emit("indicators.stripped", lines=stripped)
             if reframed:
-                rlog.emit("loop.compaction_reframed", reshape="reframe")
+                held = getattr(sess, "handoff_origin", None) if self.server.cfg.routing.context_fixes else None
+                rlog.emit("loop.compaction_reframed", reshape="reframe",
+                          origin="recorded" if held is not None else "absent",
+                          origin_reply_chars=len(held.reply) if held is not None else 0)
             if marker_left:
                 rlog.emit("loop.prose_dropped_marker_scrubbed", level="warn")
 
@@ -2142,8 +2156,6 @@ class CriaHandler(BaseHTTPRequestHandler):
         except ImageUnavailable as e:
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(e.response_error)
-        except InputOverflow as e:
-            yield from completion_to_sse(self._overflow_completion(e, body, rlog))
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
             yield _error_sse(e.response_error if generation.is_generation_error(e.response_error) else str(e))
@@ -2171,16 +2183,6 @@ class CriaHandler(BaseHTTPRequestHandler):
         raw = context.workflow.chat(provider, role, body, context, rlog)
         yield from completion_to_sse(json.loads(raw))
 
-    def _overflow_completion(self, error: InputOverflow, body: dict, rlog) -> dict:
-        """A request that cannot fit the window and has nothing droppable is ANSWERED with what was measured, not failed
-        with a bare 502 the harness can only retry: an assistant message the harness shows, in every wire shape."""
-        rlog.emit("response.input_overflow", level="warn", tokens=error.tokens, window=error.window,
-                  reserve=error.reserve, measured=error.measured)
-        return {'id': 'overflow_' + uuid.uuid4().hex, 'object': 'chat.completion', 'created': int(time.time()),
-                'model': body.get('model') or '',
-                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': error.notice()},
-                             'finish_reason': 'stop'}]}
-
     def _produce_completion(self, body: dict, rlog, sess_key: str, progressive=None):
         from .upstream import ReadFitUnknown, ReadFitOverflow
         workflow = getattr(self.server, 'image_workflow', None)
@@ -2193,8 +2195,6 @@ class CriaHandler(BaseHTTPRequestHandler):
                     return self._produce_completion_once(current, rlog, sess_key, progressive)
                 except (ReadFitUnknown, ReadFitOverflow) as error:
                     current = self._fit_fallback(error, sess_key, rlog)
-        except InputOverflow as error:
-            return self._overflow_completion(error, body, rlog), None
         finally:
             _image_current.reset(token)
 
