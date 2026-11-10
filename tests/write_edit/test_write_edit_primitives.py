@@ -57,6 +57,18 @@ def test_a_disk_that_takes_only_part_of_a_write_is_never_reported_as_a_landing_a
     assert held is None or held[2] != content.encode()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason='root reads any file')
+def test_an_edit_of_a_file_that_cannot_be_read_says_it_could_not_be_read_not_that_it_could_not_be_written(tmp_path):
+    """The failure was the read that every edit starts with; the answer used to say the file `could not be written`."""
+    (tmp_path / 'f.txt').write_text('a = 1\n')
+    os.chmod(tmp_path / 'f.txt', 0o200)
+    _, _, shown = do('edit_file', {'path': 'f.txt', 'old_string': 'a = 1', 'new_string': 'a = 2'}, tmp_path)
+    text = shown[1]['content']
+    assert denial.refused(shown[1]) and '`f.txt` could not be read: Permission denied' in text and 'written' not in text
+    os.chmod(tmp_path / 'f.txt', 0o600)
+    assert (tmp_path / 'f.txt').read_text() == 'a = 1\n'
+
+
 def test_a_path_too_long_to_carry_is_refused_before_anything_is_sent(tmp_path):
     long = 'd/' * 40_000 + 'x.txt'
     tc, done, shown = do('write_file', {'path': long, 'content': 'x'}, tmp_path)

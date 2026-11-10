@@ -485,8 +485,8 @@ class WriteOps:
                 return denial.mark(mutplan._fill(prompts.load('write_isdir' if c.kind == 'write' else 'edit_isdir'), NAME=c.path if c.kind == 'write' else name))
             if kind == 'notfile':
                 return denial.mark(mutplan._fill(prompts.load('write_not_a_file'), NAME=name))
-            template = prompts.load('write_unwritable' if c.kind == 'write' else 'edit_unwritable')
-            return denial.mark(mutplan._fill(template, NAME=name, ERR=os.strerror(found[1]) if len(found) > 1 and found[1] else 'it could not be read'))
+            template = prompts.load('write_unreadable' if c.kind == 'write' else 'edit_unreadable')       # the failure was a read: say so
+            return denial.mark(mutplan._fill(template, NAME=name, ERR=os.strerror(found[1]) if len(found) > 1 and found[1] else 'the harness could not read it'))
         return self._m_finish(op, self._m_all(op, denial.REFUSED, text))
 
     # the checkers ----------------------------------------------------
