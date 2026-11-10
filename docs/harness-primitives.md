@@ -94,9 +94,9 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
 | `rm` | delete a file, an empty directory or an owned tree | 1,709 B | `ROOT REL MODE EX` |
 | `run` | run a command with a timeout, detached, output to a file | 2,371 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
-| `search` | regex search over a file list cria chose | 1,692 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
+| `search` | regex search over a file list cria chose | 1,752 B | `ROOT PATTERN FLAGS MAX MAXFILE SKIP` + stdin |
 
-Total 13,847 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 13,907 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -331,14 +331,14 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 
 ### 5.7 `search`
 
-`search N ROOT PATTERN FLAGS MAX MAXFILE`, stdin is a JSON list of relative paths **chosen by cria** (from a listing, after its own generated-directory and ignore logic). Each file is opened with the same no-follow walk and matched line by line with Python `re` (the regex dialect `grep` already offers the model today). Records: `["m", path, lineno, line]`, `["s", path, size]` (over `MAXFILE`, not read), `["!", path, errno]`, and a final `["#"]` when `MAX` matches were reached. The harness never decides which files to search and never filters output.
+`search N ROOT PATTERN FLAGS MAX MAXFILE SKIP`, stdin is a JSON list of relative paths **chosen by cria** (from a listing, after its own generated-directory and ignore logic). Each file is opened with the same no-follow walk and matched line by line with Python `re` (the regex dialect `grep` already offers the model today). Records: `["m", path, lineno, line]`, `["s", path, size]` (over `MAXFILE`, not read), `["!", path, errno]`, and a final `["#"]` when the page is full. `SKIP` (phase 6b, operator-approved after the heavy-file measurement: harness-programs.md §7, "Phase 6b result") skips the first `SKIP` matching lines (counted over the whole list, in file order) and `MAX` counts the matches returned after them, so a file with any number of matches is read as consecutive pages `[SKIP, SKIP+MAX)`: a page with `["#"]` is full, the first page without it is the last. Errors and over-size notes are not counted and repeat on every page. The harness never decides which files to search and never filters output.
 
 ```python
 import re,signal
 def T(*a):raise TimeoutError("regex")
 signal.signal(signal.SIGALRM,T);signal.alarm(10)
 try:
-    rt,pat,fl,mx,mf=sys.argv[2:7];mx=int(mx);mf=int(mf);rx=re.compile(pat,int(fl));R=[]
+    rt,pat,fl,mx,mf,sk=sys.argv[2:8];mx=int(mx);mf=int(mf);sk=int(sk);rx=re.compile(pat,int(fl));R=[];n=0
     for rel in json.loads(sys.stdin.read()):
         try:
             fd,nm=at(rt,rel);g=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(g)
@@ -346,9 +346,11 @@ try:
             with os.fdopen(g,"rb") as f:txt=f.read().decode("utf-8","surrogateescape")
         except OSError as e:R.append(["!",rel,e.errno]);continue
         for i,l in enumerate(txt.split("\n"),1):
-            if rx.search(l):R.append(["m",rel,i,l])
-            if len(R)>=mx:break
-        if len(R)>=mx:R.append(["#"]);break
+            if rx.search(l):
+                n+=1
+                if n>sk:R.append(["m",rel,i,l])
+            if n>=sk+mx:break
+        if n>=sk+mx:R.append(["#"]);break
     out(dict(ok=1),"\n".join(json.dumps(r) for r in R).encode())
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 ```
@@ -482,7 +484,7 @@ A frame is ≤ 10,000 bytes, as today's pages. The harness keeps every frame in 
 * **Workspace survey** (`wsview`, **built in phase 6**: `cria/surveyops.py`): the view is built from a typed `wsview.Survey` that cria computes from the frames of `ls`, `read` and `run` calls. `ls` walks the tree: one `DEPTH 0` call when it fits one frame, else directory by directory (up to 16 calls a reply, `FOLD` = `FOLD_AT`, `SKIP` = `.git` and every name a build-output rule could fold); cria applies the rules that lived in the old program: a skipped directory beside its ecosystem manifest is named as an output, otherwise walked with a call of its own; a folded directory is UNKNOWN inside, never absent; a name that is not one line of UTF-8 is left out and its directory is not whole; the walk stops after `TREE_MAX_ENTRIES` entries and says so. Requested bodies are `read` pages (`BLOB_FILES_MAX`, `BLOB_BYTES_MAX`, `BLOB_FILE_MAX`; what could not be handed back is `refused`: a size, absent, unreadable). "Which program does the coder's shell resolve" and "does this path outside the workspace exist" are one `run` of shell text (`probe_script`: no decision in it; the versioned-name fallback is the glob `name+([0-9])*([0-9.])` over `$PATH`). **It does not ride on another call** (the design said it would ride as extra calls in the reply of the write step): a survey is an operation of its own, asked on cria's cadence at the start of a request and issued instead of calling the model, after the landed write it follows (§ the phase 6 result in `harness-programs.md`), and applied to the view where it sat in the history.
 * **Initial inventory** (`initial_inventory`, **built in phase 6**: `cria/inventoryops.py`): `ls` (`DEPTH 0` or by directory with the `AFTER` cursor, `FOLD` 0, `SKIP` = `groundtruth._INVENTORY_EXCLUDE`) replaces the walker. **The design's claim that per-file `blank`/`digest` are not collected was wrong**: the unread-write rule decides before any read and treats an unknown blank state as "admit" (`Loop.unread_target_check`; commit `5a7ea116`, the `ruby-verify3-0012` capture), so the facts were gathered at Phase 6 (a `read` per file, bounded to 100). **Phase 6b made them lazy (§8.10):** the inventory is names, sizes and symbols and reads no file; every item carries `blank: None`.
 * **ctags**: kept, **as the real `ctags` binary run through `run`, not as a cria program**, as shell text (`inventoryops.ctags_script`, 406 B plus one line per file name): the absolute paths `/usr/bin/ctags`, `/bin/ctags`, `/usr/local/bin/ctags` only, a `--version` that says "Universal Ctags", then `env -i … --options=NONE --output-format=json --pattern-length-limit=1 --sort=no -f - -L -` in the workspace with the file names on stdin (at most 20,000 bytes of names per run, runs in parallel). The 5.5 KB Python indexer driver (interactive JSON protocol, per-file change detection, timeouts) is deleted. What is lost: the `--_interactive=sandbox` mode's restriction of ctags to protocol-supplied files, and a file whose name holds a line break (no symbols, still listed). Output is read in cria (JSON lines; names, kinds and scopes only); a missing or non-Universal ctags is `symbol_indexer_error` `"indexer not found"`, a failing or timed-out one `"indexer failed: …"`, exactly as now (symbols unavailable, never invented).
-* **grep / glob** (**built in phase 6b**: `cria/searchops.py`): cria lists with `ls` (the whole path in one `DEPTH 0` call when it fits one frame, else directory by directory), applies `ignore.generated` to each directory's own listing and the glob rules in-process, and for `grep` sends the chosen files to `search` in batches (the pattern validated in cria with `re.compile`, run by the harness's `re`). `glob` needs no second call. The 5.3 KB walker and the shipped `inspect.getsource(ignore.generated)` are deleted. What the stub's shape forces, found by building it: (a) a reply is one frame (about 10,000 bytes), so a single file with more matches than one frame holds is returned as the first ones and labelled (a `SK` argument would complete it: harness-programs.md §7, "Stopped"); (b) a line that is not UTF-8 is an error only if it matches; (c) the stub splits a file's text on line feeds, so a file that ends with one has an empty last "line" a pattern like `^$` matches: cria asks that file's line count (`read`) and drops the match past it.
+* **grep / glob** (**built in phase 6b**: `cria/searchops.py`): cria lists with `ls` (the whole path in one `DEPTH 0` call when it fits one frame, else directory by directory), applies `ignore.generated` to each directory's own listing and the glob rules in-process, and for `grep` sends the chosen files to `search` in batches (the pattern validated in cria with `re.compile`, run by the harness's `re`). `glob` needs no second call. The 5.3 KB walker and the shipped `inspect.getsource(ignore.generated)` are deleted. What the stub's shape forces, found by building it: (a) a reply is one frame (about 10,000 bytes), so a file with more matches than one frame holds is read as consecutive pages with `SKIP` (a page is full when it says `["#"]`; a batch of several pages is read again where it began and where it ended, and must answer the same); (b) a line that is not UTF-8 is an error only if it matches; (c) the stub splits a file's text on line feeds, so a file that ends with one has an empty last "line" a pattern like `^$` matches: cria asks that file's line count (`read`) and drops the match past it.
 
 ### 8.10 The unread-write hold and read-instead
 
@@ -523,7 +525,7 @@ What cannot move and stays harness-side: starting the command in `CWD` with `std
 6. `.rb/.js/.php/.go` syntax checks cost one extra round trip; `.py` checks use cria's interpreter (§8.2).
 7. `ctags` symbols come from the plain CLI (§8.9).
 7a. (phase 6) A large inventory no longer ends with a `python3` pager the model is told to run; the sentence points at its own listing and search tools. A symlinked workspace root is followed (the root is the one cria chose). An unreadable directory is `not whole` in the survey as well.
-7b. (phase 6b) A line that is not UTF-8 is an error only if it matches (it made its whole file unreadable); a saved oversize result no longer begins with a typed record and is named by the hash of its text; a file with more matches than one frame holds is labelled; the inventory carries no per-file facts (they are asked at write time).
+7b. (phase 6b) A line that is not UTF-8 is an error only if it matches (it made its whole file unreadable); a saved oversize result no longer begins with a typed record and is named by the hash of its text; a file with more matches than one frame holds is read as pages (`SKIP`, operator-approved), complete; the inventory carries no per-file facts (they are asked at write time).
 8. Sessions that began before the cut-over are not re-presented (decision D2).
 
 ## 10. What was run to write this (scratch prototype, not in the repo)
@@ -573,6 +575,6 @@ Against the shipped constants, real directories and real bash (`tests/survey_fix
 Against the shipped constants, real directories and real bash, through a real `CriaServer` and the pinned Codex 0.159.3:
 
 * **Characterisation** (`test_search_characterization.py`): 105 cases of `grep` / `glob` / `web_fetch` / `web_search` against the capture of the route that preceded this one; 96 are byte for byte the same model-visible text and disk, 9 are intended differences with their assertions (harness-programs.md §7).
-* **Engine** (`test_search_ops.py`, `test_answer_ops.py`, `test_probe_ops.py`): order of the walk, batches, the frame ladder, a cap reached mid-file, restart between any two steps, cut and forged replies, a hostile workspace (planted `python3`/`env`/`sh`/`printf`, shadowed stdlib, `PYTHONPATH`), links in the path and in the saved path, saves of 100 B to 800 KB byte for byte through `put` waves (no command over the 64 KiB budget, no staging file left), the offers settling from the ledger in chat, responses and streamed responses, the search key never in a command, what a file is in ten shapes, the held calls released once.
+* **Engine** (`test_search_ops.py`, `test_answer_ops.py`, `test_probe_ops.py`): order of the walk, batches, the frame ladder, pages of a heavy file (20,000 matches), a page cut and asked as halves, a file changing between pages, restart between any two steps, cut and forged replies, a hostile workspace (planted `python3`/`env`/`sh`/`printf`, shadowed stdlib, `PYTHONPATH`), links in the path and in the saved path, saves of 100 B to 800 KB byte for byte through `put` waves (no command over the 64 KiB budget, no staging file left), the offers settling from the ledger in chat, responses and streamed responses, the search key never in a command, what a file is in ten shapes, the held calls released once.
 * **Real server** (`test_server_config_unread_probe.py`): inventory, probe, the held write answered with the seed, the second write; the model asked twice; no private text in any body it received.
 * **Pinned Codex 0.159.3** (`test_codex_search_spill.py`): the real server and the real Codex over a tree and two pages; round-trip latency of `ls` / `search` / the 512-byte `read` / a 45,000-byte `put`: 65 / 67 / 65 / 74 ms median (harness-programs.md §7, "Phase 6b result").

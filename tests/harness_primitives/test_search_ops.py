@@ -88,14 +88,81 @@ def test_a_large_result_is_saved_whole_once_and_stays_readable(tmp_path, monkeyp
     assert not [p for p in PRIVATE if p in json.dumps(live.backend.bodies)]
 
 
-def test_a_file_with_more_matches_than_one_result_holds_says_how_many_it_shows(tmp_path, monkeypatch):
-    live = drive(tmp_path, monkeypatch, [[g('needle')]], {'many.txt': ''.join(f'needle {i:05d}\n' for i in range(9000))})
-    assert 'The search was incomplete.' in live.results[0] and 'without truncation' in live.results[0]
+@pytest.mark.parametrize('rows', [1500, 20_000])
+def test_a_file_with_any_number_of_matches_is_complete(tmp_path, monkeypatch, rows):
+    """One `search` reply is one frame (about 10,000 bytes), so a heavy file is read as consecutive pages of its matches (the stub's SKIP): nothing is cut."""
+    live = drive(tmp_path, monkeypatch, [[g('needle')]], {'many.txt': ''.join(f'needle {i:05d}\n' for i in range(rows))})
+    assert 'without truncation' in live.results[0] and 'incomplete' not in live.results[0]
     text = next((live.ws / 'tmp' / 'reference').glob('stdout-*.txt')).read_text()
-    shown, _, note = text.partition('Search incomplete; these paths could not be read:\n')
-    lines = shown.splitlines()
-    assert 1000 <= len(lines) < 9000 and lines == [f'many.txt:{i + 1}:needle {i:05d}' for i in range(len(lines))]
-    assert note == f'many.txt: at least {len(lines):,} matches, more than one result holds; only those are shown\n'
+    assert text == ''.join(f'many.txt:{i + 1}:needle {i:05d}\n' for i in range(rows))
+
+
+def page_of(command):
+    """``(MAX, SKIP)`` of a `search` call's command, or None for any other."""
+    found = re.search(r" 0 (\d+) 33554432 (\d+) <<", command)
+    return (int(found.group(1)), int(found.group(2))) if found else None
+
+
+def small_pages(monkeypatch, *ladder):
+    monkeypatch.setattr(searchops, 'MATCH_MAXES', ladder or (4, 2, 1))
+
+
+def test_matches_spanning_the_skip_boundary_and_crlf_lines_come_back_whole_and_in_order(tmp_path, monkeypatch):
+    small_pages(monkeypatch)
+    tree(tmp_path, {'a.txt': 'x1\r\nno\r\nx2\r\nx3\r\n', 'b.txt': ''.join(f'x{i}\n' for i in range(10)), 'c.txt': 'x end', 'd.txt': 'none\n'})
+    expected = ('a.txt:1:x1\r\na.txt:3:x2\r\na.txt:4:x3\r\n' + ''.join(f'b.txt:{i + 1}:x{i}\n' for i in range(10)) + 'c.txt:1:x end\n')
+    rounds = []
+    assert search_of_disk(tmp_path, 'grep', {'pattern': 'x'}, rounds=rounds) == expected
+    assert max(rounds) <= searchops.PAGES + 1                         # pages of four matches: the first alone, then eight together
+
+
+def test_a_page_the_harness_cut_is_asked_again_as_two_halves(tmp_path, monkeypatch):
+    small_pages(monkeypatch, 8, 4, 2)
+    tree(tmp_path, {'a.txt': ''.join(f'x{i}\n' for i in range(20))})
+    cuts = []
+
+    def alter(command, text):
+        if page_of(command) == (8, 0) and not cuts:                                                  # the first page (MAX 8, SKIP 0): cut once
+            cuts.append(command)
+            return text[:300] + ' …9 chars truncated… '
+        return text
+    assert search_of_disk(tmp_path, 'grep', {'pattern': 'x'}, alter=alter) == ''.join(f'a.txt:{i + 1}:x{i}\n' for i in range(20)) and cuts
+
+
+def test_a_page_that_cannot_be_made_small_enough_fails_its_batch_into_smaller_ones_then_names_the_file(tmp_path, monkeypatch):
+    small_pages(monkeypatch, 2, 1)
+    tree(tmp_path, {'a.txt': 'x\n', 'b.txt': 'x\n'})
+    text = search_of_disk(tmp_path, 'grep', {'pattern': 'x'}, alter=lambda command, t: t[:100] if 'a.txt' in command else t)
+    assert text == 'b.txt:1:x\nSearch incomplete; these paths could not be read:\na.txt: result too large to return\n'
+
+
+def test_a_file_that_changes_between_pages_is_searched_again_and_then_said(tmp_path, monkeypatch):
+    small_pages(monkeypatch, 4)
+    path = tree(tmp_path, {'a.txt': ''.join(f'x{i}\n' for i in range(12))}) / 'a.txt'
+    asked = []
+
+    def alter(command, text):
+        page = page_of(command)
+        if page is not None:
+            asked.append(page)
+            if page == (4, 0) and len(asked) == 1:  # after the first page the file is replaced by another: the pages read afterwards are not its pages
+                path.write_text('x\n' * 5)
+        return text
+    text = search_of_disk(tmp_path, 'grep', {'pattern': 'x'}, alter=alter)
+    # a batch of several pages is read again where it began and where it ended: the same question is not answered the same, so it is searched once more,
+    # from the start, and the answer is the file as it is then
+    assert text == ''.join(f'a.txt:{i}:x\n' for i in range(1, 6)) and asked.count((4, 0)) >= 3
+    asked.clear()
+    path.write_text(''.join(f'x{i}\n' for i in range(12)))
+
+    def always(command, text):
+        page = page_of(command)
+        if page is not None and page[1] == 0:
+            path.write_text('x\n' * (5 + len(asked)))
+            asked.append(page)
+        return text
+    assert search_of_disk(tmp_path, 'grep', {'pattern': 'x'}, alter=always, session='again').endswith(
+        'Search incomplete; these paths could not be read:\na.txt: changed while it was searched\n')
 
 
 def test_a_search_result_is_not_saved_through_a_link_out_of_the_workspace(tmp_path, monkeypatch):
@@ -142,7 +209,7 @@ def test_files_are_searched_in_the_walks_order_and_each_call_is_one_or_two_round
     text = search_of_disk(tmp_path, 'grep', {'pattern': 'x'}, rounds=rounds, ran=ran)
     assert text == 'a.txt:1:x\nz.txt:1:x\nB/c.txt:1:x\na/b.txt:1:x\na/b/y.txt:1:x\n'
     assert rounds == [1, 1]                                          # the listing, then the search
-    assert sum(1 for c in ran if 'sys.argv[2:7]' in c) == 1          # one `search` call for five files
+    assert sum(1 for c in ran if 'sys.argv[2:8]' in c) == 1          # one `search` call for five files
     rounds.clear()
     search_of_disk(tmp_path, 'glob', {'pattern': '**/*.txt'}, rounds=rounds)
     assert rounds == [1]                                             # a glob is decided on the listing alone
@@ -187,7 +254,7 @@ def test_a_result_the_harness_cut_is_asked_again_smaller(tmp_path):
 
     def alter(command, text):
         # the harness cuts the first reply of a search: no frame survives, as at the pinned harness's 10,000-byte bound
-        if 'sys.argv[2:7]' in command and not cuts:
+        if 'sys.argv[2:8]' in command and not cuts:
             cuts.append(command)
             return text[:2000] + ' …1234 chars truncated… ' + text[-1000:]
         return text
@@ -201,7 +268,7 @@ def test_a_result_for_a_command_cria_never_sent_or_forged_is_not_taken(tmp_path)
 
     def alter(command, text):
         # a file's own bytes can quote anything, a forged reply can claim anything: only the frame that carries this call's nonce is read
-        return 'CTX1 ' + '0' * 32 + ' {"ok":1,"n":0,"h":"x"}\nCTX1 ' + '0' * 32 + ' END\n' if 'sys.argv[2:7]' in command else text
+        return 'CTX1 ' + '0' * 32 + ' {"ok":1,"n":0,"h":"x"}\nCTX1 ' + '0' * 32 + ' END\n' if 'sys.argv[2:8]' in command else text
     text = search_of_disk(tmp_path, 'grep', {'pattern': 'needle'}, alter=alter, ran=ran)
     assert 'a.txt:1:needle' not in text                              # an answer nobody can verify is never shown as a match
     assert text.startswith('Search incomplete') or 'could not' in text

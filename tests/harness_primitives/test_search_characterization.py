@@ -91,16 +91,6 @@ def saved_matches(got, expected_lines):
     assert saved_file(got) == ''.join(line + '\n' for line in expected_lines)
 
 
-def partial_rows(got, name, rows):
-    """The heavy file: the answer is the incomplete pointer, the saved file holds the first matches in order (at least 500 of them) and says it holds only those."""
-    assert got['results'][0].startswith('The search was incomplete.'), got['results'][0]
-    text = saved_file(got)
-    body, _, note = text.partition('Search incomplete; these paths could not be read:\n')
-    shown = body.splitlines()
-    assert 500 <= len(shown) < rows and shown == [f'{name}:{i + 1}:row {i}' for i in range(len(shown))], (len(shown), shown[-2:])
-    assert note == f'{name}: at least {len(shown):,} matches, more than one result holds; only those are shown\n'
-
-
 def result_is(*expected):
     def check(got):
         assert [r.rstrip('\n') for r in got['results']] == list(expected), got['results']
@@ -112,10 +102,6 @@ INTENDED = {
     'f_plain_text_30k': ('a fetched document past the shell command is saved whole, not cut at 46,080 bytes', landed_whole('f_plain_text_30k', 47_000)),
     'f_spill_100k_cut': ('a fetched document past the shell command is saved whole, not cut at 46,080 bytes', landed_whole('f_spill_100k_cut', 100_000)),
     'f_spill_250k': ('a fetched document past the shell command is saved whole, not cut at 46,080 bytes', landed_whole('f_spill_250k', 250_000)),
-    'g_matches_in_a_big_file': ('a file with more matches than one `search` result holds (its frame is one harness result) is saved with the matches it holds and '
-                                'a line that says so (STOPPED item, docs/harness-programs.md section 7)', lambda got: partial_rows(got, 'rows.txt', 2000)),
-    'g_matches_in_a_big_file_1500': ('a file with more matches than one `search` result holds (its frame is one harness result) is saved with the matches it holds '
-                                     'and a line that says so (STOPPED item, docs/harness-programs.md section 7)', lambda got: partial_rows(got, 'rows.txt', 1500)),
     'g_big_spill_with_errors': ('a file that is not text and has no match is no longer an unreadable file: no "incomplete" variant of the pointer',
                                 lambda got: saved_matches(got, [f'm{i:03d}.txt:{j + 1}:line {j} has the needle in it, with some padding words to make it longer'
                                                                 for i in range(60) for j in range(3)])),

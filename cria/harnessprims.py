@@ -213,7 +213,7 @@ _SEARCH = r'''import re,signal
 def T(*a):raise TimeoutError("regex")
 signal.signal(signal.SIGALRM,T);signal.alarm(10)
 try:
-    rt,pat,fl,mx,mf=sys.argv[2:7];mx=int(mx);mf=int(mf);rx=re.compile(pat,int(fl));R=[]
+    rt,pat,fl,mx,mf,sk=sys.argv[2:8];mx=int(mx);mf=int(mf);sk=int(sk);rx=re.compile(pat,int(fl));R=[];n=0
     for rel in json.loads(sys.stdin.read()):
         try:
             fd,nm=at(rt,rel);g=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(g)
@@ -221,9 +221,11 @@ try:
             with os.fdopen(g,"rb") as f:txt=f.read().decode("utf-8","surrogateescape")
         except OSError as e:R.append(["!",rel,e.errno]);continue
         for i,l in enumerate(txt.split("\n"),1):
-            if rx.search(l):R.append(["m",rel,i,l])
-            if len(R)>=mx:break
-        if len(R)>=mx:R.append(["#"]);break
+            if rx.search(l):
+                n+=1
+                if n>sk:R.append(["m",rel,i,l])
+            if n>=sk+mx:break
+        if n>=sk+mx:R.append(["#"]);break
     out(dict(ok=1),"\n".join(json.dumps(r) for r in R).encode())
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 '''

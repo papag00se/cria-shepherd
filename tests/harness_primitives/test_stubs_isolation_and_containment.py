@@ -53,7 +53,7 @@ def test_every_stub_ignores_a_workspace_that_shadows_the_stdlib_and_plants_pytho
     assert write(r, 'big.bin', b'0123456789', '-', staged=True, cwd=r, env=e).header['err'] == 'FileNotFoundError'
     assert run('put', [r, 'big.bin', GROUP, 0, 1], b'0123456789', cwd=r, env=e).header['ok'] == 1
     assert ls(r, '', 1, cwd=r, env=e).header['ok'] == 1
-    assert run('search', [r, 'x', 0, 10, 1 << 20], text='["src/a.py"]', cwd=r, env=e).header['ok'] == 1
+    assert run('search', [r, 'x', 0, 10, 1 << 20, 0], text='["src/a.py"]', cwd=r, env=e).header['ok'] == 1
     done = run('run', ['start', s, 'tok1', 10, 5, r, 0], cwd=r, env=e, text='echo ran-ok')
     assert done.header['state'] == 'done' and done.data == b'ran-ok\n'
     assert run('rm', [r, 'f.txt', 'f', '*'], cwd=r, env=e).header['ok'] == 1
@@ -130,5 +130,5 @@ def test_rm_tree_removes_a_link_below_it_and_never_what_it_points_to_and_refuses
 
 def test_search_reads_only_the_files_cria_named_and_reports_a_refused_one(tree):
     (tree.root / 'a.py').write_text('def foo():\n    return 12\n# TODO fix 99\n')
-    done = run('search', [tree.root, r'TODO|\d{2}$', 0, 100, 1 << 20], text='["a.py","link.txt","missing.py"]', cwd=tree.root)
+    done = run('search', [tree.root, r'TODO|\d{2}$', 0, 100, 1 << 20, 0], text='["a.py","link.txt","missing.py"]', cwd=tree.root)
     assert done.records == [['m', 'a.py', 2, '    return 12'], ['m', 'a.py', 3, '# TODO fix 99'], ['!', 'link.txt', 40], ['!', 'missing.py', 2]]

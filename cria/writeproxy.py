@@ -390,18 +390,18 @@ def _under_spill_dir(path: str) -> bool:
 
 def _spill_relpath(path: str) -> str | None:
     """The workspace-relative spill path when ``path`` names a SPILL_DIR file via a ROOT-ABSOLUTE
-    ``/tmp/read-only/x`` form — the model dropped the leading ``./`` (wrote ``/tmp/read-only/x`` for
-    ``./tmp/read-only/x``), which the dirguard then blocks as external, so the model can never re-read
+    ``/tmp/reference/x`` form — the model dropped the leading ``./`` (wrote ``/tmp/reference/x`` for
+    ``./tmp/reference/x``), which the dirguard then blocks as external, so the model can never re-read
     the doc cria saved (the live footgun: a fetched spec sitting unreadable on disk). Return
-    ``./tmp/read-only/x``; ``None`` otherwise. Only the root-absolute spill form is redirected — a path
-    that merely CONTAINS ``tmp/read-only`` deeper in some other tree is left alone."""
+    ``./tmp/reference/x``; ``None`` otherwise. Only the root-absolute spill form is redirected — a path
+    that merely CONTAINS ``tmp/reference`` deeper in some other tree is left alone."""
     return filecommands._spill_relpath(path, webfetch.SPILL_DIR)
 
 
 def _respill_command(command: str) -> str:
     """Root-absolute spill references inside a RAW command string, rewritten to the real
     workspace-relative form — the command-string twin of :func:`_spill_relpath`. ``read_file`` on
-    ``/tmp/read-only/x`` was silently redirected while the SAME string in a grep/cp was dirguard-
+    ``/tmp/reference/x`` was silently redirected while the SAME string in a grep/cp was dirguard-
     refused; shown both, the model learned "the sandbox blocks this file" and burned ~130 calls on
     it (run 0729-gemma4 pon2; ~25 more in poff-C1). cria controls the spill dir name, so the
     rewrite is exact — only a token that STARTS at the filesystem root is touched."""

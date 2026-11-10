@@ -217,8 +217,49 @@ def test_run_wait_refuses_a_directory_it_did_not_make(root, tmp_path):
 def test_search_gives_up_on_a_pathological_pattern(root):
     (root / 'f.txt').write_text('a' * 40 + 'b\n')
     started = time.monotonic()
-    done = run('search', [root, '(a+)+$', 0, 10, 1 << 20], text='["f.txt"]', cwd=root)
+    done = run('search', [root, '(a+)+$', 0, 10, 1 << 20, 0], text='["f.txt"]', cwd=root)
     assert done.header['ok'] == 0 and done.header['err'] == 'TimeoutError' and time.monotonic() - started < 30
+
+
+def pages_of(root, names, pattern, size, total_pages=None):
+    """The matching lines of ``names`` read as consecutive pages of ``size`` matches (the stub's SKIP and MAX), as cria reads a heavy batch: returns (records, pages asked)."""
+    got, skip, asked = [], 0, 0
+    while True:
+        done = run('search', [root, pattern, 0, size, 1 << 20, skip], text=json.dumps(names), cwd=root)
+        assert done.header['ok'] == 1
+        records = [r for r in done.records if r[0] == 'm']
+        asked += 1
+        got += records
+        if done.records[-1:] != [['#']]:
+            return got, asked
+        assert len(records) == size                       # a page that says it is full holds exactly its size
+        skip += size
+
+
+def test_search_skip_reads_any_number_of_matches_as_consecutive_pages_across_files_with_crlf_and_notes(root):
+    (root / 'a.txt').write_bytes(b'x1\r\nno\r\nx2\r\nx3\r\n')
+    (root / 'b.txt').write_bytes(''.join(f'x{i}\n' for i in range(10)).encode())
+    (root / 'c.txt').write_bytes(b'x end')
+    (root / 'big.txt').write_bytes(b'x' * 3000)             # one long matching line
+    names = ['a.txt', 'big.txt', 'b.txt', 'missing.txt', 'c.txt']
+    whole = run('search', [root, 'x', 0, 1000, 1 << 20, 0], text=json.dumps(names), cwd=root)
+    everything = [r for r in whole.records if r[0] == 'm']
+    assert len(everything) == 3 + 1 + 10 + 1
+    for size in (1, 2, 3, 4, 7, 100):
+        got, asked = pages_of(root, names, 'x', size)
+        assert got == everything and asked == len(everything) // size + 1       # the first page that is not full is the last
+    page = run('search', [root, 'x', 0, 2, 1 << 20, 3], text=json.dumps(names), cwd=root)          # a page across the boundary between files
+    assert [r[:3] for r in page.records if r[0] == 'm'] == [list(r[:3]) for r in everything[3:5]]
+    tail = run('search', [root, 'x', 0, 9, 1 << 20, 10], text=json.dumps(names), cwd=root)         # the last page: it reaches the missing file
+    assert [r[:3] for r in tail.records if r[0] == 'm'] == [list(r[:3]) for r in everything[10:]]
+    assert any(r[0] == '!' and r[1] == 'missing.txt' for r in tail.records)                          # a note is not a match: it is not counted, and repeats on every page that reaches it
+    assert run('search', [root, 'x', 0, 2, 1 << 20, 10_000], text=json.dumps(names), cwd=root).records[:1] != [['#']]   # past the end: an empty last page
+
+
+def test_search_skip_of_twenty_thousand_matches_in_one_file(root):
+    (root / 'f.txt').write_text(''.join(f'needle {i}\n' for i in range(20_000)))
+    got, asked = pages_of(root, ['f.txt'], 'needle', 4096)
+    assert [r[2] for r in got] == list(range(1, 20_001)) and got[-1][3] == 'needle 19999' and asked == 5
 
 
 def test_a_non_cooperating_writer_that_replaces_the_target_inside_the_window_is_detected_by_the_post_write_restat(root):

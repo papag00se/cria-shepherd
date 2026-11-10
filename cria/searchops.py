@@ -33,7 +33,8 @@ SEARCH = 'search'
 WHATS = ('sls', 'ssearch', 'sread')
 MAX_ENTRIES = 20_000          # entries the walk takes before it says it stopped
 BATCH = 200                   # files one `search` call is given
-MATCH_MAXES = (4000, 2000, 1000, 500, 250, 120, 60, 30, 10)      # records one `search` call may return, largest first: a frame the harness cut is asked again smaller
+MATCH_MAXES = (4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8)      # matches one `search` page holds, largest first: a page the harness cut is asked again as two halves
+PAGES = 8                     # pages of one batch asked together once the first has come back full
 MAX_FILE = 32 << 20           # a file larger than this is not searched (the stub reads a file whole)
 MAX_HOPS = 8
 _RESERVED = 3000              # bytes of a command that are not the pattern or the path (the stub, the nonce, the framing)
@@ -119,7 +120,7 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
         return harnessprims.compose('ls', nonce, words, comment=label, safe_path=safe)
     if what == 'sread':
         return harnessprims.compose('read', nonce, [args['root'], args['rel'], 0, 0, 0], comment=label, safe_path=safe)
-    return harnessprims.compose('search', nonce, [args['root'], ctx['search']['pattern'], 0, MATCH_MAXES[args['rung']], MAX_FILE],
+    return harnessprims.compose('search', nonce, [args['root'], ctx['search']['pattern'], 0, args['mx'], MAX_FILE, args['sk']],
                                 text=json.dumps(args['files']), comment=label, safe_path=safe)
 
 
@@ -216,69 +217,122 @@ def _start_state(tree: _Tree, start: str):
 
 @dataclass
 class Found:
-    """What the ``search`` steps say, folded in step order."""
+    """What the ``search`` steps say about the files chosen: their matches in order, what could not be searched and why, and what is still to ask."""
     records: dict = field(default_factory=dict)       # file -> [match records ['m', file, line, text]]
-    done: set = field(default_factory=set)
-    partial: set = field(default_factory=set)         # files with more matches than one frame returns: what is shown is the first of them
     failed: dict = field(default_factory=dict)        # file -> why it was not searched
     notes: dict = field(default_factory=dict)         # file -> ['s', file, size] or ['!', file, errno]
-    retry: list = field(default_factory=list)         # [(files, next rung)] a frame the harness cut
-    outstanding: set = field(default_factory=set)     # files in calls nobody has answered yet
-    rung: int = 0                                     # where new batches start: past the size the harness has cut already
+    issue: list = field(default_factory=list)         # the ``ssearch`` calls still to make (arguments)
 
 
-def _found(steps: list) -> Found:
-    f = Found()
-    latest: dict = {}
-    for st in sorted((x for x in steps if x.what == 'ssearch'), key=lambda x: x.s):
-        latest[tuple(st.args['files'])] = st
-    for st in sorted(latest.values(), key=lambda x: x.s):
-        files = st.args['files']
+def _page(st) -> tuple:
+    return st.args['sk'], st.args['mx']
+
+
+def _verified(done: dict, checks: dict, state: tuple) -> tuple:
+    """A batch read as more than one page is read again where it began and where it ended: pages read at different moments of a file that was changing
+    in between would otherwise be taken together. (The stub returns no identity of the file, so this is what can be known: the same questions asked
+    again must be answered the same.)"""
+    if len(done) < 2:
+        return state
+    first, last = min(done), max(k for k in done if done[k][1] or k == min(done))
+    wanted = [(first, done[first][0]), (last, done[last][0])] if last != first else [(first, done[first][0])]
+    missing = [(sk, mx, True) for sk, mx in wanted if (sk, mx) not in checks]
+    if missing:
+        return ('more', missing)
+    for sk, mx in wanted:
+        st = checks[(sk, mx)]
         if st.frame is None:
-            f.outstanding.update(files)
+            return ('more', [])
+        if st.frame['hdr'].get('ok') == 1:
+            again = [json.loads(line) for line in st.frame['text'].split('\n') if line]
+            if [r for r in again if r[0] == 'm'] != done[sk][1]:
+                return ('changed',)
+    return state
+
+
+def _group(files: list, steps: list, size: int) -> tuple:
+    """The state of one batch from the pages asked of it. A batch is read as consecutive pages ``[sk, sk + mx)`` of its matches (the ``search`` stub's SKIP and
+    MAX): a page the stub says is full is followed by the next, the first page that is not full is the last. Returns ``('done', records, notes)``,
+    ``('failed', why)``, ``('changed',)`` (the pages disagree: a file changed while it was searched) or ``('more', pages to ask)`` (an empty list: still waiting)."""
+    done, cut, pending, bad, checks = {}, set(), set(), None, {}
+    for st in sorted(steps, key=lambda x: x.s):
+        key = _page(st)
+        if st.args.get('check'):
+            checks[key] = st
+            continue
+        if st.frame is None:
+            pending.add(key)
             continue
         header = st.frame['hdr']
-        if header.get('ok') == -1:
-            f.rung = max(f.rung, min(st.args['rung'] + 1, len(MATCH_MAXES) - 1))
-            if st.args['rung'] + 1 < len(MATCH_MAXES):
-                f.retry.append((files, st.args['rung'] + 1))
-            else:
-                f.failed.update({rel: 'result too large to return' for rel in files})
-            continue
-        if header.get('ok') != 1:
+        if header.get('ok') == 1:
+            records = [json.loads(line) for line in st.frame['text'].split('\n') if line]
+            full = bool(records) and records[-1] == ['#']
+            done.setdefault(key[0], (key[1], [r for r in records if r[0] == 'm'], [r for r in records if r[0] in ('s', '!')], full))
+        elif header.get('ok') == -1:
+            cut.add(key)
+        else:
             why = header.get('err') or 'could not be searched'
-            f.failed.update({rel: ('the search took too long' if why == 'TimeoutError' else why) for rel in files})
-            continue
-        records = [json.loads(line) for line in st.frame['text'].split('\n') if line]
-        capped = bool(records) and records[-1] == ['#']
-        records = [r for r in records if r != ['#']]
-        stop = len(files)
-        if capped:
-            last = records[-1][1] if records else files[0]
-            stop = files.index(last) if last in files else len(files)
-        whole = set(files[:stop])
-        f.done |= whole
-        if capped and stop == 0:                        # the first file alone has more matches than one frame returns
-            whole = {files[0]}
-            f.done.add(files[0])
-            f.partial.add(files[0])
-        for r in records:
-            if r[1] in whole:
-                if r[0] == 'm':
-                    f.records.setdefault(r[1], []).append(r)
-                else:
-                    f.notes.setdefault(r[1], r)
+            bad = bad or ('the search took too long' if why == 'TimeoutError' else why)
+    if bad:
+        return ('failed', bad)
+    issued = pending | cut | {(k, v[0]) for k, v in done.items()}
+    position, records, notes = 0, [], {}
+    while position in done:
+        mx, got, kept, full = done[position]
+        if full and len(got) != mx:
+            return ('changed',)                              # a full page holds exactly its size
+        records += got
+        for r in kept:
+            notes.setdefault(r[1], r)
+        if not full:
+            order = [(files.index(r[1]) if r[1] in files else -1, r[2]) for r in records]
+            if -1 in [o[0] for o in order] or order != sorted(set(order)) or any(sk > position and done[sk][1] for sk in done):
+                return ('changed',)                          # matches out of order, twice, or past the end: the file moved under the pages
+            return _verified(done, checks, ('done', records, notes))
+        position += mx
+    started = [k for k in pending | cut if k[0] == position]
+    if any(k in pending for k in started):
+        return ('more', [])
+    if started:                                              # a page the harness cut: asked again as two halves
+        mx = min(k[1] for k in started)
+        if mx <= MATCH_MAXES[-1]:
+            return ('failed', 'result too large to return')
+        halves = [(position, mx // 2), (position + mx // 2, mx // 2)]
+        return ('more', [h + (False,) for h in halves if h not in issued])
+    end = max([k[0] + k[1] for k in issued] or [0])
+    if not issued:
+        return ('more', [(0, size, False)])                  # the first page alone: most searches end there
+    return ('more', [(end + i * size, size, False) for i in range(PAGES)])
+
+
+def _found(steps: list, chosen: list) -> Found:
+    """The matches of ``chosen`` (in order) from the ``ssearch`` steps, and the calls still to make."""
+    f = Found()
+    by_group: dict = {}
+    for st in steps:
+        if st.what == 'ssearch':
+            by_group.setdefault((tuple(st.args['files']), st.args['gen']), []).append(st)
+    cuts = [st.args['mx'] for sts in by_group.values() for st in sts if st.frame is not None and st.frame['hdr'].get('ok') == -1]
+    size = max((min(cuts) // 2, MATCH_MAXES[-1])) if cuts else MATCH_MAXES[0]
+
+    def settle(files: list, gen: int):
+        state = _group(files, by_group.get((tuple(files), gen), []), size)
+        if state[0] == 'done':
+            for r in state[1]:
+                f.records.setdefault(r[1], []).append(r)
+            f.notes.update(state[2])
+        elif state[0] == 'more':
+            f.issue += [{'files': files, 'gen': gen, 'sk': sk, 'mx': mx, 'check': check} for sk, mx, check in state[1]]
+        elif state[0] == 'changed' and gen == 0:
+            settle(files, 1)                                 # once more, from the start
+        elif len(files) > 1 and state[0] == 'failed':
+            settle(files[:len(files) // 2], 0)               # a batch that fails is two smaller ones
+            settle(files[len(files) // 2:], 0)
+        else:
+            f.failed.update({rel: state[1] if state[0] == 'failed' else 'changed while it was searched' for rel in files})
+    for i in range(0, len(chosen), BATCH):
+        settle(chosen[i:i + BATCH], 0)
     return f
-
-
-def _next_searches(files: list, found: Found) -> list:
-    """The ``ssearch`` calls still to make: the batches the harness cut, asked smaller, then the files nothing has covered, in batches."""
-    taken = set(found.done) | set(found.failed) | found.outstanding
-    issue = [{'files': fs, 'rung': rung} for fs, rung in found.retry]
-    taken |= {rel for fs, _ in found.retry for rel in fs}
-    todo = [rel for rel in files if rel not in taken]
-    issue += [{'files': todo[i:i + BATCH], 'rung': found.rung} for i in range(0, len(todo), BATCH)]
-    return issue
 
 
 class SearchOps:
@@ -401,10 +455,9 @@ class SearchOps:
         # the matches --------------------------------------------------------
         found = Found()
         if not glob:
-            found = _found([st for st in steps if st.what == 'ssearch'])
-            nxt = _next_searches(chosen, found)
-            if nxt:
-                return Issue(self._next_many(steps, [('ssearch', {'root': root, **n}) for n in nxt][:WAVE]))
+            found = _found(steps, chosen)
+            if found.issue:
+                return Issue(self._next_many(steps, [('ssearch', {'root': root, **n}) for n in found.issue][:WAVE]))
             verify = self._to_verify(chosen, found, steps)
             if verify:
                 return Issue(self._next_many(steps, [('sread', {'root': root, 'rel': rel}) for rel in verify][:WAVE]))
@@ -524,8 +577,6 @@ class SearchOps:
                     break
                 lines.append(f'{name}:{r[2]}:{r[3]}')
                 matches += 1
-            if rel in found.partial:
-                errors.append(f'{name}: at least {len(found.records.get(rel, ())):,} matches, more than one result holds; only those are shown')
         text = ''.join(line + '\n' for line in lines)
         if visit.skipped:
             text += messages['skipped'].format(paths='\n'.join(visit.skipped)) + '\n'
