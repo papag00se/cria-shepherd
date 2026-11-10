@@ -31,7 +31,7 @@ LIST_DIR = 'list_dir'
 # directories and /usr/lib). A directory one frame does not hold is `done:0` (unknown beyond): cria asks for the next page with
 # `AFTER` = the last name it received, one call per frame, and the rung that fitted is kept for the next page.
 LS_MAX = (1000, 400, 150, 50, 20)
-LS_MAX_PAGES = 200    # pages of one listing (200,000 entries at the first rung): beyond it the listing is labelled incomplete
+LS_MAX_PAGES = 50     # pages of one listing (50,000 entries at the first rung): beyond it the listing is labelled incomplete
 MAX_HOPS = 8          # symbolic links followed while resolving a path (ELOOP beyond)
 _TYPE = {'f': '-', 'd': 'd', 'l': 'l', 'o': '?'}
 
@@ -180,7 +180,8 @@ class Ops:
     def _command(op: str, ctx: dict, s: int, what: str, args: dict) -> str:
         nonce = callauth.nonce(op, s)
         if what == 'ls':
-            words, payload = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', args['after']], None
+            # AFTER travels as the hex of the name's bytes: a name that is not UTF-8 (a lone surrogate here) must not enter a command
+            words, payload = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', os.fsencode(args.get('after', '')).hex()], None
             comment = 'list_dir ' + ctx['path']
         elif what == 'stat':
             words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]', ''], None, 'list_dir ' + ctx['path']

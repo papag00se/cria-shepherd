@@ -138,7 +138,7 @@ def test_a_listing_whose_text_needs_more_than_one_command_is_staged_in_chunks_an
 
 def _asked(harness):
     """(records asked for, AFTER) of each `ls` call the harness ran, in order."""
-    return [(int(m.group(1)), m.group(2).strip("'")) for c in harness.ran
+    return [(int(m.group(1)), os.fsdecode(bytes.fromhex(m.group(2).strip("'")))) for c in harness.ran
             if (m := re.search(r" (\d+) 0 '\[\]' (\S*)$", command_of(c)))]
 
 
@@ -243,3 +243,28 @@ def test_a_link_below_a_path_outside_the_workspace_is_refused_and_judged_again_l
         assert link.startswith('lrwx') and link.endswith(f'z -> {privatepaths.CRIA_HOME}')          # the link itself is only listed
         assert 'f.txt' in plain
         assert not any(str(privatepaths.CRIA_HOME) in command_of(c) for c in harness.ran)      # no call ever named the private home
+
+
+def test_a_name_that_is_not_utf8_at_a_page_boundary_is_a_cursor_the_harness_can_carry(tmp_path, monkeypatch):
+    """The AFTER cursor is the hex of the name's bytes: a lone surrogate in a command would not survive the harness (the MAC would fail)."""
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    monkeypatch.setattr(ops, 'LS_MAX', (5,))
+    names = [f'f{i:02}'.encode() for i in range(12)]
+    names[4] = b'f04\xff\xfe'                                   # the last entry of the first page
+    for name in names:
+        open(os.path.join(os.fsencode(ws), name), 'w').close()
+    backend = ListBackend(ws)
+    harness = Harness(ws)
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        w.drive(harness)
+    listed = [l.split(' ')[-1] for l in listing(backend)['content'].split('\n')]
+    assert listed == [n.decode('utf-8', 'surrogateescape').replace('\udcff', '\\xff').replace('\udcfe', '\\xfe') for n in sorted(names)]
+    after = [a for _, a in _asked(harness) if a]
+    assert after and after[0] == os.fsdecode(names[4]) and all(c.encode('utf-8') for c in map(command_of, harness.ran))
+
+
+def test_a_step_written_before_the_cursor_existed_is_re_emitted_without_it():
+    ctx = {'path': '.', 'safe': '/usr/bin:/bin'}
+    old = {'wave': 0, 'root': '/w', 'rel': '', 'max_i': 0, 'hop': 0}              # no 'after': a ledger written by the previous release
+    assert ops.Ops._command('a' * 12, ctx, 0, 'ls', old).count("'[]' ''") == 1

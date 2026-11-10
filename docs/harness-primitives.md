@@ -91,12 +91,12 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | `read` | return a byte range of a file and its identity | 1,486 B | `ROOT REL OFF LEN` |
 | `write` | replace or create a file atomically, compare-and-swap | 2,647 B | `ROOT REL EX SP NEW ST MK G` + stdin |
 | `put` | stage one chunk of a payload too big for one command | 1,127 B | `ROOT REL G OFF MK` + stdin |
-| `ls` | stat a path, or list a tree, without following links | 2,088 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
+| `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
 | `rm` | delete a file, an empty directory or an owned tree | 1,695 B | `ROOT REL MODE EX` |
 | `run` | run a command with a timeout, detached, output to a file | 2,149 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
 | `search` | regex search over a file list cria chose | 1,598 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
 
-Total 12,790 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 12,824 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -216,14 +216,14 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 
 ### 5.4 `ls`
 
-`ls N ROOT REL DEPTH MAX FOLD SKIP AFTER`. `REL` empty means `ROOT` itself. A non-directory yields one record (so this is also `stat`). A directory is listed breadth-first, sorted by name, never following links. `DEPTH` 1 lists one level, 0 is unlimited. `MAX` caps records; `done:1` in the header says the listing is complete, `done:0` means "unknown beyond this point", never "absent". `FOLD` N>0: a directory with more than N non-directory entries is not listed, one `x` record gives its entry count instead. `SKIP` is a JSON list of directory names that are reported but not entered (their record carries a trailing `1`). `AFTER` is a name (empty: no filter): only entries whose name sorts after it are listed. It is the resume cursor of `DEPTH 1` listings (cria asks for the next page with `AFTER` = the last name it received, `FOLD` 0); with `FOLD` set it would count only the entries after the name, so the two are not combined.
+`ls N ROOT REL DEPTH MAX FOLD SKIP AFTER`. `REL` empty means `ROOT` itself. A non-directory yields one record (so this is also `stat`). A directory is listed breadth-first, sorted by name, never following links. `DEPTH` 1 lists one level, 0 is unlimited. `MAX` caps records; `done:1` in the header says the listing is complete, `done:0` means "unknown beyond this point", never "absent". `FOLD` N>0: a directory with more than N non-directory entries is not listed, one `x` record gives its entry count instead. `SKIP` is a JSON list of directory names that are reported but not entered (their record carries a trailing `1`). `AFTER` is a name given as the lowercase hex of its bytes (empty: no filter): only entries whose name sorts after it are listed. Hex, because a name need not be UTF-8 and a command must be: a name with an undecodable byte (a lone surrogate once cria has it as text) is a cursor the harness can carry. It is the resume cursor of `DEPTH 1` listings (cria asks for the next page with `AFTER` = the last name it received, `FOLD` 0); with `FOLD` set it would count only the entries after the name, so the two are not combined.
 
 Payload: one JSON array per line, `[type, path, size, mtime_ns, mode, extra?]`, `type` ∈ `f d l o x`, `path` relative to `ROOT`, `extra` = link text for `l`, `1` for a skipped directory. JSON escapes make every file name (newlines, invalid UTF-8 as lone surrogates) round-trip.
 
 ```python
 import stat
 try:
-    rt,rel,dp,mx,fold,skip,af=sys.argv[2:9];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);R=[];q=[]
+    rt,rel,dp,mx,fold,skip,af=sys.argv[2:9];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);af=os.fsdecode(bytes.fromhex(af));R=[];q=[]
     k=lambda m:"l" if stat.S_ISLNK(m) else "d" if stat.S_ISDIR(m) else "f" if stat.S_ISREG(m) else "o"
     fd,nm=at(rt,rel);s=os.stat(nm,dir_fd=fd,follow_symlinks=False)
     if k(s.st_mode)=="d":q=[(rel.strip("/"),1)]
@@ -510,7 +510,7 @@ Syntax-on-stdin facts (§8.2) were checked directly: `ruby -c`, `node --check`, 
 
 Against the shipped constants, not scratch copies:
 
-* **Source:** the stubs equal §5's code blocks byte for byte (12,761 B at phase 3, 12,790 B with `AFTER`; per-stub registry budgets hold; no stub holds a single quote).
+* **Source:** the stubs equal §5's code blocks byte for byte (12,761 B at phase 3, 12,824 B with `AFTER`; per-stub registry budgets hold; no stub holds a single quote).
 * **Isolation and containment:** the prototype's tests, lifted: a workspace shadowing 16 stdlib modules plus `sitecustomize`, a planted `python3` first on `PATH` and `PYTHONPATH`/`PYTHONSTARTUP` at the workspace ran against all seven stubs and through a real `list_dir`: no marker was created. The controls hold (plain `python3 -c` and `python3 -I -c` under a planted `PATH` do run the planted interpreter). Containment: `..`, a final-component link (`ELOOP`), a link in the directory path (`ENOTDIR`), a FIFO and a directory, for `read`, `write`, `ls`, `rm`, `search`; outside files unchanged.
 * **Write semantics:** CAS, splice, wrong `NEW`, mode kept, byte-exact CRLF and `\xff`, `mk`, a 300,000-byte payload staged out of order and replayed (the consumed staging file answers `FileNotFoundError`, then `read`'s `fsha` shows it landed), 16 concurrent writers (one lands, 15 `stale`), 45,000 raw bytes in one command; `run`: exit, detached, timeout kill, 20,000-byte output, token reuse refused, the child's own environment.
 * **Frames and authentication:** nine alterations of a real frame (cut, duplicated, flipped, wrong nonce, ...) are all UNKNOWN; a frame for another nonce is plain output; a payload that inflates past its declared length is refused before it is inflated; a file *named* like a complete frame with the right nonce is data inside the payload; a result for an id cria never issued, for a command changed by one byte, delivered twice, or carrying another call's nonce is not taken; a model-authored `ctx_` id is renamed before the harness sees it; a key that is not private verifies nothing.

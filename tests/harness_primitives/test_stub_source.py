@@ -32,7 +32,7 @@ def test_stub_sizes_stay_within_the_registry_budgets_and_hold_no_quote():
     assert set(budgets) == set(NAMES)
     for name, source in harnessprims.STUBS.items():
         assert "'" not in source and len(source.encode()) <= budgets[name], (name, len(source.encode()), budgets[name])
-    assert sum(len(s.encode()) for s in harnessprims.STUBS.values()) == 12_790
+    assert sum(len(s.encode()) for s in harnessprims.STUBS.values()) == 12_824
 
 
 def test_compose_is_a_pure_function_with_the_documented_prefix_and_a_display_comment_that_carries_no_line_break():

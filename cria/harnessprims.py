@@ -116,7 +116,7 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 
 _LS = r'''import stat
 try:
-    rt,rel,dp,mx,fold,skip,af=sys.argv[2:9];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);R=[];q=[]
+    rt,rel,dp,mx,fold,skip,af=sys.argv[2:9];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);af=os.fsdecode(bytes.fromhex(af));R=[];q=[]
     k=lambda m:"l" if stat.S_ISLNK(m) else "d" if stat.S_ISDIR(m) else "f" if stat.S_ISREG(m) else "o"
     fd,nm=at(rt,rel);s=os.stat(nm,dir_fd=fd,follow_symlinks=False)
     if k(s.st_mode)=="d":q=[(rel.strip("/"),1)]
