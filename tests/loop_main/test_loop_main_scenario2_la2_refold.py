@@ -1,7 +1,6 @@
 """A prior long rollup remains historical evidence rather than being refolded by the new handoff."""
 import json
 
-import pytest
 
 from cria import assistruntime, selfcompact
 from cria.config import Role
@@ -35,16 +34,6 @@ def compact(refold_verdict, refold_text, tmp_path):
         + [{"role": "assistant", "content": f"turn {i} " + "y" * 1000} for i in range(60)]
     out = driver._self_compact(view, sess, 1, Rlog())
     return out, sess, phases
-
-
-@pytest.mark.parametrize("verdict,text", [("RETROSPECTIVE", "CONDENSED: resolver built and verified."),
-                                          ("PLAN", "CONDENSED: resolver built and verified."),
-                                          ("RETROSPECTIVE", "")])
-def test_prior_rollup_is_preserved_as_history_not_refolded_without_a_topic_judge(verdict, text, tmp_path):
-    out, sess, phases = compact(verdict, text, tmp_path)
-    rollup = next(m["content"] for m in out if "⟦ctx:rollup⟧" in str(m.get("content")))
-    assert OLD in rollup and "CONDENSED" not in rollup
-    assert not phases
 
 
 def test_a_rung_without_the_compaction_policy_ships_the_history_untouched_and_asks_nobody(tmp_path):

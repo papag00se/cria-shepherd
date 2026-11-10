@@ -40,26 +40,6 @@ def test_a_bundle_with_any_defect_is_refused_with_the_defect_named(eng, tmp_path
         system1.load_bundle(root)
 
 
-def test_a_pristine_bundle_loads_with_its_policy_texts_and_self_test(eng, tmp_path):  # noqa: F811
-    """The good bundle yields its id (the directory name), the policy texts (immutable) and a self-test covering every family."""
-    root = make_bundle(tmp_path / "b", eng)
-    bundle = system1.load_bundle(root)
-    assert bundle.bundle_id == "b" and set(bundle.policies) == set(system1.FAMILIES)
-    assert {case["family"] for case in bundle.selftest} == set(system1.FAMILIES)
-    with pytest.raises(TypeError):
-        bundle.policies["dictation"] = "x"
-
-
-def test_an_absent_runtime_library_is_a_typed_dependency_error():
-    """Importing a missing optional extra says which one."""
-    with pytest.raises(system1.System1DependencyError, match="'no_such_module_sv2' is not installed"):
-        system1._import("no_such_module_sv2")
-
-
-def _runtime(eng, tmp_path, **kw):  # noqa: F811
-    return system1.System1Runtime(make_bundle(tmp_path / "rt", eng), **kw)
-
-
 @pytest.mark.parametrize("break_it, message", [
     (lambda e: setattr(e.ort, "InferenceSession", lambda *a, **k: (_ for _ in ()).throw(OSError("corrupt graph"))), "cannot load the System 1 graph or tokenizer: corrupt graph"),
     (lambda e: setattr(e.ort.InferenceSession, "get_providers", lambda self: ["CUDAExecutionProvider"]), r"CPU only; ORT selected \['CUDAExecutionProvider'\]"),

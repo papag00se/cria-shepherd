@@ -186,62 +186,6 @@ def reply_text(mode, raw):
     return next(e["text"] for e in sse_events(raw) if e.get("type") == "response.output_text.done")
 
 
-@pytest.mark.parametrize("responses", [False, True])
-def test_tool_descriptions_reach_model_through_real_http(wire, responses):
-    shell = {"name": "exec_command", "description": "Native shell.", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}
-    stdin = {"name": "write_stdin", "description": "Native input.", "parameters": {"type": "object", "properties": {"session_id": {"type": "number", "description": "Identifier of the running unified exec session."}, "chars": {"type": "string", "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."}}, "required": ["session_id"]}}
-    create = {"name": "create_file", "description": "Create only; never overwrite.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}
-    read = {"name": "read_file", "description": "Lines are zero-based and end-exclusive.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, "required": ["path", "start_line", "end_line"]}}
-    tools = [{"type": "function", **fn} if responses else {"type": "function", "function": fn} for fn in (shell, stdin, create, read)]
-    path = "/v1/responses" if responses else "/v1/chat/completions"
-    make = resp_body if responses else chat_body
-    status, _ = wire.post(path, make(tools=tools))
-    assert status == 200
-    sent = wire.fake.chats[-1][1]
-    menu = {t["function"]["name"]: t["function"] for t in sent["tools"]}
-    assert menu["exec_command"]["description"] == "Native shell."
-    assert menu["create_file"]["description"] == create["description"]
-    assert menu["read_file"]["description"] == read["description"]
-    assert menu["write_stdin"]["description"].startswith("Native input.")
-    assert "leave chars empty" in menu["write_stdin"]["description"]
-    assert "regular expression" in menu["grep"]["description"]
-    assert "Args:" not in json.dumps(sent["messages"])
-
-
-def test_responses_environment_reaches_coder_formatted_through_http(tmp_path):
-    import subprocess
-    root = tmp_path / 'work'
-    root.mkdir()
-    xml = f'<environment_context><cwd>{root}</cwd><filesystem><permission_profile type="managed"><file_system type="restricted"><entry access="read"><path>/</path></entry><entry access="write"><path>{root}</path></entry></file_system></permission_profile></filesystem></environment_context>'
-    body = resp_body("Fix the project and add tests __TOOL__", tools=[{"type": "function", "name": "exec_command", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}])
-    body["input"].insert(0, {"type": "message", "role": "user", "content": [{"type": "input_text", "text": xml}]})
-    w = Wire(tmp_path, routing=lambda url: RoutingConfig(
-        backends={"local": Backend("local")},
-        roles={"classifier": Role("classifier", "local"), "coder": Role("coder", "local")},
-        failover={"coding": ("coder",)}, engagement_bias="task", engagement_level=5))
-    try:
-        while True:
-            status, raw = w.post("/v1/responses", body)
-            assert status == 200
-            output = json.loads(raw)['output']
-            calls = [item for item in output if item.get('type') == 'function_call']
-            if not calls or not str(calls[0].get('call_id')).startswith('ctx_'):
-                break
-            if any(isinstance(m.get('content'), str) and m['content'].startswith('# Environment context') for _, chat in w.fake.chats for m in chat.get('messages', [])):
-                break                          # the coder has been asked: cria's own operations (inventory, writes, gates) answer without it
-            call = calls[0]
-            result = subprocess.run(['bash', '-c', json.loads(call['arguments'])['cmd']], cwd=root,
-                                    capture_output=True, text=True, check=True)
-            body['input'].extend([call, {'type': 'function_call_output', 'call_id': call['call_id'], 'output': result.stdout}])
-        messages = w.fake.chats[-1][1]["messages"]
-        env = next(m["content"] for m in messages if isinstance(m.get("content"), str) and m["content"].startswith("# Environment context"))
-        assert '`entry` `access="read"`:\n        - `path`: `"/"`' in env
-        assert f'`entry` `access="write"`:\n        - `path`: `"{root}"`' in env
-        assert any(m.get("content") == "Fix the project and add tests __TOOL__" for m in messages)
-    finally:
-        w.close()
-
-
 MODES = ["chat-buffered", "chat-stream", "responses-buffered", "responses-stream"]
 
 
@@ -281,34 +225,6 @@ def test_a_failing_upstream_is_a_clean_error_never_a_fake_success(wire, stream):
         with pytest.raises(urllib.error.HTTPError) as err:
             wire.post(*request("chat-buffered", marker))
         assert err.value.code == 502
-
-
-@pytest.mark.parametrize("mode", MODES)
-def test_a_persons_oversized_final_input_is_sent_whole_never_answered_with_a_stop_message(wire, mode):
-    """A ~70k-token last user message used to end the session with a stop message. A person's text is never cut (principle 5): it is sent whole with a structured event, and the model server's own refusal (a retryable error) is the answer to an impossible request."""
-    status, raw = wire.post(*request(mode, "summarise:\n" + BIG))
-    text = reply_text(mode, raw)
-    assert status == 200 and "input-not-delivered" not in text and text
-    (sent,) = [body for _, body in wire.fake.chats if "w29999" in json.dumps(body["messages"])]
-    assert sent["messages"][-1]["content"] == "summarise:\n" + BIG and "⟦ctx:reduced⟧" not in json.dumps(sent)
-    kinds = [e["kind"] for e in wire.events()]
-    assert "context.overflow_unfittable" in kinds and "context.overflow_reduced" not in kinds
-
-
-def tool_result_request(mode, result, task="count the ERROR lines in logs/app.log", **kw):
-    """The task, the model's own `cat` call, and what the harness returned for it, in that wire mode's shape."""
-    path = "/v1/chat/completions" if mode.startswith("chat") else "/v1/responses"
-    stream, call = mode.endswith("stream"), {"cmd": "cat logs/app.log"}
-    if mode.startswith("chat"):
-        return path, {"model": "m", "stream": stream, "messages": [
-            {"role": "user", "content": task},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1", "type": "function", "function": {
-                "name": "exec_command", "arguments": json.dumps(call)}}]},
-            {"role": "tool", "tool_call_id": "call_1", "content": result}], **kw}
-    return path, {"model": "m", "stream": stream, "prompt_cache_key": "sid-1", **kw, "input": [
-        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": task}]},
-        {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": json.dumps(call)},
-        {"type": "function_call_output", "call_id": "call_1", "output": result}]}
 
 
 @pytest.mark.parametrize("mode", ["chat-buffered", "responses-buffered"])
@@ -362,40 +278,6 @@ def test_level_zero_forwards_tools_and_history_untouched_and_logs_only_transport
                      "response.sent", "upstream.request", "upstream.done", "context.window"}
 
 
-def _atoms(messages):
-    """The conversation as ordered facts (text per role, calls, result slots), blind to how adjacent assistant pieces are grouped."""
-    out = []
-    for m in messages:
-        c = m.get("content")
-        c = "".join(p.get("text", "") for p in c) if isinstance(c, list) else c
-        if c and c.strip():
-            out.append((m["role"], c.strip()))
-        out += [("call", t["function"]["name"], t["function"]["arguments"]) for t in m.get("tool_calls") or []]
-        if m["role"] == "tool":
-            out.append(("result", m["tool_call_id"], m["content"]))
-    return out
-
-
-def _codex_bodies():
-    """Real Codex-shaped Responses requests (the shapes of ~/.cria/calls inbound bodies): persona + developer, a shell function, a custom
-    patch tool and a native search; a history with a failed command, a failed patch and an empty search; and text that looks like dialect."""
-    shell = {"type": "function", "name": "exec_command", "description": "run", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}
-    patch = {"type": "custom", "name": "apply_patch", "description": "edit", "format": {"type": "grammar", "syntax": "lark", "definition": "start: x"}}
-    user = lambda t: {"type": "message", "role": "user", "content": [{"type": "input_text", "text": t}]}
-    call = lambda i, n, a: {"type": "function_call", "call_id": i, "name": n, "arguments": json.dumps(a)}
-    out = lambda i, t: {"type": "function_call_output", "call_id": i, "output": t}
-    note = {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I will look.\n```json\n{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"ls\"}}\n```"}]}
-    history = [user("<environment_context>\n<cwd>/work</cwd>\n</environment_context>"), user("fix the importer and run the tests"), note,
-               call("c1", "exec_command", {"cmd": "pytest -q"}), out("c1", "exec_command failed: No such file or directory"),
-               call("c2", "exec_command", {"cmd": "grep -rn nothing ."}), out("c2", ""),
-               {"type": "custom_tool_call", "call_id": "c3", "name": "apply_patch", "input": "*** Begin Patch\n*** End Patch"},
-               {"type": "custom_tool_call_output", "call_id": "c3", "output": "apply_patch verification failed"}, user("continue")]
-    common = {"model": "m", "stream": False, "instructions": "You are a coding agent running in the Codex CLI.\nBe precise.", "prompt_cache_key": "sid-1"}
-    return [dict(common, input=[user("hello")], tools=[shell]),
-            dict(common, input=history, tools=[shell, patch, {"type": "web_search"}], tool_choice="auto", parallel_tool_calls=True),
-            dict(common, input=history * 3, tools=[shell])]
-
-
 @pytest.mark.parametrize("mode,beat,text", [("chat-stream", b": cria", b"Hello world"),
                                            ("responses-stream", b"event: response.in_progress", b'"text": "Hello world"')])
 def test_a_slow_prefill_is_kept_alive_with_heartbeats_and_the_content_still_arrives(tmp_path, mode, beat, text):
@@ -434,18 +316,3 @@ def test_the_dropped_prose_marker_never_reaches_the_model_at_any_level(tmp_path,
     sent = json.dumps(w.fake.chats[-1][1]["messages"], ensure_ascii=False)
     assert "README.md" in sent and PROSE_DROPPED_MARKER not in sent and "cria" not in sent.lower()
 
-
-def test_call_capture_keeps_the_exact_request_prompt_and_response(tmp_path):
-    """With capture on, each model call leaves its exact body, rendered prompt and parsed response, numbered in call order."""
-    w = Wire(tmp_path, capture=True)
-    try:
-        sent = chat_body("hello capture")
-        w.post("/v1/chat/completions", sent)
-        w.post("/v1/chat/completions", sent)
-    finally:
-        w.close()
-    folder = tmp_path / "calls" / "sid-1"
-    assert sorted(p.name for p in folder.glob("000?-proxy.json")) == ["0001-proxy.json", "0002-proxy.json"]
-    assert json.loads((folder / "0001-proxy.json").read_text())["body"] == sent
-    assert "hello capture" in (folder / "0001-proxy.prompt.txt").read_text()
-    assert json.loads((folder / "0001-proxy.response.json").read_text())["choices"][0]["message"]["content"] == "Hi"

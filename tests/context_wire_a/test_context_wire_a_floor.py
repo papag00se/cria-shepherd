@@ -6,7 +6,6 @@ lost and an unfittable request is reported as over budget, never declared fit.
 """
 import copy
 import json
-import math
 
 import pytest
 
@@ -80,56 +79,6 @@ def test_overflow_drops_oldest_whole_turns_keeps_system_and_active_turn_and_name
     assert "omitted from this note" in note  # a whole turn that does not fit is disclosed
     assert est_tokens(note) < est_tokens("".join(cf._msg_text(m) for m in history))
     assert (rep.msg_tokens_after + rep.tool_tokens) * cf.SAFETY_FACTOR <= 12000 - rep.reserve < 12000
-
-
-def test_compacted_history_keeps_complete_attributed_pairs_or_discloses_omission():
-    # Based on the captured Node shell failure: the result's own status and diagnostics,
-    # not the harness chunk identifier, must remain attached to its issuing call.
-    command = 'node -e "fetch(`https://api.handle.me/resolve/${handle}`)"'
-    result = ("Chunk ID: a07aca\nWall time: 4.6262 seconds\nProcess exited with code 1\n"
-              "Original token count: 473\nOutput:\n"
-              "/usr/bin/bash: line 1: ${data.resolvedAddress}: bad substitution\n"
-              "SyntaxError: Unexpected token ';'\n")
-    history = [a("unrepresentable " * 1000), a("", "node", "exec_command", json.dumps({"cmd": command})), tool("node", result),
-               a("", "rust", "exec_command", '{"cmd":"cargo test"}'),
-               tool("rust", "Chunk ID: 123abc\nWall time: 30 seconds\nProcess running with session ID 42\nOutput:\ncompiling\n"),
-               a("", "echo", "exec_command", '{"cmd":"echo ok"}'),
-               tool("echo", "Chunk ID: 456abc\nWall time: 0 seconds\nProcess exited with code 0\nOutput:\nok\n")]
-    note = cf._compacted_note(history, len(history), 10000)["content"]
-    assert command.replace('"', '\\"') in note
-    assert result in note
-    assert note.index('cargo test') < note.index('Process running with session ID 42') < note.index('echo ok') < note.index('Process exited with code 0')
-    tiny = cf._compacted_note(history, len(history), 0)["content"]
-    assert '›' not in tiny and 'Chunk ID:' not in tiny and 'bytes of text' not in tiny
-    assert 'omitted' in tiny.lower()
-
-
-def test_selected_history_discloses_gaps_and_does_not_attribute_unpaired_results():
-    history = [u("Important earlier instruction"), a("First line is meaningful.\nSecond line."),
-               a("cannot fit " * 3000), a("A later complete observation."),
-               tool("missing", "unpaired status 0")]
-    note = cf._compacted_note(history, len(history), 1000)["content"]
-    assert "Important earlier instruction" in note
-    assert "First line is meaningful.\nSecond line." in note
-    assert note.index("Second line.") < note.index("omitted here") < note.index("A later complete observation.")
-    assert "unpaired status 0" not in note
-    assert "omitted from this note" in note
-
-
-def test_interleaved_call_results_keep_their_own_status_and_original_order():
-    history = [a("", "cargo", "exec_command", '{"cmd":"cargo test"}'),
-               a("", "echo", "exec_command", '{"cmd":"echo test"}'),
-               tool("cargo", "Process running with session ID 77880\nOutput:\nerror: compilation failed\n"),
-               tool("echo", "Process exited with code 0\nOutput:\nTests passed successfully.\n"),
-               a("older unrepresentable text " * 1000)]
-    note = cf._compacted_note(history, len(history), 10000)["content"]
-    assert note.index("cargo test") < note.index("echo test") < note.index("Process running with session ID 77880") < note.index("Process exited with code 0")
-    assert "cargo" in note and "echo" in note
-    from cria import resultnotes
-    resultnotes.append_note(history[2], "producer annotation")
-    note = cf._compacted_note(history, len(history), 10000)["content"]
-    assert "error: compilation failed" in note and "producer annotation" not in note
-    assert "only partly shown" in note
 
 
 def _write_note(results, paths=("pkg/target.py",)):

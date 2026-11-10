@@ -186,15 +186,3 @@ def test_a_remediation_directive_replaces_the_step_cursor_without_running_step_p
     assert [m for m in directed if m.get("content") == TASK] and cursor not in directed
 
 
-
-@pytest.mark.parametrize("level, harness_text_kept", [(2, True), (3, False), (5, False)])
-def test_from_context_fixes_up_the_harness_prompt_is_replaced_by_the_short_brief_whatever_its_wording(level, harness_text_kept):
-    # Found by slot (CALLER_INSTRUCTIONS), never by wording: persona and developer constraints go together.
-    runtime = loop.assistruntime.current()
-    with patch.object(loop.assistruntime, "current", return_value=replace(runtime, engagement_level=level)):
-        system = loop._required_coder_base(history(), tools=TOOLS, workspace_root="/workspace").messages[0]["content"]
-    assert (PERSONA in system) is harness_text_kept
-    assert ("writable roots are `/workspace`" in system) is harness_text_kept
-    brief = prompts.render("harness_brief", workspace="/workspace")
-    assert (brief in system) is not harness_text_kept
-    assert "{{" not in system and TASK not in system

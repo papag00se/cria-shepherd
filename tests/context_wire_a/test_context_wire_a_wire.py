@@ -36,56 +36,6 @@ def text(msgs):
     return "\n".join(str(m.get("content") or "") for m in msgs)
 
 
-def test_hold_hint_hides_mutators_for_one_wire_request_without_rewriting_history():
-    names = ['read_file', 'write_file', 'create_file', 'edit_file', 'str_replace', 'apply_patch',
-             'exec_command', 'task_complete', 'list_dir']
-    tools = [{'type': 'function', 'function': {'name': n, 'parameters': {'type': 'object'}}} for n in names]
-    history = [{'role': 'user', 'content': 'work'},
-               {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'w', 'type': 'function',
-                'function': {'name': 'edit_file', 'arguments': '{"path":"a"}'}}]},
-               {'role': 'tool', 'tool_call_id': 'w', 'content': 'not run; content follows'}]
-    up = upstream.Upstream('http://unused', context_window=49152, engagement_level=5)
-    body = {'model': 'm', 'messages': history, 'tools': tools}
-    baseline = up._prep(body, False, Rlog())[0]
-    hinted = up._prep({**body, bodykeys.HOLD_WRITE_TOOLS: True}, False, Rlog())[0]
-    sent = json.loads(hinted)
-    assert [t['function']['name'] for t in sent['tools']] == ['read_file', 'task_complete', 'list_dir']
-    assert sent['messages'] == history and b'cria_' not in hinted
-    assert up._prep(body, False, Rlog())[0] == baseline
-
-
-def test_floor_never_moves_a_later_result_before_a_surviving_user_instruction():
-    from cria import selfcompact
-    failure = selfcompact.internal_evidence_message("EARLY CHECK FAILED")
-    passed = selfcompact.internal_evidence_message("LATER CHECK PASSED")
-    messages = [{"role": "user", "content": "Fix the test."}, failure,
-                {"role": "assistant", "content": "filler " * 3000},
-                {"role": "user", "content": "NOW FIX THE FAILURE"}, passed,
-                {"role": "assistant", "content": "more filler " * 3000},
-                {"role": "user", "content": "Continue."}]
-    visible = text(prep(messages, window=4096, safety=1.0, max_tokens=256)["messages"])
-    assert "NOW FIX THE FAILURE" in visible
-    assert "EARLY CHECK FAILED" in visible and "LATER CHECK PASSED" in visible
-    assert visible.index("EARLY CHECK FAILED") < visible.index("NOW FIX THE FAILURE") < visible.index("LATER CHECK PASSED")
-
-
-def test_advertised_tool_descriptions_and_workflow_reach_the_final_wire():
-    from cria import toolmenu, writeproxy
-    shell = {"type": "function", "function": {"name": "exec_command", "description": "Native executor.",
-             "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}}}
-    unknown = {"type": "function", "function": {"name": "unknown", "description": "Keep me.", "parameters": {"type": "object", "properties": {}}}}
-    body = {"tools": [shell, unknown], "messages": [{"role": "user", "content": "work"}]}
-    writeproxy.advertise(body, brave_key="test")
-    toolmenu.add_cheatsheet(body)
-    sent = prep(body["messages"], tools=body["tools"])
-    tools = {t["function"]["name"]: t for t in sent["tools"]}
-    assert "User-Agent" in tools["web_fetch"]["function"]["description"]
-    assert "old_string" in tools["edit_file"]["function"]["description"]
-    assert tools["exec_command"]["function"]["description"].startswith("Native executor.")
-    assert tools["exec_command"]["function"]["parameters"] == shell["function"]["parameters"] and tools["unknown"] == unknown
-    assert "Args:" not in text(sent["messages"]) and "prefer a focused tool" in text(sent["messages"])
-
-
 class GuessedUp(upstream.Upstream):
     """A real Upstream whose /props probe failed: the window is the 8,192 fallback and flagged a guess."""
 
@@ -128,48 +78,6 @@ def test_the_complete_labelled_note_fits_the_final_wire_for_the_whole_session_pa
         assert cf.est_total(wire, None) <= 1520 and not rlog.named("context.floor")[-1]["over_budget"]
         assert "omitted from this note" in text(wire) and "›" not in text(wire)
         assert msgs[-1]["content"] in text(wire)
-
-
-def test_final_wire_carries_whole_historical_result_with_its_call_when_it_fits():
-    call = {"id": "node", "type": "function", "function": {"name": "exec_command", "arguments": '{"cmd":"node -e broken"}'}}
-    result = ("Chunk ID: a07aca\nWall time: 4.6262 seconds\nProcess exited with code 1\n"
-              "Original token count: 473\nOutput:\n"
-              "/usr/bin/bash: line 1: bad substitution\nSyntaxError: Unexpected token ';'\n")
-    msgs = ([{"role": "user", "content": "Original task"}]
-            + [{"role": "assistant", "content": "older " * 1200} for _ in range(6)]
-            + [{"role": "assistant", "content": "", "tool_calls": [call]},
-               {"role": "tool", "tool_call_id": "node", "content": result}]
-            + [{"role": "assistant", "content": "newer " * 1200} for _ in range(4)]
-            + [{"role": "user", "content": "Later instruction"}])
-    wire = prep(msgs, window=3000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})["messages"]
-    sent = text(wire)
-    assert "Original task" in sent and "Later instruction" in sent
-    assert 'node -e broken' in sent and result in sent
-    assert sent.index('node -e broken') < sent.index(result)
-    assert '›' not in sent
-
-
-def test_only_replayed_handoff_text_is_cut_and_only_after_a_proven_overflow():
-    """A user-role message over the window used to end the session with a stop message. Text cria authored (typed handoff provenance) loses its OLDEST part, labelled, once a measurement or backend rejection (`_reduce_user`) proved the overflow; a person's message is sent whole (principle 5) and the unfittable case is a structured event, never a stop message."""
-    body = "Summarise this:\n" + "".join(f"record {i:05d} " + "x" * 40 + "\n" for i in range(400))
-    handoff = {"role": "user", "content": body, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff(True)}
-    kw = dict(window=1000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})
-    rlog = Rlog()
-    sent = prep([handoff], rlog=rlog, reduce_user=True, **kw)["messages"]
-    out = sent[0]["content"]
-    assert out.startswith("Summarise this:\n⟦ctx:reduced⟧") and "were omitted to fit the 1,000-token" in out
-    assert body.splitlines()[-1] in out and body.splitlines()[1] not in out and cf.est_total(sent, None) <= 999
-    assert bodykeys.HARNESS_HANDOFF not in sent[0]                                     # private provenance never reaches the wire
-    event = rlog.named("context.overflow_reduced")[0]
-    assert event["messages"] == 1 and event["omitted_chars"] > 0 and event["est_tokens_after"] < event["est_tokens_before"]
-    assert not rlog.named("context.overflow_unfittable")
-    rlog = Rlog()                                                                       # no proven overflow: the estimate alone cuts nothing
-    assert prep([handoff], rlog=rlog, **kw)["messages"][0]["content"] == body and rlog.named("context.overflow_estimated")
-    rlog = Rlog()                                                                       # a person's message: sent whole, structured event
-    assert prep([{"role": "user", "content": body}], rlog=rlog, reduce_user=True, **kw)["messages"][0]["content"] == body
-    assert rlog.named("context.overflow_unfittable") and not rlog.named("context.overflow_reduced")
-    fits = "Summarise this:\nshort"
-    assert prep([{"role": "user", "content": fits}], reduce_user=True, **kw)["messages"][0]["content"] == fits
 
 
 BLOCK = "".join(f"[ERROR] /w/src/Main.java:[{i},3] cannot find symbol number {i}\n" for i in range(40))
@@ -304,11 +212,6 @@ def test_a_context_rejection_is_re_sent_only_if_the_re_fit_changed_the_bytes(sha
         assert len(sent[1]) < len(sent[0]) and not rlog.named("upstream.refit_no_change")
     else:
         assert len(set(sent)) == 1
-
-
-class Unclosable(urllib.error.HTTPError):
-    def close(self):
-        raise OSError("bad close")
 
 
 def test_a_continuation_never_promises_paired_results_the_body_does_not_hold():

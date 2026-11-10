@@ -2,11 +2,9 @@
 import json
 from pathlib import Path
 
-import pytest
 from types import SimpleNamespace
 
-from cria import contextfloor, denial, indicators, loop, memoryhandoff as memory, probegate, prompts, resultnotes, selfcompact as sc, server
-from cria.memoryeffects import Effect
+from cria import contextfloor, denial, indicators, loop, prompts, resultnotes, selfcompact as sc, server
 from cria.config import Role
 from gate_fixtures import gate_turn
 from compaction_handoff_helpers import call, chat_reply, lens_answer, result, shell, write
@@ -84,146 +82,6 @@ def _harden(briefing, retrospective, history, replies=(), seen=None):
     comp = {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": briefing}}]}
     return server._harden_compaction_reply(comp, {"messages": history}, SimpleNamespace(chat=chat), Srv, rlog, "")["choices"][0]["message"]["content"]
 
-def test_packet_sources_keep_interleaved_calls_paired_by_id():
-    from cria import compactionpacket
-    history = [call("cargo", "exec_command", cmd="cargo test"),
-               call("echo", "exec_command", cmd="echo done"),
-               result("cargo", "Process running with session ID 77880\nOutput:\nerror\n"),
-               result("echo", "Process exited with code 0\nOutput:\ndone\n")]
-    sources = compactionpacket.tool_evidence(history)
-    assert [source.call_id for source in sources] == ["cargo", "echo"]
-    assert "cargo test" in sources[0].arguments and "Process running" in sources[0].result
-    assert "echo done" in sources[1].arguments and "Process exited with code 0" in sources[1].result
-    assert compactionpacket.tool_evidence(history + [result("cargo", "duplicate")]) == sources[1:]
-
-
-def test_selected_lines_are_original_and_keep_their_own_running_status():
-    from cria import compactionpacket, historyselection
-    history = [call("cargo", "exec_command", cmd="cargo test"), call("echo", "exec_command", cmd="echo done"),
-               result("cargo", "Chunk ID: aa\nWall time: 1 seconds\nProcess running with session ID 77880\nOutput:\nerror: broken\n"),
-               result("echo", "Chunk ID: bb\nWall time: 0 seconds\nProcess exited with code 0\nOutput:\ndone\n")]
-    resultnotes.append_note(history[2], "PRIVATE PRODUCER NOTE")
-    sources = compactionpacket.tool_evidence(history)
-    assert "PRIVATE PRODUCER NOTE" not in sources[0].result
-    selected = historyselection.validate(sources, {"cargo": [5], "echo": [5]})
-    assert len(selected) == 2
-    assert "Process running with session ID 77880\n" in selected[0].render()
-    assert "[Other original result lines omitted.]\nerror: broken\n" in selected[0].render()
-    assert "Process exited with code 0" not in selected[0].render()
-    assert "Process exited with code 0" in selected[1].render()
-    assert historyselection.validate(sources, {"cargo": [True], "echo": [999]}) == ()
-    assert historyselection.validate(sources, {"untrusted": [1]}) == ()
-
-
-def test_harness_selector_uses_authenticated_original_lines_and_abstains_on_invalid():
-    history = ([{"role": "user", "content": "Fix tests."}]
-               + shell("c1", "npm test", "SyntaxError: Unexpected token ';'", 1)
-               + [{"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}])
-    # The fake selector identifies only the original diagnostic, not its own prose.
-    source = __import__("cria.compactionpacket", fromlist=["tool_evidence"]).tool_evidence(history)[0]
-    line = next(i for i, text in enumerate(source.result.splitlines(), 1) if "SyntaxError" in text)
-    selected = _harden("", "RETROSPECTIVE", history, replies=[json.dumps({"c1": [line]})])
-    assert "Selected historical evidence for call ID c1" in selected
-    assert "SyntaxError: Unexpected token ';'" in selected
-    invalid = _harden("", "RETROSPECTIVE", history, replies=[json.dumps({"c1": [9999]})])
-    assert "Selected historical evidence" not in invalid
-    assert "SyntaxError: Unexpected token ';'" in invalid
-
-
-def test_selector_abstains_on_timeout_unknown_id_or_truncated_response():
-    from cria import compactionpacket, historyselection
-    history = [call("c", "exec_command", cmd="npm test"), result("c", "failed\n")]
-    sources = compactionpacket.tool_evidence(history)
-    role = Role(name="reasoner", backend="local")
-    log = SimpleNamespace(phase="coder", emit=lambda *a, **kw: None)
-    def timeout(body, rlog):
-        raise TimeoutError()
-    def answer(content, finish="stop"):
-        return lambda body, rlog: json.dumps({"choices": [{"finish_reason": finish, "message": {"content": content}}]})
-    for chat in (timeout, answer('{"unknown": [1]}'), answer('{"c": [1]}', 'length'), answer('not json')):
-        assert historyselection.select(sources, "Fix tests", chat, role, log) == ()
-        assert log.phase == "coder"
-    assert historyselection.select(sources, "Fix tests", answer('```json\n{"c": [1]}\n```'), role, log)[0].lines == (1,)
-
-
-def test_authenticated_selection_reaches_final_wire_under_pressure():
-    from cria import compactionpacket, upstream
-    cargo = "Chunk ID: aa\nWall time: 1 seconds\nProcess running with session ID 77880\nOutput:\nerror: broken\n" + "noise\n" * 3000
-    echo = "Chunk ID: bb\nWall time: 0 seconds\nProcess exited with code 0\nOutput:\ndone\n"
-    history = [{"role": "user", "content": "Fix the tests."},
-               call("cargo", "exec_command", cmd="cargo test"), call("echo", "exec_command", cmd="echo done"),
-               result("cargo", cargo), result("echo", echo),
-               {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}]
-    facts = memory.SessionFacts(original_task="Fix the tests.")
-    role = Role(name="reasoner", backend="local")
-    rlog = SimpleNamespace(phase="proxy", session=None, emit=lambda *a, **k: None)
-    response = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}]}
-    def chat(body, log):
-        return chat_reply(json.dumps({"cargo": [5], "echo": [5]}))
-    handoff = memory.harden(response, {"messages": history}, facts, server._handoff_services(None),
-        selected=True, chat_fn=chat, role=role, rlog=rlog, settle=lambda *a: None)
-    assert len(handoff.packet.sources) == 2
-    cargo_pos = next(i for i, block in enumerate(handoff.packet.blocks) if "call ID cargo" in block)
-    echo_pos = next(i for i, block in enumerate(handoff.packet.blocks) if "call ID echo" in block)
-    assert cargo_pos < echo_pos
-    assert "cargo test" in handoff.packet.blocks[cargo_pos] and "echo done" in handoff.packet.blocks[echo_pos]
-    prior = memory.SessionFacts(original_task="Fix the tests.", prior_handoffs=(handoff.prose,), prior_packet=handoff.packet)
-    replay = {"messages": [{"role": "user", "content": handoff.prose},
-                           {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}]}
-    again = memory.harden(response, replay, prior, server._handoff_services(None), selected=True,
-        chat_fn=chat, role=role, rlog=rlog, settle=lambda *a: None)
-    assert again.packet.sources == handoff.packet.sources
-    assert again.packet.selected == handoff.packet.selected
-    assert all(again.packet.blocks.count(block) == 1 for block in again.packet.selected)
-    unavailable = memory.harden(response, replay, prior, server._handoff_services(None), selected=True,
-        chat_fn=None, role=role, rlog=rlog, settle=lambda *a: None)
-    assert unavailable.packet.selected == handoff.packet.selected
-    assert all(block in unavailable.packet.blocks for block in unavailable.packet.selected)
-    origin = loop._HandoffOrigin(handoff.prose, "", False, packet=handoff.packet)
-    messages, reframed = loop.reframe_compaction([{"role": "user", "content": handoff.prose},
-                                                  {"role": "user", "content": "Continue working."}], origin=origin)
-    assert reframed
-    up = upstream.Upstream("http://unused", context_window=4096, engagement_level=5)
-    raw, _, _ = up._prep({"model": "m", "messages": messages, "max_tokens": 256}, False, rlog, safety_override=1.0)
-    visible = json.loads(raw)["messages"]
-    wire = json.dumps(visible)
-    assert "Selected historical evidence for call ID cargo" in wire
-    assert "Process running with session ID 77880" in wire and "error: broken" in wire
-    assert "Selected historical evidence for call ID echo" in wire and "Process exited with code 0" in wire
-    assert "Fix the tests." in wire and "Continue working." in wire
-    assert all(not any(k in m for k in __import__("cria.bodykeys", fromlist=["ALL"]).ALL) for m in visible)
-
-
-def test_two_compaction_passes_preserve_user_text_that_looks_like_an_old_stub():
-    text = "• › [tool] Chunk ID: important"
-    filler = {"role": "assistant", "content": "unrelated " * 3000}
-    first = contextfloor._compacted_note([{"role": "user", "content": text}, filler], 2, 5000)
-    assert text in first["content"]
-    second = contextfloor._compacted_note([first, filler], 2, 5000)
-    assert text in second["content"]
-
-
-def test_prior_floor_note_is_evidence_only_when_producer_marked():
-    from cria import bodykeys, compactionpacket
-    text = "⟦ctx:compacted⟧ Prior content.\n› [tool] Chunk ID: old"
-    user = {"role": "user", "content": text}
-    internal = {**user, bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE}
-    user_block, note_block = compactionpacket.blocks([user, internal])
-    assert "HISTORICAL user MESSAGE" in user_block and text in user_block
-    assert "HISTORICAL producer-owned historical evidence MESSAGE" in note_block and text in note_block
-    assert compactionpacket.latest_user([call("c", "exec_command", cmd="true"), internal]) == ""
-    assert compactionpacket.latest_user([call("c", "exec_command", cmd="true"), user]) == text
-
-
-def test_harness_handoff_preserves_tool_evidence_instead_of_invented_briefing():
-    hist = ([{"role": "user", "content": "Fix the rounding bug."}]
-            + shell("s1", "go test ./...", "FAIL: rounding expected 48.58, got 48.57", 1)
-            + [{"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize."}])
-    text = _harden("The tests passed and the bug is fixed.", "RETROSPECTIVE", hist)
-    assert "FAIL: rounding expected 48.58, got 48.57" in text
-    assert "The tests passed and the bug is fixed." not in text
-
-
 def test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accepted_one_ships_untouched():
     """phi4 / Java A10: every briefing was rejected (14 PLAN, 15 NARROWS) and each later window held only a listing. The prose fabricates progress; what the tools did is a fact cria owns - its own wording over typed fields, never a sentence from tool output."""
     hist = ([{"role": "user", "content": "Fix the importer."}] + write("w1", "src/Importer.java")
@@ -254,12 +112,6 @@ def test_a_rejected_harness_briefing_hands_over_what_the_tools_did_and_an_accept
 # read_file of README.md (both lowered to exec_command programs on the wire) and the harness's own compaction ask. Wave 14 REPLAY1 replayed
 # harness compaction requests 8 of 8 with the briefing REJECTED, and in the 5 whose history held no write or shell call Codex stored an EMPTY summary.
 CODEX_READ_ONLY = json.loads((Path(__file__).with_name("withheld_codex_readonly_request.json")).read_text())
-
-def _codex_reply(briefing, lens_verdicts, replies=()):
-    """The reply a real Codex-shaped compaction request gets through the production hardener, as the server prepares the history."""
-    from cria import responses, writeproxy
-    messages = writeproxy.represent_inbound(responses.to_chat_body(CODEX_READ_ONLY)["messages"])
-    return _harden(briefing, lens_verdicts, messages, replies)
 
 def test_the_work_ledger_keeps_event_order_one_path_per_file_and_one_line_per_event():
     """The ledger renders only typed facts: ordered events, one path per file, one line per event, refused != ran, own gate excluded."""

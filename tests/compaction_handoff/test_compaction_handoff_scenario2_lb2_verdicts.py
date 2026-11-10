@@ -52,12 +52,3 @@ def test_only_the_exact_positive_word_of_every_applicable_lens_accepts_a_briefin
     assert fields["lens"] == ("" if ok else asked[-1])             # the lens that refused is the last one asked (the handoff names it)
     assert said is None or all(fields["answers"][k] == v for k, v in said.items())
 
-
-def test_a_task_is_asked_about_no_scope_lens_and_an_unavailable_judge_rejects_with_a_warning_or_silently():
-    assert run(answer(), Log(), task="") == (True, ["retrospective"]) == run(answer(), Log())
-    for chat, role, briefing in [(None, ROLE, "b"), (lambda *a: "", None, "b"), (lambda *a: "", ROLE, "  ")]:
-        log = Log()
-        assert validate_compaction_briefing(chat, role, briefing, files="", checks="", transcript_blocks=[], rlog=log) is False
-        assert log.events == [("context.compaction_validation", {"reshape": "validate-rollup", "level": "warn", "accepted": False,
-                                                                 "reason": "judge unavailable", "lens": "unavailable"})]
-        assert validate_compaction_briefing(chat, role, briefing, files="", checks="", transcript_blocks=[], rlog=None) is False

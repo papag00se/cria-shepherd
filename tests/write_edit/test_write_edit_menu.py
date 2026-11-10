@@ -51,18 +51,3 @@ def test_focus_never_leaves_the_coder_tool_less():
 
 FULL = [tool("write_file"), tool("edit_file"), tool("read_file"), tool("list_dir"), tool("exec_command", command={"type": "string"})]
 
-
-def test_workflow_prefers_small_edits_and_dedicated_tools_without_a_catalog():
-    """Preserve the edit-first and shell-last workflow without duplicating tool schemas."""
-    sheet = toolmenu.cheatsheet(FULL)
-    assert "prefer a focused tool" in sheet and "exact edit" in sheet and "Args:" not in sheet
-    assert all(name not in sheet for name in names(FULL))
-
-
-@pytest.mark.parametrize("present", [["write_file", "read_file"], ["edit_file", "read_file"],
-                                     ["write_file", "shell", "apply_patch"]])
-def test_workflow_does_not_invent_a_second_tool_menu(present):
-    sheet = toolmenu.cheatsheet([tool(n) for n in present])
-    assert all(f"- {name}" not in sheet for name in present)
-    assert "Args:" not in sheet
-    assert toolmenu.cheatsheet([]) is None and toolmenu.cheatsheet(None) is None

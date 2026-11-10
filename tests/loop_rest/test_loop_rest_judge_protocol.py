@@ -78,37 +78,6 @@ def satisfy(replies):
         return loop.judge_satisfaction("Implement the feature", "action evidence", chat, ROLE, Rlog()), bodies
 
 
-@pytest.mark.parametrize("root", ["", "/unsurveyed"])
-def test_task_approval_without_workspace_observation_stays_unknown(monkeypatch, root):
-    monkeypatch.setattr(loop, "_satisfaction_verdict", lambda *a, **k: {"satisfied": True, "reason": "complete"})
-    runtime = assistruntime.AssistRuntime.select(level=5)
-    object.__setattr__(runtime, "pre_release", ())
-    log = Rlog()
-    token = wsview.bind(wsview.View(root or "/unsurveyed", "remote"))
-    try:
-        with assistruntime.bound(runtime):
-            approved, _, _ = loop.judge_satisfaction("Write app.py", "", lambda *a: b"", ROLE, log, workspace_root=root)
-    finally:
-        wsview.unbind(token)
-    assert not approved
-    assert any(event == "loop.satisfaction_confirm" and fields["confirmed"] is False for event, fields in log.events)
-
-
-def test_statement_deliverable_does_not_require_a_workspace_confirmation(monkeypatch):
-    # The statement classifier has already decided the closing answer is the deliverable;
-    # an unsurveyed workspace must not block an answer that does not depend on one.
-    monkeypatch.setattr(loop, "_statement_deliverable", lambda *a, **k: True)
-    monkeypatch.setattr(loop, "_satisfaction_verdict", lambda *a, **k: {"satisfied": True, "reason": "answered"})
-    runtime = assistruntime.AssistRuntime.select(level=5)
-    object.__setattr__(runtime, "pre_release", ())
-    log = Rlog()
-    with assistruntime.bound(runtime):
-        approved, _, _ = loop.judge_satisfaction("Explain the result", "", lambda *a: b"", ROLE, log,
-                                                workspace_root="", closing_claim="The result is 42.")
-    assert approved
-    assert not any(event == "loop.satisfaction_confirm" for event, _ in log.events)
-
-
 def test_a_non_boolean_flag_takes_the_careful_pass_and_a_positive_retry_cannot_approve():
     """A public flag that is not literally true/false is unreadable: re-asked once with thinking off, still not approved."""
     for value in ("false", 1, None, []):

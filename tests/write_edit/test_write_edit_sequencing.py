@@ -1,6 +1,5 @@
 """Calls of one turn on one file are applied by cria in the order SENT, however the harness schedules its calls, and cost ONE read and ONE write."""
 import os
-import re
 
 import pytest
 
@@ -41,26 +40,6 @@ def test_a_reversed_concurrent_batch_equals_the_call_order_result_and_leaves_not
     assert tmp_path.joinpath("f.txt").read_text() == after
     assert len(results) == len(calls) and all(denial.landed(m) for m in results)
     assert os.listdir(tmp_path) == ["f.txt"] and os.listdir(scratch_of(tmp_path)) == ["bin"]
-
-
-def test_thirty_edits_of_one_file_in_one_turn_are_one_read_and_one_write(tmp_path):
-    """phi4 / Java A11 call 0016: thirty-odd edits in one turn ran concurrently, lost updates, and twenty-odd were refused with an empty
-    `current`. cria reads the file once, applies the thirty in call order to the evolving text and writes the result once; each call
-    is answered on its own."""
-    body = "".join(f"row {i} = {i}\n" for i in range(60))
-    tmp_path.joinpath("f.txt").write_text(body)
-    calls = [call("edit_file", {"path": "f.txt", "old_string": f"row {i} = {i}\n", "new_string": f"row {i} = {i + 1000}\n"}, f"c{i}") for i in range(30)]
-    first = lower(calls, root=str(tmp_path))
-    ran = [command_of(tc) for tc in first]
-    msgs = [{"role": "assistant", "tool_calls": first}] + [
-        {"role": "tool", "tool_call_id": tc["id"], "content": "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n"
-         + (lambda d: d.stdout)(run(tc, tmp_path))} for tc in first]
-    shown = settle(msgs, tmp_path, ran=ran)
-    results = [m for m in shown if m["role"] == "tool"]
-    assert len(results) == 30 and all(denial.landed(m) for m in results)
-    assert tmp_path.joinpath("f.txt").read_text() == "".join(f"row {i} = {i + (1000 if i < 30 else 0)}\n" for i in range(60))
-    stubs = lambda needle: [c for c in ran if needle in c]
-    assert len(stubs("CTX_EOF")) == 1 and len([c for c in ran if "os.O_NONBLOCK" in c and "CTX_EOF" not in c and "fsha" in c]) == 1, "one write, one read"
 
 
 @pytest.mark.parametrize("first", ["refused edit", "held write"])

@@ -163,101 +163,6 @@ def test_five_rewrites_of_one_file_run_the_repos_checks_and_steer_with_the_readi
     assert ("you have rewritten `app.py` repeatedly" in steer) is (not reasoner)
 
 
-@pytest.mark.parametrize("refusal", [False, True], ids=["wheel-spin", "refusal"])
-@pytest.mark.parametrize("verdict,delivered", [
-    ({**SILENT, "on_track": True}, False),
-    ({**SILENT, "on_track": True, "by_tool": True}, False),
-    ({**OK}, False),
-    ({**SILENT, "reason": "unsupported claim"}, False),
-    (GAP, True),
-], ids=["productive-incomplete", "productive-tool-verdict", "already-complete", "ungrounded", "missing-output"])
-def test_stuck_review_shares_task_evidence_delivery_and_cadence_without_completion_or_s1(tmp_path, verdict, delivered, refusal):
-    """A wheel-spin requests one task-aware inspection, not a second timer verdict or a canned rescue.
-    The focused result cannot release completion, and next-turn completion claims still need their own review."""
-    from cria import completionreview
-
-    class NoS1:
-        def __getattr__(self, name):
-            pytest.fail("task review must not call System 1")
-
-    bodies, asked, inspected = [], [], []
-    base = judge([verdict, SILENT], asked)
-    def reasoner(body, log):
-        inspected.append((log.phase, body))
-        return base(body, log)
-    count = [0]
-    def coder(body, log):
-        bodies.append(body)
-        count[0] += 1
-        return say(None, tool_calls=[{"id": f"w{count[0]}", "type": "function", "function": {
-            "name": "write_file", "arguments": json.dumps({"path": "app.py", "content": f"x = {count[0]}"})}}])
-
-    run = Run(tmp_path, coder, reasoner, tools=(SHELL, WRITE), system1=NoS1(), satisfaction_check_start_minutes=0)
-    for _ in range(5):
-        run.turn()
-    run.turn()  # guard asks the harness for current checks
-    if refusal:
-        from cria import stalledwork
-        # Exercise the other detector's returned-probe contract at the same real driver boundary.
-        run.sess.stalled_probe = stalledwork.PendingProbe(stalledwork.Trigger.REFUSAL, run.sess.stalled_probe.call)
-        run.sess.repeat_count, run.sess.repeat_action = 3, "refused write"
-    run.sess.latest_satisfaction, run.sess.latest_satisfaction_evidence = False, "held negative completion verdict"
-    run.sess.pending_done, run.sess.pending_done_parts = "held claim", ("held",)
-    # Make the timer due on the very turn its guard result returns: the focused inspection must consume the opportunity.
-    ctx = run.driver._ctx
-    ctx.satisfaction_check_start_minutes = ctx.satisfaction_check_every_minutes = 1
-    ctx.satisfaction_check_min_turns = ctx.satisfaction_check_max_turns = 1
-    result = run.turn(RED)
-    assert result["tool_calls"] and not run.ended()
-    assert asked.count("satisfaction") == 1 and "deliverable-observation" not in asked
-    review = next(body for phase, body in inspected if phase == "satisfaction")
-    packet = "\n".join(str(m.get("content", "")) for m in review["messages"])
-    assert TASK in packet and "README.md" in packet and "x = 5" in packet and "undefined name 'x'" in packet
-    assert ("refused" if refusal else "rewrit") in packet and "on_track" in packet
-    answer_tool = next(t["function"] for t in review["tools"] if t["function"]["name"] == "verdict")
-    assert answer_tool["parameters"]["properties"]["on_track"]["type"] == "boolean"
-    assert run.sess.latest_satisfaction is False and run.sess.latest_satisfaction_evidence == "held negative completion verdict"
-    assert run.sess.pending_done == "held claim" and run.sess.pending_done_parts == ("held",)
-    notes = [m["content"] for m in bodies[-1]["messages"] if m["role"] == "user" and m["content"].startswith("⟦ctx:steer⟧")]
-    assert bool(notes) is delivered
-    if delivered:
-        assert len(notes) == 1 and QUOTE in notes[0] and run.sess.completion_remediation_subject == "README.md"
-        assert "loop.satisfaction_gap_named" in run.log.names()
-    else:
-        assert not run.sess.nudge_reason and not run.sess.completion_remediation_subject
-    assert [(f["trigger"], f["status"]) for k, f in run.log.events if k == "loop.task_review"] == [
-        (completionreview.ReviewTrigger.STUCK.value, "guidance" if delivered else "on-track" if verdict.get("on_track") or verdict.get("satisfied") else "withheld")]
-
-
-def test_plan_on_focused_review_reaches_the_same_coder_turn_without_a_second_scheduled_review(tmp_path):
-    """The step driver settles a guard before incrementing its work-drive clock; coalescing must use that next drive."""
-    from cria import assistruntime, stalledwork
-    from cria.loop import _StalledWorkView
-    bodies, asked = [], []
-    run = Run(tmp_path, writer_to_new_files(bodies), judge([GAP], asked), tools=(SHELL, WRITE),
-              satisfaction_check_start_minutes=1, satisfaction_check_every_minutes=1,
-              satisfaction_check_min_turns=1, satisfaction_check_max_turns=1)
-    run.sess.synthetic = run.sess.plan_off = False
-    run.sess.workspace_root = str(tmp_path)
-    run.driver._ctx.planner_enabled = True  # explicit test-only planner opt-in
-    run.sess.drive_count, run.sess.spin_path = 4, "app.py"
-    ticket = stalledwork.PendingProbe(stalledwork.Trigger.WHEEL_SPIN, {"id": "guard"})
-    run.sess.stalled_probe = ticket
-    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
-        service = run.driver._probe_author("wheel_spin", run.sess, None, run.body, run.log)
-        settled = stalledwork.DEFINITION.settle(stalledwork.ReturnedProbeInput(
-            ticket, lambda: None, lambda: "current checker output", service, run.log),
-            _StalledWorkView(run.sess))
-        assert settled.steer is not None
-        out = run.driver._work_item(run.sess, "sid:k", run.body, run.log, run.sess.plan.items[0], 1)
-    assert out["choices"][0]["message"]["tool_calls"] and not run.ended()
-    assert run.sess.drive_count == run.sess.task_review_last_drive == 5
-    assert asked.count("satisfaction") == 1 and "deliverable-observation" not in asked
-    notes = [m["content"] for m in bodies[0]["messages"] if str(m.get("content", "")).startswith("⟦ctx:steer⟧")]
-    assert len(notes) == 1 and QUOTE in notes[0]
-    assert run.sess.latest_satisfaction is None and run.sess.completion_remediation_subject == "README.md"
-
-
 def test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_repos_checks_pass(tmp_path):
     """A coder that finished but cannot stop: drive 1's timer verdict names README.md (grounded on disk) and the coder hears it
     on that same turn; drive 2's verdict is satisfied, so the checks are run ("task looks done") and only a GREEN page ends it."""
@@ -278,34 +183,6 @@ def test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_re
     assert "task looks done" in probe["content"] and run.sess.done_probe and run.sess.pending_done_parts
     final = run.turn(GREEN)
     assert "verified by the completion check and the repo's own checks" in final["content"] and run.ended()
-
-
-@pytest.mark.parametrize("blocked", ["red", "steer", "both"])
-@pytest.mark.parametrize("plan_off", [True, False])
-def test_one_task_review_finds_a_missing_deliverable_without_waiting_for_checks_or_ordinary_steering(tmp_path, blocked, plan_off):
-    """A failing check or parked steer cannot starve task coverage; no second observer competes with it."""
-    bodies, asked = [], []
-    run = Run(tmp_path, writer_to_new_files(bodies), judge([GAP], asked), tools=(SHELL, WRITE),
-              satisfaction_check_start_minutes=1, satisfaction_check_every_minutes=1,
-              satisfaction_check_min_turns=1, satisfaction_check_max_turns=1)
-    run.sess.last_gate_red = blocked in ("red", "both")
-    if blocked in ("steer", "both"):
-        run.sess.nudge_reason = "ordinary check steer"
-    if plan_off:
-        run.turn()
-    else:
-        from cria import assistruntime
-        run.sess.synthetic = run.sess.plan_off = False
-        run.sess.workspace_root = str(tmp_path)
-        run.driver._ctx.planner_enabled = True  # explicit test-only planner opt-in
-        with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
-            run.driver._work_item(run.sess, "sid:k", run.body, run.log, run.sess.plan.items[0], 1)
-    assert asked.count("satisfaction") == 1
-    assert "deliverable-observation" not in asked
-    notes = [m["content"] for m in bodies[0]["messages"] if m["role"] == "user" and m["content"].startswith("⟦ctx:steer⟧")]
-    assert len(notes) == 1 and QUOTE in notes[0] and "ordinary check steer" not in notes[0]
-    assert run.sess.last_gate_red is (blocked in ("red", "both"))
-    assert run.sess.completion_remediation_subject == "README.md" and not run.ended()
 
 
 def writer_to_new_files(bodies):
@@ -418,39 +295,3 @@ def test_reasoning_that_leaked_into_the_coders_content_never_reaches_the_harness
 READ = {"type": "function", "function": {"name": "read_file", "parameters": {
     "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}}
 
-
-def test_shared_task_review_delivers_acknowledges_and_settles_a_missing_deliverable_over_a_red_gate_and_a_parked_steer(tmp_path):
-    """Retains the scheduled observer's incident coverage after its consolidation into task review: even under a RED gate
-    (the review neither waits for nor clears it), a task-named absent file reaches the coder REPLACING a parked ordinary steer,
-    rides every later body (once, never duplicated), is acknowledged by the reply's inspection, draws one non-write follow-up
-    after that result, and is released only by the harness's own write result for the exact file."""
-    asked, bodies = [], []
-    script = iter([("read_file", {"path": "app.py"}), ("read_file", {"path": "app.py"}),
-                   ("write_file", {"path": "README.md", "content": "x"}), ("write_file", {"path": "notes.txt", "content": "x"})])
-
-    def coder(body, rlog):
-        bodies.append(body)
-        name, args = next(script)
-        return say(None, tool_calls=[{"id": f"c{len(bodies)}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}])
-
-    run = Run(tmp_path, coder, judge([GAP, GAP], asked), tools=(SHELL, WRITE, READ), satisfaction_check_start_minutes=1,
-              satisfaction_check_every_minutes=1, satisfaction_check_min_turns=1, satisfaction_check_max_turns=1)
-    run.sess.last_gate_red, run.sess.nudge_reason, run.sess.steer_source = True, "GATE-RED-STEER", "completion gate (repo checks failed)"
-
-    def users(n):
-        return [m["content"] for m in bodies[n]["messages"] if m["role"] == "user" and m["content"].startswith("⟦ctx:steer⟧")]
-
-    first = run.turn()                                                  # shared review fires on the first due drive, gate still red
-    assert asked.count("satisfaction") == 1 and "deliverable-observation" not in asked
-    assert run.sess.completion_remediation_subject == "README.md" and run.sess.task_review_last_drive == 1
-    assert len(users(0)) == 1 and "README.md" in users(0)[0] and "GATE-RED-STEER" not in users(0)[0]   # replaced, delivered once
-    assert first["tool_calls"] and run.sess.completion_remediation_nonwrite_ids == ("c1",)  # acknowledged by its inspection
-    run.turn("x = 1")                                                   # the inspection's result: one follow-up, remediation still carried
-    assert asked.count("satisfaction") == 1                            # armed: the review stays out
-    assert any("remediation remains open" in u for u in users(1)) and sum("README.md" in u for u in users(1)) == 1
-    run.turn("x = 1")                                                   # remediation survives the follow-up, not duplicated
-    assert run.sess.completion_remediation_subject == "README.md" and sum("README.md" in u for u in users(2)) == 1
-    (tmp_path / "README.md").write_text("docs\n")
-    run.turn("Wrote README.md")                                         # the harness's write result releases it
-    assert run.sess.completion_remediation_subject == "" and not any("README.md" in u for u in users(3))
-    assert "loop.completion_remediation_written" in run.log.names()

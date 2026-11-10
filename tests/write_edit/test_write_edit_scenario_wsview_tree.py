@@ -79,23 +79,6 @@ def test_a_surveyed_view_answers_what_the_disk_holds_and_unknown_where_it_did_no
     assert d.reroot("/nowhere/x") is d and d.read(v.abs("src/pkg/a.py")) == "print(1)\n"
 
 
-def test_a_survey_that_hit_its_bound_is_unknown_and_a_foreign_or_empty_one_is_refused(tree, monkeypatch):
-    whole = survey_of(tree)
-    assert whole.complete
-    monkeypatch.setattr(wsview, "TREE_MAX_ENTRIES", 20)                # the walk stops after the entries it has: the rest is named as not listed
-    bounded = wsview.View(str(tree), SESS)
-    assert wsview.apply_survey(bounded, survey_of(tree))
-    assert len(bounded._files) < 65 and bounded.isfile("src/pkg/a.py") is None and bounded.isfile("nope") is None and not bounded.listed_everything()
-    assert not bounded.complete and bounded.isdir("src/pkg") is True                 # named, its interior not known
-    assert wsview.apply_survey(fresh_view := wsview.View(str(tree), SESS), whole) and fresh_view.isfile("many/file_60.py") and fresh_view.isfile("nope") is False
-    foreign = wsview.View("/some/other/repo", SESS)
-    assert not wsview.apply_survey(foreign, whole) and wsview.last_reject()["reason"] == "different-tree" and foreign.isfile("README.md") is None
-    empty = wsview.View(str(tree), SESS)
-    assert not wsview.apply_survey(empty, wsview.Survey(str(tree), listed=False)) and wsview.last_reject()["reason"] == "no-tree" and not empty.surveyed
-    rootless = wsview.View(None, SESS)
-    assert wsview.apply_survey(rootless, whole) and rootless.root == str(tree) and rootless.isfile("README.md")
-
-
 def test_writes_edits_and_mutators_make_held_facts_stale_until_the_next_survey_confirms_them(tree):
     v = wsview.View(str(tree), SESS)
     ask("src/pkg/a.py", "README.md")

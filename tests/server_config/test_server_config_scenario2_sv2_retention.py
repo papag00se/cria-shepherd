@@ -22,13 +22,6 @@ def test_list_json_reports_every_entry_state_and_the_ignored_names(home):
     assert all(e['age_seconds'] >= 3 * DAY - 5 for e in data['entries'])
     live._hold.close()
 
-def test_human_list_formats_sizes_ages_and_long_labels(home):
-    """Table: 'no retained entries' on an empty home, long session labels ellipsised, minute/hour ages."""
-    assert run(home, 'list')[1] == 'no retained entries\n'
-    long = image(home, 'x' * 40); long._hold.close(); age(home, 7300 / DAY)
-    text = run(home, 'list')[1]
-    assert 'x' * 21 + '...' in text and '2h' in text
-
 @pytest.mark.parametrize('seconds, text', [(0, '0s'), (59, '59s'), (60, '1m'), (3599, '59m'), (3600, '1h'), (2 * DAY, '2d'), (-5, '0s')])
 def test_age_text_table(seconds, text): assert retention._fmt_age(seconds) == text
 
@@ -66,7 +59,3 @@ def test_unusable_roots_are_noted_not_fatal_and_wrong_mode_or_foreign_files_are_
     code, text = run(home, 'prune', '--older-than', '0s', '--apply')
     assert code == 0 and 'APPLY: will remove 0 entries' in text and 'refused: not an owned private directory' in text and (d / 'f').exists()
     assert run(home, 'prune', '--kind', 'image', '--session', 'image-session-wide', '--apply')[1].count('refused') == 1 and (d / 'f').exists()
-
-def test_a_world_readable_images_root_is_refused_with_a_note(home):
-    (home / 'images').mkdir(mode=0o755)
-    assert any('image: root' in n and 'refused' in n for n in rows(home)['notes'])

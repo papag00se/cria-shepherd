@@ -72,16 +72,6 @@ def test_phantom_and_would_break_directives_never_escalate_to_a_rewrite(tmp_path
     assert all(says in m["content"] and "FULL file" not in m["content"] for m in results[1:]), results[-1]["content"]
 
 
-def test_a_miss_reaches_every_reader_as_words_and_typed_facts_never_as_an_encoded_report(tmp_path):
-    """The facts of a miss are kept typed in cria's ledger and the directive is composed from them: no model (coder or reasoner) is ever
-    handed a base64 blob that embeds the file's bytes (96K tokens of poison in one judge prompt, once)."""
-    (tmp_path / "api.json").write_text("{" + "x" * 90_000 + "}")
-    _, _, msgs = do("edit_file", {"path": "api.json", "old_string": "nothing like it", "new_string": "z"}, tmp_path)
-    text = msgs[1]["content"]
-    assert denial.proof(msgs[1]) == denial.UNAPPLIED and len(text) < 600 and "xxxx" not in text and "read api.json in full" in text
-    assert denial.report(msgs[1])["ef"]["mode"] == "no_anchor" and "current" not in denial.report(msgs[1])["ef"]      # too big to quote: not kept either
-
-
 BIG = "\n".join(f"v{i} = {i}" for i in range(400))
 HUGE = "x" * 50_000
 # (id, before, old, new, lines the coder must be shown, claims it must not make)

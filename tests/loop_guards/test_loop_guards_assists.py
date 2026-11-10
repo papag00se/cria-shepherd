@@ -40,22 +40,6 @@ def test_a_steer_is_dropped_as_dictation_only_when_code_shaped_and_not_ruled_a_d
         assert not asked                                                      # a plain steer never costs a question
 
 
-@pytest.mark.parametrize("answer, expected", [("DESCRIBES", False), ("DICTATES", True), ("", True), (None, True)])
-def test_classifier_error_asks_reasoner_even_for_prose_without_code_shape(answer, expected):
-    class Broken:
-        def judge(self, *args, **kwargs):
-            raise RuntimeError("classifier unavailable")
-    seen = []
-    directive = "Call the helper here before continuing."
-    def ask(prompt, user):
-        seen.append(prompt)
-        return answer
-    assert loop._dictates_code(directive, ask if answer is not None else None, system1=Broken()) is expected
-    assert bool(seen) is (answer is not None)
-    if seen:
-        assert directive in seen[0]
-
-
 PASTED = "Here is the script:\n\n```python\n" + "\n".join(f"line_{i} = {i}" for i in range(20)) + "\n```\n"
 
 

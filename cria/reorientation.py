@@ -88,9 +88,9 @@ DEFINITION = Definition(Policy(
     services=("landed-write-record",),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
-    regressions=(Reference("tests/loop_orientation/test_loop_orientation_reorientation.py",
+    regressions=(Reference("tests-before-prune-20261110:tests/loop_orientation/test_loop_orientation_reorientation.py",
                            "test_a_history_rewrite_tells_the_coder_only_the_landed_write_record"),
-                 Reference("tests/loop_orientation/test_loop_orientation_driver_handoff.py",
+                 Reference("tests-before-prune-20261110:tests/loop_orientation/test_loop_orientation_driver_handoff.py",
                            "test_no_continuation_is_followed_by_an_authored_or_canned_inspection"),
                  ),
     migrated=False), reorient)

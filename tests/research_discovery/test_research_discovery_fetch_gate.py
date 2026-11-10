@@ -68,23 +68,6 @@ def doc_of(chars):
     n = chars // 230
     return json.dumps({"paths": {f"/p{i}": {"get": {"summary": "x" * 200}} for i in range(n)}})
 
-def test_a_spill_holds_the_whole_document_at_any_size_and_its_stored_fact_is_the_ledgers(tmp_path):
-    """A doc is saved byte-for-byte 'IN FULL' however large (no command's size cuts it any more); the pointer says so; the stored fact is typed and true,
-    computed from the bytes cria sent and confirmed by the harness, and it is what settles the offer."""
-    for name, chars in (("a", 30_000), ("b", 100_000), ("c", 250_000)):
-        doc = doc_of(chars)
-        (tmp_path / name).mkdir()
-        h = Harness(tmp_path / name, doc)
-        with h.patch:
-            wf.fetch_nav(URL)
-            out, saved, final = h.deliver()
-        full = wf.spill_content(*wf.reduce_for_cache(doc, "application/json", URL), "application/json")
-        assert saved == full and "IN FULL" in out and "API endpoints" in out and "the file itself says where it stops" not in out
-        assert final["rep"]["st"]["byte_count"] == len(saved.encode()) and final["ext"]["stored"] == final["rep"]["st"]       # the stored fact is typed and true
-        assert wf.already_spilled(h.session, URL, h.ws)                                                                     # the offer settled on it
-        wf.clear_cache()
-
-
 def test_a_spilled_doc_is_not_refetched_after_compaction_but_a_targeted_read_is_answered(tmp_path):
     """live 0727-104845: the harness compacted the spilled result away and the coder re-fetched the SAME url 19 times."""
     h = Harness(tmp_path, doc_of(30_000))

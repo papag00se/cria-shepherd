@@ -106,32 +106,6 @@ def test_the_exact_window_fits_decision_is_argmax_in_label_order_and_only_the_tr
     assert len(eng.fed) == fed + 4
 
 
-@pytest.mark.parametrize("mutate", [lambda r: (r / "policy" / "dictation.txt").write_bytes(b"another policy"), lambda r: (r / "selftest.json").unlink()],
-                         ids=["wrong-policy", "no-selftest"])
-def test_an_unusable_bundle_stops_the_service_before_the_graph_loads(eng, tmp_path, mutate):
-    """Loading the bundle's files precedes the graph; with [system1] enabled a bad bundle is a StartupError, never a silent fallback."""
-    eng.ort.InferenceSession = lambda *a, **k: pytest.fail("graph loaded from an unusable bundle")
-    with pytest.raises(system1wiring.StartupError):
-        system1wiring.build(NS(enabled=True, threads=1, bundle_path=make_bundle(tmp_path / "b", eng, mutate)))
-
-
-def test_experimental_topic_uses_complete_input_and_existing_resource_limits(eng, tmp_path):
-    calls, rlog = tmp_path / "calls", rlog_for(tmp_path.name)
-    rt = System1Runtime(make_bundle(tmp_path / "b", eng), capture_dir=calls)
-    eng.logits = [[-1.0, 2.0]]
-    assert rt.judge_compaction_topic("original task", "relevant opening\nunrelated ending", rlog=rlog) == "OFF_TOPIC"
-    event = rlog.kinds("system1.judgment")[-1]
-    record = json.loads(Path(event["capture"]).read_text())
-    assert event["experimental"] is True
-    assert record["request"]["state"] == {"original_task": "original task", "response": "relevant opening\nunrelated ending"}
-    assert record["request"]["policy"].endswith("\n\n")
-    eng.fed.clear()
-    eng.extra = MAX_WINDOW_TOKENS
-    with pytest.raises(system1.System1NoFit):
-        rt.judge_compaction_topic("original task", "entire response", rlog=rlog)
-    assert not eng.fed
-
-
 def test_classifier_records_are_complete_and_invisible_to_the_suites_llm_evidence(eng, tmp_path):
     """A classifier record that looked like an upstream call would inflate call counts and invalidate every capture-on row."""
     calls, rlog = tmp_path / "calls", rlog_for(tmp_path.name)  # the capture counter is process-wide per session

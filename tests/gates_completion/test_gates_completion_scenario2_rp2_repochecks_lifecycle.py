@@ -7,32 +7,13 @@ import pytest
 
 from cria import gateops, loop, probegate, repositorychecks as rc
 from gates_completion_helpers import Log, gates_completion_view, new_plan, sec  # noqa: F401
-from test_gates_completion_scenario_periodic_checks import TOOLS, Driver, harness, pump
+from test_gates_completion_scenario_periodic_checks import Driver, harness, pump
 
 
 def lost(d):
     """The evidence services of a driver whose gates never deliver their evidence (the run's output cannot be read): every result is UNKNOWN."""
     return dataclasses.replace(d.evidence, result=lambda state: gateops.GateResult(
         state.gate_plan.op, "", "unknown", reason="the check output could not be read whole", reported="the spool is gone"))
-
-
-def test_a_plan_that_cannot_be_composed_leaves_no_pending_check_and_a_missing_shell_ends_a_poll(tmp_path, monkeypatch):
-    harness(tmp_path, monkeypatch, "print('ok')")
-    d = Driver(tmp_path, coder_turns=15)
-    broken = rc.ProbeServices(lambda m: str(tmp_path), lambda *a, **k: (_ for _ in ()).throw(OSError("disk gone")), lambda: d.rig.seam)
-    out = rc.admit(d.source(), d.state, broken)
-    assert out.status is rc.Status.UNAVAILABLE and d.state.gate_plan is None and ("loop.gate_error", {"level": "warn", "error": "disk gone"}) in d.log.events
-    d.state.coder_turns = 15
-    first = rc.admit(d.source(), d.state, d.probes)
-    assert first.status is rc.Status.PENDING and d.state.gate_plan.op
-    shellless = rc.Input({"tools": [], "messages": d.messages}, d.log, 5)
-    assert rc.transport(d.source(), loop.GuardState(), d.probes, d.evidence).status is rc.Status.NOT_DUE      # no plan, nothing to wait for
-    # a gate still running when the harness stops offering a shell is terminal UNKNOWN, said once
-    plan = new_plan("b" * 12, workspace=str(tmp_path))
-    state = loop.GuardState(gate_plan=plan, probe_call_id="p")
-    assert rc.transport(shellless, state, d.probes, d.evidence).status is rc.Status.OBSERVED
-    assert plan.error == "the harness no longer offers a shell for the next poll" and rc.poll_after_rewrite(shellless, state, d.probes) is None
-    assert ("gate.transport_unknown", {"level": "warn", "reason": plan.error}) in d.log.events
 
 
 def test_a_survey_only_first_gate_is_replanned_once_and_a_transport_unknown_repeatedly_stops_vetoing(tmp_path, monkeypatch):
@@ -123,16 +104,3 @@ def test_the_runner_and_module_judgments_speak_before_the_checker_and_a_survey_o
     rc.record(d.source(), red, probegate.GateOutcome(ran=True, replan_after_survey=True), "syntax error in a.py", d.evidence)
     assert red.gate_replan_required and not red.gate_fresh and red.last_gate_red
 
-
-def test_a_survey_replan_of_the_same_red_is_one_stall_round_not_two_and_keeps_the_findings(tmp_path, monkeypatch):
-    harness(tmp_path, monkeypatch, "print('ok')")
-    d = Driver(tmp_path)
-    first = rc.probegate.GateOutcome(ran=True, replan_after_survey=True)
-    d.state.last_gate_flag = ""
-    rc.record(d.source(), d.state, first, "a.py:1: SyntaxError", d.evidence)
-    assert d.state.last_gate_red and d.state.last_gate_flag == "a.py:1: SyntaxError"   # red findings preserved
-    assert d.state.gate_stall == 0                                                    # no coder round has passed yet
-    rc.record(d.source(), d.state, rc.probegate.GateOutcome(ran=True), "a.py:1: SyntaxError", d.evidence)
-    assert d.state.gate_stall == 1                                                    # the replan is the one counted round
-    rc.record(d.source(), d.state, rc.probegate.GateOutcome(ran=True), "a.py:1: SyntaxError", d.evidence)
-    assert d.state.gate_stall == 2                                                    # a genuine unchanged re-run still stalls

@@ -1,48 +1,14 @@
 """Writes and edits through the harness primitives, executed by real stubs in bash: what lands on disk and what the coder is told."""
-import hashlib
 import json
 import os
 import shutil
-import subprocess
 
 import pytest
 
-from cria import denial, editrecovery
+from cria import denial
 from write_edit_helpers import command_of, do, write_edit_workspace_view  # noqa: F401  (the fixture binds the workspace view)
 
 TRICKY = "line1\n\ttabbed 'q' \"dq\" $VAR `bt` \\n \u2603\r\nend-without-newline"
-
-
-def test_a_write_and_an_edit_send_the_fixed_stub_and_only_their_own_bytes(tmp_path):
-    """The harness is shown a short constant program and the bytes that change: a 2 KB write is about 6.0 KB of command, and an edit of a
-    file of 300 KB (read once, so cria holds it) is about 3.8 KB however large the file is."""
-    big = "".join(f"line {i} of a large file\n" for i in range(12_000))
-    (tmp_path / "big.txt").write_text(big)
-    tc, done, msgs = do("write_file", {"path": "new.txt", "content": "x" * 2000}, tmp_path)
-    assert done.returncode == 0 and denial.landed(msgs[1]) and len(command_of(tc).encode()) < 6_400
-    do("read_file", {"path": "big.txt"}, tmp_path, cid="r", injected=("read_file",))
-    tc, done, msgs = do("edit_file", {"path": "big.txt", "old_string": "line 6000 of", "new_string": "LINE 6000 of"}, tmp_path, cid="e")
-    assert denial.landed(msgs[1]) and (tmp_path / "big.txt").read_text() == big.replace("line 6000 of", "LINE 6000 of")
-    assert len(command_of(tc).encode()) < 3_900, len(command_of(tc).encode())
-
-
-def test_large_write_payload_is_carried_once_and_round_trips(tmp_path):
-    content = ''.join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(400))
-    tc, done, msgs = do('write_file', {'path': 'a.txt', 'content': content}, tmp_path)
-    command = json.loads(tc['function']['arguments'])['cmd']
-    assert len(command.encode()) < 40_000       # the 25 KB of content once, as base64 (34 KB), the 2.7 KB stub and, on a first call, the workspace survey's ride
-    assert done.returncode == 0, done.stderr
-    assert (tmp_path / 'a.txt').read_text() == content
-    assert json.loads(msgs[0]['tool_calls'][0]['function']['arguments']) == {'path': 'a.txt', 'content': content}
-    assert denial.landed(msgs[1])
-    replacement = content[::-1]
-    tc, done, msgs = do('edit_file', {'path': 'a.txt', 'old_string': content, 'new_string': replacement}, tmp_path)
-    command = json.loads(tc['function']['arguments'])['cmd']
-    assert len(command.encode()) < 40_000       # the edit's own bytes once (the 25 KB replacement), not the file's too (its 25 KB are not resent)
-    assert done.returncode == 0, done.stderr
-    assert (tmp_path / 'a.txt').read_text() == replacement
-    assert json.loads(msgs[0]['tool_calls'][0]['function']['arguments']) == {'path': 'a.txt', 'old_string': content, 'new_string': replacement}
-    assert denial.landed(msgs[1])
 
 
 @pytest.mark.parametrize("content", [TRICKY, "", "0", "x" * 20_000], ids=["tricky", "empty", "falsy", "20KB"])

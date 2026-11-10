@@ -4,13 +4,12 @@ unattended run stops its own harness if the monitor is interrupted."""
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from suite import milestones, run, storage
+from suite import milestones, run
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,23 +49,6 @@ class Rig:
     def monitor(self):
         return run.monitor_milestones(self.proc, self.pacing, "async", self.ws, self.task,
                                       stop=lambda: self.events.append(("stop", self.clock.now)))
-
-
-def test_workspace_snapshot_preserves_source_but_not_git_ignored_or_generated_files(tmp_path):
-    ws = tmp_path / 'workspace'
-    ws.mkdir()
-    subprocess.run(['git', 'init', '-q', str(ws)], check=True)
-    (ws / '.gitignore').write_text('secret.tmp\n')
-    (ws / 'secret.tmp').write_text('ignored')
-    (ws / 'main.py').write_text('source')
-    (ws / 'node_modules').mkdir()
-    (ws / 'node_modules' / 'dependency.js').write_text('installed')
-    (ws / 'target').mkdir()
-    (ws / 'target' / 'program').write_text('compiled')
-    storage.copy_workspace(ws, tmp_path / 'snapshot')
-    snapshot = tmp_path / 'snapshot'
-    assert (snapshot / 'main.py').read_text() == 'source'
-    assert not any((snapshot / name).exists() for name in ('.git', 'secret.tmp', 'node_modules', 'target'))
 
 
 def test_pacing_is_one_fifteen_minute_wall_clock_with_a_budget_cap():

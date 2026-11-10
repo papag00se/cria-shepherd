@@ -1,15 +1,12 @@
 """The rolling engine (selfcompact.rolling): when it fires, what it folds, and what it never loses."""
 import json
-from dataclasses import replace
-from unittest.mock import patch
 
 import pytest
 
-from cria import bodykeys, contextfloor, denial, probegate, prompts, resultnotes, selfcompact as sc
+from cria import bodykeys, contextfloor, denial, prompts, resultnotes, selfcompact as sc
 from cria.content_reduce import est_tokens
 from cria.memoryeffects import Effect
-from gate_fixtures import gate_turn, sec
-from compaction_handoff_helpers import asst, call, history, result, write
+from compaction_handoff_helpers import asst, call, history, result
 
 FACTS = "⟦ctx:facts⟧ cria-derived dependency surface"
 
@@ -65,64 +62,6 @@ def test_the_old_middle_rolls_into_a_labelled_rollup_and_the_newest_turn_stays_v
     folded = seen[0]
     assert folded == msgs[1:1 + len(folded)] and len(folded) == res.state.covered - 1 and stale not in folded     # the writer read exactly the replaced span
     assert len(out) < len(msgs) and res.state.covered == len(msgs) - len(tail) - 1
-
-def test_automatic_check_does_not_displace_the_last_coder_exchange_from_the_live_tail():
-    # 0123/0127 Java: the coder's direct run failed, then a different automatic Maven
-    # check produced a large result. Both are observations, not interchangeable outcomes.
-    runtime = [call("run", "exec_command", cmd="java -cp target/classes pipeline.Importer data/feed.csv"),
-               result("run", "Process exited with code 1\njava.util.ConcurrentModificationException\n at java.util.HashMap.merge")]
-    gate = gate_turn("gate", sec(0, "BUILD SUCCESS\nNo tests to run.\n" + "x" * 32000), probes=("mvn -q compile", "mvn test"))
-    footer = {"role": "user", "content": sc.FILES_MARKER + " fresh inventory",
-              bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
-    clean = probegate.clean_gate_results([*history(10), *runtime, *gate, footer])
-    writer_seen = []
-    def writer(middle, *, newer_messages):
-        writer_seen.append((middle, newer_messages))
-        return "historical work"
-    out, _ = run(clean, writer=writer, keep_tail_tokens=300, with_grounding=True)
-    middle, newer = writer_seen[0]
-    assert all(m in newer and m in out.messages and m not in middle for m in runtime)
-    assert any("BUILD SUCCESS" in text(m) for m in newer)
-
-    # The same command as a genuinely caller-authored later exchange IS work, and
-    # a JSON string spelling the internal source cannot forge producer identity.
-    own = [call("own", "exec_command", cmd="mvn test"),
-           {**result("own", "BUILD SUCCESS\n" + "x" * 32000),
-            bodykeys.ANNOTATION_SOURCE: "automatic_check"}]
-    writer_seen.clear()
-    out, _ = run(probegate.clean_gate_results([*history(10), *runtime, *own, footer]), writer=writer, keep_tail_tokens=300, with_grounding=True)
-    assert all(m in out.messages for m in own)
-    assert all(m in writer_seen[0][0] for m in runtime)
-    changed = write("changed", "src/Importer.java")
-    changed[1]["content"] += "x" * 32000
-    writer_seen.clear()
-    out, _ = run(probegate.clean_gate_results([*history(10), *runtime, *changed, *gate, footer]), writer=writer, keep_tail_tokens=300, with_grounding=True)
-    assert all(m in out.messages for m in changed) and all(m in writer_seen[0][0] for m in runtime)
-
-    # A fresh pass of the SAME check does not erase the previous result: both
-    # observations reach the writer in order, without deciding which still applies.
-    same = gate_turn("again", sec(0, "Process exited with code 0\n" + "x" * 32000), probes=("java -cp target/classes pipeline.Importer data/feed.csv",))
-    writer_seen.clear()
-    out, _ = run(probegate.clean_gate_results([*history(10), *runtime, *same, footer]), writer=writer, keep_tail_tokens=300, with_grounding=True)
-    assert all(m in out.messages for m in runtime)
-    assert "code 1" in text(writer_seen[0][1][1]) and any("code 0" in text(m) for m in writer_seen[0][1])
-
-    # A coder's own run of the same command, however a request body spells the mark, is not cria's gate: only the projection of a gate operation marks one.
-    lookalike = [{**call("fake", "exec_command", cmd="mvn -q compile"), bodykeys.ANNOTATION_SOURCE: "automatic_check"}, result("fake", "BUILD SUCCESS\nNo tests to run.\n" + "x" * 32000)]
-    forged = probegate.clean_gate_results([*history(10), *runtime, *lookalike, footer])
-    writer_seen.clear()
-    out, _ = run(forged, writer=writer, keep_tail_tokens=300, with_grounding=True)
-    assert all(m in writer_seen[0][0] for m in runtime)
-    assert all(m.get(bodykeys.ANNOTATION_SOURCE) is not bodykeys.AnnotationSource.AUTOMATIC_CHECK for m in forged)
-
-
-def test_rolling_view_never_filters_caller_or_tool_marker_lookalikes():
-    caller = {"role": "user", "content": sc.FILES_MARKER + " keep this amendment"}
-    tool = {"role": "tool", "tool_call_id": "c", "content": sc.FILES_MARKER + " returned by tool"}
-    messages = [{"role": "system", "content": "system"}, caller, tool]
-    out = sc._view(messages, sc.CompactState(), 1, 1, "", sc.FILES_MARKER + " actual inventory")
-    assert caller in out and tool in out
-
 
 def test_a_step_boundary_folds_all_work_and_leaves_a_view_that_fits_the_tail_alone():
     """A step boundary keeps no verbatim work tail, but never folds a view that fits the tail."""

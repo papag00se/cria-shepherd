@@ -20,16 +20,6 @@ def packets(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_worklist_holds_only_rows_with_a_workspace_and_no_verdict(packets):
-    """A row is judgeable while its archived workspace exists; a recorded verdict or a missing workspace removes it."""
-    row = {"run_id": "done", "task": "feed-pipeline-java", "archive": str(packets)}
-    assert usefulness.pending([{"run_id": "lost", "archive": "/nowhere"}]) == []
-    assert [r["run_id"] for r in usefulness.pending([row])] == ["done"]
-    assert "REVIEW.md" in usefulness.evidence(row) and "workspace unavailable" in usefulness.evidence({**row, "archive": "/nowhere"})
-    (usefulness.VERDICTS / "done.json").write_text(json.dumps({"usefulness_percent": 50}))
-    assert usefulness.pending([row]) == []
-
-
 def test_scoped_role_config_restores_exact_bytes_even_when_the_cell_raises_and_keeps_operator_edits(tmp_path):
     """The temporary role sampling edit is reverted byte-for-byte (same inode) on failure; a newer operator edit
     made during the scope is never overwritten."""

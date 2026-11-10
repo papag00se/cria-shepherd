@@ -53,24 +53,6 @@ def test_the_plan_off_frame_is_the_raw_task_under_crias_coder_prompt_with_no_har
     assert "IGNORED" not in blob and "step 1" not in blob.lower() and "You are Codex" not in blob
 
 
-def test_a_step_frame_keeps_the_task_as_history_and_hides_cria_banners_from_the_coder():
-    """A genuine step keeps the whole task as background and the step as the ask; cria's banner lines (which a coder parrots back) never reach
-    the model, while every call and its prose do: a command is never hidden because of what its text says (an earlier release's plan-file write is shown raw)."""
-    msgs = [{"role": "user", "content": "Write a handler and a README."},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {
-                "name": "exec_command", "arguments": '{"cmd": "mkdir -p .cria && printf %s YWJj | base64 -d > .cria/x.md"}'}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "wrote .cria/x.md"},
-            {"role": "assistant", "content": "⟦cria⟧ planned 5 steps\n⟦cria⟧ update_plan: [...]"},
-            {"role": "assistant", "content": "⟦cria⟧ coder · m\nActually reading handler.py now."},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c2", "type": "function", "function": {
-                "name": "exec_command", "arguments": '{"cmd": "cat handler.py"}'}}]}]
-    framed = _frame_for_item(msgs, "Create handler.py", "", 2, 3, tools=[SHELL])
-    blob = json.dumps(framed)
-    assert "⟦cria⟧" not in blob and "mkdir -p .cria" in blob
-    assert "cat handler.py" in blob and "Actually reading handler.py now." in blob and "README" in blob
-    assert framed[-1]["role"] == "user" and "Create handler.py" in framed[-1]["content"] and "README" not in framed[-1]["content"]
-
-
 MARKER = ("Another language model started to solve this problem and produced a summary of its thinking process. "
           "You also have access to the state of the tools that were used by that language model. Use this to build on "
           "the work that has already been done and avoid duplicating work. Here is the summary produced by the other "

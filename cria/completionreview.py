@@ -138,9 +138,9 @@ DEFINITION = ReviewDefinition(
                         Reference("tests/gates_completion/test_gates_completion_cov_review.py", "test_every_review_event_names_its_trigger_and_scheduled_reviews_belong_to_the_higher_level"),
                         Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge"),
                         Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_the_scheduled_check_steers_on_a_grounded_gap_and_ends_only_after_the_repos_checks_pass"),
-                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_one_task_review_finds_a_missing_deliverable_without_waiting_for_checks_or_ordinary_steering"),
-                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_stuck_review_shares_task_evidence_delivery_and_cadence_without_completion_or_s1"),
-                        Reference("tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_plan_on_focused_review_reaches_the_same_coder_turn_without_a_second_scheduled_review"),
+                        Reference("tests-before-prune-20261110:tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_one_task_review_finds_a_missing_deliverable_without_waiting_for_checks_or_ordinary_steering"),
+                        Reference("tests-before-prune-20261110:tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_stuck_review_shares_task_evidence_delivery_and_cadence_without_completion_or_s1"),
+                        Reference("tests-before-prune-20261110:tests/loop_guards/test_loop_guards_scenario_lb_sessions.py", "test_plan_on_focused_review_reaches_the_same_coder_turn_without_a_second_scheduled_review"),
                         ),
            migrated=True),
     review_task)

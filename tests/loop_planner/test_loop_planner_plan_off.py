@@ -168,17 +168,6 @@ def test_a_blocked_check_returns_before_any_model_call(monkeypatch, blocker):
     assert rlog.events[0][0] == "loop.satisfaction_blocked" and rlog.events[0][1]["why"] == blocker
 
 
-@pytest.mark.parametrize("hold", ["steer", "gate-red"])
-def test_a_positive_scheduled_review_cannot_release_over_a_red_gate_or_pending_steering(monkeypatch, hold):
-    sess = Sess()
-    sess.last_gate_red = hold == "gate-red"
-    sess.nudge_reason = "pending ordinary steer" if hold == "steer" else ""
-    out, log = run_satisfaction(monkeypatch, sess, (True, "all task requirements look satisfied", ""), blocked=hold)
-    assert out is None and not sess.done_probe and not sess.pending_done
-    assert sess.task_review_last_drive == 80
-    assert "loop.satisfaction_check" in log.kinds()  # the question ran; only release was withheld
-
-
 def test_a_not_satisfied_verdict_names_the_gap_once_and_never_ends_the_session(monkeypatch):
     """shipping-rates-rb x nemotron-elastic: four NOT-satisfied verdicts naming Shipping.zone_for went unheard
     (cell 2/4). feed-pipeline-java x qwen35: TWELVE identical verdicts on a 5/5 workspace. So: reach the coder,

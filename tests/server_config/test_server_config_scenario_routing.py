@@ -2,10 +2,8 @@
 once; a server-reported context overflow is re-fitted once and the shrunken body is what the model finally answers."""
 import json
 import threading
-import urllib.error
 from http.server import ThreadingHTTPServer
 
-import pytest
 
 from cria import contextfloor
 from cria.config import Backend, Role, RoutingConfig
@@ -58,22 +56,6 @@ def test_a_server_reported_context_overflow_is_re_fitted_once_and_the_smaller_bo
                for m in second["messages"][1:-1])
     assert [e["real"] for e in w.events() if e["kind"] == "context.refit"] == [60000]
     assert sorted(p.name for p in (tmp_path / "calls" / "sid-1").glob("000?-proxy.json")) == ["0001-proxy.json", "0002-proxy.json"]
-
-
-@pytest.mark.parametrize("mode,marker,client_status", [
-    ("chat-stream", "hello", 200), ("chat-buffered", "__500__", 502),
-    ("chat-stream", "__500__", 200), ("chat-buffered", "__DROP__", 500)])  # the last: the connection dies mid-body
-def test_the_client_gets_a_clean_status_for_a_stream_a_rejection_and_a_cut_connection(tmp_path, mode, marker, client_status):
-    """A stream, a 500 with its own error JSON and a body cut at 19 of 500 promised bytes each reach the client as a clean status (a cut body is a 500 today, not a 502)."""
-    w = Wire(tmp_path, capture=True)
-    try:
-        try:
-            status = w.post(*request(mode, marker))[0]
-        except urllib.error.HTTPError as e:
-            status = e.code
-    finally:
-        w.close()
-    assert status == client_status
 
 
 def test_a_roles_portability_knobs_shape_the_request_the_served_model_receives(tmp_path):

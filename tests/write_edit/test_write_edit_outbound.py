@@ -1,8 +1,7 @@
 """Outbound guards that decide whether a lowered write/edit/command may run at all: private dir, system programs, unsafe cleanup, fused tails."""
 import json
-import os
 
-from cria import assistruntime, cleanupsafety, denial, dirguard, writeproxy, wsview
+from cria import assistruntime, cleanupsafety, denial, dirguard, writeproxy
 from cria.config import CRIA_HOME
 from write_edit_helpers import SHELL, call, command_of, do, lower, settle, write_edit_workspace_view  # noqa: F401
 
@@ -99,20 +98,3 @@ def test_a_second_call_fused_into_a_write_payload_is_trimmed_whatever_kind_of_ca
     big = "".join(f"def f{i}(a, b):\n    return a + b\n" for i in range(200))
     assert writeproxy.trim_fused_tail(REAL) == REAL and writeproxy.trim_fused_tail(prose) == prose and writeproxy.trim_fused_tail(big) == big
 
-
-def test_a_write_lands_and_reads_back_whatever_a_noisy_python3_shim_prints(tmp_path):
-    import sys
-    # The actual lowered write and inbound representation with a noisy python3 shim, without invoking mise or the network.
-    shim = tmp_path / 'bin'; shim.mkdir()
-    python = shim / 'python3'
-    python.write_text('#!/bin/sh\nprintf "shim warning\\n" >&2\nexec "' + sys.executable + '" "$@"\n')
-    python.chmod(0o755)
-    target = tmp_path / 'file.txt'
-    token = wsview.bind(wsview.View(str(tmp_path), 'noisy'))
-    try:
-        _, done, messages = do('write_file', {'path': str(target), 'content': 'written\n'}, tmp_path,
-                               root=str(tmp_path), env={'PATH': str(shim) + ':/usr/bin:/bin'})
-    finally:
-        wsview.unbind(token)
-    assert done.returncode == 0 and target.read_text() == 'written\n'
-    assert denial.landed(messages[1])

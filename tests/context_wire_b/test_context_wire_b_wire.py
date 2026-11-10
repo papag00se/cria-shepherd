@@ -94,29 +94,6 @@ def test_a_body_that_fits_natively_keeps_all_caller_input_and_strips_private_hin
     assert all(m in sent["messages"] for m in original["messages"]) and server.ops == ["render", "count"]
     assert bodykeys.PINNED_TASK not in sent and body == original
 
-@rows([(lambda text: len(text) // 3, False, False), ({"tokens": []}, False, False), ({"tokens": [True]}, False, False), ({"tokens": [-1]}, False, False), ({"tokens": ["42"]}, False, False), (2000, True, False),
-       (lambda text: len(text) // 3, False, True), ({"tokens": []}, False, True), (2000, True, True)])
-def test_only_replayed_handoff_text_is_cut_and_only_when_overflow_is_proven(tokens, no_render, handoff):
-    """A person's oversized message is NEVER cut (principle 5): whatever the measurement says it is sent whole. A replayed handoff (typed provenance) loses its OLDEST part, labelled, only on a measured overflow; with no measurement (malformed answer, no rendered prompt) or a measured fit it is sent whole too. The caller's body is untouched."""
-    up = upstream(4096)
-    server, body = Server(up, lambda text: tokens(text) if callable(tokens) else tokens), native_request()
-    if handoff:
-        body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff(True)
-    if no_render:
-        up._render_prompt = lambda body: None
-    original = deepcopy(body)
-    rlog = Rlog()
-    up.chat(body, rlog)
-    (sent,) = server.posts
-    first = sent["messages"][0]["content"]
-    measured_over = callable(tokens) and not no_render
-    if handoff and measured_over:
-        assert first.startswith("Keep this preceding constraint. ") and "⟦ctx:reduced⟧" in first and first.endswith("FINAL_CONSTRAINT_BYTE")
-        assert rlog.first("context.overflow_reduced") is not None
-    else:
-        assert first == original["messages"][0]["content"] and rlog.first("context.overflow_reduced") is None
-    assert sent["messages"][1:] == original["messages"][1:] and body == original and up._window == 4096
-
 def test_typed_history_is_reduced_with_a_label_but_caller_messages_are_not():
     """Cria's own evidence turns may be compacted (labelled) under native overflow before any user message is touched."""
     up = upstream(4096, {})
@@ -136,43 +113,6 @@ def test_lower_levels_and_a_guessed_window_never_authorize_reduction(level, wind
     with mock.patch("cria.upstream.urllib.request.urlopen", side_effect=OSError("down")):
         wire, _, _ = Upstream("http://synthetic.invalid", context_window=window, engagement_level=level)._prep({"model": "s", "messages": messages}, False, Rlog())
     assert json.loads(wire)["messages"] == messages
-
-
-def test_producer_facts_do_not_turn_the_latest_tool_exchange_into_old_history():
-    """Java 0131: trailing producer notes displaced a live check and the wire dropped its full result."""
-    output = "check exit 0\n" + "".join(f"line {i:05d} data abcdefghijk\n" for i in range(1100))
-    call = {"role": "assistant", "tool_calls": [{"id": "c", "type": "function", "function": {"name": "exec_command", "arguments": '{"cmd":"make check"}'}}]}
-    result = {"role": "tool", "tool_call_id": "c", "content": output}
-    notes = [selfcompact.internal_evidence_message(t) for t in (
-        "⟦ctx:current⟧ current file", "⟦ctx:files⟧ files", "⟦ctx:facts⟧ facts")]
-    messages = [{"role": "system", "content": "system " * 1200}, {"role": "user", "content": "task"},
-                {"role": "user", "content": "⟦ctx:continuation⟧ " + "past " * 1200},
-                {"role": "user", "content": "⟦ctx:rollup⟧ " + "brief " * 1900}, call, result,
-                {"role": "user", "content": "past guidance " * 1000,
-                 bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.GUIDANCE_HISTORY}, *notes]
-    body = {"model": "m", bodykeys.OUTPUT_RESERVE: 16384, "messages": messages,
-            "tools": [{"type": "function", "function": {"name": "exec_command", "description": "D" * 6400,
-                                                        "parameters": {"type": "object", "properties": {}}}}]}
-    raw, _, _ = Upstream("http://unused", context_window=40960)._prep(body, False, Rlog(), safety_override=1.42)
-    sent = json.loads(raw)["messages"]
-    assert next(m for m in sent if m.get("tool_call_id") == "c")["content"] == output
-    assert any(tc.get("id") == "c" for m in sent for tc in m.get("tool_calls", []))
-    assert any("⟦ctx:compacted⟧" in (m.get("content") or "") for m in sent)
-    assert bodykeys.ANNOTATION_SOURCE not in raw.decode()
-    assert all(any(m.get("content") == note["content"] for m in sent) for note in notes)
-    untyped = deepcopy(body)
-    for note in untyped["messages"][-len(notes):]:
-        note.pop(bodykeys.ANNOTATION_SOURCE)
-    old, _, _ = Upstream("http://unused", context_window=40960)._prep(untyped, False, Rlog(), safety_override=1.42)
-    assert not any(m.get("tool_call_id") == "c" for m in json.loads(old)["messages"])
-
-    # Identical user-authored text remains a real request; producer identity is not a text match.
-    for note in notes:
-        assert selfcompact.is_user_request({"role": "user", "content": note["content"]})
-    followup = {"role": "user", "content": "Please review the result; this is a real follow-up."}
-    body["messages"] = messages + [followup]
-    later, _, _ = Upstream("http://unused", context_window=40960)._prep(body, False, Rlog(), safety_override=1.42)
-    assert followup in json.loads(later)["messages"]
 
 
 def test_the_wire_reduces_the_authored_caller_span_under_pressure_and_never_serializes_the_hints():

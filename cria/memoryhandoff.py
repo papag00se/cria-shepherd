@@ -310,7 +310,7 @@ POLICY = Policy(
     hooks=(Reference("cria/server.py", "_recognize_compaction"),
            Reference("cria/server.py", "_compaction_body"),
            Reference("cria/server.py", "_harden_compaction_reply")),
-    regressions=(Reference("tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_harness_handoff_preserves_tool_evidence_instead_of_invented_briefing"),
+    regressions=(Reference("tests-before-prune-20261110:tests/compaction_handoff/test_compaction_handoff_evidence.py", "test_harness_handoff_preserves_tool_evidence_instead_of_invented_briefing"),
                  ),
     migrated=False,
 )

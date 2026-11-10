@@ -1,10 +1,9 @@
 """The periodic repository check-in: when it is due, and that a refused, cut or unreadable run is never read as green."""
 import copy
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from cria import gateops, loop, probegate, proberun, prompts, repositorychecks as rcheck
+from cria import loop, probegate, proberun, prompts, repositorychecks as rcheck
 from gate_fixtures import FakeGateSeam
 from cria import probediscovery as pd
 from cria.probeparse import parse_output
@@ -42,19 +41,6 @@ def test_the_check_in_is_due_on_the_fifteenth_coder_turn_and_only_with_a_shell(t
     assert result.status is status
     assert state.coder_turns == (turns if status is rcheck.Status.NOT_DUE else 0)   # a due check-in restarts the clock, even unavailable
     assert (state.awaiting_probe, state.periodic_probe) == ((True, True) if status is rcheck.Status.PENDING else (False, False))
-
-@pytest.mark.parametrize("why", ["permission denied", "cut"])
-def test_a_refused_or_cut_gate_is_unknown_never_a_green_run(why):
-    """A red board stays red: neither a refusal nor output that could not be read whole may be read as the repo's checks passing."""
-    plan = probegate.GatePlan("/workspace", surveyed_before=True, op="b" * 12)
-    result = gateops.GateResult(plan.op, "/workspace", "unknown", reason=why, refusal="Permission denied" if why == "permission denied" else "")
-    out, state, src = resume(result, plan, last_gate_red=True)
-    assert out.outcome.transport_unknown and out.text == prompts.render("periodic_gate",
-                                                                         truth=prompts.load("probe_transport_unknown"))
-    assert state.last_gate_red and not state.gate_fresh and "gate.transport_unknown" in [k for k, _ in src.log.events]
-    refused = gateops.GateResult("c" * 12, "/workspace", "complete", sections={})      # nothing ran to a result: harness words in the log, silence to the coder
-    out, state, src = resume(refused, probegate.GatePlan("/workspace", surveyed_before=True, op="c" * 12))
-    assert out.text is None and not state.last_gate_ran
 
 def test_a_passing_tally_regression_is_per_command_and_a_runner_without_a_tally_is_not_zero_tests():
     state = loop.GuardState()

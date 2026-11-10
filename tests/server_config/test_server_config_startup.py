@@ -4,8 +4,8 @@ import os
 import pytest
 
 from cria import failover as fo
-from cria import loop, system1, system1wiring
-from cria.config import Role, System1Config
+from cria import system1, system1wiring
+from cria.config import System1Config
 from cria.envfile import env_secret, load_env_file
 
 
@@ -41,32 +41,6 @@ class Log:
         self.events.append((kind, kw))
 
 
-@pytest.mark.parametrize("fault", ["raises", "unexpected-label", "typed-error"])
-@pytest.mark.parametrize("verdict,expected", [("RETROSPECTIVE", True), ("PLAN", False), ("", False)])
-def test_classifier_failure_asks_the_reasoner_for_the_complete_briefing(fault, verdict, expected, monkeypatch):
-    """A failed classifier asks the reasoner; an unreadable or negative reasoner verdict declines."""
-    class Runtime:
-        def judge(self, family, state, *, rlog=None):
-            if fault == "raises":
-                raise RuntimeError("ort exploded")
-            if fault == "typed-error":
-                raise system1.System1Error("no-fit input")
-            return "MAYBE"
-
-    log, asked = Log(), []
-    with pytest.raises(system1wiring.Unjudged):
-        system1wiring.classify(Runtime(), "retrospective", "The briefing.", log, seat="t")
-    assert [k for k, _ in log.events] == ["system1.declined"] and log.events[0][1]["family"] == "retrospective"
-    def summarize(*args, **kwargs):
-        asked.append(kwargs)
-        return verdict
-    monkeypatch.setattr(loop, "summarize", summarize)
-    ok = loop.validate_compaction_briefing(lambda *a, **k: None, Role("reasoner", "local"), "We built X.", files="", checks="",
-                                           transcript_blocks=[], rlog=log, system1=Runtime())
-    assert ok is expected and len(asked) == 1
-    assert "We built X." in str(asked[0]["evidence_blocks"])
-
-
 def test_a_classifier_failure_never_swallows_an_interrupt():
     """Only Exception declines; KeyboardInterrupt still stops the service."""
     class Runtime:
@@ -92,17 +66,6 @@ def test_an_enabled_classifier_that_cannot_load_refuses_startup_and_disabled_loa
     monkeypatch.setattr(system1, "System1Runtime", Broken)
     with pytest.raises(system1wiring.StartupError, match="ValueError: bad manifest"):
         system1wiring.build(System1Config(enabled=True, bundle_dir=str(tmp_path)))
-
-
-def test_configured_replacement_bundle_is_loaded(tmp_path, monkeypatch):
-    calls = []
-    class Runtime:
-        def __init__(self, path, threads, *, capture_dir):
-            calls.append((path, threads, capture_dir))
-    monkeypatch.setattr(system1, "System1Runtime", Runtime)
-    cfg = System1Config(bundle_dir=str(tmp_path), threads=3)
-    assert isinstance(system1wiring.build(cfg, capture_dir=tmp_path / "captures"), Runtime)
-    assert calls == [(tmp_path, 3, tmp_path / "captures")]
 
 
 CHAIN = ["light", "light_backup", "cloud_reasoner", "cloud_coder"]

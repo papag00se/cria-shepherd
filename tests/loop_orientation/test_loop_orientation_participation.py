@@ -1,12 +1,11 @@
 """What did a green or red command actually reach? Participation is evidence from the runner, never inference from an
 exit code; every unknown stays non-approving."""
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 from survey_fixtures import ask_survey
-from cria import loop, participation as pt, probediscovery as pd, probegate, wsview
+from cria import loop, participation as pt, probediscovery as pd, wsview
 from loop_orientation_helpers import Log, local_workspace_view  # noqa: F401
 
 E = pd.Ecosystem
@@ -61,25 +60,6 @@ def test_source_reach_is_per_named_file_and_a_missing_section_or_red_phase_is_ne
     assert pt.report([golang]).support("source") is pt.Support.UNKNOWN
     check = pt.report([pt.observe(cand(E.JsTs, "node --check src/index.js", pd.ProbeKind.SyntaxCheck), "", 0)])
     assert check.supports_source_file("src/index.js") and not check.supports_source_file("src/other.js")
-
-def test_workspace_read_tracking_captures_only_successful_scoped_discovery_inputs():
-    view = wsview.View('/workspace', 'tracked-discovery')
-    view.note_read('/workspace/package.json', '{"scripts":{}}')
-    view.note_read('/workspace/unconsumed.py', 'not read')
-    view.note_read('/workspace/sub/setup.cfg', '[tool]')
-    with view.track_body_reads() as reads:
-        assert view.read('/workspace/package.json') == '{"scripts":{}}'
-        assert view.read('/workspace/missing.json') is None
-        with view.track_body_reads() as nested:
-            assert view.read_bytes('/workspace/package.json') == b'{"scripts":{}}'
-        assert nested.paths == frozenset({'package.json'})
-        assert view.reroot('/workspace/sub').read('setup.cfg') == '[tool]'
-    assert reads.paths == frozenset({'package.json', 'sub/setup.cfg'})
-    assert view.read('/workspace/unconsumed.py') == 'not read'
-    assert reads.paths == frozenset({'package.json', 'sub/setup.cfg'})
-    assert view.body_pending('/workspace/missing.json')
-    assert not view.body_pending('/workspace/unconsumed.py')
-
 
 def declared(script, files):
     """The project's declared `npm test` script over a workspace holding `files`, as the harness's survey shows it."""

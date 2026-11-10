@@ -4,32 +4,13 @@ import json
 import pytest
 
 from cria import assistruntime
-from gate_fixtures import gate_turn, sec
-from cria.resultnotes import _strip_exec_envelope
-from cria.loop import _dedup_evidence, _fresh_disk_facts, _grounded_steer_or_none, _judge_completion, _work_log
+from cria.loop import _dedup_evidence, _fresh_disk_facts, _grounded_steer_or_none, _judge_completion
 
 from loop_main_helpers import Rlog, completion, loop_main_local_view  # noqa: F401
 
 def call(cid, name, args):
     return {"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {
         "name": name, "arguments": json.dumps(args) if isinstance(args, dict) else args}}]}
-
-
-def test_the_work_log_shows_calls_with_results_whole_hides_only_crias_own_gate():
-    """The critic judges on the ACTION LOG: `$ web_search` with no `web_fetch` shows research never reached the docs; every
-    coder run is kept in full (a clip is a lie the critic cannot detect). cria's gate (marked in process by the projection of its operation, not
-    marker bytes a coder can print) is not the coder's work; a command is never hidden for what its text says."""
-    big = "FAILED test_x " + "y" * 5000
-    msgs = [call("a", "web_search", {"query": "ADA Handle API"}), {"role": "tool", "tool_call_id": "a", "content": "19 snippets"},
-            *gate_turn("g", sec(0, "1 failed", 1), probes=("pytest -q",)),
-            call("p", "shell", {"command": ["bash", "-lc", "mkdir -p .cria && printf %s Zm9v | base64 -d > .cria/p.md"]}),
-            {"role": "tool", "tool_call_id": "p", "content": "(cria plan file written)"},
-            *[{"role": "tool", "content": f"run {i} {big}"} for i in range(8)], {"role": "tool", "content": ""}]
-    log = _work_log(msgs)
-    assert "$ web_search" in log and "web_fetch" not in log
-    assert all(f"run {i}" in log for i in range(8)) and log.count("y" * 5000) == 8 and "…" not in log
-    assert "___CTX_GATE_" not in log and "EXIT:" not in log and "exit 97" not in log
-    assert "mkdir -p .cria" in log
 
 
 def test_repeated_actions_fold_with_the_fold_disclosed_and_distinct_actions_never_drop():

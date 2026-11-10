@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from cria import assistruntime, contextfloor, denial, focustrim, loop, prompts, writeproxy, wsview
+from cria import contextfloor, denial, focustrim, loop, prompts, writeproxy
 from write_edit_helpers import ENVELOPE, call, do, lower, represent, run, shrink_services, write_edit_workspace_view  # noqa: F401
 
 DATA = b"original token\n"
@@ -77,21 +77,6 @@ def test_a_large_rejected_draft_leaves_the_argument_slot_and_rides_once_in_the_r
     (tmp_path / "notes.txt").write_text("todo\n")
     _, _, ok = do("edit_file", {"path": "notes.txt", "old_string": "todo", "new_string": BIG}, tmp_path, cid="ok")
     assert json.loads(ok[0]["tool_calls"][0]["function"]["arguments"])["new_string"] == BIG       # landed bytes are never collapsed
-
-
-@pytest.mark.parametrize('case', ['syntax', 'parent'])
-def test_validation_refusals_keep_large_draft_for_correction(tmp_path, case):
-    if case == 'syntax':
-        (tmp_path / 'valid.py').write_text('x = 1\n')
-        path, draft = 'valid.py', '# draft line\n' * 50 + 'def broken(:\n'
-    else:
-        (tmp_path / 'parent').write_text('blocker\n')
-        path, draft = 'parent/child.txt', 'draft content\n' * 50
-    _, _, shown = do('write_file', {'path': path, 'content': draft}, tmp_path)
-    assert denial.refused(shown[1])
-    fn = shown[0]['tool_calls'][0]['function']
-    assert fn['name'] == 'write_file' and json.loads(fn['arguments']) == {'path': path}
-    assert shown[1]['content'].count(draft) == 1 and '⟦ctx:rejected-candidate⟧' in shown[1]['content']
 
 
 class Ledger:

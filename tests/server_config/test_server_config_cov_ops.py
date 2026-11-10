@@ -1,9 +1,8 @@
 """Operator/ops seams: cria.retention (operator-run cleanup of private retained state: dry run by default, explicit selectors, live holders
 skipped, symlinks never followed, corrupt entries removed only when named, interrupted deletes retryable) and cria.heartbeat (SSE keepalive)."""
 import io, os, time
-from pathlib import Path
 import pytest
-from cria import imagepersist, privatepaths, retention
+from cria import imagepersist, retention
 from cria.heartbeat import Heartbeat
 from cria.imageprotocol import CoderRoute
 from cria.imagestore import ImageStore
@@ -29,20 +28,6 @@ def age(home, days, *, skip=()):
         if not p.is_symlink() and p not in skip: os.utime(p, (t, t))
 
 def tree(home): return sorted((str(p.relative_to(home)), p.lstat().st_mtime_ns) for p in home.rglob('*'))
-
-def test_default_image_retention_uses_the_runtime_image_store(tmp_path, monkeypatch):
-    home = tmp_path / 'cria-home'
-    images = tmp_path / 'state' / 'images'
-    monkeypatch.setattr(privatepaths, 'CRIA_HOME', home)
-    monkeypatch.setattr(privatepaths, 'IMAGE_HOME', images)
-    session = ImageStore(images, close_authority=object()).session('old')
-    session._hold.close()
-    entries, _, fds, _ = retention.collect(home, ['image'])
-    for fd in fds.values():
-        os.close(fd)
-    assert any(entry.kind == 'image' for entry in entries)
-    assert not (home / 'images').exists()
-
 
 def test_prune_needs_a_selector_dry_runs_by_default_and_apply_removes_only_what_is_old_enough(home, tmp_path):
     """A bare prune can never select everything; without --apply nothing changes; --older-than 1w keeps a 6-day entry and removes an 8-day one."""

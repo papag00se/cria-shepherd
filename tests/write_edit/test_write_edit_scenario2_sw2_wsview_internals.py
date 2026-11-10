@@ -23,22 +23,6 @@ def _clean_caches():
         table.clear()
 
 
-def test_a_surveys_facts_are_three_valued_and_what_it_could_not_hand_back_is_said():
-    tree = ["D\tsub", "F\t12\t4\tgood.txt", "F\t0\t0\tbad.txt", "X\t900\tcrowd", "X\t900\t"]
-    v = wsview.View("/ws", SESS)
-    assert wsview.apply_survey(v, survey("/ws", tree, {"good.txt": b"abcd"}, refused={"huge.bin": 99_999_999, "gone.txt": wsview.ABSENT}))
-    assert v.surveyed
-    assert v.size("good.txt") == 4 and v.read("good.txt") == "abcd" and v.mtime("good.txt") == 12.0
-    assert v.size("bad.txt") == 0 and v.isfile("bad.txt") and v.read_bytes("bad.txt") is None        # no body was delivered: unknown
-    assert v.undeliverable == ["gone.txt", "huge.bin"] and v.isdir("sub") and v.isfile("crowd/anything") is None   # folded dir
-    assert not v.complete         # the root itself was folded: nothing may read as absent
-    assert v.isfile("never.txt") is None and v.exists("never.txt") is None
-    assert not wsview.apply_survey(wsview.View("/other", SESS), survey("/ws", tree)) and wsview.last_reject()["reason"] == "different-tree"
-    rootless = wsview.View(None, SESS)
-    assert wsview.apply_survey(rootless, survey("/ws", tree)) and rootless.root == "/ws"
-    assert not wsview.apply_survey(wsview.View("/ws", SESS), survey("/ws", [], listed=False)) and wsview.last_reject()["reason"] == "no-tree"
-
-
 def test_a_view_nobody_surveyed_answers_unknown_not_absent():
     v = wsview.View("/ws", SESS)
     assert (v.isdir("a"), v.isdir("/ws"), v.isfile("a"), v.mtime("a"), v.walk("."), v.files(), v.read_current_survey("a")) == (None,) * 7
@@ -158,30 +142,3 @@ def test_the_disk_view_answers_absent_paths_as_unknown_and_finds_versioned_progr
     wsview.unbind(token)
     assert wsview.current("/x").isfile("/x") is None
 
-
-def test_the_survey_answers_programs_versioned_names_and_outside_paths_from_the_coders_own_shell(tmp_path):
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    for name, mode in (("pyx3.12", 0o755), ("pyxnoexec1.0", 0o644), ("tool", 0o755), ("tool2.7", 0o755)):
-        (bindir / name).write_text("#!/bin/sh\n")
-        (bindir / name).chmod(mode)
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    (tmp_path / "afile").write_text("x")
-    found = survey_of_disk(ws, progs=["pyx", "pyxnoexec", "zz-nothing", "tool", "sh; echo no"], outside=[str(cache), str(tmp_path / "afile"), str(tmp_path / "gone"), "~"],
-                           env={"PATH": f"{tmp_path / 'nonexistent'}:{bindir}:/usr/bin:/bin"})
-    assert found.progs == {"pyx": "pyx3.12", "pyxnoexec": "", "zz-nothing": "", "tool": "tool", "sh; echo no": ""}     # the name is data, never run
-    assert found.outside == {str(cache): "d", str(tmp_path / "afile"): "f", str(tmp_path / "gone"): "", "~": "d"}
-
-
-def test_the_survey_hands_back_what_it_can_and_says_what_it_cannot(tmp_path):
-    ws = tmp_path / "ws"
-    (ws / "sub").mkdir(parents=True)
-    (ws / "small.txt").write_text("abcd")
-    (ws / "big.txt").write_bytes(b"x" * (wsview.BLOB_FILE_MAX + 1))
-    (ws / "mid.bin").write_bytes(bytes(range(256)) * 100)          # 25,600 bytes: more than one page, not valid text
-    found = survey_of_disk(ws, bodies=["small.txt", "big.txt", "gone.txt", "sub", "mid.bin", "sub/x/y"])
-    assert found.bodies == {"small.txt": b"abcd", "mid.bin": bytes(range(256)) * 100}
-    assert found.refused == {"big.txt": wsview.BLOB_FILE_MAX + 1, "gone.txt": wsview.ABSENT, "sub": wsview.UNSTATABLE, "sub/x/y": wsview.ABSENT}

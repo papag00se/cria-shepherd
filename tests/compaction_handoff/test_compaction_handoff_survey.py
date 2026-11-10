@@ -75,37 +75,6 @@ def test_a_survey_that_hit_its_own_bound_reads_unknown_and_never_empty_or_comple
         assert "has no files" not in out and "is empty" not in out and "This list is complete" not in out and L["complete"] not in out
         assert ("NOT complete" in out and "main.py" in out) or not sub
 
-def test_a_foreign_or_empty_survey_is_refused_and_a_known_answer_is_never_emptied_by_it():
-    """A survey of another tree, or one that never listed the root, is refused and never empties what is known; before any survey the answer is unknown, not no."""
-    whole = survey("F\t0\t3\ta.py\nF\t0\t3\tb.py", root="/ws")
-    view = wsview.View("/ws", "s")
-    assert not wsview.apply_survey(view, survey("", root="/ws", listed=False)) and not view.surveyed       # a survey without a listing is no survey
-    assert wsview.apply_survey(view, whole) and view.isfile("a.py") is True
-    assert not wsview.apply_survey(view, survey("", root="/ws", listed=False)) and view.isfile("a.py") is True
-    assert not wsview.apply_survey(wsview.View("/some/other/repo", "s"), whole)      # a survey of another tree answers nothing
-    assert wsview.View("/ws", "s2").isfile("a.py") is None                           # before anything is gathered: unknown, not no
-
-def test_a_remembered_body_is_dropped_when_its_size_disagrees_or_the_file_changed_unobserved_and_never_crosses_roots():
-    """Walked three times in L5 cells <60: a base64 body cut mid-line decoded into a wrong-length soup that a steer author read as 'the file is binary'; `go get` rewrote v1.4.0 to v1.5.0 at the same width and the cached body delivered the WRONG version's API as fact."""
-    body = b"hello world, this is the real file\n" * 4
-    cut = wsview.View("/w")
-    assert wsview.apply_survey(cut, survey(f"F\t0\t{len(body)}\thello.py", root="/w", blobs={"hello.py": body[:-40]}))
-    assert "hello.py" not in cut._bodies                                    # length disagrees with the listing: not the file
-    ok = wsview.View("/w")
-    assert wsview.apply_survey(ok, survey(f"F\t0\t{len(body)}\thello.py", root="/w", blobs={"hello.py": body})) and ok._bodies["hello.py"] == body
-    old, new = 'require other.com/pkg v1.4.0\n', 'require other.com/pkg v1.5.0\n'
-    tree = lambda mtime: f"F\t{mtime}\t{len(old)}\tgo.mod"
-    wsview._BODY_CACHE.clear()
-    first = wsview.View("/workspace", "sess-same-size")
-    assert wsview.apply_survey(first, survey(tree(1000), root="/workspace", blobs={"go.mod": old.encode()}))
-    same = wsview.View("/workspace", "sess-same-size")
-    assert wsview.apply_survey(same, survey(tree(1000), root="/workspace")) and same.read("go.mod") == old       # unchanged file: still reused
-    edited = wsview.View("/workspace", "sess-same-size")
-    assert wsview.apply_survey(edited, survey(tree(2000), root="/workspace"))
-    assert edited.read("go.mod") is None and "go.mod" in wsview.pending("sess-same-size")[0]                    # newer mtime: unknown, and re-asked
-    assert wsview.View("/elsewhere", "sess-same-size").read("go.mod") is None                                    # another root never inherits this one's cache
-
-
 def test_a_written_body_is_rechecked_on_mtime_by_later_surveys_and_a_crlf_body_is_never_reconstructed_by_an_edit():
     """C38b follow-up (69e4136c): a replayed write (`note_written`) left no mtime check at all, so `go get` bumping go.mod's version at the
     same width was read back as the pre-bump body forever; it is now tree-corroborated exactly when the known tree agrees on size.

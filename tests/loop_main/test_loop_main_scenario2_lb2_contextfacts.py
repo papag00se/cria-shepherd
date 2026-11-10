@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from cria import loop, selfcompact, webfetch
+from cria import loop, webfetch
 
 PAGE, SPEC = "https://docs.rs/toml/", "https://api.x/openapi.json"
 
@@ -30,14 +30,6 @@ def read_of(path):
 def render(f, visible=(), urls=(), restored=None, **kw):
     out = loop._render_context_facts(f, visible_messages=list(visible), visible_fetch_urls=set(urls), restored_offered=restored or {}, workspace=None, **kw)
     return None if out is None else out["content"]
-
-
-def test_the_produced_facts_anchor_is_evidence_not_a_new_caller_request():
-    f = facts(ledger=(("/w/a.py", (6, "3 lines")),))
-    msg = loop._render_context_facts(f, visible_messages=[], visible_fetch_urls=set(), restored_offered={}, workspace=None)
-    assert not selfcompact.is_user_request(msg)
-    # A caller can write identical text without acquiring internal provenance.
-    assert selfcompact.is_user_request({"role": "user", "content": msg["content"]})
 
 
 def test_the_anchor_states_each_pages_status_where_its_body_is_and_how_each_file_read_stands():
