@@ -3423,16 +3423,6 @@ class Loop:
                               turn_index=sess.coder_timed_turns)
                 return ""
             view = wsview.current(root)
-            blank = view.blank_state(path)
-            if blank is True:
-                return admitted('blank')
-            if blank is None:
-                if view.observation_fingerprint is not None and view.isfile(path) is False:
-                    return admitted('missing')
-                if rlog is not None:
-                    rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
-                              turn_index=sess.coder_timed_turns)
-                return admitted('unknown')
             rel = view.rel(path)
             _track_content_fingerprints(sess, messages, view)
             seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
@@ -3450,6 +3440,18 @@ class Loop:
                     seen = hashlib.sha1(current[0]).hexdigest() in restored
                 elif _content_digest(current[0]) != fingerprint:
                     seen = False
+            if seen:
+                return admitted('seen')
+            blank = view.blank_state(path)
+            if blank is True:
+                return admitted('blank')
+            if blank is None:
+                if view.observation_fingerprint is not None and view.isfile(path) is False:
+                    return admitted('missing')
+                if rlog is not None:
+                    rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
+                              turn_index=sess.coder_timed_turns, reason='blankness_unavailable')
+                return admitted('unknown')
             fact = unread_target_fact(sess, view, path, messages, seen=seen)
             return fact if fact else admitted('seen' if seen else 'unresolved')
         return check

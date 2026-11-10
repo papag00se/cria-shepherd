@@ -78,6 +78,26 @@ def test_unread_hold_uses_current_inventory_blankness_and_logs_unknown(tmp_path)
         wsview.unbind(token)
 
 
+def test_captured_reads_are_credited_before_unknown_blankness(tmp_path):
+    from pathlib import Path
+    fixture = Path(__file__).resolve().parents[1] / 'fixtures/unread_write/ruby-verify-0006.json'
+    history = json.loads(fixture.read_text())['body']['messages']
+    view = wsview.View(str(tmp_path), 'sid:captured-credit')
+    token = wsview.bind(view)
+    try:
+        driver, log = make(), Rlog()
+        driver._put_session('sid:captured-credit', synthetic())
+        check = driver.unread_target_check('sid:captured-credit', history, str(tmp_path), log)
+        for path in ('lib/shipping/rates.rb', 'test/test_rates.rb'):
+            assert check(path) == ''
+            assert any(k == 'loop.unread_dispatch_nonatomic' and f['target'] == path and f['state'] == 'seen'
+                       for k, f in log.events)
+            assert all(f.get('reason') == 'content_fingerprint_unavailable' for k, f in log.events
+                       if k == 'loop.unread_target_state' and f['target'] == path)
+    finally:
+        wsview.unbind(token)
+
+
 def test_the_shrink_services_need_the_policy_a_root_a_reasoner_and_a_role_and_read_the_live_session(tmp_path):
     asked = []
 
