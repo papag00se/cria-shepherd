@@ -181,8 +181,9 @@ class GateOps:
         return 'fg' if ctx.get('fg') else 'start'
 
     def resume_gate(self, session: str, op_id: str) -> list:
-        """The calls that carry an unfinished gate on after the harness's compaction took its calls out of the history: one more ``wait`` for the
-        same run (the run, its directory and its output are where they were). ``[]`` when there is nothing to resume."""
+        """The calls that carry an unfinished gate on after the harness's compaction took its calls out of the history: one more poll of the run's
+        session when the harness holds one for it, else one more ``wait`` for the same run (the run, its directory and its output are where they were).
+        ``[]`` when there is nothing to resume."""
         from .opspath import OpsUnavailable
         with self._lock:
             op = self.ledger.ops(session).get(op_id)
