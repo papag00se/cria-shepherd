@@ -49,9 +49,13 @@ def test_captured_ruby_batched_edit_holds_survive_bridge_restart(tmp_path, monke
     with monkeypatch.context() as old:
         old.setattr(editsequence, 'matches_release', lambda _: False)
         assert Bridge(str(tmp_path / 'state')).continuation_state('s').pending == ()
-    assert len(Bridge(str(tmp_path / 'state')).continuation_state('s').pending) == len(calls)
+    assert len(Bridge(str(tmp_path / 'state')).continuation_state('s').pending) == 2
     messages = [{'role': 'assistant', 'tool_calls': lowered}]
-    messages += [{'role': 'tool', 'tool_call_id': c['id'], 'content': run_call(c)} for c in lowered]
+    import subprocess
+    for c in lowered:
+        done = subprocess.run(['bash', '-c', json.loads(c['function']['arguments'])['cmd']], capture_output=True, text=True)
+        messages.append({'role': 'tool', 'tool_call_id': c['id'], 'content':
+                         f'Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code {done.returncode}\nOriginal token count: 9\nOutput:\n' + done.stdout + done.stderr})
     shutil.copytree(tmp_path / 'state', tmp_path / 'invalid')
     with monkeypatch.context() as old:
         old.setattr(editsequence, 'matches_release', lambda _: False)
@@ -60,14 +64,22 @@ def test_captured_ruby_batched_edit_holds_survive_bridge_restart(tmp_path, monke
     from cria import loop
     assert not facts and loop._recent_unread_hold(failed)
     assert all(set(json.loads(c['function']['arguments'])) == {'path'} for c in failed[0]['tool_calls'])
-    assert all('⟦ctx:read-unverified⟧' in result['content'] and not denial.refused(result) for result in failed[1:])
+    assert sum('⟦ctx:read-unverified⟧' in result['content'] for result in failed[1:]) == 2
+    assert all(not denial.refused(failed[i + 1]) for i in (0, 2))
     projected, facts = page_through(Bridge(str(tmp_path / 'state')), messages)
     shown = writeproxy.represent_inbound(projected, workspace_root=str(workspace))
-    assert len(facts) == len(calls)
+    assert len(facts) == 2
+    delivered = set()
     for call, result in zip(calls, shown[1:]):
         args = json.loads(call['function']['arguments'])
-        assert denial.refused(result) and denial.read_payload(result) == Path(args['path']).read_text()
-        assert '⟦ctx:read-unverified⟧' not in result['content']
+        path = args['path']
+        assert denial.refused(result) and '⟦ctx:read-unverified⟧' not in result['content']
+        if path not in delivered:
+            assert denial.read_payload(result) == Path(path).read_text()
+            delivered.add(path)
+        else:
+            assert denial.read_payload(result) is None
+            assert result['content'] == '⟦ctx:denied⟧ This edit_file call was not run.\n'
     assert all(set(json.loads(c['function']['arguments'])) == {'path'} for c in shown[0]['tool_calls'])
 
 

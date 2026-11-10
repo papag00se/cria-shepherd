@@ -1521,6 +1521,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         if not tool_calls:
             continue
         rebuilt: list[dict] = []
+        held_reads: set[str] = set()
         edit_seq = _edit_sequence(tool_calls, injected)
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
@@ -1575,6 +1576,21 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             read_in_place = effect.read_in_place if effect is not None else False
             bridged = False
             if cmd is not None:
+                hold_key = None
+                if effect.multipart_kind == 'read-instead' and workspace_root:
+                    if name == 'apply_patch':
+                        from .toolargs import patch_paths
+                        paths = patch_paths(tc)
+                        path = paths[0] if len(paths) == 1 else None
+                    else:
+                        path = _tool_path(args)
+                    if path:
+                        hold_key = os.path.normpath(os.path.join(workspace_root, path))
+                    if hold_key in held_reads:
+                        labels = prompts.load_map('write_unread_target')
+                        with denial.receipt_scope(receipt, declaration):
+                            cmd = _refusal_command(prompts.fill(labels['not_read'], fact=effect.multipart_fact, tool=name))
+                        effect = replace(effect, multipart_kind=None)
                 if (multipart_command is not None and direct_synthetic_read
                         and effect.multipart_kind and receipt == denial.receipt_for(tc.get('id'), name, fn.get('arguments'))):
                     from .multipart import BridgeError
@@ -1593,6 +1609,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     if replacement is not None:
                         cmd = replacement
                         bridged = True
+                        if hold_key is not None:
+                            held_reads.add(hold_key)
                         if observe_multipart_fallback is not None:
                             fallback = original_cmd
                             if ti in edit_seq and EDIT_SEQ_DIR not in fallback:
