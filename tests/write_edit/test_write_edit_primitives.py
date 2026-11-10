@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from cria import denial, syntaxcheck
+from cria.prompts import load as prompts_load
 from cria.ops import Ops
 from write_edit_helpers import _ENGINE, call, command_of, do, lower, run, settle, write_edit_workspace_view  # noqa: F401
 
@@ -67,6 +68,28 @@ def test_an_edit_of_a_file_that_cannot_be_read_says_it_could_not_be_read_not_tha
     assert denial.refused(shown[1]) and '`f.txt` could not be read: Permission denied' in text and 'written' not in text
     os.chmod(tmp_path / 'f.txt', 0o600)
     assert (tmp_path / 'f.txt').read_text() == 'a = 1\n'
+
+
+def test_an_edit_of_text_after_a_byte_that_is_not_utf8_changes_only_that_text_and_keeps_every_other_byte(tmp_path):
+    """The file's bytes are text to cria only through a decoding that gives every byte back (surrogateescape): with `replace` the byte after an
+    edit would have been written as U+FFFD, and a splice computed on the cut text would have landed in the wrong place."""
+    raw = b'x = 1  # caf\xe9 \xff\xfe\ny = 2\nz = 3  # \x80\n'
+    (tmp_path / 'f.py').write_bytes(raw)
+    _, _, shown = do('edit_file', {'path': 'f.py', 'old_string': 'y = 2', 'new_string': 'y = 22'}, tmp_path)
+    assert denial.landed(shown[1]) and (tmp_path / 'f.py').read_bytes() == raw.replace(b'y = 2', b'y = 22')
+
+
+def test_a_write_through_a_link_into_crias_own_home_is_refused_and_nothing_lands_there(tmp_path, monkeypatch):
+    """The same guards that judge the path the model named judge the one a link leads to, and cria's home is never written by a coder."""
+    from cria import filecommands
+    home = tmp_path.parent / (tmp_path.name + '.crias-home')
+    home.mkdir()
+    monkeypatch.setattr(filecommands, 'CRIA_HOME', home)                      # (the guard's own name for it: never the operator's real one)
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    os.symlink(home, ws / 'home')
+    _, _, shown = do('write_file', {'path': 'home/planted.txt', 'content': 'x\n'}, ws)
+    assert denial.refused(shown[1]) and prompts_load('cria_home_refusal').strip() in shown[1]['content'] and os.listdir(home) == []
 
 
 def test_a_path_too_long_to_carry_is_refused_before_anything_is_sent(tmp_path):
