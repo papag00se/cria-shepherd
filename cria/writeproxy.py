@@ -25,6 +25,7 @@ import base64
 from typing import NamedTuple
 import hashlib
 import uuid
+import zlib
 import json
 import os
 import re
@@ -842,6 +843,16 @@ def _record_block(marks: "completionmarks.Plan | None") -> str:
     return block + completionmarks.head(marks, receipt) if marks is not None and receipt else block
 
 
+def _packed_program(program: str) -> str:
+    """Ship a self-contained harness program without installing workspace artifacts."""
+    data = base64.b64encode(zlib.compress(program.encode('utf-8'), 9)).decode('ascii')
+    return "import base64,zlib\nexec(zlib.decompress(base64.b64decode(" + repr(data) + ")))\n"
+
+
+_PACKED_MARKS = _packed_program(completionmarks.directory_program())
+_PACKED_SEQUENCE = _packed_program(editsequence.PROGRAM + completionmarks.FUNCTIONS)
+
+
 def _queued(py: str, seq: "EditSequence | None", marks: "completionmarks.Plan | None" = None) -> str:
     """``py`` with its place in the turn's per-file queue (the ``#%%SEQ%%`` slot of an edit or whole-write program) filled in,
     and - when it carries completion marks - the wait for an EARLIER turn's writer of the same file (the ``#%%XSEQ%%`` slot).
@@ -849,9 +860,9 @@ def _queued(py: str, seq: "EditSequence | None", marks: "completionmarks.Plan | 
     if marks is not None:
         py = py.replace("#%%XSEQ%%\n", completionmarks.wait(marks, EDIT_SEQ_WAIT_SECONDS))
     if seq is None:
-        return completionmarks.directory_program() + py if marks is not None else py
+        return _PACKED_MARKS + py if marks is not None else py
     turn, idx, preds, participants = seq
-    head = editsequence.PROGRAM + completionmarks.FUNCTIONS
+    head = _PACKED_SEQUENCE
     return head + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
         dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
         participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))

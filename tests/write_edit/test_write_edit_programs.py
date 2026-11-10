@@ -13,6 +13,21 @@ from write_edit_helpers import do, first_record, write_edit_workspace_view  # no
 TRICKY = "line1\n\ttabbed 'q' \"dq\" $VAR `bt` \\n \u2603\r\nend-without-newline"
 
 
+def test_queued_writes_and_edits_keep_commands_small_and_execute(tmp_path):
+    sequence = ('0123456789abcdef0123456789abcdef', 0, (), (0,))
+    env = {**os.environ, 'TMPDIR': str(tmp_path)}
+    write = writeproxy._write_command('f.txt', 'before\n', seq=sequence)
+    assert len(write.encode()) < 30_000
+    result = subprocess.run(['bash', '-c', write], cwd=tmp_path, env=env, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'f.txt').read_bytes() == b'before\n'
+    edit = writeproxy._edit_command('f.txt', 'before', 'after', seq=sequence)
+    assert len(edit.encode()) < 35_000
+    result = subprocess.run(['bash', '-c', edit], cwd=tmp_path, env=env, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'f.txt').read_bytes() == b'after\n'
+
+
 @pytest.mark.parametrize("content", [TRICKY, "", "0", "x" * 20_000], ids=["tricky", "empty", "falsy", "20KB"])
 def test_a_whole_write_lands_exactly_the_bytes_sent_and_replays_as_the_models_own_call(tmp_path, content):
     """Whole write: byte-exact (shell metachars, CRLF, empty, falsy, 20 KB in ONE call), atomic, no litter, re-presented unchanged."""
