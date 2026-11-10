@@ -17,7 +17,7 @@ PRIVATE = ('CTX1', 'ctx_', 'python3', '-I -S', 'harness-call', 'CTX_EOF', 'env -
 @pytest.fixture(autouse=True)
 def clean_questions():
     yield
-    for table in (wsview._BODY_MISSES, wsview._PROG_MISSES, wsview._OUTSIDE_MISSES, wsview._BODY_CACHE, wsview._PROG_CACHE):
+    for table in (wsview._BODY_MISSES, wsview._PROG_MISSES, wsview._OUTSIDE_MISSES, wsview._BODY_CACHE, wsview._PROG_CACHE, wsview._BODY_ABSENT):
         table.clear()
     wsview._REFRESH.clear()
 
@@ -61,24 +61,26 @@ def test_questions_the_view_could_not_answer_are_asked_at_the_next_request_and_n
     ws = tmp_path / 'ws'
     ws.mkdir()
     (ws / 'Cargo.toml').write_text('[package]\n')
-    backend = TurnBackend([('list_dir', {'path': '.'})])
+
+    class Asking(TurnBackend):
+        """The model lists the directory five times; a new question appears after its second call, an absence to re-check after its fourth."""
+        def chat(self, body, rlog=None):
+            if len(self.bodies) == 2:
+                wsview.want_program(SID, 'no-such-program-here')
+            if len(self.bodies) == 4:
+                wsview._PROG_CACHE.setdefault(SID, {})['another-absent'] = ''
+                wsview.want_program(SID, 'another-absent')
+            return super().chat(body, rlog)
+    backend = Asking(*[[('list_dir', {'path': '.'})] for _ in range(5)])
     wsview.want_body(SID, 'Cargo.toml')
     wsview.want_program(SID, 'cargo')
-    h = Harness(ws)
     with start_in(Wire(tmp_path, backend), ws) as w:
-        w.drive(h)
-        assert ledger_kinds() == ['survey', 'list_dir']                           # asked before the model's first call
-        assert wsview.pending(SID) == ([], [], [])
-        # nothing was asked of the harness a second time while the model only listed; an absence a survey reported is not a reason by itself
-        wsview.want_program(SID, 'no-such-program-here')
-        w.messages += [{'role': 'user', 'content': 'again'}]
-        w.post()
-        assert ledger_kinds()[:2] == ['survey', 'list_dir'] and ledger_kinds().count('survey') == 2     # a NEW question: one more survey, after the model acted
-        wsview._PROG_CACHE.setdefault(SID, {})['no-such-program-here'] = ''
-        wsview.want_program(SID, 'no-such-program-here')                           # the absence is re-checked with the next landed write, not at every request
-        w.messages += [{'role': 'user', 'content': 'again'}]
-        w.post()
-        assert ledger_kinds().count('survey') == 2
+        w.drive(Harness(ws))
+        kinds = ledger_kinds()
+        assert kinds[:2] == ['survey', 'list_dir']                                  # asked before the model's first call
+        # a new question after the model's second call: one more survey, but not at the very next request (two turns apart); the absence adds none
+        assert kinds.count('survey') == 2 and wsview.pending(SID)[1] == ['another-absent']
+        assert kinds.index('survey', 1) > kinds.index('list_dir', 1)
 
 
 def test_one_survey_every_fourth_landed_write_and_the_first_one(tmp_path):

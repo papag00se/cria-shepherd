@@ -28,6 +28,7 @@ from .opsteps import Final, Issue
 
 SURVEY = 'survey'
 INVENTORY = 'inventory'
+SURVEY_GAP = 2          # model turns between two surveys that nothing landed for (a question waiting, the gate's checks): a question nobody can answer never makes one per request
 SURVEY_EVERY = 4        # landed file mutations between surveys once the view is populated: four is often enough to see the file the coder wrote two turns ago without re-listing the repo every turn
 WHATS = ('vls', 'vread', 'vrun', 'vrm')
 WAVE = 16               # calls in one reply
@@ -368,8 +369,8 @@ class SurveyOps:
     def _survey_due(self, session: str, messages: list) -> bool:
         """Whether a survey should be asked now, on cria's own cadence (the one the survey always had, no longer carried by another call):
 
-        * a question the view could not answer is waiting (a body, a program, a path outside the workspace) or the completion gate's
-          checks have run, and the model has done something since the last survey (never two in a row on nothing);
+        * a question the view could not answer is waiting (a body, a program, a path outside the workspace; an absence a survey reported
+          is not a new question) or the completion gate's checks have run, and ``SURVEY_GAP`` turns have passed since the last survey;
         * or a file mutation landed since the last survey, and either no survey has ever run, or ``SURVEY_EVERY`` calls have landed,
           or any question waits (an absence a survey reported is re-asked at the next one).
         Never while a survey is in flight."""
@@ -381,23 +382,23 @@ class SurveyOps:
         landed = sum(1 for o in ledger_ops[last + 1:] if o.kind == 'mutate' and o.final is not None
                      for r in o.final.get('results') or () if r.get('o') == 'landed')
         asked = {st.id for i in surveys for st in ledger_ops[i].steps.values()}
-        acted = last < 0 or self._acted_since(messages, asked)
+        turns = 99 if last < 0 else self._turns_since(messages, asked)
         waiting = any(wsview.pending(session))
-        if wsview.fresh_demands(session) and acted:
+        if wsview.fresh_demands(session) and turns >= SURVEY_GAP:
             return True
-        return bool(landed and acted and (last < 0 or landed >= SURVEY_EVERY or waiting))
+        return bool(landed and turns >= 1 and (last < 0 or landed >= SURVEY_EVERY or waiting))
 
     @staticmethod
-    def _acted_since(messages: list, asked: set) -> bool:
-        """The model (or the harness) made a call after the last survey call in the history."""
-        seen = False
+    def _turns_since(messages: list, asked: set) -> int:
+        """How many turns of calls (assistant messages with tool calls) came after the last survey call in the history."""
+        turns = 0
         for m in reversed(messages):
             if isinstance(m, dict) and m.get('role') == 'assistant':
                 ids = [c.get('id') for c in m.get('tool_calls') or () if isinstance(c, dict)]
                 if any(i in asked for i in ids):
-                    return seen
-                seen = seen or bool(ids)
-        return True
+                    return turns
+                turns += bool(ids)
+        return turns
 
     # ---------------------------------------------------------------- deciding
     def _v_after(self, op, steps: list):

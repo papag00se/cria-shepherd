@@ -237,7 +237,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
         wsview.clear_pending(session, wants['bodies'], wants['progs'], wants['outside'])
         wsview.clear_refresh(session)
         if log is not None:
-            log.emit('wsview.survey_issued', bodies=len(wants['bodies']), programs=len(wants['progs']), outside=len(wants['outside']))
+            log.emit('wsview.survey_issued', bodies=len(wants['bodies']), programs=len(wants['progs']), outside=len(wants['outside']),
+                     asked=[*wants['bodies'][:4], *wants['progs'][:2], *wants['outside'][:2]])
         return calls
 
     @staticmethod

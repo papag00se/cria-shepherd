@@ -32,7 +32,7 @@ def _no_questions_outlive_their_test():
     from cria import wsview
     def clear():
         for table in (wsview._BODY_MISSES, wsview._PROG_MISSES, wsview._OUTSIDE_MISSES, wsview._PROG_CACHE, wsview._BODY_CACHE,
-                      wsview._UNANSWERED_READS):
+                      wsview._UNANSWERED_READS, wsview._BODY_ABSENT):
             table.clear()
         wsview._REFRESH.clear()
     clear()

@@ -1000,8 +1000,11 @@ class View:
     def _ingest_blob(self, survey: "Survey") -> None:
         for rel, size in survey.refused.items():
             self._undeliverable[rel] = int(size)
+            if size == ABSENT:
+                _remember_absent(self._sess, rel)
         for rel, raw in survey.bodies.items():
             self._set_body(rel, raw)
+            _forget_absent(self._sess, rel)
 
     def _set_body(self, rel: str, raw: bytes) -> None:
         self._record_body(rel, raw)
@@ -1591,6 +1594,25 @@ def _remember(store: dict[str, list[str]], sess: str, item: str) -> None:
     del q[:-_MISS_MAX]
 
 
+# Paths a survey of this session reported ABSENT. A command that may have changed the tree voids the view's own answer (the file may exist
+# now), so a reader asks again; but a re-check of an absence is not a new question, and is asked with the next landed write's survey, never at
+# every request.
+_BODY_ABSENT: dict[str, set[str]] = {}
+
+
+def _remember_absent(sess: str, rel: str) -> None:
+    if sess and rel:
+        if len(_BODY_ABSENT) > 512:
+            _BODY_ABSENT.clear()
+        bucket = _BODY_ABSENT.setdefault(sess, set())
+        if len(bucket) < 256:
+            bucket.add(rel)
+
+
+def _forget_absent(sess: str, rel: str) -> None:
+    _BODY_ABSENT.get(sess, set()).discard(rel)
+
+
 def want_body(sess: str, rel: str) -> None:
     _remember(_BODY_MISSES, sess, rel)
 
@@ -1643,8 +1665,8 @@ def fresh_demands(sess: str) -> bool:
     answered), or a refresh the gate wants? An absence a survey already reported is re-checked on the next write's survey, not on
     every request."""
     bodies, progs, outside = pending(sess)
-    cached = _PROG_CACHE.get(sess) or {}
-    return bool(sess in _REFRESH or bodies or outside or any(cached.get(name) != "" for name in progs))
+    cached, gone = _PROG_CACHE.get(sess) or {}, _BODY_ABSENT.get(sess) or ()
+    return bool(sess in _REFRESH or any(rel not in gone for rel in bodies) or outside or any(cached.get(name) != "" for name in progs))
 
 
 def pending(sess: str) -> tuple[list[str], list[str], list[str]]:
