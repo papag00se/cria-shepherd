@@ -317,8 +317,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             session = gateops.running_session(text) if gate_run else None       # the run goes on in a session of the harness's own
             return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc), **({'said': said} if said else {}),
                                                               **({'session': session} if session else {})}, 'text': '', 'wire': len(text)}
-        return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
-                'wire': len(text)}
+        data = inventoryops.condense(frame.data) if step is not None and step.what in inventoryops.CTAGS_OUTPUT else frame.data.decode('utf-8', 'surrogateescape')
+        return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': data, 'wire': len(text)}
 
     def _advance(self, session: str, op_ids: set, present: set, log) -> list:
         """Decide each operation's next step from the ledger alone. Returns the primitive calls the harness has not seen:

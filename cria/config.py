@@ -650,17 +650,20 @@ class HarnessConfig:
     The ``symbols_*`` limits bound the initial inventory's ctags step (docs/harness-programs.md, "The ctags inventory's bound"). A file's
     symbol list is all or nothing: a file over ``symbols_max_file_bytes`` is not handed to ctags; one with more than ``symbols_max_per_file``
     symbols, or whose output lies beyond the ``symbols_max_output_bytes`` one inventory reads back, is listed with ``symbols: null`` (what the
-    inventory already says "unavailable" means). Measured over 28,001 code files of this machine's repositories: size p99 132 KB, p99.9 1.4 MB,
-    over 1 MiB 0.18% (bundles, generated parsers); symbols p99 324, p99.9 3,088, over 500 0.7% (bundles, generated bindings); output about 170 B
-    per symbol, so 2 MiB is about 12,000 symbols, more than the 12,000-character listing the first coder turn can show of any tree."""
+    inventory already says "unavailable" means). ``symbols_budget_tokens`` is what the symbols the first coder turn is shown may take of its context
+    (cria's own chars/4 estimate of the symbols as listed): files the configured reasoner judges most related to the task get theirs first, whole
+    or not at all. Measured over 28,001 code files of this machine's repositories: size p99 132 KB, p99.9 1.4 MB, over 1 MiB 0.18% (bundles,
+    generated parsers); symbols p99 324, p99.9 3,088, over 500 0.7% (bundles, generated bindings); ctags's terse format is about 60-110 B per tag
+    (path and line included)."""
 
     safe_path: str = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
     symbols_max_file_bytes: int = 1_048_576
     symbols_max_per_file: int = 500
-    symbols_max_output_bytes: int = 2_097_152
+    symbols_max_output_bytes: int = 524_288
+    symbols_budget_tokens: int = 1_000
 
     def __post_init__(self):
-        for name in ("symbols_max_file_bytes", "symbols_max_per_file", "symbols_max_output_bytes"):
+        for name in ("symbols_max_file_bytes", "symbols_max_per_file", "symbols_max_output_bytes", "symbols_budget_tokens"):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
                 raise ValueError(f"[harness] {name} must be a positive integer, got {value!r}")

@@ -11,6 +11,7 @@ import pytest
 from survey_fixtures import drive_with_ops, inventory_of_disk
 
 from cria import initial_inventory, inventoryops, wsview
+from cria.content_reduce import est_tokens
 
 
 def ctags_available():
@@ -107,16 +108,16 @@ def test_the_output_one_inventory_reads_back_is_bounded_and_a_file_is_listed_who
     same tree always gives the same answer."""
     for i in range(30):
         (tmp_path / f'f{i:02}.py').write_text(''.join(f'def f{i}_{j}(): pass\n' for j in range(300)))
-    limits = lambda budget: {'file_bytes': 1 << 20, 'symbols': 500, 'output_bytes': budget}
+    limits = lambda budget: {**inventoryops.DEFAULT_LIMITS, 'output_bytes': budget}
     free_ran, ran = [], []
     everything = inventory_of_disk(tmp_path, facts=False, limits=limits(100 << 20), ran=free_ran)['files']
-    first = inventory_of_disk(tmp_path, facts=False, limits=limits(300_000), ran=ran)['files']
-    again = inventory_of_disk(tmp_path, facts=False, limits=limits(300_000), restart=True)['files']
+    first = inventory_of_disk(tmp_path, facts=False, limits=limits(60_000), ran=ran)['files']
+    again = inventory_of_disk(tmp_path, facts=False, limits=limits(60_000), restart=True)['files']
     assert [i['symbols'] for i in first] == [i['symbols'] for i in again]                  # a pure function of the tree and the limits
     listed = [i['path'] for i in first if i['symbols'] is not None]
     assert 3 <= len(listed) < 30 and listed == [f'f{i:02}.py' for i in range(len(listed))]    # a prefix of the path order
     assert all(len(i['symbols']) == 300 and i['symbols'] == e['symbols'] for i, e in zip(first, everything) if i['symbols'] is not None)
-    assert len(ran) < len(free_ran) and len(ran) <= 3 + 300_000 // 8_000                    # the pages read are bounded by the budget, not by the output
+    assert len(ran) < len(free_ran) and len(ran) <= 4 + 60_000 // 8_000                    # the pages read are bounded by the budget, not by the output
 
 
 def test_the_indexer_missing_is_uniform_and_what_each_file_is_is_decided_from_its_bytes(tmp_path, no_ctags):
@@ -186,7 +187,7 @@ def fake_ctags(tmp_path, body):
     return fake, log
 
 
-FAKE_TAGS = 'while read n; do printf \'{"_type":"tag","name":"sym_%s","path":"%s","kind":"function"}\\n\' "$n" "$n"; done'
+FAKE_TAGS = 'while read n; do printf \'sym_%s\\t%s\\t1;"\\tfunction\\n\' "$n" "$n"; done'
 
 
 @needs_ctags
@@ -215,7 +216,9 @@ def test_the_indexer_is_never_run_in_its_sandbox_mode_and_never_asked_for_an_xml
     assert os.path.basename(tmpdir).startswith('.ctx-run-')      # a sandboxed harness's /tmp is read-only and `-f -` still makes a temporary file
     assert '_interactive' not in argv
     excluded = next(a for a in argv.split() if a.startswith('--languages=')).removeprefix('--languages=').split(',')
-    assert sorted(excluded) == sorted('-' + p for p in inventoryops.XML_PARSERS)
+    assert set('-' + p for p in inventoryops.XML_PARSERS) <= set(excluded)
+    assert sorted(excluded) == sorted('-' + p for p in inventoryops.XML_PARSERS + inventoryops.DOC_PARSERS)
+    assert '--output-format=u-ctags' in argv and '--output-format=json' not in argv and '--kinds-Python=cfm' in argv           # the terse format, the kinds listed
 
 
 def test_an_indexer_killed_by_a_signal_is_reported_for_its_files_and_never_run_again(tmp_path, monkeypatch):
@@ -458,3 +461,99 @@ def test_an_inventory_answered_by_a_restarted_cria_is_the_same_inventory_and_a_c
         return text
     again = inventory_of_disk(tmp_path, alter=alter, facts=False)
     assert cut['n'] == 2 and {i['path']: (i['size'], i['blank'], i.get('digest')) for i in again['files']} == steady_view
+
+
+# ---------------------------------------------------------------- the symbols the coder is shown: a token budget, files related to the task first, whole or not at all
+def _symbols(n, prefix='sym'):
+    return [{'name': f'{prefix}_{i}', 'kind': 'function'} for i in range(n)]
+
+
+def _shown(text):
+    """``{path: symbols}`` of the files the rendered inventory lists (its last JSON line before any trailing note)."""
+    import json
+    line = next(l for l in reversed(text.split('\n')) if l.startswith('[{'))
+    return {item['path']: item['symbols'] for item in json.loads(line)}
+
+
+def _data(sizes, budget=1000):
+    return {'files': [{'path': f'f{i:02}.py', 'size': 10, 'symbols': _symbols(n, f'f{i:02}') if n else None, 'blank': None, 'observed_at': 0.0}
+                      for i, n in enumerate(sizes)], 'symlinks': [], 'errors': [], 'excluded_names': ['.git'], 'symbol_indexer_error': None, 'symbols_budget_tokens': budget}
+
+
+def test_symbols_that_fit_the_budget_are_all_listed_and_the_text_is_what_it_always_was():
+    data = _data([2, 0, 1])
+    text = initial_inventory.render(data, lambda item: pytest.fail('a tree whose symbols fit asks nobody'))
+    assert text.endswith('[{"path":"f00.py","size":10,"symbols":[{"name":"f00_0","kind":"function"},{"name":"f00_1","kind":"function"}]},'
+                         '{"path":"f01.py","size":10,"symbols":null},{"path":"f02.py","size":10,"symbols":[{"name":"f02_0","kind":"function"}]}]')
+
+
+def test_symbols_over_the_budget_are_listed_for_whole_files_only_and_never_more_than_the_budget():
+    data = _data([20] * 10, budget=300)
+    events = []
+    shown = _shown(initial_inventory.render(data, None, emit=lambda k, **f: events.append((k, f))))
+    listed = {p: s for p, s in shown.items() if s is not None}
+    assert listed and len(listed) < 10 and list(listed) == [f'f{i:02}.py' for i in range(len(listed))]          # no reasoner: path order
+    assert all(s == _symbols(20, p[:3]) for p, s in listed.items())                                             # each file whole
+    assert sum(est_tokens(__import__('json').dumps(s, separators=(',', ':'))) for s in listed.values()) <= 300     # the budget, by the estimator the context floor uses
+    assert len(shown) == 10                                                                                     # every file is still listed
+    kinds = [k for k, _ in events]
+    assert 'loop.initial_inventory_symbols_unranked' in kinds and dict(events)['loop.initial_inventory_symbols']['ranked_by'] == 'path order'
+
+
+def test_files_the_reasoner_judges_related_get_their_symbols_first_in_file_order_and_unrelated_ones_never():
+    data = _data([20] * 10, budget=300)
+    related = {'f07.py', 'f03.py', 'f09.py', 'f05.py', 'f01.py'}
+    asked = []
+
+    def ask(item):
+        asked.append(item['path'])
+        return 'RELEVANT' if item['path'] in related else 'UNRELATED'
+    events = []
+    shown = _shown(initial_inventory.render(data, ask, emit=lambda k, **f: events.append((k, f))))
+    listed = [p for p, s in shown.items() if s is not None]
+    assert listed == sorted(related)[:len(listed)] and 1 <= len(listed) < len(related)       # the related ones, whole, until the budget is spent
+    assert 'loop.initial_inventory_symbols_unranked' not in [k for k, _ in events] and dict(events)['loop.initial_inventory_symbols']['ranked_by'] == 'reasoner'
+    assert initial_inventory.render(data, ask) == initial_inventory.render(data, ask)       # the same inventory, the same answer
+    none_related = _shown(initial_inventory.render(data, lambda item: 'UNRELATED'))
+    assert all(s is None for s in none_related.values()) and len(none_related) == 10        # nothing is related: no symbols, the files are all there
+
+
+def test_a_reasoner_that_cannot_judge_falls_back_to_path_order_and_says_so():
+    data = _data([20] * 10, budget=300)
+
+    def broken(item):
+        raise RuntimeError('no reasoner')
+    events = []
+    by_error = initial_inventory.render(data, broken, emit=lambda k, **f: events.append((k, f)))
+    assert by_error == initial_inventory.render(data, None)
+    assert dict(events)['loop.initial_inventory_symbols_unranked']['reason'] == 'reasoner could not judge' and events[0][1]['level'] == 'warn'
+    mixed = _shown(initial_inventory.render(data, lambda item: 'RELEVANT' if item['path'] == 'f08.py' else None))
+    assert [p for p, s in mixed.items() if s is not None][0] == 'f08.py'                      # the one it could judge first, then the others by path
+
+
+def test_a_large_inventory_lists_symbols_only_for_the_selected_files_within_the_budget():
+    data = _data([20] * 10, budget=600)
+    text = initial_inventory.render(data, lambda item: 'RELEVANT' if item['path'] in ('f02.py', 'f04.py', 'f06.py') else 'UNRELATED', budget_chars=300)
+    shown = _shown(text)
+    assert set(shown) == {'f02.py', 'f04.py', 'f06.py'} and all(s == _symbols(20, p[:3]) for p, s in shown.items())
+
+
+def test_the_ledger_keeps_what_cria_decides_from_not_the_pages_of_ctags_output():
+    raw = ''.join(f'symbol_{i}\tpkg/module_{i // 5}.py\t{i};"\tfunction\n' for i in range(400)) + 'tail_without_newline'
+    kept = inventoryops.condense(raw.encode())
+    import json
+    page = json.loads(kept)
+    assert ';"' in page['h'] and ';"' not in json.dumps(page['g']) and 'pkg/module_3.py' in json.dumps(page['g']) and len(kept) < len(raw) * 0.7      # only the line a previous page began is kept as it was
+    assert inventoryops.condense(b'') == '' and '"n":0' in inventoryops.condense(b'no line break at all')
+
+
+@needs_ctags
+def test_where_the_pages_end_changes_nothing_a_line_broken_by_a_page_is_put_back_together(tmp_path, monkeypatch):
+    for i in range(12):
+        (tmp_path / f'module_{i:02}.py').write_text(''.join(f'def function_number_{i}_{j}(): pass\n' for j in range(40)) + 'class Last:\n    def method(self): pass\n')
+    limits = lambda budget: {**inventoryops.DEFAULT_LIMITS, 'output_bytes': budget}
+    reference = {b: [i['symbols'] for i in inventory_of_disk(tmp_path, facts=False, limits=limits(b))['files']] for b in (10**7, 20_000)}
+    monkeypatch.setattr(inventoryops, 'PAGE_BYTES', 300)             # lines are cut by almost every page
+    for budget, expected in reference.items():
+        assert [i['symbols'] for i in inventory_of_disk(tmp_path, facts=False, limits=limits(budget))['files']] == expected
+    assert all(s and len(s) == 42 for s in reference[10**7]) and 0 < len([s for s in reference[20_000] if s]) < 12      # whole, or the budget's cut: whole files only

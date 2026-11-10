@@ -92,15 +92,18 @@ def test_a_safe_path_with_a_control_character_is_rejected_at_the_config_and_at_t
 
 def test_the_symbol_limits_are_config_values_documented_with_defaults_and_recorded_in_the_inventory_operation(tmp_path):
     from cria import inventoryops
-    assert (HarnessConfig().symbols_max_file_bytes, HarnessConfig().symbols_max_per_file, HarnessConfig().symbols_max_output_bytes) == (1_048_576, 500, 2_097_152)
-    assert inventoryops.DEFAULT_LIMITS == {'file_bytes': 1_048_576, 'symbols': 500, 'output_bytes': 2_097_152}
+    assert (HarnessConfig().symbols_max_file_bytes, HarnessConfig().symbols_max_per_file, HarnessConfig().symbols_max_output_bytes) == (1_048_576, 500, 524_288)
+    assert inventoryops.DEFAULT_LIMITS == {'file_bytes': 1_048_576, 'symbols': 500, 'output_bytes': 524_288, 'tokens': 1_000}
+    assert HarnessConfig().symbols_budget_tokens == 1_000
     for bad in (0, -1, 1.5, '5', True):
         with pytest.raises(ValueError, match='symbols_max_per_file'):
             HarnessConfig(symbols_max_per_file=bad)
+        with pytest.raises(ValueError, match='symbols_budget_tokens'):
+            HarnessConfig(symbols_budget_tokens=bad)
     path = tmp_path / 'c.toml'
-    path.write_text('[harness]\nsymbols_max_file_bytes = 2000\nsymbols_max_per_file = 7\nsymbols_max_output_bytes = 90000\n')
+    path.write_text('[harness]\nsymbols_max_file_bytes = 2000\nsymbols_max_per_file = 7\nsymbols_max_output_bytes = 90000\nsymbols_budget_tokens = 250\n')
     limits = inventoryops.limits_of(Config.load(path).harness)
-    assert limits == {'file_bytes': 2000, 'symbols': 7, 'output_bytes': 90000}
+    assert limits == {'file_bytes': 2000, 'symbols': 7, 'output_bytes': 90000, 'tokens': 250}
     engine = ops.Ops(inventory_limits=limits)
     _, calls = engine.issue_inventory('s', SHELL, str(tmp_path))
     assert next(iter(engine.ledger.ops('s').values())).ctx['limits'] == limits and calls

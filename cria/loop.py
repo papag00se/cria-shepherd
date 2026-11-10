@@ -3038,7 +3038,7 @@ class Loop:
                             self._ctx.reasoner_role.apply(call, internal=True, rlog=rlog)
                             rlog.phase = 'initial-inventory'
                             return initial_inventory.verdict(_parse_completion(self._ctx.reasoner_buffered_chat(call, rlog)))
-                    initial_listing = initial_inventory.render(data, ask)
+                    initial_listing = initial_inventory.render(data, ask, emit=rlog.emit)
                     bootstrap.initial_listing = initial_listing
                 except (ValueError, TypeError, KeyError, UnicodeError):
                     rlog.emit('loop.initial_inventory_unavailable', level='warn')
