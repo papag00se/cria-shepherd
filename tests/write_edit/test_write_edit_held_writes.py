@@ -153,10 +153,56 @@ def test_only_a_whole_text_in_the_conversation_lifts_the_hold(ws, label, look, s
     assert write_pom(ws, look(ws))[0] is seen
 
 
-def test_a_read_the_ledger_remembers_but_the_window_lost_is_not_the_text_while_the_coders_own_write_is(ws):
-    """seg-10: the durable ledger said pom.xml was read, but the result was compacted away; the coder's own whole write persists."""
+def test_compacted_read_and_own_write_ledgers_do_not_prove_visible_content(ws):
+    """Neither durable ledger substitutes for the coder's retained whole-file evidence."""
     assert write_pom(ws, ledger_read=True)[0] is False
-    assert write_pom(ws, written={"pom.xml": (11, "1 lines")})[0] is True
+    assert write_pom(ws, written={"pom.xml": (11, "1 lines")})[0] is False
+
+
+@pytest.mark.parametrize('retained,mutated,held', [(True, False, False), (False, False, True), (True, True, True)])
+def test_own_write_credit_requires_retained_history(tmp_path, retained, mutated, held):
+    from cria import writeproxy
+    from write_edit_helpers import ENVELOPE, lower, run
+    target = tmp_path / 'x.txt'
+    target.write_text('original\n')
+    first = lower([call('write_file', {'path': 'x.txt', 'content': 'owned\n'}, 'first')], root=str(tmp_path))[0]
+    done = run(first, tmp_path)
+    result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
+                               'content': ENVELOPE.format(rc=proc.returncode) + proc.stdout}
+    raw = [{'role': 'assistant', 'tool_calls': [first]}, result(first, done)]
+    if mutated:
+        change = call('exec_command', {'cmd': "printf 'changed\\n' > x.txt"}, 'change')
+        outcome = run(change, tmp_path)
+        raw += [{'role': 'assistant', 'tool_calls': [change]}, result(change, outcome)]
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:own-representation'))
+    try:
+        history = writeproxy.represent_inbound(raw, workspace_root=str(tmp_path))
+        assert denial.landed(history[1])
+    finally:
+        wsview.unbind(token)
+    view = wsview.View(str(tmp_path), 'sid:own-fresh')
+    token = wsview.bind(view)
+    try:
+        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                         capture_output=True, text=True, check=True).stdout)
+        assert view.apply_initial_inventory(data, str(tmp_path))
+        driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                           runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+        session = loop._plan_off_session(loop._synthetic_plan('task'), '')
+        session.written_files = loop._extract_writes(history)
+        assert 'x.txt' in session.written_files
+        driver._put_session('sid:own', session)
+        visible = history if retained else []
+        check = driver.unread_target_check('sid:own', visible, str(tmp_path))
+        lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'second')],
+                        root=str(tmp_path), unread_target=check)[0]
+        reply = run(lowered, tmp_path)
+        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
+                                             workspace_root=str(tmp_path))
+        assert denial.refused(shown[1]) is held
+        assert target.read_text() == (('changed\n' if mutated else 'owned\n') if held else 'candidate\n')
+    finally:
+        wsview.unbind(token)
 
 
 @pytest.mark.parametrize('peer,batch,held', [

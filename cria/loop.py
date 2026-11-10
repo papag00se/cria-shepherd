@@ -6529,7 +6529,7 @@ def _injected_fence_texts(sess, messages: list[dict] | None = None) -> list[str]
 
 def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
     """Does the coder HOLD this workspace file's whole text — a whole read whose result is still in the
-    conversation, or its own whole write (the ledger of those is durable: cria composed the bytes)?
+    conversation, or its own whole write whose call and result remain visible?
 
     A RANGED READ IS NOT THE FILE, and a read whose result the harness has since compacted away is not
     in the window (phi4 A4 0047: `pom.xml` lines 1-8 of 29, then a whole-file overwrite; seg-10: the
@@ -6537,7 +6537,6 @@ def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
     consulted here — it still serves the ⟦ctx:facts⟧ listing, where "you looked once" is the fact."""
     seen = _extract_whole_reads(messages or [], view)
     seen |= set(_extract_writes(messages or []))
-    seen |= set(getattr(sess, "written_files", None) or {})
     # A WHOLE TEXT HANDED TO THE CODER THIS TURN (the ⟦ctx:facts⟧ anchor's restored block) is the whole
     # read the hold asks for: the exact current bytes, in the conversation the coder is answering.
     seen |= set(getattr(sess, "restored_current", None) or {})
@@ -6698,9 +6697,7 @@ def _coder_has_seen_current(view, rel: str, sess, messages: list[dict]) -> bool:
                      if message.get('role') == 'tool' and message.get('tool_call_id') in shell_reads]
     observations += [(idx, tid) for idx, tid, path, *_ in _write_events(messages) if view.rel(path) == rel]
     if not observations:
-        # Only the durable own-write record survives without a visible whole-read event.
-        written = getattr(sess, 'written_files', None) or {}
-        return not view.may_have_changed and any(view.rel(p) == rel for p in written)
+        return False  # a compacted-away own write is no longer visible to the coder
     from . import denial
     position, observed_id = max(observations, key=lambda item: item[0])
     unlanded = denial.unlanded_call_ids(messages)
