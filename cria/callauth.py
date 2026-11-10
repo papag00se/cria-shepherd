@@ -123,14 +123,35 @@ def verify(cid, command: str) -> tuple[str, int] | None:
     return (op, step) if hmac.compare_digest(expected, cid) else None
 
 
+POLL = 'poll session '
+
+
+def poll_content(session: int, chars: str = '') -> str:
+    """The content a poll of a harness's own continuation tool (``write_stdin``) is authenticated by: its session and what it writes. A call has no
+    command line, so this is the text its id's MAC is taken over; the id is cria's, and a call the model writes never verifies."""
+    return f'{POLL}{int(session)}\n{chars}'
+
+
+def content_of(arguments) -> str:
+    """What the id of a call made of ``arguments`` is a MAC over: its shell command, or for a continuation call its session and characters."""
+    from .toolargs import parse_args
+    from .toolwire import _command_of
+    if command := _command_of(arguments):
+        return command
+    args = parse_args(arguments)
+    session = args.get('session_id')
+    if isinstance(session, int) and not isinstance(session, bool) and isinstance(args.get('chars', ''), str):
+        return poll_content(session, args.get('chars', ''))
+    return ''
+
+
 def neutralize(completion: dict) -> dict:
     """Give every model-authored tool call whose id begins ``ctx_`` a neutral new id, so the verified namespace is only ever
     cria's. A call whose id is the MAC of its exact command (one cria issued itself, as the loop does for the inventory) is cria's and is left
     as it is: only the key makes one, and the model never holds it."""
-    from .toolwire import _command_of
     for choice in completion.get('choices') or []:
         for call in (choice.get('message') or {}).get('tool_calls') or []:
             if (isinstance(call, dict) and isinstance(call.get('id'), str) and call['id'].startswith(PREFIX)
-                    and verify(call['id'], _command_of((call.get('function') or {}).get('arguments'))) is None):
+                    and verify(call['id'], content_of((call.get('function') or {}).get('arguments'))) is None):
                 call['id'] = 'call_' + secrets.token_hex(12)
     return completion

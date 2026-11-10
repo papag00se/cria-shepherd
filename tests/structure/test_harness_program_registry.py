@@ -63,4 +63,4 @@ def test_a_registered_module_stays_within_its_budget_and_is_in_the_docs(module):
 
 def test_the_seven_stubs_are_exactly_the_registered_ones():
     assert sorted(harnessprims.STUBS) == ['ls', 'put', 'read', 'rm', 'run', 'search', 'write']
-    assert sum(len(text) for text in harnessprims.STUBS.values()) <= 14_400
+    assert sum(len(text) for text in harnessprims.STUBS.values()) <= 14_500

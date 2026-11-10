@@ -619,7 +619,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
-            if callauth.verify(tc.get("id"), _command_of(fn.get("arguments"))) is not None:
+            if callauth.verify(tc.get("id"), callauth.content_of(fn.get("arguments"))) is not None:
                 rebuilt.append(tc)        # a call cria issued itself (its id is the MAC of this very command): never re-guarded, never lowered
                 continue
             if only_injected and name not in injected:

@@ -44,6 +44,31 @@ class Sandbox:
                               capture_output=True, text=True, timeout=timeout)
 
 
+    def run_until(self, base_url, done, prompt='start', timeout=240):
+        """The pinned Codex as `run` launches it, stopped as soon as `done()` is true (or after `timeout` seconds): a test that wants one thing a scripted
+        model makes happen need not wait for Codex to finish by itself. Returns Codex's return code, None when it was stopped."""
+        import signal
+        (self.home / 'config.toml').write_text(
+            f'model="fixture"\nmodel_provider="local"\n[model_providers.local]\nname="local"\nbase_url="{base_url}"\nwire_api="responses"\n')
+        argv = suite_run._codex_argv(prompt, self.workspace)
+        argv[0] = str(suite_run.RESTORED_CODEX_BINARY)
+        argv.insert(2, '--skip-git-repo-check')
+        proc = subprocess.Popen(argv, cwd=self.workspace, env={**os.environ, 'CODEX_HOME': str(self.home), 'TMPDIR': str(self.scratch)},
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        end = time.monotonic() + timeout
+        try:
+            while proc.poll() is None and time.monotonic() < end and not done():
+                time.sleep(0.25)
+            return proc.returncode
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    proc.wait(10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+
+
 def function_calls(request):
     """The tool calls and outputs of a Responses request: [(call_id, arguments JSON, output text or None)]."""
     calls, outputs = {}, {}

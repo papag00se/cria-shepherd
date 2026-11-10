@@ -35,7 +35,7 @@ from .inventoryops import InventoryOps
 from .readops import LedgerRead, ReadFact, ReadOps
 from .surveyops import SurveyAsk, SurveyOps
 from .writeops import LedgerWrite, WriteOps
-from .toolwire import _command_of, _refusal_command, _shell_call
+from .toolwire import _refusal_command, _shell_call
 
 LIST_DIR = 'list_dir'
 # Records one ls frame asks for, largest first: a frame the harness cut (more than ~10,000 bytes) is asked again smaller.
@@ -270,7 +270,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             if isinstance(m, dict) and m.get('role') == 'assistant':
                 for c in m.get('tool_calls') or ():
                     cid = c.get('id') if isinstance(c, dict) else None
-                    command = _command_of((c.get('function') or {}).get('arguments'))
+                    command = callauth.content_of((c.get('function') or {}).get('arguments'))
                     found = callauth.verify(cid, command) if seen.get(cid) == 1 else None
                     if found is None:
                         continue
@@ -303,12 +303,17 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
 
     @staticmethod
     def _frame_record(op: str, s: int, text: str, step=None) -> dict:
-        nonce = callauth.nonce(op, s)
+        gate_run = step is not None and step.what in gateops.RUNS
+        # A poll of the harness's own session carries no frame of its own: the run's frame (the nonce of the call that started it) arrives in the
+        # first poll after it ended.
+        nonce = callauth.nonce(op, step.args['run'] if gate_run and step.what == 'gpoll' else s)
         try:
             frame = harnessprims.read_frame(text, nonce)
         except harnessprims.FrameUnknown as exc:
             said = gateops.refusal_reason(text)          # the harness's own words when it declined the call (a sandbox refusal prints no frame)
-            return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc), **({'said': said} if said else {})}, 'text': '', 'wire': len(text)}
+            session = gateops.running_session(text) if gate_run else None       # the run goes on in a session of the harness's own
+            return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc), **({'said': said} if said else {}),
+                                                              **({'session': session} if session else {})}, 'text': '', 'wire': len(text)}
         return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
                 'wire': len(text)}
 
@@ -331,18 +336,18 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
                 records = [self._step(op_id, op.ctx, s, what, args, blobs) for s, what, args in action.steps]
                 self.ledger.append(session, *({'t': 'blob', 'op': op_id, 'h': h, 'text': t} for h, t in action.blobs.items()),
                                    *(r[0] for r in records))
-                calls += [self._harness_call(op, r[0]['id'], r[1]) for r in records]
+                calls += [self._harness_call(op, r[0]['id'], r[1], r[0]['what'], r[0]['args']) for r in records]
             else:                  # still waiting for a result; a step an earlier request issued and the harness never saw goes out again
                 wave = max(st.args['wave'] for st in op.steps.values())
-                calls += [self._harness_call(op, st.id, self._command(op_id, op.ctx, st.s, st.what, st.args, op.blobs))
+                calls += [self._harness_call(op, st.id, self._command(op_id, op.ctx, st.s, st.what, st.args, op.blobs), st.what, st.args)
                           for st in sorted(op.steps.values(), key=lambda x: x.s) if st.args['wave'] == wave and st.id not in present]
         return calls
 
     @staticmethod
-    def _harness_call(op: Op, call_id: str, command: str) -> dict:
+    def _harness_call(op: Op, call_id: str, command: str, what: str = '', args: dict | None = None) -> dict:
         """The tool call that hands the harness ``command``: a gate's polls also ask for the time its tool schema offers (a wait is longer than the harness's own yield)."""
         if op.kind == gateops.GATE:
-            return gateops.GateOps._gate_call(op.ctx, ({'id': call_id}, command))
+            return gateops.GateOps._gate_call(op.ctx, call_id, command, what, args)
         return _shell_call(call_id, op.ctx['shell'], command)
 
     # ---------------------------------------------------------------- the decisions
@@ -640,7 +645,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             if isinstance(m, dict) and m.get('role') == 'assistant':
                 for c in m.get('tool_calls') or ():
                     cid = c.get('id') if isinstance(c, dict) else None
-                    if cid not in verified and callauth.verify(cid, _command_of((c.get('function') or {}).get('arguments'))):
+                    if cid not in verified and callauth.verify(cid, callauth.content_of((c.get('function') or {}).get('arguments'))):
                         yield cid
 
     @staticmethod

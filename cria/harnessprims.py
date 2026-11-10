@@ -180,31 +180,34 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 '''
 
 _RUN = r'''import time,subprocess,shutil,stat
-md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(l.split("=",1) for l in base64.b64decode(os.environ["CTX_ENV"]).decode("utf-8","surrogateescape").split("\0") if "=" in l)
+md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(l.split("=",1) for l in base64.b64decode(os.environ["CTX_ENV"]).decode("utf-8","surrogateescape").split("\0") if "=" in l);g=md=="fg"
 try:
-    if md!="start":
+    if md=="wait":
         s=os.lstat(d)
         if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.getuid() or s.st_mode&63:raise OSError(13,"not our run directory")
-    if md=="start":
+    else:
         os.mkdir(d,448)
         with open(W("s.sh"),"wb") as f:f.write(sys.stdin.buffer.read())
-        if os.fork()==0:
-            os.setsid()
-            if os.fork()==0:
-                z=os.open(os.devnull,os.O_RDWR);[os.dup2(z,i) for i in(0,1,2)]
+        if g or os.fork()==0:
+            g or os.setsid()
+            if g or os.fork()==0:
+                z=os.open(os.devnull,os.O_RDWR)
+                g or [os.dup2(z,i) for i in(0,1,2)]
                 with open(W("out"),"wb") as o:
-                    p=subprocess.Popen([sh,W("s.sh")],cwd=cwd or None,env=E,stdin=z,stdout=o,stderr=subprocess.STDOUT,start_new_session=True);to=0
-                    try:c=p.wait(tmo)
-                    except subprocess.TimeoutExpired:os.killpg(p.pid,9);c=p.wait();to=1
+                    p=subprocess.Popen([sh,W("s.sh")],cwd=cwd or None,env=E,stdin=z,stdout=o,stderr=subprocess.STDOUT,start_new_session=True);to=0;e=time.monotonic()+tmo
+                    while 1:
+                        try:c=p.wait(.2);break
+                        except subprocess.TimeoutExpired:
+                            if time.monotonic()>e or not os.path.isdir(d):os.killpg(p.pid,9);c=p.wait();to=1;break
                 open(W("done.tmp"),"w").write(json.dumps(dict(exit=c,timeout=to,size=os.path.getsize(W("out")))));os.rename(W("done.tmp"),W("done"))
-            os._exit(0)
-        os.wait()
+            g or os._exit(0)
+        g or os.wait()
     e=time.monotonic()+wait
     while not os.path.exists(W("done")) and time.monotonic()<e:time.sleep(.05)
     if not os.path.exists(W("done")):out(dict(ok=1,state="running",dir=d))
     r=json.load(open(W("done")));h=hashlib.sha256();b=b""
-    with open(W("out"),"rb") as g:
-        for c in iter(lambda:g.read(1<<20),b""):
+    with open(W("out"),"rb") as q:
+        for c in iter(lambda:q.read(1<<20),b""):
             h.update(c);b+=c if len(b)<6000 else b""
     r.update(ok=1,state="done",dir=d,osha=h.hexdigest(),head=min(6000,r["size"]))
     if keep!="1" and r["size"]<=6000:

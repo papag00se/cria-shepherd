@@ -142,6 +142,42 @@ def test_run_returns_exit_and_output_detached_runs_outlive_the_caller_and_a_dead
     assert paged.header['fsha'] == big.header['osha']
 
 
+def gone(pattern, seconds=6):
+    import subprocess
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if subprocess.run(['pgrep', '-f', pattern], capture_output=True).returncode != 0:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_run_in_the_foreground_answers_in_its_own_call_and_a_deadline_kills_the_group(root, tmp_path):
+    """`fg` is `start` without the detach: the harness's own call is the supervisor, so a harness that keeps a yielded call alive keeps the run alive."""
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+    began = time.monotonic()
+    done = run('run', ['fg', scratch, 'tokf', 10, 1, root, 1], cwd=root, text='echo hello; echo err >&2; sleep 1.5; exit 3')
+    assert (done.header['exit'], done.header['state'], done.data) == (3, 'done', b'hello\nerr\n') and time.monotonic() - began >= 1.5      # it waited for the end
+    assert run('run', ['wait', scratch, 'tokf', 10, 1, root, 1], cwd=root).header['exit'] == 3                   # the run's own directory answers the same afterwards
+    killed = run('run', ['fg', scratch, 'tokg', 1, 1, root, 1], cwd=root, text='sleep 27.1')
+    assert killed.header['timeout'] == 1 and time.monotonic() - began < 8 and gone('[s]leep 27.1')
+    assert run('run', ['fg', scratch, 'tokf', 5, 1, root, 1], cwd=root, text='echo x').header['err'] == 'FileExistsError'
+
+
+@pytest.mark.parametrize('mode', ['start', 'fg'])
+def test_removing_the_run_s_directory_stops_the_run(root, tmp_path, mode):
+    """Abandoning a run is removing its directory (cria's `rm t`, which it issues on every path out of a gate): the supervisor sees it go and kills the group."""
+    import shutil
+    import threading
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+    threading.Timer(1.2, lambda: shutil.rmtree(scratch / '.ctx-run-toka')).start()
+    began = time.monotonic()
+    run('run', ['start' if mode == 'start' else 'fg', scratch, 'toka', 60, 2, root, 1], cwd=root, text='sleep 27.7; echo never')
+    assert gone('[s]leep 27.7') and time.monotonic() - began < 10
+
+
 # ---- phase 3 review, low items -------------------------------------------------------------------------------------
 
 def test_a_fifo_is_refused_without_hanging_and_without_holding_the_directory_lock(root):

@@ -50,19 +50,27 @@ INTENDED = {
 }
 
 
+@pytest.mark.parametrize('continuation', [False, True], ids=['detached', 'foreground'])
 @pytest.mark.parametrize('name', sorted(rig.CASES))
-def test_case(tmp_path, monkeypatch, name):
+def test_case(tmp_path, monkeypatch, name, continuation):
+    """``foreground``: the harness offers a tool to continue a yielded call (Codex's `write_stdin`), so the gate runs in the foreground of its call
+    (Phase 9a); what the model reads of a check that ends in one call is the same either way."""
     import shutil
     if TOOLS.get(name) and not shutil.which(TOOLS[name]):
         pytest.skip(f'no {TOOLS[name]} here')
-    got = rig.run_case(rig.CASES[name], tmp_path, monkeypatch)
+    got = rig.run_case(rig.CASES[name], tmp_path, monkeypatch, continuation=continuation)
     target = os.environ.get('CRIA_CHARACTERIZE')
+    if target and continuation:
+        return
     if target:
         path = pathlib.Path(target)
         data = json.loads(path.read_text()) if path.exists() else {}
         data[name] = got
         path.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False))
         return
+    from cria import privatepaths
+    modes = {r['args'].get('mode') for f in (privatepaths.CRIA_HOME / 'ops').iterdir() for r in map(json.loads, f.read_text().splitlines()) if r['t'] == 'step' and r['what'] == 'grun'}
+    assert modes and modes <= ({'fg', 'wait'} if continuation else {'start', 'wait'}), modes                  # the gate ran the way the harness's tools say it can
     fixture = json.loads(FIXTURE.read_text())
     ws = tmp_path / 'ws'
     assert not [p for p in os.listdir(ws) if p.startswith('MARK-')], "cria's own plumbing ran project code"

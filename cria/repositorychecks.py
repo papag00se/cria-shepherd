@@ -17,7 +17,7 @@ from typing import Callable, Protocol
 
 from . import gateseam, participation, probegate, proberun, prompts
 from .assistcontract import Policy, Reference
-from .shelltool import find_shell_tool, tool_declares_time_budget
+from .shelltool import find_continuation_tool, find_shell_tool, tool_declares_time_budget
 
 GATE_EVERY_CODER_TURNS = 15
 MAX_PROBE_REISSUES = 2
@@ -160,6 +160,7 @@ def compose(source: Input, state: State, services: ProbeServices) -> dict | None
         source.log.emit("loop.gate_error", level="warn", error=str(error))
         state.gate_plan = None
         return None
+    plan.continuation = find_continuation_tool(source.body.get("tools"))
     seam = services.seam()
     call = seam.issue(_session(state), tool, plan) if seam is not None else None
     if call is None:

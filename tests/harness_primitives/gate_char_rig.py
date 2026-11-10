@@ -29,6 +29,9 @@ CHECKS = '⟦ctx:checks'
 SHELL = {'name': 'exec_command', 'parameters': {'type': 'object', 'properties': {'cmd': {'type': 'string'}}, 'required': ['cmd']}}
 
 
+CONTINUATION = {'name': 'write_stdin', 'parameters': {'type': 'object', 'properties': {'session_id': {'type': 'number'}, 'chars': {'type': 'string'}}, 'required': ['session_id']}}
+
+
 class Scripted(FakeUpstream):
     """The shared fake upstream, except that the coder follows the case's script: one reply per coder request, then 'Done.'."""
     def do_POST(self):
@@ -165,8 +168,9 @@ def running_runs():
     return {'.ctx-run-' + gateops.token(op) for op in out - done}
 
 
-def run_case(case, tmp_path, monkeypatch, limit=40):
-    """Drive one case: returns what the model read of the gate, what the harness ran and what is on disk."""
+def run_case(case, tmp_path, monkeypatch, limit=40, continuation=False):
+    """Drive one case: returns what the model read of the gate, what the harness ran and what is on disk. ``continuation``: the harness also offers a tool to
+    continue a yielded call, so the gate runs in the foreground of its call (every case ends in one call: a poll would be a call the rig cannot answer)."""
     monkeypatch.setattr(system1wiring, 'build', lambda *args, **kwargs: None)
     for name, value in (case.get('patch') or {}).items():
         monkeypatch.setattr(probegate, name, value)
@@ -183,7 +187,7 @@ def run_case(case, tmp_path, monkeypatch, limit=40):
     harness = Harness(ws, env=env_extra)
     scratch = harness.cwd + '.scratch'
     env = f'<environment_context><cwd>{ws}</cwd></environment_context>'
-    request = {'model': 'm', 'tools': [{'type': 'function', 'function': SHELL}],
+    request = {'model': 'm', 'tools': [{'type': 'function', 'function': SHELL}, *([{'type': 'function', 'function': CONTINUATION}] if continuation else [])],
                'messages': [{'role': 'user', 'content': t} for t in (env, case.get('task', 'Implement the feature'))]}
     try:
         after = None

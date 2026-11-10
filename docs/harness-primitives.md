@@ -93,10 +93,10 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | `put` | stage one chunk of a payload too big for one command | 1,370 B | `WS G OFF` + stdin |
 | `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
 | `rm` | delete a file, an empty directory or an owned tree | 1,709 B | `ROOT REL MODE EX` |
-| `run` | run a command with a timeout, detached, output to a file | 2,371 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
+| `run` | run a command with a timeout, detached or in the foreground of its call, output to a file | 2,563 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
 | `search` | regex search over a file list cria chose | 1,752 B | `ROOT PATTERN FLAGS MAX MAXFILE SKIP` + stdin |
 
-Total 14,239 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 14,431 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -293,38 +293,41 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 
 `run N MODE TMP TOK TIMEOUT WAIT CWD KEEP`, script text on stdin for `MODE=start`.
 
-* `start` allocates `TMP/.ctx-run-<TOK>` with `mkdir` (mode 0700; `EEXIST` refuses, so a retried start never adopts someone else's directory; cria answers a lost start with `wait` instead), writes the script to `s.sh`, forks twice with `setsid` so the harness reaping its process group cannot cut the run, and the grandchild runs `bash s.sh` in `CWD` with stdin from `/dev/null` and stdout+stderr into `out`, killing the whole process group at `TIMEOUT` seconds. It writes `done` (`{exit, timeout, size}`) atomically when the run ends. The child gets the user's own environment (`PATH` is restored from `CTX_PATH`); only the supervisor's interpreter is isolated.
-* Both modes then wait up to `WAIT` seconds for `done` and answer `state:"running"` (with `dir`) or `state:"done"` with `exit`, `timeout`, `size`, `osha` (sha-256 of the whole output), `head` and a payload of the first ≤ 6,000 output bytes. With `KEEP=0` and a fully inline result the stub deletes the directory it created. Otherwise cria pages the rest with `read` (`ROOT=dir`, `REL=out`) and removes the directory with `rm t` (on every path: a verdict, a deadline, an unreadable page, a cut or lost reply; the directory's name is derived from the token cria chose, so a lost reply needs no `dir` to be removed).
+* `start` allocates `TMP/.ctx-run-<TOK>` with `mkdir` (mode 0700; `EEXIST` refuses, so a retried start never adopts someone else's directory; cria answers a lost start with `wait` instead), writes the script to `s.sh`, forks twice with `setsid` so the harness reaping its process group cannot cut the run, and the grandchild runs `bash s.sh` in `CWD` with stdin from `/dev/null` and stdout+stderr into `out`, killing the whole process group at `TIMEOUT` seconds. It writes `done` (`{exit, timeout, size}`) atomically when the run ends. **`fg` (Phase 9a) is `start` without the detach**: the same directory, the same script, the same supervisor loop, but run by the stub's own process, so a harness that keeps a yielded call alive in a session of its own keeps the run alive (Codex's `exec_command` keeps a call past its 30 s yield and its `write_stdin` polls it); the script's output still goes to `out`, so the call's own output is only the frame, which arrives when the run ends. Measured against the pinned Codex 0.159.3 (harness-programs.md, Phase 7 finding and Phase 9a): every exec runs in its own PID namespace whose PID 1 is `codex-linux-sandbox`, and a process `start` detaches is gone when the exec that started it returns, so under that harness `start` cannot outlive one call and `fg` can. **Abandoning a run is removing its directory**: the supervisor's loop (a `wait(0.2)` on the child) also sees that the directory is gone and kills the group, so cria's `rm t` of a gate's directory, which it issues on every path out of a gate, stops a run that is still going (the deadline, a restart that no longer needs it). The child gets the user's own environment (`PATH` is restored from `CTX_PATH`); only the supervisor's interpreter is isolated.
+* `start` and `wait` then wait up to `WAIT` seconds for `done` (`fg` is called only after the run ended, so it answers at once) and answer `state:"running"` (with `dir`) or `state:"done"` with `exit`, `timeout`, `size`, `osha` (sha-256 of the whole output), `head` and a payload of the first ≤ 6,000 output bytes. With `KEEP=0` and a fully inline result the stub deletes the directory it created. Otherwise cria pages the rest with `read` (`ROOT=dir`, `REL=out`) and removes the directory with `rm t` (on every path: a verdict, a deadline, an unreadable page, a cut or lost reply; the directory's name is derived from the token cria chose, so a lost reply needs no `dir` to be removed).
 
 Why this cannot live in cria: the command has to run where the files are, outlive a harness exec that returns after ~10 s, and be bounded by a timeout that does not depend on any connection to cria. Authority: exactly the harness's, including whatever the project's own checks do (running the project's tests *is* running project code; the supervisor's isolation protects the supervisor, not the child).
 
 ```python
 import time,subprocess,shutil,stat
-md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(l.split("=",1) for l in base64.b64decode(os.environ["CTX_ENV"]).decode("utf-8","surrogateescape").split("\0") if "=" in l)
+md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(l.split("=",1) for l in base64.b64decode(os.environ["CTX_ENV"]).decode("utf-8","surrogateescape").split("\0") if "=" in l);g=md=="fg"
 try:
-    if md!="start":
+    if md=="wait":
         s=os.lstat(d)
         if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.getuid() or s.st_mode&63:raise OSError(13,"not our run directory")
-    if md=="start":
+    else:
         os.mkdir(d,448)
         with open(W("s.sh"),"wb") as f:f.write(sys.stdin.buffer.read())
-        if os.fork()==0:
-            os.setsid()
-            if os.fork()==0:
-                z=os.open(os.devnull,os.O_RDWR);[os.dup2(z,i) for i in(0,1,2)]
+        if g or os.fork()==0:
+            g or os.setsid()
+            if g or os.fork()==0:
+                z=os.open(os.devnull,os.O_RDWR)
+                g or [os.dup2(z,i) for i in(0,1,2)]
                 with open(W("out"),"wb") as o:
-                    p=subprocess.Popen([sh,W("s.sh")],cwd=cwd or None,env=E,stdin=z,stdout=o,stderr=subprocess.STDOUT,start_new_session=True);to=0
-                    try:c=p.wait(tmo)
-                    except subprocess.TimeoutExpired:os.killpg(p.pid,9);c=p.wait();to=1
+                    p=subprocess.Popen([sh,W("s.sh")],cwd=cwd or None,env=E,stdin=z,stdout=o,stderr=subprocess.STDOUT,start_new_session=True);to=0;e=time.monotonic()+tmo
+                    while 1:
+                        try:c=p.wait(.2);break
+                        except subprocess.TimeoutExpired:
+                            if time.monotonic()>e or not os.path.isdir(d):os.killpg(p.pid,9);c=p.wait();to=1;break
                 open(W("done.tmp"),"w").write(json.dumps(dict(exit=c,timeout=to,size=os.path.getsize(W("out")))));os.rename(W("done.tmp"),W("done"))
-            os._exit(0)
-        os.wait()
+            g or os._exit(0)
+        g or os.wait()
     e=time.monotonic()+wait
     while not os.path.exists(W("done")) and time.monotonic()<e:time.sleep(.05)
     if not os.path.exists(W("done")):out(dict(ok=1,state="running",dir=d))
     r=json.load(open(W("done")));h=hashlib.sha256();b=b""
-    with open(W("out"),"rb") as g:
-        for c in iter(lambda:g.read(1<<20),b""):
+    with open(W("out"),"rb") as q:
+        for c in iter(lambda:q.read(1<<20),b""):
             h.update(c);b+=c if len(b)<6000 else b""
     r.update(ok=1,state="done",dir=d,osha=h.hexdigest(),head=min(6000,r["size"]))
     if keep!="1" and r["size"]<=6000:

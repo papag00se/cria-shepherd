@@ -76,7 +76,8 @@ def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, sessi
 
 
 def gate_of_disk(root, candidates=None, *, script=None, sections=None, timeout=60.0, deadline=90.0, wait=2.0, scope=None, env=None, ran=None,
-                 alter=None, restart=False, session="gt", rounds=None, cwd=None, shell=None, workspace=None, step=None, probe_timeout=240.0, skip=()):
+                 alter=None, restart=False, session="gt", rounds=None, cwd=None, shell=None, workspace=None, step=None, probe_timeout=240.0, skip=(),
+                 continuation=None, harness=None):
     """The real gate over the real directory ``root``: the checks (composed by `gatescript.compose` from ``candidates``, or a hand-written ``script`` with
     its ``sections``) are issued as a gate operation and every primitive call is run with bash where the files are, until it is done.
     Returns the `gateops.GateResult` (None while it is not done). ``step(calls, ops)`` may stop the drive early by returning True."""
@@ -91,9 +92,10 @@ def gate_of_disk(root, candidates=None, *, script=None, sections=None, timeout=6
 
     def issue(ops):
         holder["op"], calls = ops.issue_gate(session, shell or SHELL, root=root, script=script, sections=list(sections), timeout=timeout, deadline=deadline,
-                                             wait=wait, facts=facts, shown="", scope=scope)
+                                             wait=wait, facts=facts, shown="", scope=scope, continuation=continuation)
         return calls
-    return _drive(issue, cwd or root, session, env, ran, alter, restart, rounds, lambda ops: ops.gate_of(session, holder["op"]), step=step, skip=skip)
+    return _drive(issue, cwd or root, session, env, ran, alter, restart, rounds, lambda ops: ops.gate_of(session, holder["op"]), step=step, skip=skip,
+                  harness=harness)
 
 
 def _fact(c):
@@ -107,7 +109,8 @@ def probe_of_disk(root, rel, session="pr", env=None, ran=None, alter=None, resta
                   restart, rounds, lambda ops: next(o.final["facts"] for o in ops.ledger.ops(session).values() if o.kind == "probe"))
 
 
-def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=None, skip=()):
+def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=None, skip=(), harness=None):
+    """``harness(call)`` answers each call of cria's with the harness's text (the default runs the command with bash where the files are)."""
     home = tempfile.mkdtemp(prefix="survey-home-")
     saved = privatepaths.CRIA_HOME
     privatepaths.CRIA_HOME = type(saved)(home) / ".cria"
@@ -122,9 +125,12 @@ def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=
             messages.append({"role": "assistant", "tool_calls": calls})
             for tc in calls:
                 index += 1
-                command = json.loads(tc["function"]["arguments"])["cmd"]
+                command = json.loads(tc["function"]["arguments"]).get("cmd") or tc["function"]["name"] + " " + tc["function"]["arguments"]
                 if ran is not None:
                     ran.append(command)
+                if harness is not None:
+                    messages.append({"role": "tool", "tool_call_id": tc["id"], "content": harness(tc)})
+                    continue
                 if index in skip:           # the harness never ran it and answered nothing: a lost call
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": ""})
                     continue

@@ -119,6 +119,22 @@ def tool_declares_time_budget(tool: dict) -> bool:
     return any(f in props for f in _TIME_BUDGET_FIELDS)
 
 
+def find_continuation_tool(tools) -> dict | None:
+    """The tool that continues a shell call the harness yielded (Codex: ``write_stdin``), as ``{name, schema}``, or None.
+
+    By the contract in its schema, never by name: a REQUIRED numeric ``session_id`` (which running call) and a string ``chars`` that is NOT
+    required (what to write; left out, it polls). A harness that offers no such tool cannot keep a command alive after its own call returns."""
+    for t in tools or []:
+        fn = t.get("function", t) if isinstance(t, dict) else {}
+        schema = fn.get("parameters") or {}
+        props = schema.get("properties") or {}
+        required = schema.get("required") or []
+        if (fn.get("name") and (props.get("session_id") or {}).get("type") in ("number", "integer") and "session_id" in required
+                and (props.get("chars") or {}).get("type") == "string" and "chars" not in required):
+            return {"name": fn["name"], "schema": schema}
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Does this command CHANGE something, or only report?
 

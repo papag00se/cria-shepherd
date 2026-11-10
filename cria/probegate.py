@@ -108,6 +108,9 @@ class GatePlan:
     deadline_s: float = 0.0
     # How long ONE poll of this gate may wait for the run to be done, chosen once at compose time from the LAUNCHING tool's own schema.
     poll_wait_s: float = GATE_POLL_WAIT_S
+    # The harness's tool for continuing a call it yielded (`shelltool.find_continuation_tool`), when it offers one: the gate then runs in the foreground of
+    # its call and cria polls the session; without one a check that outlives its call cannot complete.
+    continuation: "dict | None" = None
     # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
     # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
     # again with the network taken away — and it reached the coder in 20 prompts of L5
@@ -300,7 +303,8 @@ def issue(ops, session: str, shell_tool: dict, plan: GatePlan) -> "dict | None":
                   for c in plan.candidates)
     try:
         op, calls = ops.issue_gate(session, shell_tool, root=plan.workspace, script=plan.script, sections=plan.sections, timeout=run_seconds(plan),
-                                   deadline=plan.deadline_s, wait=plan.poll_wait_s, facts=facts, shown=plan.shown, scope=plan.scope)
+                                   deadline=plan.deadline_s, wait=plan.poll_wait_s, facts=facts, shown=plan.shown, scope=plan.scope,
+                                   continuation=plan.continuation)
     except OpsUnavailable:
         return None
     plan.op = op
