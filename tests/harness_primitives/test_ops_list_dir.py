@@ -268,3 +268,43 @@ def test_a_step_written_before_the_cursor_existed_is_re_emitted_without_it():
     ctx = {'path': '.', 'safe': '/usr/bin:/bin'}
     old = {'wave': 0, 'root': '/w', 'rel': '', 'max_i': 0, 'hop': 0}              # no 'after': a ledger written by the previous release
     assert ops.Ops._command('a' * 12, ctx, 0, 'ls', old).count("'[]' ''") == 1
+
+
+def test_a_listing_staged_in_more_than_one_wave_stores_its_text_once_and_asks_for_at_most_sixteen_chunks_per_reply(tmp_path, monkeypatch):
+    """Review (low): every put step held the whole spill text, and every chunk went out in one reply."""
+    from cria import harnessprims
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    monkeypatch.setattr(harnessprims, 'CHUNK_BYTES', 2_000)
+    monkeypatch.setattr(harnessprims, 'PUT_WAVE', 3)
+    for i in range(160):
+        (ws / (f'{i:04}-' + 'n' * 50)).write_text('')
+    backend = ListBackend(ws)
+    harness = Harness(ws)
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        w.drive(harness)
+        target = re.search(r'\./tmp/\w+/stdout-[0-9a-f]{64}\.txt', listing(backend)['content']).group(0)
+        saved = (ws / target).read_text()
+    assert saved.count('\n') == 159 and len(saved.encode()) > 3 * 2_000                    # more than one wave of three chunks
+    records = [json.loads(l) for l in next((privatepaths.CRIA_HOME / 'ops').iterdir()).read_text().splitlines()]
+    assert sum(r['t'] == 'blob' for r in records) == 1 and not [r for r in records if r['t'] == 'step' and 'text' in r.get('args', {})]
+    puts = [r for r in records if r['t'] == 'step' and r['what'] == 'put']
+    assert len(puts) > 3 and sorted({r['args']['wave'] for r in puts}).__len__() >= 2
+    assert all(sum(1 for r in puts if r['args']['wave'] == k) <= 3 for k in {r['args']['wave'] for r in puts})
+
+
+def test_a_directory_link_named_with_a_trailing_slash_lists_what_it_points_to_and_without_it_the_link(tmp_path):
+    """Review (low): `link/` is the target directory (as `ls -la link/` showed it); normpath used to drop the slash."""
+    ws, outside = tmp_path / 'ws', tmp_path / 'outside'
+    (ws / 'real').mkdir(parents=True)
+    outside.mkdir()
+    (ws / 'real' / 'a.py').write_text('x')
+    (outside / 'secret.txt').write_text('s')
+    (ws / 'alias').symlink_to('real')
+    (ws / 'out').symlink_to(outside)
+    backend = ListBackend('alias/', 'alias', 'out/')
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        w.drive(Harness(ws))
+        slash, bare, escaped = (m['content'] for m in backend.tool_results())
+        assert re.fullmatch(r'-rw-r--r-- +1 \S+ \S+ a\.py', slash) and bare.startswith('lrwx') and bare.endswith('alias -> real')
+        assert 'secret.txt' not in escaped and 'outside' in escaped.lower()

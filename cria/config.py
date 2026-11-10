@@ -651,7 +651,7 @@ class HarnessConfig:
 
     def __post_init__(self):
         parts = self.safe_path.split(":") if isinstance(self.safe_path, str) else []
-        if not parts or any(not p.startswith("/") or p != p.strip() or "'" in p for p in parts):
+        if not parts or any(not p.startswith("/") or p != p.strip() or "'" in p or not p.isprintable() for p in parts):
             raise ValueError(f"[harness] safe_path must be absolute directories joined by ':', got {self.safe_path!r}")
 
 

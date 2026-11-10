@@ -64,3 +64,13 @@ def test_a_configured_safe_path_is_what_the_composed_command_and_the_candidate_s
     writeproxy.translate_outbound(completion, SHELL, injected={'list_dir'}, workspace_root='/w',
                                   issue_list_dir=lambda c, a: engine.issue_list_dir('s', SHELL, c, a, workspace_root='/w', level='none'))
     assert '/usr/bin/env -i PATH=/opt/tools/bin:/usr/bin ' in json.loads(completion['choices'][0]['message']['tool_calls'][0]['function']['arguments'])['cmd']
+
+
+@pytest.mark.parametrize('value', ['/usr/bin\n:/bin', '/usr/bin:/b\x07in', '/usr/bin\t', '/usr/\x00bin'])
+def test_a_safe_path_with_a_control_character_is_rejected_at_the_config_and_at_the_composer(value):
+    """Review (low): such a value passed validation and silently broke every primitive (no frame, every call UNKNOWN)."""
+    from cria import harnessprims
+    with pytest.raises(ValueError):
+        HarnessConfig(safe_path=value)
+    with pytest.raises(ValueError):
+        harnessprims.compose('ls', 'ab' * 16, [], safe_path=value)
