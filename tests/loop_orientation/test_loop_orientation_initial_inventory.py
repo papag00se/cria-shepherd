@@ -81,6 +81,8 @@ def test_indexer_unavailable_is_uniform_and_browser_remains_usable(tmp_path, mon
     without_blank = {**data, 'files': [{k: v for k, v in item.items() if k != 'blank'}
                                       for item in data['files']]}
     assert initial_inventory.render(data).encode() == initial_inventory.render(without_blank).encode()
+    assert all(item.get('digest', '') not in initial_inventory.render(data)
+               for item in data['files'] if item.get('digest'))
     from cria.upstream import Upstream
     from loop_orientation_helpers import Log
     upstream = Upstream('http://fixture', context_window=16384, capture_dir=None, capture_rendered=False)

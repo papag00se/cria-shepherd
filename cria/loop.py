@@ -3070,7 +3070,7 @@ class Loop:
                             bootstrap.inventory_observations = {
                                 item['path']: {'blank': item.get('blank'), 'size': item['size'],
                                                'digest': item.get('digest'), 'origin': 'initial_inventory',
-                                               'observed_at': observed_at}
+                                               'observed_at': item.get('observed_at', observed_at)}
                                 for item in data['files']}
                         ask = None
                         if self._ctx.reasoner_role is not None and self._ctx.reasoner_buffered_chat is not None:
@@ -3467,15 +3467,24 @@ class Loop:
             if seen:
                 return admitted('seen')
             blank = view.blank_state(path)
+            if blank is None and view.observation_fingerprint is not None and view.isfile(path) is False:
+                return admitted('missing')
+            # The initial inventory belongs to the session, not the request-local view. Only a
+            # still-valid observation in this exact workspace may supply an otherwise absent fact.
+            inventory = (sess.inventory_observations.get(rel) if rel and sess.inventory_root == view.root else None)
+            from_inventory = blank is None and inventory is not None and inventory.get('blank') is not None
+            if from_inventory:
+                blank = inventory['blank']
             if blank is True:
                 return admitted('blank')
             if blank is None:
-                if view.observation_fingerprint is not None and view.isfile(path) is False:
-                    return admitted('missing')
                 if rlog is not None:
                     rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
                               turn_index=sess.coder_timed_turns, reason='blankness_unavailable')
                 return admitted('unknown')
+            if from_inventory:
+                return prompts.fill(prompts.load_map('unread_target_fact')['sized'], path=rel,
+                                    size=inventory['size'])
             fact = unread_target_fact(sess, view, path, messages, seen=seen)
             return fact if fact else admitted('seen' if seen else 'unresolved')
         return check
@@ -11113,6 +11122,8 @@ def _inventory_shell_targets(command, root):
             return _ANY_PATH
         return [x for x in args if not x.startswith('-')] or _ANY_PATH
     if cmd == 'sed' and any(x == '-i' or x.startswith('-i') or x.startswith('--in-place') for x in args):
+        if any((x.startswith('-i') and x != '-i') or x.startswith('--in-place=') for x in args):
+            return _ANY_PATH  # a backup suffix creates another path
         operands = [x for x in args if not x.startswith('-')]
         return operands[1:] if len(operands) > 1 else _ANY_PATH
     # git tree operations, recursive copies, rsync, extractors, generators, and every other
@@ -11124,6 +11135,16 @@ def _invalidate_inventory_observations(sess, messages, view):
     if not sess.inventory_observations or sess.inventory_root != view.root:
         return
     from . import denial
+    for _, _, path, start, end, text in _read_results_ordered(messages):
+        rel = view.rel(path)
+        fact = sess.inventory_observations.get(rel)
+        if fact and fact.get('digest') and isinstance(text, str) and not start and not end and _read_is_whole(start, end, text):
+            try:
+                changed = _content_digest(text) != fact['digest']
+            except UnicodeError:
+                changed = True
+            if changed:
+                sess.inventory_observations[rel] = {**fact, 'blank': None, 'invalidated_by': 'content_changed'}
     for path, fact in list(sess.inventory_observations.items()):
         digest = fact.get('digest')
         current = view.capture_edit_preimage(path)
@@ -11148,8 +11169,15 @@ def _invalidate_inventory_observations(sess, messages, view):
             elif writeproxy.is_crias_own(command):
                 continue
             if is_shell_tool_name(fn.get('name')):
+                args = _args_of(fn.get('arguments') or '')
                 text = _command_text(fn.get('arguments') or '')
                 targets = _inventory_shell_targets(text, view.root) if text is not None else _ANY_PATH
+                cwd = next((args[k] for k in ('workdir', 'cwd', 'working_directory') if args.get(k)), None)
+                if cwd and targets is not _ANY_PATH:
+                    if not isinstance(cwd, str) or any(c in cwd for c in '$`*?[]{}~'):
+                        targets = _ANY_PATH
+                    else:
+                        targets = [os.path.join(view.root, cwd, target) for target in targets]
             else:
                 targets = _mutation_targets(fn, view.root)
                 if not targets and shelltool.is_write_tool_name(fn.get('name')) and shelltool.is_file_tool_name(fn.get('name')):

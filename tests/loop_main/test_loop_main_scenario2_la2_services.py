@@ -82,7 +82,10 @@ def test_unread_hold_uses_current_inventory_blankness_and_logs_unknown(tmp_path)
 @pytest.mark.parametrize('command,invalidated', [
     ('echo changed > source', {'source'}), ('tee source', {'source'}),
     ('mv source moved', {'source'}), ('rm source', {'source'}), ('sed -i s/a/b/ source', {'source'}),
-    ('git checkout -- .', {'source', 'other'}), ('rm -rf dir', {'source', 'other'}),
+    *[(f'git {op}', {'source', 'other'}) for op in
+      ('checkout -- .', 'restore .', 'reset --hard', 'stash', 'clean -fd', 'switch main',
+       'pull', 'merge main', 'rebase main', 'apply patch')],
+    ('rm -rf dir', {'source', 'other'}),
     ('cp -r dir dest', {'source', 'other'}), ('rsync -a src/ dest/', {'source', 'other'}),
     ('tar xf archive.tar', {'source', 'other'}), ('unzip archive.zip', {'source', 'other'}),
     ('cargo init', {'source', 'other'}), ('npm create vite', {'source', 'other'}),
@@ -120,6 +123,20 @@ def test_inventory_observations_expire_on_native_delete_and_changed_bytes(tmp_pa
         'function': {'name': 'delete_file', 'arguments': json.dumps({'path': 'other'})}}]}]
     loop._invalidate_inventory_observations(sess, history, view)
     assert sess.inventory_observations['other']['invalidated_by'] == 'del'
+
+
+def test_inventory_mutation_targets_respect_shell_workdir(tmp_path):
+    sess = synthetic()
+    sess.inventory_root = str(tmp_path)
+    sess.inventory_observations = {p: {'blank': False, 'size': 3, 'origin': 'initial_inventory',
+        'observed_at': 1.0} for p in ('source', 'sub/source')}
+    history = [{'role': 'assistant', 'tool_calls': [{'id': 'c', 'function': {'name': 'exec_command',
+        'arguments': json.dumps({'cmd': 'echo abc > source', 'workdir': 'sub'})}}]}]
+    loop._invalidate_inventory_observations(sess, history, wsview.View(str(tmp_path), 'sid:cwd'))
+    assert sess.inventory_observations['source']['blank'] is False
+    assert sess.inventory_observations['sub/source']['blank'] is None
+    restored = loop._session_from_dict(loop._session_to_dict(sess))
+    assert restored.inventory_mutation_ids == {'c'}
 
 
 def test_captured_reads_are_credited_before_unknown_blankness(tmp_path):

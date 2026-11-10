@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from cria import denial, initial_inventory, loop, wsview
-from write_edit_helpers import (call, do, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
+from write_edit_helpers import (call, do, run_batch, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
 
 POM = "".join(f"<l{i}>{i}</l{i}>\n" for i in range(29))
 
@@ -124,6 +124,131 @@ def test_listed_blank_files_are_written_and_nonblank_is_read_instead(tmp_path, o
             assert path.read_text() == original
         else:
             assert denial.landed(messages[1]) and path.read_text() == 'replacement'
+    finally:
+        wsview.unbind(token)
+
+
+def inventory_session(tmp_path, sid):
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+        capture_output=True, text=True, check=True).stdout)
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+        runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+    session = loop._plan_off_session(loop._synthetic_plan('task'), '')
+    session.inventory_root = str(tmp_path)
+    session.inventory_observations = {item['path']: {'blank': item.get('blank'), 'size': item['size'],
+        'digest': item.get('digest'), 'origin': 'initial_inventory', 'observed_at': 1.0} for item in data['files']}
+    driver._put_session(sid, session)
+    return driver
+
+
+def test_captured_ruby_batches_hold_only_the_first_unread_readme(tmp_path):
+    """Captured 0006 and 0009 calls; recreate the original landed overwrite for the second batch."""
+    repo = Path(__file__).resolve().parents[2]
+    fixtures = repo / 'tests/fixtures/unread_write'
+    shutil.copytree(repo / 'suite/tasks/shipping-rates-rb/seed', tmp_path, dirs_exist_ok=True)
+    assert (tmp_path / 'README.md').stat().st_size == 456
+    seed = (tmp_path / 'README.md').read_text()
+    driver = inventory_session(tmp_path, 'sid:ruby')
+    history = json.loads((fixtures / 'ruby-verify-0006.json').read_text())['body']['messages']
+    batches = [json.loads((fixtures / f'{n:04d}-coder-s1.response.json').read_text())
+               ['choices'][0]['message']['tool_calls'] for n in (6, 9)]
+    batches = [[tc for tc in batch if tc['function']['name'] != 'task_complete'] for batch in batches]
+    assert [len(batch) for batch in batches] == [9, 9]
+    class Log:
+        def __init__(self): self.events = []
+        def emit(self, kind, **fields): self.events.append((kind, fields))
+    log = Log()
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:ruby'))
+    try:
+        check = driver.unread_target_check('sid:ruby', history, str(tmp_path), log)
+        first = run_batch(batches[0], tmp_path, range(9), root=str(tmp_path), unread_target=check, rlog=log)
+        held = [m for m in first[1:] if denial.read_payload(m) is not None]
+        assert [m['tool_call_id'] for m in held] == ['gQ4zzOKhnobcUDwnNxASRAB6KWXa5PGR']
+        assert denial.read_payload(held[0]) == seed and (tmp_path / 'README.md').read_text() == seed
+        # The original incident did land this write. Recreate that landed result through the real
+        # lowering, so the second captured batch tests own-write credit, not the fixed hold's read.
+        original = next(tc for tc in batches[0] if tc['id'] == held[0]['tool_call_id'])
+        _, _, own = do('write_file', json.loads(original['function']['arguments']), tmp_path,
+                       cid=original['id'], root=str(tmp_path))
+        assert denial.landed(own[1])
+        first[0]['tool_calls'] = [own[0]['tool_calls'][0] if tc['id'] == original['id'] else tc
+                                  for tc in first[0]['tool_calls']]
+        first = [own[1] if m.get('tool_call_id') == original['id'] else m for m in first]
+        check = driver.unread_target_check('sid:ruby', history + first, str(tmp_path), log)
+        second = run_batch(batches[1], tmp_path, range(9), root=str(tmp_path), unread_target=check, rlog=log)
+        assert not [m for m in second[1:] if denial.read_payload(m) is not None]
+        assert [fields['path'] for kind, fields in log.events if kind == 'writeproxy.write_unread_target'] == ['README.md']
+    finally:
+        wsview.unbind(token)
+
+
+@pytest.mark.parametrize('case', ['compact', 'whitespace', 'checkout', 'unlisted', 'delete'])
+def test_inventory_state_survives_compaction_but_not_mutation(tmp_path, case):
+    class Log:
+        def __init__(self): self.events = []
+        def emit(self, event, **fields): self.events.append((event, fields))
+    path = tmp_path / 'target.txt'
+    if case != 'unlisted':
+        path.write_text(' \n\t' if case == 'whitespace' else 'seed content')
+    if case == 'checkout':
+        def git(*args):
+            return subprocess.run(['git', *args], cwd=tmp_path, capture_output=True, text=True, check=True)
+        git('init', '-q')
+        git('add', 'target.txt')
+        git('-c', 'user.email=test@example.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'seed')
+    driver = inventory_session(tmp_path, 'sid:state')
+    log, history = Log(), []
+    if case in ('checkout', 'delete'):
+        command = 'git checkout -- .' if case == 'checkout' else 'rm target.txt'
+        result = subprocess.run(['bash', '-c', command], cwd=tmp_path, capture_output=True, text=True, check=True)
+        history = [{'role': 'assistant', 'tool_calls': [call('exec_command', {'cmd': command}, 'mutation')]},
+                   {'role': 'tool', 'tool_call_id': 'mutation', 'content': result.stdout}]
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:state'))
+    try:
+        check = driver.unread_target_check('sid:state', history, str(tmp_path), log)
+        _, _, result = do('write_file', {'path': 'target.txt', 'content': 'replacement'}, tmp_path,
+                          cid='write', root=str(tmp_path), unread_target=check)
+        if case == 'compact':
+            assert denial.read_payload(result[1]) == 'seed content'
+            assert path.read_text() == 'seed content'
+        else:
+            assert denial.landed(result[1]) and path.read_text() == 'replacement'
+        if case in ('checkout', 'unlisted', 'delete'):
+            assert any(event == 'loop.unread_target_state' and fields['target'] == 'target.txt'
+                       and fields['state'] == 'state_unknown' and fields['reason'] == 'blankness_unavailable'
+                       for event, fields in log.events)
+        if case == 'delete':
+            check = driver.unread_target_check('sid:state', history + result, str(tmp_path), log)
+            _, _, next_result = do('write_file', {'path': 'target.txt', 'content': 'again'}, tmp_path,
+                                   cid='next', root=str(tmp_path), unread_target=check)
+            assert denial.landed(next_result[1]) and path.read_text() == 'again'
+    finally:
+        wsview.unbind(token)
+
+
+def test_changed_same_size_read_invalidates_inventory_even_after_compaction(tmp_path):
+    path = tmp_path / 'target.txt'
+    path.write_text('abc')
+    driver = inventory_session(tmp_path, 'sid:changed')
+    path.write_text('xyz')
+    _, _, read = do('read_file', {'path': 'target.txt'}, tmp_path, cid='read',
+                    injected=('read_file',), root=str(tmp_path))
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:changed'))
+    try:
+        check = driver.unread_target_check('sid:changed', read, str(tmp_path))
+        assert check('target.txt') == ''  # the actual read has credit
+        assert driver._store.get('sid:changed').inventory_observations['target.txt']['blank'] is None
+        # Dropping the read must not revive the older inventory observation.
+        class Log:
+            def __init__(self): self.events = []
+            def emit(self, kind, **fields): self.events.append((kind, fields))
+        log = Log()
+        compacted = driver.unread_target_check('sid:changed', [], str(tmp_path), log)
+        _, _, result = do('write_file', {'path': 'target.txt', 'content': 'new'}, tmp_path,
+                          root=str(tmp_path), unread_target=compacted)
+        assert denial.landed(result[1])
+        assert any(k == 'loop.unread_target_state' and f['reason'] == 'blankness_unavailable'
+                   for k, f in log.events)
     finally:
         wsview.unbind(token)
 

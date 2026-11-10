@@ -175,6 +175,7 @@ indexer = Indexer()
 '''
 
 _SYMBOLS = r'''                item['blank'] = None
+                item['observed_at'] = time.time()
                 descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
                 with os.fdopen(descriptor, 'rb') as source:
                     opened = os.fstat(source.fileno())
@@ -415,7 +416,7 @@ def browse_command(root: str) -> str:
 def render(data: dict, ask=None, *, root: str = '.', budget_chars: int = 12000) -> str:
     """Show whole small inventories or a labelled bounded selection, with a re-survey route."""
     # Classification is a private workspace fact, not part of the coder's inventory.
-    files = [{k: v for k, v in item.items() if k != 'blank'} for item in data['files']]
+    files = [{k: v for k, v in item.items() if k not in ('blank', 'digest', 'observed_at')} for item in data['files']]
     labels = prompts.load_map('initial_inventory_labels')
     dump = lambda value: json.dumps(value, ensure_ascii=True, separators=(',', ':'))
     issues = {'symlinks': data.get('symlinks', []), 'errors': data.get('errors', [])}
