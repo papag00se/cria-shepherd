@@ -42,6 +42,17 @@ class LedgerUnit(str):
         obj.entry, obj.first, obj.last, obj.columns = entry, first, last, columns
         return obj
 
+    # Immutable address: copy, deepcopy and pickle rebuild from ALL the constructor's arguments (the default str reconstruction
+    # passed only the text and raised, as `compactionpacket.OmissionNote` did).
+    def __getnewargs__(self):
+        return (str(self), self.entry, self.first, self.last, self.columns)
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
 
 def ledger_units(ledger: str) -> list[str]:
     """The excisable units of a rendered fetch ledger.

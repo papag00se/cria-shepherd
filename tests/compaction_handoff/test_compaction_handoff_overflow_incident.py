@@ -185,3 +185,42 @@ def test_a_person_typing_the_harness_opening_never_loses_the_task():
     posts, rlog = run(messages)
     assert CRITICAL in posts[0]["messages"][0]["content"] and "⟦ctx:reduced⟧" not in posts[0]["messages"][0]["content"]
     assert rlog.named("context.overflow_unfittable") and not rlog.named("context.overflow_reduced")
+
+
+def test_a_bounded_packets_omission_note_survives_every_copy_the_floor_makes():
+    """2026-11-10 04:20 UTC: preparing the request after a harness compaction raised `Cannot specify ',' with 's'` because the floor deep-copies message contents and `OmissionNote` (a str subclass) was rebuilt from its text. Real captured handoff (187 omitted blocks) rebuilt as a producer-owned packet, expanded by the real reframe, sent through the real wire twice (the second request reuses the session's fit state, which copies)."""
+    import copy
+    import pickle
+    from cria import compactionpacket
+    text = json.loads(gzip.decompress((FIXTURE.parent / "inbound-4990c314-responses.json.gz").read_bytes()))["input"][-1]["content"][0]["text"]
+    blocks = [compactionpacket.OmissionNote(187), *("HISTORICAL " + b for b in text.split("\n\nHISTORICAL ")[1:])]
+    packet = compactionpacket.Packet("the task", tuple(blocks))
+    note = packet.blocks[0]
+    for rebuilt in (copy.copy(note), copy.deepcopy(note), pickle.loads(pickle.dumps(note)), copy.deepcopy([{"content": note}])[0]["content"]):
+        assert isinstance(rebuilt, compactionpacket.OmissionNote) and rebuilt.blocks == 187 and rebuilt == note
+    origin = _HandoffOrigin(packet.render(), "", False, packet=packet)
+    messages = [{"role": "user", "content": "the task"}, {"role": "user", "content": packet.render()}]
+    expanded, reframed = reframe_compaction(messages, origin=origin)
+    assert reframed and any(isinstance(m.get("content"), str) and "187 earlier evidence block(s)" in m["content"] for m in expanded)
+    up = Upstream("http://inprocess.invalid", context_window=WINDOW, capture_dir=None, capture_rendered=False, engagement_level=5)
+    up._render_prompt = lambda body: None
+    log = Rlog()
+    log.session = "sid-copy"                                               # a session: the wire keeps (and copies) its fit state
+    for _ in range(2):
+        wire, _, _ = up._prep({"model": "m", "messages": [{"role": "system", "content": "frame"}, *expanded]}, False, log)
+        assert "187 earlier evidence block(s)" in json.dumps(json.loads(wire)["messages"])
+    # Nested: a bounded packet that already carries a note sums it (and the result still copies).
+    nested = compactionpacket.fit_packet(compactionpacket.Packet("t", (note, "mid " * 20000, "newest")), window=16384,
+                                         measure=lambda s: len(s) // 3)
+    assert nested.blocks[0].blocks == 188 and copy.deepcopy(nested.blocks[0]).blocks == 188
+
+
+def test_str_subclasses_that_carry_facts_survive_copy_and_pickle():
+    """Every str subclass whose `__new__` takes more than the text must rebuild from its own facts (the omission note crashed a live session on a deepcopy)."""
+    import copy
+    import pickle
+    from cria import compactionpacket, dedup
+    for value, facts in ((compactionpacket.OmissionNote(7), lambda v: v.blocks),
+                         (dedup.LedgerUnit("abc", "entry", 1, 2, (3, 4)), lambda v: (v.entry, v.first, v.last, v.columns))):
+        for rebuilt in (copy.copy(value), copy.deepcopy(value), pickle.loads(pickle.dumps(value))):
+            assert type(rebuilt) is type(value) and rebuilt == value and facts(rebuilt) == facts(value)

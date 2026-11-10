@@ -74,6 +74,17 @@ class OmissionNote(str):
         obj.blocks = blocks
         return obj
 
+    # Immutable: every copy, deepcopy (the floor deep-copies message contents) and pickle rebuilds from the COUNT, never from the
+    # rendered text (the default str reconstruction called __new__ with the string and raised in the thousands formatter).
+    def __getnewargs__(self):
+        return (self.blocks,)
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
 
 def fit_packet(packet: Packet, *, window: int | None, measure) -> Packet:
     """Bound producer-owned historical blocks, retaining the newest whole blocks.
