@@ -3424,12 +3424,17 @@ class Loop:
             _track_content_fingerprints(sess, messages, view)
             seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
             if seen:
-                fingerprint = _retained_content_fingerprint(sess, messages, view, rel)
+                # A wire-confirmed restoration is newer than retained historical calls. Its producer
+                # already bound the delivered block to a SHA-1 of the restored file's exact bytes.
+                restored = {digest for p, digest in (getattr(sess, 'restored_current', None) or {}).items() if view.rel(p) == rel}
+                fingerprint = _retained_content_fingerprint(sess, messages, view, rel) if not restored else None
                 current = view.capture_edit_preimage(rel)
-                if fingerprint is None or current is None:
+                if current is None or (not restored and fingerprint is None) or len(restored) > 1:
                     if rlog is not None:
                         rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
                                   turn_index=sess.coder_timed_turns, reason='content_fingerprint_unavailable')
+                elif restored:
+                    seen = hashlib.sha1(current[0]).hexdigest() in restored
                 elif _content_digest(current[0]) != fingerprint:
                     seen = False
             return unread_target_fact(sess, view, path, messages, seen=seen)

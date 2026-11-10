@@ -261,6 +261,64 @@ def test_retained_evidence_requires_matching_current_fingerprint_when_available(
         wsview.unbind(token)
 
 
+@pytest.mark.parametrize('restoration,held', [('current', False), ('stale', True), ('absent', True)])
+def test_wire_confirmed_restoration_overrides_older_read_fingerprint(tmp_path, restoration, held):
+    from cria import contextrestoration, upstream, writeproxy
+    from write_edit_helpers import ENVELOPE, lower, run
+    target = tmp_path / 'x.txt'
+    target.write_text('old\n')
+    first = lower([call('read_file', {'path': 'x.txt'}, 'r')], injected=('read_file',), root=str(tmp_path))[0]
+    done = run(first, tmp_path)
+    result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
+                               'content': ENVELOPE.format(rc=proc.returncode) + proc.stdout}
+    view = wsview.View(str(tmp_path), 'sid:restore')
+    token = wsview.bind(view)
+    try:
+        history = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
+                                               workspace_root=str(tmp_path))
+        assert denial.read_payload(history[1]) == 'old\n'
+        run(call('exec_command', {'cmd': "printf 'new\\n' > x.txt"}, 'external'), tmp_path)
+        view = wsview.View(str(tmp_path), 'sid:restore-fresh')
+        wsview.unbind(token); token = wsview.bind(view)
+        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                         capture_output=True, text=True, check=True).stdout)
+        assert view.apply_initial_inventory(data, str(tmp_path))
+        view.note_read('x.txt', 'new\n')
+        facts = contextrestoration.FileHistory(('x.txt',), (), (), (), lambda p: p, {})
+        restored = contextrestoration.restore(contextrestoration.RestoreInput(lambda: view, lambda: facts))
+        assert restored.message and restored.offered
+        class Log:
+            session = None
+            phase = 'coder-s1'
+            def emit(self, *args, **kwargs): pass
+        log = Log()
+        up = upstream.Upstream('http://unused', context_window=49152, engagement_level=5)
+        body = {'model': 'm', 'messages': [{'role': 'user', 'content': 'task'}, restored.message]}
+        if restoration == 'absent':
+            body['messages'].pop()
+        up._prep(body, False, log)
+        delivered = getattr(log, 'restored_on_wire', {})
+        assert bool(delivered) is (restoration != 'absent')
+        if restoration == 'stale':
+            run(call('exec_command', {'cmd': "printf 'later\\n' > x.txt"}, 'external2'), tmp_path)
+            view.note_read('x.txt', 'later\n')
+        driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                           runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+        session = loop._plan_off_session(loop._synthetic_plan('task'), '')
+        session.restored_current = delivered
+        driver._put_session('sid:restore', session)
+        check = driver.unread_target_check('sid:restore', history, str(tmp_path))
+        lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
+                        root=str(tmp_path), unread_target=check)[0]
+        reply = run(lowered, tmp_path)
+        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
+                                             workspace_root=str(tmp_path))
+        assert denial.refused(shown[1]) is held
+        assert target.read_text() == ('later\n' if restoration == 'stale' else 'new\n' if held else 'candidate\n')
+    finally:
+        wsview.unbind(token)
+
+
 def test_fingerprint_check_does_not_follow_inventory_skipped_symlink(tmp_path):
     target = tmp_path / 'target.txt'
     target.write_text('current\n')
