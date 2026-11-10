@@ -130,16 +130,19 @@ def test_an_edit_that_replaced_only_the_head_of_a_member_is_told_its_old_body_st
 
 
 @pytest.mark.parametrize("name,write", [("edit_file", False), ("write_file", True)])
-def test_a_write_that_may_have_landed_is_never_called_unchanged_or_unlanded(tmp_path, name, write):
+def test_a_write_that_may_have_landed_is_never_called_unchanged_or_unlanded(tmp_path, name, write, monkeypatch):
     """The target was replaced and THEN the program failed (EIO after os.replace): the record is `uncertain`, the answer does not say
     'nothing was changed', the call is not unlanded, and the rejected payload is not labelled 'never reached disk'."""
     (tmp_path / "f.txt").write_text("old content\n")
-    (tmp_path / "fault").mkdir()
-    (tmp_path / "fault/sitecustomize.py").write_text(
-        "import os, errno\n_r = os.replace\n\ndef _boom(*a, **k):\n    _r(*a, **k)\n    raise OSError(errno.EIO, 'injected after replace')\n\nos.replace = _boom\n")
+    from cria import ownedfiles
+    injected = ownedfiles.ATOMIC_REPLACE_PROGRAM.replace(
+        '            os.replace(tmp,path)\n',
+        "            os.replace(tmp,path)\n            raise OSError(errno.EIO, 'injected after replace')\n")
+    assert injected != ownedfiles.ATOMIC_REPLACE_PROGRAM
+    monkeypatch.setattr(ownedfiles, 'ATOMIC_REPLACE_PROGRAM', injected)
     args = ({"path": "f.txt", "content": "new content\n"} if write else
             {"path": "f.txt", "old_string": "old content", "new_string": "new content"})
-    tc, done, msgs = do(name, args, tmp_path, env={"PYTHONPATH": str(tmp_path / "fault")})
+    tc, done, msgs = do(name, args, tmp_path)
     assert (tmp_path / "f.txt").read_text() == "new content\n"
     assert '"k":"uncertain"' in done.stdout.split("\n", 1)[0] and not denial.is_denied(done.stdout)
     assert "Nothing was changed" not in done.stdout and not denial.unlanded_call_ids(msgs)

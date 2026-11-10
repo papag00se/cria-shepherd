@@ -32,9 +32,9 @@ def runner(py=(0, "", ""), flakes=(0, "", ""), node=(0, "", ""), seen=None):
 def test_the_floor_reads_only_real_sources_and_turns_the_interpreters_words_into_a_nudge(tree):
     seen = []
     report = lp.run_linter_probe(str(tree), runner(py=(1, "", PYC), node=(1, "", JSC), seen=seen))
-    assert [a[:3] for a in seen if a[0] == "python3"] == [["python3", "-m", "py_compile"]] and "pyflakes" not in str(seen)   # a parse error is not escalated
+    assert [a[:4] for a in seen if a[0] == "python3"] == [["python3", "-I", "-m", "py_compile"]] and "pyflakes" not in str(seen)   # a parse error is not escalated
     py = next(a for a in seen if a[0] == "python3")
-    assert py[3:] == [str(tree / "app/cart.py"), str(tree / "app/util.py")]                                    # no venv, no node_modules
+    assert py[4:] == [str(tree / "app/cart.py"), str(tree / "app/util.py")]                                    # no venv, no node_modules
     assert sorted(a[2] for a in seen if a[0] == "node") == [str(tree / "web/cart.js"), str(tree / "web/ok.mjs")]
     assert not report.is_clean() and [f.language for f in report.failing()] == ["python", "javascript"]
     nudge = report.nudge_text()

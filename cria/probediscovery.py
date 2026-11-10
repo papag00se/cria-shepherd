@@ -1227,7 +1227,7 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     py = linterprobe.collect_files(str(root), ["py"])
     if py:
         out.append(cand(ProbeKind.SyntaxCheck,
-                        ["python3", "-m", "compileall", "-q", "-x", _COMPILEALL_SKIP_RE, "."],
+                        ["python3", "-I", "-m", "compileall", "-q", "-x", _COMPILEALL_SKIP_RE, "."],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Python, participation_inputs=tuple(py), private_python_cache=True,
                         participation_inputs_complete=wsview.current().listed_everything(str(root)),
@@ -1246,15 +1246,15 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
                         ecosystem=Ecosystem.Ruby, reason="Ruby file present: parse floor"))
     tomls = linterprobe.collect_files(str(root), ["toml"])[:MAX_FLOOR_FILES_PER_LANG]
     if tomls:
-        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _TOML_CHECK, *tomls],
+        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-I", "-c", _TOML_CHECK, *tomls],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="TOML config present: parse floor"))
     jsons = _strict_json_files(root)[:MAX_FLOOR_FILES_PER_LANG]
     if jsons:
-        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _JSON_CHECK, *jsons],
+        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-I", "-c", _JSON_CHECK, *jsons],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="strict-JSON config present: parse floor"))
     xmls = _strict_xml_files(root)[:MAX_FLOOR_FILES_PER_LANG]
     if xmls:
-        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _XML_CHECK, *xmls],
+        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-I", "-c", _XML_CHECK, *xmls],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="build XML present: parse floor"))
     return out
 

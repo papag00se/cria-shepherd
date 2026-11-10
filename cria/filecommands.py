@@ -134,7 +134,7 @@ def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
     unavailable = _refusal_command(prompts.fill(prompts.load_map("read_failed")["unreadable"], path=display_path))
     return (f"{_read_failure_branches(q, path)}"
             f"if ! command -v python3 >/dev/null 2>&1; then {unavailable}; fi; "
-            f"python3 - {q} {start} {end} {_qbash(receipt or '')} {_qbash(past)} {_qbash(base64.b64encode(json.dumps(prompts.load_map('read_transport_oversize')).encode()).decode())} {READ_TRANSPORT_STDOUT_BYTES} <<'{_RANGE_HD}'\n{_read_program(_RANGE_PY)}{_RANGE_HD}\n"
+            f"python3 -I - {q} {start} {end} {_qbash(receipt or '')} {_qbash(past)} {_qbash(base64.b64encode(json.dumps(prompts.load_map('read_transport_oversize')).encode()).decode())} {READ_TRANSPORT_STDOUT_BYTES} <<'{_RANGE_HD}'\n{_read_program(_RANGE_PY)}{_RANGE_HD}\n"
             f'__ctx_rd=$?\n'
             f'exit "$__ctx_rd"')
 
@@ -264,7 +264,7 @@ def _whole_read(q: str, *, kind: str = denial.RAN, pre: str = "", otherwise: str
     no_read_b64 = base64.b64encode(no_read.encode("utf-8")).decode("ascii")
     template_b64 = base64.b64encode(json.dumps(prompts.load_map('read_transport_oversize')).encode()).decode()
     return (f"if ! command -v python3 >/dev/null 2>&1; then {unavailable}; fi; "
-            f"python3 - {q} {_qbash(receipt or '')} {kind} '{pre_b64}' '{no_read_b64}' '{template_b64}' {READ_TRANSPORT_STDOUT_BYTES} "
+            f"python3 -I - {q} {_qbash(receipt or '')} {kind} '{pre_b64}' '{no_read_b64}' '{template_b64}' {READ_TRANSPORT_STDOUT_BYTES} "
             f"<<'{_READ_HD}'\n{_read_program(_READ_PY)}{_READ_HD}\n"
             f'__ctx_rd=$?\n'
             f'if [ "$__ctx_rd" -eq 0 ]; then :; else {failed}; fi')
@@ -706,7 +706,7 @@ def build_multipart_page(spec: MultipartReadSpec, offset: int, *, command_max_by
         raise ValueError('invalid record limit')
     page_mode = 'take' if offset == 0 else 'live' if live else 'serve'
     script = _MULTIPART_PAGE_PY.replace('%%CONFIG%%', cfg).replace('%%OFFSET%%', str(offset)).replace('%%MODE%%', page_mode).replace('%%LIMIT%%', str(limit))
-    command = "python3 - <<'__CTX_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + ownedfiles.DIRECTORY_PROGRAM + script + '\n__CTX_MULTIPART_PAGE__\n'
+    command = "python3 -I - <<'__CTX_MULTIPART_PAGE__'\n" + resultpacket.ENCODER_PY + _TRANSPORT_PY + ownedfiles.DIRECTORY_PROGRAM + script + '\n__CTX_MULTIPART_PAGE__\n'
     if command_max_bytes is not None:
         if type(command_max_bytes) is not int or command_max_bytes < 0:
             raise ValueError('invalid command byte limit')

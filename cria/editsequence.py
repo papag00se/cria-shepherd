@@ -61,9 +61,9 @@ def _seq_done(context,index):
 def matches_release(text: str) -> bool:
     """Accept only a release regenerated from its literal sequence arguments."""
     import ast
-    head = f"python3 - <<'{_HD_PY}'\n"
+    head = next((h for h in (f"python3 -I - <<'{_HD_PY}'\n", f"python3 - <<'{_HD_PY}'\n") if text.startswith(h)), '')
     tail = f"{_HD_PY}\n"
-    if not text.startswith(head) or not text.endswith(tail):
+    if not head or not text.endswith(tail):
         return False
     try:
         tree = ast.parse(text[len(head):-len(tail)])
@@ -76,7 +76,8 @@ def matches_release(text: str) -> bool:
         idx = ast.literal_eval(done_call.args[1])
         if not isinstance(turn, str) or prefix != EDIT_SEQ_DIR or type(idx) is not int or not isinstance(participants, (list, tuple)):
             return False
-        return text == _seq_release((turn, idx, (), participants))
+        expected = _seq_release((turn, idx, (), participants))
+        return text == expected or text == expected.replace('python3 -I -', 'python3 -', 1)
     except (SyntaxError, ValueError, TypeError, AttributeError, IndexError):
         return False
 
@@ -88,4 +89,4 @@ def _seq_release(sequence: "tuple") -> str:
           + f'    _sequence=_seq_open({turn!r},{EDIT_SEQ_DIR!r},{participants!r},time.monotonic()+{EDIT_SEQ_WAIT_SECONDS!r})\n'
           + f'    _seq_done(_sequence,{idx!r})\n'
           + 'except (OSError,ValueError):\n    pass\n')
-    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}\n"
+    return f"python3 -I - <<'{_HD_PY}'\n{py}{_HD_PY}\n"

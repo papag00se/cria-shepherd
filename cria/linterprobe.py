@@ -180,11 +180,11 @@ def _child_names(dirpath: str) -> list[str] | None:
 def py_compile_argv(files: list[str]) -> list[str]:
     """All files in ONE invocation — py_compile stops at the first failure with an
     exact file:line, which is all the nudge needs."""
-    return ["python3", "-m", "py_compile", *files]
+    return ["python3", "-I", "-m", "py_compile", *files]
 
 
 def pyflakes_argv(files: list[str]) -> list[str]:
-    return ["python3", "-m", "pyflakes", *files]
+    return ["python3", "-I", "-m", "pyflakes", *files]
 
 
 def node_check_argv(path: str) -> list[str]:

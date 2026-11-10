@@ -135,4 +135,4 @@ def command(name, args, workspace, permission, roots):
             'cache_markers': dirguard._DEP_CACHE_MARKERS,
             'messages': prompts.load_map('content_search_results')}
     payload = base64.b64encode(json.dumps(spec, ensure_ascii=True).encode()).decode('ascii')
-    return 'python3 -c ' + shlex.quote(source) + ' ' + shlex.quote(payload)
+    return 'python3 -I -c ' + shlex.quote(source) + ' ' + shlex.quote(payload)

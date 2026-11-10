@@ -2061,7 +2061,7 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
         open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
     return (f"{SURVEY_CMD_OPEN}\n"
             "__ctx_sv_ec=$?\n"
-            f"{{ {prefix}python3 - <<'{_HEREDOC}'\n{body}\n{_HEREDOC}\n}} 2>/dev/null\n"
+            f"{{ {prefix}python3 -I - <<'{_HEREDOC}'\n{body}\n{_HEREDOC}\n}} 2>/dev/null\n"
             "( exit $__ctx_sv_ec )\n"
             f"{SURVEY_CMD_CLOSE}")
 
@@ -2079,7 +2079,7 @@ def marks_ride(query, *, cd: str = "") -> str:
     prefix = f"cd {_q(cd)} 2>/dev/null; " if cd else ""
     return (f"{SURVEY_CMD_OPEN}\n"
             "__ctx_sv_ec=$?\n"
-            f"{{ {prefix}python3 - <<'{_HEREDOC}'\n{completionmarks.ride(query, receipt)}\n{_HEREDOC}\n}} 2>/dev/null\n"
+            f"{{ {prefix}python3 -I - <<'{_HEREDOC}'\n{completionmarks.ride(query, receipt)}\n{_HEREDOC}\n}} 2>/dev/null\n"
             "( exit $__ctx_sv_ec )\n"
             f"{SURVEY_CMD_CLOSE}")
 

@@ -43,5 +43,5 @@ def test_a_tool_the_harness_does_not_have_is_lowered_to_the_shell_it_does_have_i
     assert _lowered("exec_command", {"command": ["bash", "-lc", "pwd"]}, tools) == (shell, {key: wrap("pwd")})
     name, args = _lowered("cat_file", {"path": "a.py", "start": 2, "end": 9}, tools)
     command = args[key][2] if kind == "array" else args[key]
-    assert name == shell and "python3 - a.py 2 9" in command and "a.py is not there" in command
+    assert name == shell and "python3 -I - a.py 2 9" in command and "a.py is not there" in command
     assert _lowered(shell, {key: "echo hi"}, tools) == (shell, {key: wrap("echo hi")})              # a call to the shell itself is reshaped to that schema

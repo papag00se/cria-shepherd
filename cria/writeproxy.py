@@ -428,7 +428,10 @@ def _v(path, raw):
             try:
                 with _os.fdopen(_fd, 'w') as _fh:
                     _fh.write(text)
-                _r = _sp.run(_argv + [_tmp], capture_output=True, text=True, timeout=20)
+                # Syntax checkers must not load ambient interpreter hooks from the harness environment.
+                _blocked = ('NODE_OPTIONS', 'NODE_PATH', 'RUBYOPT', 'RUBYLIB', 'RUBYGEMS_GEMDEPS', 'PHPRC', 'PHP_INI_SCAN_DIR')
+                _env = dict((k, v) for k, v in _os.environ.items() if k not in _blocked)
+                _r = _sp.run(_argv + [_tmp], capture_output=True, text=True, timeout=20, env=_env)
                 if _r.returncode != 0:
                     _msg = ((_r.stderr or '') + (_r.stdout or '')).strip()
                     # THE TEMP PATH GOES, IT IS NOT REPLACED. This used to substitute the real
@@ -592,7 +595,7 @@ def _write_command(path: str, content: str, seq: "EditSequence | None" = None, m
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("write_unwritable")))).replace(
         '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
     py = _queued(py, seq, marks)
-    return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
+    return WriteCommand(f"python3 -I - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
 
 # The edit executor (old/new/path base64'd — nothing to escape). Tries an EXACT single match first
@@ -927,7 +930,7 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
     py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable")))).replace(
         '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
     py = _queued(py, seq, marks)
-    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
+    return f"python3 -I - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
 _STDOUT_SPILL_PY = r'''
@@ -1011,7 +1014,7 @@ def _bounded_tool_stdout(command: str, expected: str | None = None, *, listing: 
                 "    print(" + repr(failure) + " + str(exc))\n"
                 "    sys.exit(2)\n"
                 "sys.exit(process.returncode)\n")
-    return 'python3 -c ' + _qbash(program) + ' ' + _qbash(command)
+    return 'python3 -I -c ' + _qbash(program) + ' ' + _qbash(command)
 
 
 def _list_command(args: dict) -> str:
@@ -1319,7 +1322,7 @@ def _search_command(args: dict, answer: "brave.Answer", *, search_offer=None, op
               + "\nbuffer = io.StringIO()\noriginal_stdout = sys.stdout\n"
               + "try:\n    sys.stdout = buffer\n    _produce()\nfinally:\n    sys.stdout = original_stdout\n"
               + "sys.stdout.write(bounded_stdout(buffer.getvalue().encode(), *" + repr(transport_arguments) + ").decode())\n")
-    parse = 'python3 -c ' + _qbash(script)
+    parse = 'python3 -I -c ' + _qbash(script)
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
     # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
     # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
