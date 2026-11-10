@@ -174,12 +174,13 @@ class Indexer:
 indexer = Indexer()
 '''
 
-_SYMBOLS = r'''                if indexer.proc is None:
-                    continue
+_SYMBOLS = r'''                item['blank'] = None
                 descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
                 with os.fdopen(descriptor, 'rb') as source:
                     opened = os.fstat(source.fileno())
-                    if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    if (not stat.S_ISREG(opened.st_mode)
+                            or (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+                            != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)):
                         raise OSError('file changed during survey')
                     def unchanged():
                         current = os.fstat(source.fileno())
@@ -188,27 +189,31 @@ _SYMBOLS = r'''                if indexer.proc is None:
                         name.encode('utf-8')
                         decoder = codecs.getincrementaldecoder('utf-8')('strict')
                         binary = False
+                        blank = True
                         total = 0
                         while total < opened.st_size:
                             chunk = source.read(min(CHUNK, opened.st_size - total))
                             if not chunk:
                                 break
                             total += len(chunk)
-                            if b'\0' in chunk:
-                                binary = True
-                                break
-                            decoder.decode(chunk)
-                        decoder.decode(b'', final=True)
+                            binary = binary or b'\0' in chunk
+                            text = decoder.decode(chunk)
+                            blank = blank and (not text or text.isspace())
+                        text = decoder.decode(b'', final=True)
+                        blank = blank and (not text or text.isspace())
                     except UnicodeError:
-                        continue
-                    if binary:
                         continue
                     if total != opened.st_size or not unchanged():
                         raise OSError('file changed during survey')
-                    source.seek(0)
-                    symbols = indexer.tags(name, source, opened.st_size)
-                    if not unchanged():
-                        raise OSError('file changed during survey')
+                    if binary:
+                        continue
+                    symbols = None
+                    if indexer.proc is not None:
+                        source.seek(0)
+                        symbols = indexer.tags(name, source, opened.st_size)
+                        if not unchanged():
+                            raise OSError('file changed during survey')
+                    item['blank'] = blank
                     item['symbols'] = symbols'''
 
 
@@ -406,7 +411,8 @@ def browse_command(root: str) -> str:
 
 def render(data: dict, ask=None, *, root: str = '.', budget_chars: int = 12000) -> str:
     """Show whole small inventories or a labelled bounded selection, with a re-survey route."""
-    files = data['files']
+    # Classification is a private workspace fact, not part of the coder's inventory.
+    files = [{k: v for k, v in item.items() if k != 'blank'} for item in data['files']]
     labels = prompts.load_map('initial_inventory_labels')
     dump = lambda value: json.dumps(value, ensure_ascii=True, separators=(',', ':'))
     issues = {'symlinks': data.get('symlinks', []), 'errors': data.get('errors', [])}

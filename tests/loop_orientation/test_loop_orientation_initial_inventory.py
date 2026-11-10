@@ -69,10 +69,16 @@ def test_large_tag_rich_source_is_streamed_without_truncation(tmp_path):
 def test_indexer_unavailable_is_uniform_and_browser_remains_usable(tmp_path, monkeypatch):
     monkeypatch.setattr(initial_inventory, '_INDEX_SETUP', initial_inventory._INDEX_SETUP.replace(
         "shutil.which('ctags', path=os.defpath + ':/usr/local/bin')", 'None'))
-    for name in ('file.py', 'file.go'):
-        (tmp_path / name).write_text('def example(): pass\n')
+    for name, content in {'file.py': b'def example(): pass\n', 'file.go': b' ',
+                          'empty': b'', 'unicode': '\u2003\n'.encode(),
+                          'binary': b' \x00', 'invalid': b'\xff'}.items():
+        (tmp_path / name).write_bytes(content)
     data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
                                      capture_output=True, text=True, check=True).stdout)
+    assert {item['path']: item['blank'] for item in data['files']} == {
+        'file.py': False, 'file.go': True, 'empty': True, 'unicode': True,
+        'binary': None, 'invalid': None}
+    assert '"blank"' not in initial_inventory.render(data)
     assert all(item['symbols'] is None for item in data['files'])
     assert data['symbol_indexer_error'] == 'indexer not found'
     assert 'Symbol indexer unavailable' in initial_inventory.render(data)
