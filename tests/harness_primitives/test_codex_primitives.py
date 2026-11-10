@@ -2,6 +2,7 @@
 runs under the sandbox policy, the E2BIG boundary is where the design says, and the per-round-trip cost is measured."""
 import http.server
 import json
+import os
 import statistics
 import threading
 
@@ -158,3 +159,28 @@ def test_list_dir_through_the_pinned_codex_and_a_real_cria_server(sandbox, tmp_p
     assert not [p for p in ('CTX1', 'ctx_', 'python3', '-I -S', 'harness-call', 'CTX_EOF') if p in seen]
     saved = next((ws / 'tmp' / 'reference').iterdir())
     assert saved.read_text().count('\n') >= 150
+
+
+def test_sandbox_trust_boundary(sandbox):
+    """Records (docs/harness-primitives.md section 6) what a command inside the pinned Codex's sandbox can reach: each call has its
+    own PID namespace, a process of the same call can write into another process's stdout through /proc, and what ~/.cria allows is
+    printed for the machine's policy (the key's confidentiality and ledger's integrity depend on it)."""
+    import pwd
+    cria = pwd.getpwuid(os.getuid()).pw_dir + '/.cria'          # the user's real home (the test fixture points $HOME elsewhere)
+    commands = [
+        f'echo "cria-home-listable=$(ls {cria} >/dev/null 2>&1 && echo yes || echo no)"; touch {cria}/.sandbox-write-probe 2>/dev/null; '
+        f'echo "cria-home-writable=$(test -e {cria}/.sandbox-write-probe && echo yes || echo no)"',
+        'echo "visible=$(ls /proc | grep -c "^[0-9][0-9]*$")"',
+        'python3 -c "import time,sys;print(1);sys.stdout.flush();time.sleep(3)" > out.txt 2>&1 & c=$!; sleep 0.5; '
+        'echo FORGED >> /proc/$c/fd/1; sleep 0.1; echo "child-stdout=$(tr "\\n" , < out.txt)"',
+    ]
+    try:
+        with Scripted(commands) as server:
+            done = sandbox.run(server.url)
+            assert done.returncode == 0, done.stderr[-2000:]
+            outs = [out for _cid, _args, out in function_calls(server.requests[-1])]
+    finally:
+        __import__('pathlib').Path(cria, '.sandbox-write-probe').unlink(missing_ok=True)     # only exists if the policy lets a command write there
+    print('SANDBOX', [o.split('Output:')[-1].strip() for o in outs])
+    assert int(outs[1].split('visible=')[1].split()[0]) < 20                      # not the host: a namespace of its own
+    assert 'child-stdout=1,FORGED,' in outs[2]                                     # a same-call process can write into another's stdout
