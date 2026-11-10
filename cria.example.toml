@@ -65,6 +65,12 @@ symbols_budget_tokens = 1000
 # Full contract: docs/multipart-and-retention.md.
 # auto_prune_after = "14d"
 # auto_prune_every = "1h"
+# The one deletion that is ON by default (operator's standing order): cria's operation ledger for a session (~/.cria/ops/<hash>.jsonl: the calls it ran
+# through the harness) is deleted, whole, once the session has been inactive for ops_idle_after (measured from the ledger's last append and the last request
+# cria saw for it; a request in flight is never idle) and holds no operation still open. A session that resumes afterwards shows its old calls raw.
+# Minimum for both: 1m.
+ops_idle_after = "30m"
+ops_sweep_every = "5m"
 
 [context]
 focus_trim = true                  # collapse duplicate tool calls

@@ -104,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
     log.emit("server.start", host=cfg.server.host, port=cfg.server.port, upstream=cfg.upstream.base_url)
     server.start_retention()
+    server.start_ledger_sweep()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

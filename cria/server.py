@@ -978,6 +978,7 @@ class CriaServer(ThreadingHTTPServer):
         # Per-session end-of-turn stats (calls, tok/s, guard fires, wall time).
         self.stats_store = StatsStore()
         self.retention = None   # AutoPruner, only when the operator configured [retention] auto_prune_after
+        self.ledger_sweep = None   # LedgerSweeper (cria/ledgersweep.py): on by default, [retention] ops_idle_after
         from .ops import Ops
         self.ops = Ops(safe_path=cfg.harness.safe_path, inventory_limits=inventoryops.limits_of(cfg.harness))   # operations carried out through the harness primitives (ledger under ~/.cria/ops)
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
@@ -1132,6 +1133,14 @@ class CriaServer(ThreadingHTTPServer):
         self.retention = AutoPruner(home or privatepaths.CRIA_HOME, after, self.cfg.retention.every_seconds,
                                     self.log.emit).start()
         return self.retention
+
+    def start_ledger_sweep(self):
+        """Start the sweep of idle operation ledgers (``[retention] ops_idle_after``, default 30 minutes; ``cria/ledgersweep.py``)."""
+        if self.ledger_sweep is not None:
+            return self.ledger_sweep
+        from .ledgersweep import LedgerSweeper
+        self.ledger_sweep = LedgerSweeper(self.ops.ledger, self.cfg.retention.ops_idle_seconds, self.cfg.retention.ops_sweep_seconds, self.log.emit).start()
+        return self.ledger_sweep
 
     def drain_streams(self) -> int:
         """On shutdown, END every in-flight SSE stream with a terminal, RETRYABLE response.failed so
@@ -1318,14 +1327,19 @@ class CriaHandler(BaseHTTPRequestHandler):
     def _post(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")   # strip any query string (parity with do_GET)
         from . import readcontext
-        with assistruntime.bound(self.server.pilot_runtime), readcontext.bound():
-            if path == "/v1/chat/completions":
-                self._handle_chat()
-            elif path == "/v1/responses":
-                self._handle_responses()
-            else:
-                self.close_connection = True   # the body was not read: it must not be parsed as a request
-                self._send_json(404, {"error": "not found"})
+        try:
+            with assistruntime.bound(self.server.pilot_runtime), readcontext.bound():
+                if path == "/v1/chat/completions":
+                    self._handle_chat()
+                elif path == "/v1/responses":
+                    self._handle_responses()
+                else:
+                    self.close_connection = True   # the body was not read: it must not be parsed as a request
+                    self._send_json(404, {"error": "not found"})
+        finally:
+            held, self._ops_hold = getattr(self, "_ops_hold", None), None
+            if held is not None:
+                self.server.ops.ledger.release(held)      # the session's ledger is idle again from now
 
     # ------------------------------------------------------------------ chat
 
@@ -1402,6 +1416,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         text. What the harness has not yet seen goes back to it without asking the model. Returns True when it answered."""
         before = body.get('messages') or []
         self._ops_session = sess_key       # ONE ledger for the request: results are read from it here and calls are issued into it in _translate_out
+        if getattr(self, "_ops_hold", None) is None:
+            self._ops_hold = self.server.ops.ledger.hold(sess_key)      # a request in flight (a model call of minutes) never makes its ledger idle
         taken = self.server.ops.incoming(sess_key, before, rlog, tools=body.get('tools'), room=lambda: self._read_room(rlog),
                                          survey=self._survey_ask(body, sess_key, before))
         body['messages'] = taken.messages

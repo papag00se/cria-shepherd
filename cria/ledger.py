@@ -23,8 +23,11 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import stat
 import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from . import privatepaths
@@ -65,11 +68,91 @@ class Op:
         return self.extra_calls or ([self.call] if self.call else [])
 
 
+FOLDED_SESSIONS = 16            # sessions whose folded ledger is kept in memory; the least recently used is dropped (and re-read from its file when asked for)
+_LEDGER_NAME = re.compile(r'[0-9a-f]{64}\.jsonl\Z')
+
+
 class Ledger:
     def __init__(self, directory=None):
         self._directory = directory
         self._lock = threading.RLock()
-        self._folded: dict = {}
+        self._folded: OrderedDict = OrderedDict()       # (directory, session) -> (bytes folded, file identity, ops): a cache of the file, never the record
+        self._active: dict = {}                         # ledger file name -> when this process last saw a request or an append for it
+        self._flight: dict = {}                         # ledger file name -> requests being handled for it right now
+
+    def _remember(self, key, value) -> None:
+        """Keep ``value`` as the folded state of ``key``, most recently used; past ``FOLDED_SESSIONS`` the least recently used is dropped. Dropping only
+        drops the cache: the next ``ops`` for that session folds its whole file again and returns the same operations."""
+        self._folded[key] = value
+        self._folded.move_to_end(key)
+        while len(self._folded) > FOLDED_SESSIONS:
+            self._folded.popitem(last=False)
+
+    # ---------------------------------------------------------------- activity (what the retention sweep must not mistake for idleness)
+    def hold(self, session: str) -> str:
+        """A request for ``session`` is being handled (it may be a model call of minutes, or a check of minutes, with nothing appended meanwhile):
+        its ledger is not idle until :meth:`release`. Returns the token to release."""
+        name = self._name(session)
+        with self._lock:
+            self._flight[name] = self._flight.get(name, 0) + 1
+            self._active[name] = time.time()
+        return name
+
+    def release(self, name: str) -> None:
+        with self._lock:
+            self._flight[name] = max(0, self._flight.get(name, 0) - 1)
+            self._active[name] = time.time()
+
+    def sweep(self, idle_after: float, *, now: float | None = None) -> list:
+        """Delete the ledger files of sessions that have been inactive for ``idle_after`` seconds: WHOLE files only, never a trimmed one. A ledger is
+        not swept when a request for its session is in flight or was seen (or appended to) here within ``idle_after``, when its file was written within it
+        (another process's append), when another process holds it, or when it holds an operation with no ``final`` (an operation still open). A session
+        whose ledger is gone starts again from nothing: its earlier calls are shown to the model as they are (docs/harness-primitives.md, decision D2).
+        Returns one dict per file removed (``ledger`` a prefix of its name, ``size``, ``idle_seconds``, ``operations``)."""
+        now = time.time() if now is None else now
+        removed = []
+        with self._lock:
+            try:
+                directory = self._open_dir()
+            except LedgerError:
+                return removed
+            try:
+                for name in sorted(os.listdir(directory)):
+                    if not _LEDGER_NAME.match(name) or self._flight.get(name) or now - self._active.get(name, 0) < idle_after:
+                        continue
+                    try:
+                        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                    except OSError:
+                        continue
+                    with os.fdopen(fd, 'rb') as f:
+                        info = os.fstat(f.fileno())
+                        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077 or now - info.st_mtime < idle_after:
+                            continue
+                        try:
+                            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except OSError:
+                            continue
+                        ops: dict = {}
+                        for raw in f.read().split(b'\n'):
+                            self._fold(ops, raw)
+                        if any(op.final is None for op in ops.values()) or os.fstat(f.fileno()).st_size != info.st_size:
+                            continue
+                        try:
+                            os.unlink(name, dir_fd=directory)
+                        except OSError:
+                            continue
+                    for key in [k for k in self._folded if self._name(k[1]) == name]:
+                        del self._folded[key]
+                    self._active.pop(name, None)
+                    self._flight.pop(name, None)
+                    removed.append({'ledger': name[:12], 'size': info.st_size, 'idle_seconds': int(now - info.st_mtime), 'operations': len(ops)})
+                if removed:
+                    os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
+        return removed
 
     def _path(self):
         return self._directory if self._directory is not None else privatepaths.CRIA_HOME / 'ops'
@@ -110,6 +193,7 @@ class Ledger:
     def append(self, session: str, *records: dict) -> None:
         line = ''.join(json.dumps(r, separators=(',', ':')) + '\n' for r in records).encode()
         with self._lock:
+            self._active[self._name(session)] = time.time()
             directory = self._open_dir()
             try:
                 fd = os.open(self._name(session), os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600, dir_fd=directory)
@@ -135,6 +219,7 @@ class Ledger:
     def ops(self, session: str) -> dict:
         """Every operation recorded for ``session``, folded from the file (read incrementally; the file only grows)."""
         with self._lock:
+            self._active[self._name(session)] = time.time()
             try:
                 directory = self._open_dir()
             except LedgerError:
@@ -158,7 +243,7 @@ class Ledger:
                     end = data.rfind(b'\n') + 1
                     for raw in data[:end].split(b'\n'):
                         self._fold(ops, raw)
-                    self._folded[key] = (pos + end, (info.st_dev, info.st_ino), ops)
+                    self._remember(key, (pos + end, (info.st_dev, info.st_ino), ops))
                     return ops
             except OSError:
                 return {}

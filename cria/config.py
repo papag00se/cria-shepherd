@@ -681,13 +681,31 @@ class RetentionConfig:
     removes retained state whose last touch is older than that, once at start and then every
     ``auto_prune_every`` (default ``"1h"``), with exactly the safety of
     ``python -m cria.retention prune --apply --older-than``. Both are ``<n><s|m|h|d|w>`` strings;
-    ``auto_prune_after`` must be at least ``1h`` and ``auto_prune_every`` at least ``1m``."""
+    ``auto_prune_after`` must be at least ``1h`` and ``auto_prune_every`` at least ``1m``.
+
+    ``ops_idle_after`` is the one deletion that is ON by default, by the operator's standing order: the operation ledger of a session
+    (``~/.cria/ops/<hash>.jsonl``, cria's bookkeeping of the calls it ran through the harness) is deleted, whole, once the session has been inactive
+    for this long (default 30 minutes; cria gets no signal that a session ended, so inactivity is the proxy) and holds no operation still open;
+    ``ops_sweep_every`` (default 5 minutes) is how often cria looks. Both are ``<n><s|m|h|d|w>`` strings of at least ``1m``. Inactivity is measured
+    from the ledger's last append and the last request cria saw for that session, and no request in flight is ever idle."""
 
     auto_prune_after: str | None = None
     auto_prune_every: str = "1h"
+    ops_idle_after: str = "30m"
+    ops_sweep_every: str = "5m"
 
     def __post_init__(self):
         from .retention import AUTO_MIN_AGE, AUTO_MIN_EVERY, parse_age
+        for name in ("ops_idle_after", "ops_sweep_every"):         # the operation ledger's sweep (`ledger.Ledger.sweep`): ON by default, 30 minutes idle
+            value = getattr(self, name)
+            try:
+                seconds = parse_age(value) if isinstance(value, str) else None
+            except ValueError as exc:
+                raise ValueError(f"[retention] {name} {value!r}: {exc}") from None
+            if seconds is None:
+                raise ValueError(f'[retention] {name} must be an age string like "30m", got {value!r}')
+            if seconds < AUTO_MIN_EVERY:
+                raise ValueError(f"[retention] {name} {value!r} is below the minimum of 1m")
         for name, floor in (("auto_prune_after", AUTO_MIN_AGE), ("auto_prune_every", AUTO_MIN_EVERY)):
             value = getattr(self, name)
             if value is None and name == "auto_prune_after":
@@ -710,6 +728,16 @@ class RetentionConfig:
     def every_seconds(self) -> int:
         from .retention import parse_age
         return parse_age(self.auto_prune_every)
+
+    @property
+    def ops_idle_seconds(self) -> int:
+        from .retention import parse_age
+        return parse_age(self.ops_idle_after)
+
+    @property
+    def ops_sweep_seconds(self) -> int:
+        from .retention import parse_age
+        return parse_age(self.ops_sweep_every)
 
 
 @dataclass(frozen=True)
@@ -891,8 +919,8 @@ def _system1(data: dict) -> System1Config:
 
 
 def _retention(data: dict) -> RetentionConfig:
-    if not isinstance(data, dict) or set(data) - {"auto_prune_after", "auto_prune_every"}:
-        raise ValueError("[retention] supports only auto_prune_after and auto_prune_every")
+    if not isinstance(data, dict) or set(data) - {"auto_prune_after", "auto_prune_every", "ops_idle_after", "ops_sweep_every"}:
+        raise ValueError("[retention] supports only auto_prune_after, auto_prune_every, ops_idle_after and ops_sweep_every")
     return RetentionConfig(**data)
 
 
