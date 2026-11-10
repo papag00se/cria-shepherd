@@ -66,12 +66,21 @@ class Packet:
         return "\n\n".join(pieces)
 
 
+class OmissionNote(str):
+    """The label standing for blocks a packet dropped to fit. It carries its own count (a str subclass, in-process only), so a
+    later handoff that drops this note too can sum what it stood for instead of counting it as one block."""
+    def __new__(cls, blocks: int):
+        obj = super().__new__(cls, prompts.render("handoff_blocks_omitted", count=f"{blocks:,}").strip())
+        obj.blocks = blocks
+        return obj
+
+
 def fit_packet(packet: Packet, *, window: int | None, measure) -> Packet:
     """Bound producer-owned historical blocks, retaining the newest whole blocks.
 
     The task and latest user instruction are never reduced. If those alone exceed
     the allowance the result remains oversized; no measurement means no fit claim.
-    The omitted blocks are represented by the floor's existing disclosure.
+    The omitted blocks are represented by one :class:`OmissionNote` stating how many (cumulatively).
     """
     if not isinstance(window, int) or window <= 0 or not callable(measure):
         return packet
@@ -81,7 +90,8 @@ def fit_packet(packet: Packet, *, window: int | None, measure) -> Packet:
         return packet
 
     def candidate(count):
-        note = prompts.render("compacted_history_omitted", count=count).strip()
+        # Blocks, not turns: a dropped block may itself be a note for many earlier blocks (an earlier handoff's).
+        note = OmissionNote(sum(b.blocks if isinstance(b, OmissionNote) else 1 for b in packet.blocks[:count]))
         kept = packet.blocks[count:]
         return replace(packet, blocks=(note, *kept),
                        selected=tuple(s for s in packet.selected if s in kept))

@@ -10,12 +10,12 @@ from cria.upstream import Upstream
 
 @pytest.mark.parametrize("rendered,tokens,reduced", [
     (True, 2000, False),                     # exact native fit: everything the caller sent goes out, whatever the estimate says
-    (True, 5000, True),                      # a measured overflow: the oldest part of the largest user message goes, labelled
-    (False, 2000, True),                     # the template could not be rendered: no measurement, the estimate says it cannot fit
-    (True, {"tokens": ["42"]}, True),        # malformed /tokenize answer: no measurement
+    (True, 5000, True),                      # a measured overflow: the oldest part of the replayed handoff goes, labelled
+    (False, 2000, False),                    # the template could not be rendered: no measurement, an estimate never cuts
+    (True, {"tokens": ["42"]}, False),       # malformed /tokenize answer: no measurement
 ])
-def test_native_sizing_sends_the_callers_whole_input_or_cuts_its_oldest_part_labelled(monkeypatch, rendered, tokens, reduced):
-    """Only a measured overflow (or no measurement at all) may cut user text, oldest part first and labelled; the other messages, the opening line and the newest bytes ride; one POST, never a refusal."""
+def test_native_sizing_sends_the_whole_input_or_cuts_a_replayed_handoff_oldest_part_labelled(monkeypatch, rendered, tokens, reduced):
+    """Only a MEASURED overflow of a replayed handoff (typed provenance) may cut text, oldest part first and labelled; the other messages, the opening line and the newest bytes ride; one POST, never a refusal. A person's message is sent whole."""
     up = Upstream("http://inprocess.invalid", context_window=4096, capture_dir=None, capture_rendered=False)
     posts = []
 
@@ -35,6 +35,7 @@ def test_native_sizing_sends_the_callers_whole_input_or_cuts_its_oldest_part_lab
         {"role": "user", "content": "Perform the original task."},
         {"role": "assistant", "content": "⟦ctx:briefing⟧ Original evidence\r\nwith its role and β bytes intact."},
         {"role": "user", "content": "A later amendment: preserve preceding instructions."}]}
+    body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff()
     original = deepcopy(body)
     log = type("Log", (), {"emit": lambda *a, **k: None})()
     up.chat(body, log)
@@ -44,5 +45,5 @@ def test_native_sizing_sends_the_callers_whole_input_or_cuts_its_oldest_part_lab
         assert cut.startswith("Keep this preceding constraint. ") and "⟦ctx:reduced⟧" in cut and cut.endswith("FINAL_CONSTRAINT_BYTE")
         assert posts[0]["messages"][1:] == original["messages"][1:] and len(cut) < len(original["messages"][0]["content"])
     else:
-        assert all(m in posts[0]["messages"] for m in original["messages"])
+        assert posts[0]["messages"][0]["content"] == original["messages"][0]["content"] and posts[0]["messages"][1:] == original["messages"][1:]
     assert body == original and up._window == 4096

@@ -62,7 +62,7 @@ def test_packet_budget_keeps_task_and_newest_evidence_with_disclosure():
     assert fitted.task == packet.task and fitted.action == packet.action
     assert "new observation" in fitted.render()
     assert "old " * 20000 not in fitted.render()
-    assert "1 earlier turn(s) omitted" in fitted.render()
+    assert "1 earlier evidence block(s) were omitted" in fitted.render()
     assert len(fitted.render()) // 3 <= 16384 // 4
     assert compactionpacket.fit_packet(compactionpacket.Packet("task", ("small",)),
                                        window=16384, measure=lambda s: len(s) // 3).blocks == ("small",)
@@ -78,7 +78,11 @@ def test_packet_budget_keeps_task_and_newest_evidence_with_disclosure():
         original_task=packet.task, prior_handoffs=(origin.continuation,), prior_packet=fitted))
     assert "HISTORICAL producer-owned historical evidence MESSAGE:" not in again.render()
     assert again.render().count("new observation") == 1
-    assert again.render().count("1 earlier turn(s) omitted") == 1
+    assert again.render().count("earlier evidence block(s) were omitted") == 1
+    # Nested: a note carried into a later handoff that drops it too is summed, never counted as one block.
+    nested = compactionpacket.fit_packet(compactionpacket.Packet("t", (compactionpacket.OmissionNote(5), "mid " * 20000, "newest")),
+                                         window=16384, measure=lambda s: len(s) // 3)
+    assert nested.blocks[0].blocks == 6 and "6 earlier evidence block(s)" in nested.render() and "newest" in nested.render()
     from dataclasses import replace
     services = replace(server._handoff_services(), packet_window=16384,
                        packet_measure=lambda s: len(s) // 3)
@@ -91,7 +95,7 @@ def test_packet_budget_keeps_task_and_newest_evidence_with_disclosure():
         {"role": "user", "content": "checkpoint"}]},
         memoryhandoff.SessionFacts(original_task="original task"), services,
         selected=True, chat_fn=None, role=None, rlog=log, settle=lambda *a: None)
-    assert "1 earlier turn(s) omitted" in result.prose
+    assert "1 earlier evidence block(s) were omitted" in result.prose
     assert "new observation" in result.prose and len(result.prose) // 3 <= 16384 // 4
 
 

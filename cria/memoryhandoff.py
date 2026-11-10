@@ -289,7 +289,7 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
     original = packet
     packet = compactionpacket.fit_packet(packet, window=services.packet_window, measure=services.packet_measure)
     if packet is not original:
-        rlog.emit("context.handoff_bounded", omitted=len(original.blocks) - len(packet.blocks) + 1)
+        rlog.emit("context.handoff_bounded", omitted_blocks=packet.blocks[0].blocks)
     text = packet.render()
     choices = [dict(ch) for ch in completion.get("choices") or []]
     if not choices:

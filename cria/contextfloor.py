@@ -67,8 +67,10 @@ _REDUCED_MARK = "⟦ctx:reduced⟧"
 # The message-level hint `bodykeys.RESTORED_FILES` names the restored-file-text block (a literal here for
 # the same reason as _PROTECT_MARKERS: contextfloor imports no sibling; a test asserts it is in sync).
 _RESTORED_HINT = "cria_restored_files"
-# The reframed harness handoff (a user-role replay of a packet cria produced; literal like _PROTECT_MARKERS, a test pins it).
-_CONTINUATION_MARK = "⟦ctx:continuation⟧"
+# THE OPERATOR SWITCH for lever 8 on a person's own message. OFF: principles.md section 5 treats disclosed clipping as
+# truncation, so until the operator decides, the lever cuts only text cria itself authored or framed (a message carrying the
+# typed ``bodykeys.HarnessHandoff`` provenance). ``fit(cut_human_input=...)`` overrides it per call.
+CUT_HUMAN_INPUT = False
 # The stand-in note retains whole historical turns or paired exchanges within this shared allowance;
 # anything else is disclosed as omitted. The drop loops measure the entire note, including labels.
 _NOTE_DIGEST_FRACTION = 0.25
@@ -484,7 +486,8 @@ def reply_room_floor(reserve: int, window: int) -> int:
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
         safety: float = SAFETY_FACTOR, pinned_task: str = "",
         headroom: bool = False, wire_overhead: int = 0,
-        protected_call_ids: tuple[str, ...] = (), reduce_user_input: bool = False) -> tuple[list[dict], object, FloorReport]:
+        protected_call_ids: tuple[str, ...] = (), reduce_user_input: bool = False,
+        cut_human_input: bool | None = None) -> tuple[list[dict], object, FloorReport]:
     """Return ``(messages, tools, report)`` reshaped to fit ``window`` (accounting for the
     ``tools`` schema and a generation ``reserve``). Pure — does not mutate the inputs;
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
@@ -649,14 +652,15 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
                 overhead=rep.wire_overhead, notes=notes, **protected)
             over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
     if over and reduce_user_input and not protected_call_ids:
-        # --- Lever 8 (the very last): what remains is a USER-role message nothing above can shrink (a harness's
-        # replayed handoff, a paste). Ending the session over it with a "not delivered" assistant message is the
-        # outcome principle 14 forbids whoever wrote the message, so its OLDEST part is omitted, labelled with
+        # --- Lever 8 (the very last): what remains is a user-role message nothing above can shrink. Ending the session
+        # over it with a "not delivered" assistant message is the outcome principle 14 forbids, so the OLDEST part of text
+        # cria authored (a replayed handoff; a person's message only behind CUT_HUMAN_INPUT) is omitted, labelled with
         # the sizes, and the newest part is delivered. Never silent, never a stop message. The caller authorizes it
-        # (``reduce_user_input``) only once a measurement proved the overflow, or none can be had: an estimate
-        # alone never cuts a user's text.
+        # (``reduce_user_input``) only once a measurement or a backend capacity rejection proved the overflow: an
+        # estimate alone never cuts text that may fit.
         work, rep.user_reduced, rep.user_omitted_chars = _reduce_user_input(
-            work, tools, window=window, reserve=reserve, safety=safety, overhead=rep.wire_overhead)
+            work, tools, window=window, reserve=reserve, safety=safety, overhead=rep.wire_overhead,
+            cut_human_input=CUT_HUMAN_INPUT if cut_human_input is None else cut_human_input)
         if rep.user_reduced:
             rep.msg_tokens_after = _msgs_tokens(work)
             over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
@@ -675,25 +679,34 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     return work, tools, rep
 
 
+def _cuttable_user_text(message: dict, cut_human_input: bool) -> bool:
+    """May lever 8 cut this user-role message? Text cria itself authored or framed: yes, decided by PRODUCER PROVENANCE (the
+    typed ``bodykeys.HarnessHandoff`` the inbound edge sets on a handoff it rewrote; a JSON string cannot carry it), never by
+    reading the text. A person's own message: only behind the operator switch (:data:`CUT_HUMAN_INPUT`), and then never
+    cria's own anchors."""
+    if isinstance(message.get(bodykeys.HARNESS_HANDOFF), bodykeys.HarnessHandoff):
+        return True
+    return cut_human_input and not _has_protect_marker(message)
+
+
 # The first characters of a reduced user message that always stay: its opening line (an instruction such as
 # "summarise:" leads the paste it governs), never more than this many characters.
 _USER_HEAD_CHARS = 500
 
 
 def _reduce_user_input(messages: list[dict], tools, *, window: int, reserve: int, safety: float,
-                       overhead: int) -> tuple[list[dict], int, int]:
-    """Cut the OLDEST part of the largest user-role message(s) until the request fits, labelled.
+                       overhead: int, cut_human_input: bool = False) -> tuple[list[dict], int, int]:
+    """Cut the OLDEST part of the largest cuttable user-role message(s) until the request fits, labelled.
 
-    The last lever, for what no other lever may touch: a user-role message that alone outgrows the window. It
-    does not matter who wrote it (a person, or a harness replaying a handoff cria produced): handing the session
-    back with a stop message is forbidden (principle 14), and the remedy for too much is to carry the newest
-    part. The message keeps its opening line (at most :data:`_USER_HEAD_CHARS` characters), then a label stating
-    how many characters, lines and tokens were omitted and how many of the newest characters follow; the tail
-    begins at a line boundary when one is near. The kept tail is the LARGEST that fits (a search on the floor's
-    own estimate), so nothing is omitted that the room could carry. cria's own anchors (the briefing, task, facts, rollup, steer) are left alone, so are a message with
-    non-text parts and one a stand-in could not shorten; only the reframed harness handoff, the one anchor a harness
-    replays at any size, is reducible; when the frame alone exceeds the
-    window every user message is cut to its head plus label and the report stays ``over_budget``.
+    The last lever, for text no other lever may touch. Handing the session back with a stop message is forbidden
+    (principle 14), and the remedy for too much of text cria itself authored (a handoff packet a harness replays as a
+    user-role message) is to carry its newest part. Which messages are cuttable is :func:`_cuttable_user_text`: the typed
+    ``HarnessHandoff`` provenance, or any user message only when the operator switch ``cut_human_input`` is ON.
+    The message keeps its opening line (at most :data:`_USER_HEAD_CHARS` characters), then a label stating how many
+    characters, lines and tokens were omitted and how many of the newest characters follow; the tail begins at a line
+    boundary when one is near. The kept tail is the LARGEST that fits (a search on the floor's own estimate). A message with
+    non-text parts, and one a stand-in could not shorten, are left alone; when the frame alone exceeds the window every
+    cuttable message is cut to its head plus label and the report stays ``over_budget``.
 
     Returns ``(messages, messages_reduced, characters_omitted)``."""
     budget = window - reserve
@@ -703,8 +716,7 @@ def _reduce_user_input(messages: list[dict], tools, *, window: int, reserve: int
     while not fits(out):
         sized = [(len(m["content"]), i) for i, m in enumerate(out)
                  if m.get("role") == "user" and isinstance(m.get("content"), str)
-                 and i not in done
-                 and (not _has_protect_marker(m) or selfcompact.opens_in_crias_voice(m, (_CONTINUATION_MARK,)))]
+                 and i not in done and _cuttable_user_text(m, cut_human_input)]
         if not sized:
             break
         _, i = max(sized)

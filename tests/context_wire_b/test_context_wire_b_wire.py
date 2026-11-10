@@ -94,18 +94,27 @@ def test_a_body_that_fits_natively_keeps_all_caller_input_and_strips_private_hin
     assert all(m in sent["messages"] for m in original["messages"]) and server.ops == ["render", "count"]
     assert bodykeys.PINNED_TASK not in sent and body == original
 
-@rows([(lambda text: len(text) // 3, False), ({"tokens": []}, False), ({"tokens": [True]}, False), ({"tokens": [-1]}, False), ({"tokens": ["42"]}, False), (2000, True)])
-def test_caller_input_is_cut_oldest_first_and_labelled_only_when_overflow_is_proven_or_unmeasurable(tokens, no_render):
-    """A true overflow, or a missing/malformed measurement (or no rendered prompt) cuts the OLDEST part of the largest user message, labelled, and sends it: never a refusal, the caller's body is untouched, and the other messages ride whole."""
+@rows([(lambda text: len(text) // 3, False, False), ({"tokens": []}, False, False), ({"tokens": [True]}, False, False), ({"tokens": [-1]}, False, False), ({"tokens": ["42"]}, False, False), (2000, True, False),
+       (lambda text: len(text) // 3, False, True), ({"tokens": []}, False, True), (2000, True, True)])
+def test_only_replayed_handoff_text_is_cut_and_only_when_overflow_is_proven(tokens, no_render, handoff):
+    """A person's oversized message is NEVER cut (principle 5): whatever the measurement says it is sent whole. A replayed handoff (typed provenance) loses its OLDEST part, labelled, only on a measured overflow; with no measurement (malformed answer, no rendered prompt) or a measured fit it is sent whole too. The caller's body is untouched."""
     up = upstream(4096)
     server, body = Server(up, lambda text: tokens(text) if callable(tokens) else tokens), native_request()
+    if handoff:
+        body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff()
     if no_render:
         up._render_prompt = lambda body: None
     original = deepcopy(body)
-    up.chat(body, Rlog())
+    rlog = Rlog()
+    up.chat(body, rlog)
     (sent,) = server.posts
-    cut = sent["messages"][0]["content"]
-    assert cut.startswith("Keep this preceding constraint. ") and "⟦ctx:reduced⟧" in cut and cut.endswith("FINAL_CONSTRAINT_BYTE")
+    first = sent["messages"][0]["content"]
+    measured_over = callable(tokens) and not no_render
+    if handoff and measured_over:
+        assert first.startswith("Keep this preceding constraint. ") and "⟦ctx:reduced⟧" in first and first.endswith("FINAL_CONSTRAINT_BYTE")
+        assert rlog.first("context.overflow_reduced") is not None
+    else:
+        assert first == original["messages"][0]["content"] and rlog.first("context.overflow_reduced") is None
     assert sent["messages"][1:] == original["messages"][1:] and body == original and up._window == 4096
 
 def test_typed_history_is_reduced_with_a_label_but_caller_messages_are_not():

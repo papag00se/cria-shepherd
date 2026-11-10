@@ -1,0 +1,1 @@
+{{COUNT}} earlier evidence block(s) were omitted from this handoff to fit the context window, counting those already omitted by earlier handoffs it carries; each block is one message or part of one.

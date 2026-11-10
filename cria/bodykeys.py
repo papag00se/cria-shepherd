@@ -58,6 +58,23 @@ class HistorySelectionOrigin:
 
 HISTORY_SELECTION = 'cria_history_selection'
 
+
+class HarnessHandoff:
+    """In-process producer authority: this user-role message is a harness-replayed compaction handoff cria rewrote at the
+    inbound edge (``loop.reframe_compaction``), text cria authored or framed rather than a person's. A JSON string
+    cannot acquire it. ``authenticated`` is True when the replayed reply matched the identity cria recorded when it
+    produced it (``_HandoffOrigin``); False when only the harness's fixed compaction opening was recognised."""
+    __slots__ = ("authenticated",)
+
+    def __init__(self, authenticated: bool = False):
+        self.authenticated = bool(authenticated)
+
+    def __deepcopy__(self, memo):
+        return self
+
+
+HARNESS_HANDOFF = 'cria_harness_handoff'
+
 # --- request-body hints: an earlier stage's intent, read by a later one -------------------------
 
 #: The role wants consecutive same-role turns merged before serialization. Opt-in per model, so a
@@ -184,4 +201,4 @@ MULTIPART_UNVERIFIED = "cria_multipart_unverified"
 LEGACY_MESSAGE_KEYS = ("_multipart_unverified",)
 
 ALL = (HOLD_WRITE_TOOLS, UNREAD_HOLD, ROLE_ORIGIN, MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, ACTION_ORIGIN, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT, CHAT_WIRE, HISTORY_SELECTION)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, ACTION_ORIGIN, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT, CHAT_WIRE, HISTORY_SELECTION, HARNESS_HANDOFF)

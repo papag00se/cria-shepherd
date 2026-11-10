@@ -50,6 +50,7 @@ from .loop import (
     _drop_harness_frame,
     _PROSE_DROPPED_MARKER,
     _HandoffOrigin,
+    CONTINUATION_MARKER,
     LoopContext,
     LoopStore,
     _fetch_ground_truth,
@@ -754,6 +755,23 @@ def _carried_ledger(messages: list, *, origin: _HandoffOrigin | None = None) -> 
             summary = text.split(_COMPACTION_BOUNDARY, 1)[1].lstrip("\n")
             return origin.ledger if origin.matches_summary(summary) else ""
     return ""
+
+
+def _mark_replayed_handoffs(before: list, after: list, origin) -> list:
+    """Give every message `reframe_compaction` REWROTE into a continuation the typed ``bodykeys.HarnessHandoff`` provenance:
+    the one authority by which the context floor may cut a user-role message (`contextfloor._cuttable_user_text`). A message is
+    marked only if the reframe produced it here (not an object of the inbound list) and it opens with cria's own continuation
+    marker; ``authenticated`` records whether the replayed text matched the identity cria recorded when it produced it."""
+    inbound = {id(m) for m in before}
+    out = []
+    for m in after:
+        content = m.get("content") if isinstance(m, dict) else None
+        if (isinstance(m, dict) and id(m) not in inbound and m.get("role") == "user" and isinstance(content, str)
+                and content.startswith(CONTINUATION_MARKER) and bodykeys.ANNOTATION_SOURCE not in m):
+            authenticated = isinstance(origin, _HandoffOrigin) and origin.continuation == content
+            m = {**m, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff(authenticated)}
+        out.append(m)
+    return out
 
 
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "",
@@ -1685,7 +1703,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         if self.server.cfg.routing.context_fixes:
             live_loop = getattr(self.server, "loop", None)
             sess = live_loop._store.get(sess_key) if live_loop is not None else None
-            cleaned, reframed = reframe_compaction(cleaned, origin=getattr(sess, "handoff_origin", None))
+            origin = getattr(sess, "handoff_origin", None)
+            before = cleaned
+            cleaned, reframed = reframe_compaction(before, origin=origin)
+            if reframed:
+                cleaned = _mark_replayed_handoffs(before, cleaned, origin)
         # C44 R1 (review 9eaadebe): UNCONDITIONAL, every level — `reframe_compaction` above is the
         # interpreter (picks the right template) for the shapes it recognizes, gated on CONTEXT_FIXES
         # by the same "reattribution is surgery" rule as the reframe itself; this is the blanket net

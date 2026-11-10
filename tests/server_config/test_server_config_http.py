@@ -282,16 +282,15 @@ def test_a_failing_upstream_is_a_clean_error_never_a_fake_success(wire, stream):
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_a_final_input_larger_than_the_window_is_reduced_and_answered_never_stopped(wire, mode):
-    """A ~70k-token last user message used to end the session with a stop message. Its oldest part is now omitted, labelled, and the model answers the request."""
+def test_a_persons_oversized_final_input_is_sent_whole_never_answered_with_a_stop_message(wire, mode):
+    """A ~70k-token last user message used to end the session with a stop message. A person's text is never cut (principle 5): it is sent whole with a structured event, and the model server's own refusal (a retryable error) is the answer to an impossible request."""
     status, raw = wire.post(*request(mode, "summarise:\n" + BIG))
     text = reply_text(mode, raw)
     assert status == 200 and "input-not-delivered" not in text and text
     (sent,) = [body for _, body in wire.fake.chats if "w29999" in json.dumps(body["messages"])]
-    cut = sent["messages"][-1]["content"]
-    assert cut.startswith("summarise:\n⟦ctx:reduced⟧") and cut.endswith("w29999") and "w00000" not in cut
-    event = next(e for e in wire.events() if e["kind"] == "context.overflow_reduced")
-    assert event["omitted_chars"] > 0 and event["est_tokens_after"] < event["est_tokens_before"]
+    assert sent["messages"][-1]["content"] == "summarise:\n" + BIG and "⟦ctx:reduced⟧" not in json.dumps(sent)
+    kinds = [e["kind"] for e in wire.events()]
+    assert "context.overflow_unfittable" in kinds and "context.overflow_reduced" not in kinds
 
 
 def tool_result_request(mode, result, task="count the ERROR lines in logs/app.log", **kw):

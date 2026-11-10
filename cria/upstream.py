@@ -842,8 +842,8 @@ class Upstream:
               _reduce_user: bool = False) -> tuple[bytes, int, str | None]:
         """Prepare at the sole wire boundary, serializing each session's fitting state.
 
-        ``_reduce_user`` authorizes the floor's last lever (the labelled cut of an oversized user-role message): only
-        after a measurement proved the overflow, or when none can be had. An estimate alone never destroys user text."""
+        ``_reduce_user`` authorizes the floor's last lever (the labelled cut of an oversized replayed handoff): only
+        after a measurement or a backend capacity rejection proved the overflow. An estimate alone never cuts text."""
         if body.get(bodykeys.PROTECTED_READS) and not _READ_FIT_SCOPE.get():
             return self._prep_protected_reads(body, stream, rlog, safety_override, _previous_fit, _wire_overhead)
         session = getattr(rlog, 'session', None)
@@ -1117,7 +1117,7 @@ class Upstream:
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
                                              bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE, bodykeys.ACTION_ORIGIN,
-                                             bodykeys.HISTORY_SELECTION,
+                                             bodykeys.HISTORY_SELECTION, bodykeys.HARNESS_HANDOFF,
                                              bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED, bodykeys.UNREAD_HOLD,
                                              *bodykeys.LEGACY_MESSAGE_KEYS)}
                                if isinstance(m, dict) else m for m in out["messages"]]
@@ -1197,10 +1197,11 @@ class Upstream:
                 rlog.emit("context.overflow_unfittable", level="error", measured=False,
                           tokens=int(sent_estimate * safety), window=window, reserve=rep.reserve)
             elif rep.over_budget or data == _previous_fit:
-                # Nothing could measure this body and the estimate says no lever fits it: only now may the
-                # last lever cut the user's oldest text (labelled).
-                return self._prep(body, stream, rlog, safety_override=safety,
-                                  _previous_fit=data, _wire_overhead=_wire_overhead, _reduce_user=True)
+                # Nothing could measure this body: the estimate alone never authorizes cutting text that may fit.
+                # Send it whole; a backend capacity rejection (the bounded refit in `_open_with_refit`) is the
+                # authority that re-fits with the last lever allowed.
+                rlog.emit("context.overflow_estimated", level="warn", tokens=int(sent_estimate * safety),
+                          window=window, reserve=rep.reserve)
             else:
                 # Structural wire growth is measured in the same estimate space,
                 # separately from model density and the role's generation reserve.

@@ -25,9 +25,10 @@ class Rlog:
         return [f for k, f in self.events if k == kind]
 
 
-def prep(msgs, *, window=49152, level=config.MAX_ENGAGEMENT_LEVEL, rlog=None, up=None, safety=1.8, **extra):
+def prep(msgs, *, window=49152, level=config.MAX_ENGAGEMENT_LEVEL, rlog=None, up=None, safety=1.8, reduce_user=False, **extra):
     up = up or upstream.Upstream("http://unused", context_window=window, engagement_level=level)
-    raw, _est, _cap = up._prep({"model": "m", "messages": msgs, **extra}, False, rlog or Rlog(), safety_override=safety)
+    raw, _est, _cap = up._prep({"model": "m", "messages": msgs, **extra}, False, rlog or Rlog(), safety_override=safety,
+                               _reduce_user=reduce_user)
     return json.loads(raw)
 
 
@@ -148,21 +149,27 @@ def test_final_wire_carries_whole_historical_result_with_its_call_when_it_fits()
     assert '›' not in sent
 
 
-def test_an_input_that_cannot_fit_the_known_window_is_reduced_and_labelled_never_refused():
-    """A user-role message over the window used to end the session with a stop message. Its oldest part is
-    omitted instead, labelled with the sizes; the opening line and the newest part ride."""
+def test_only_replayed_handoff_text_is_cut_and_only_after_a_proven_overflow():
+    """A user-role message over the window used to end the session with a stop message. Text cria authored (typed handoff provenance) loses its OLDEST part, labelled, once a measurement or backend rejection (`_reduce_user`) proved the overflow; a person's message is sent whole (principle 5) and the unfittable case is a structured event, never a stop message."""
     body = "Summarise this:\n" + "".join(f"record {i:05d} " + "x" * 40 + "\n" for i in range(400))
+    handoff = {"role": "user", "content": body, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff()}
+    kw = dict(window=1000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})
     rlog = Rlog()
-    sent = prep([{"role": "user", "content": body}], window=1000, safety=1, rlog=rlog,
-                **{bodykeys.OUTPUT_RESERVE: 1})["messages"]
+    sent = prep([handoff], rlog=rlog, reduce_user=True, **kw)["messages"]
     out = sent[0]["content"]
     assert out.startswith("Summarise this:\n⟦ctx:reduced⟧") and "were omitted to fit the 1,000-token" in out
     assert body.splitlines()[-1] in out and body.splitlines()[1] not in out and cf.est_total(sent, None) <= 999
+    assert bodykeys.HARNESS_HANDOFF not in sent[0]                                     # private provenance never reaches the wire
     event = rlog.named("context.overflow_reduced")[0]
     assert event["messages"] == 1 and event["omitted_chars"] > 0 and event["est_tokens_after"] < event["est_tokens_before"]
     assert not rlog.named("context.overflow_unfittable")
+    rlog = Rlog()                                                                       # no proven overflow: the estimate alone cuts nothing
+    assert prep([handoff], rlog=rlog, **kw)["messages"][0]["content"] == body and rlog.named("context.overflow_estimated")
+    rlog = Rlog()                                                                       # a person's message: sent whole, structured event
+    assert prep([{"role": "user", "content": body}], rlog=rlog, reduce_user=True, **kw)["messages"][0]["content"] == body
+    assert rlog.named("context.overflow_unfittable") and not rlog.named("context.overflow_reduced")
     fits = "Summarise this:\nshort"
-    assert prep([{"role": "user", "content": fits}], window=1000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})["messages"][0]["content"] == fits
+    assert prep([{"role": "user", "content": fits}], reduce_user=True, **kw)["messages"][0]["content"] == fits
 
 
 BLOCK = "".join(f"[ERROR] /w/src/Main.java:[{i},3] cannot find symbol number {i}\n" for i in range(40))
@@ -184,20 +191,19 @@ def test_a_repeat_pointer_never_outlives_the_copy_it_points_at_while_the_floor_t
     """B1: the one-copy fold ran BEFORE the floor; the kept newest copy (an unprotected checks result) was then
     dropped while the protected continuation kept its 'shown in full further down' pointer - the diagnostic was
     in the body zero times. Sweep the window across the trim range: a pointer only ever has its copy, and
-    windows the frame alone exceeds are reported unfittable and sent minimal, never refused with a stop message."""
+    windows the frame alone exceeds are reported (estimated or unfittable) and sent, never refused with a stop message."""
     note = prompts.load("repeated_message_note").strip()
-    trimmed = refused = reduced = 0
+    trimmed = refused = 0
     for window in range(520, 4000, 40):
         rlog = Rlog()
         sent = prep(pointer_body(), window=window, rlog=rlog)["messages"]
-        if rlog.named("context.overflow_unfittable"):
+        if rlog.named("context.overflow_estimated"):
             refused += 1
         else:
             assert cf.est_total(sent, None) * cf.SAFETY_FACTOR <= window
         trimmed += "⟦ctx:compacted⟧" in text(sent)
-        reduced += bool(rlog.named("context.overflow_reduced"))
         assert DIAG in text(sent) or note not in text(sent), window
-    assert trimmed and reduced and not refused
+    assert trimmed and refused
     folded = prep(pointer_body()[:5], window=1_000_000)["messages"]
     assert note in text(folded) and text(folded).count(DIAG) == 1            # the fold fires when nothing is trimmed
     for level in (config.PURE_PROXY, config.TOOL_CALL_FIXES, config.SIMPLE_TOOLS):   # no context surgery below L3
@@ -274,11 +280,11 @@ def overflow(n_ctx=49152, real=94788):
     return urllib.error.HTTPError("http://x/v1/chat/completions", 400, "Bad Request", {}, io.BytesIO(body.encode()))
 
 
-@pytest.mark.parametrize("shape,sends", [("long history", 2), ("tiny body", 1), ("composed two-message", 2)])
+@pytest.mark.parametrize("shape,sends", [("long history", 2), ("tiny body", 1), ("composed two-message", 1)])
 def test_a_context_rejection_is_re_sent_only_if_the_re_fit_changed_the_bytes(shape, sends):
     """cria re-sent 3.2M prompt tokens to a 400 it already had: 59 refits, 59 identical 400s (a composed
     two-message prompt had no whole turn to drop, so re-prepping returned the same bytes). A body that really
-    shrinks (its user message now loses its oldest part, labelled) is still retried; one that cannot is never put on the wire twice."""
+    shrinks is still retried; one that cannot (a person's message is never cut) is never put on the wire twice."""
     msgs = {"long history": [{"role": "system", "content": "frame"}] + [
                 {"role": "user" if i % 2 == 0 else "assistant", "content": "x" * 4000} for i in range(12)]
             + [{"role": "user", "content": "now"}],
