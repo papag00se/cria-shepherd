@@ -2083,7 +2083,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                     written[tc.get("id")] = body_arg
                             if tc.get("id") in failed_ids:
                                 draft = toolstages.current().preserve_draft(
-                                    tc, _tool_path(p) or "", rlog if _first_sight_of_rejection(sess_key, tc) else None)
+                                    tc, _tool_path(p) or "", rlog if _first_sight_of_rejection(sess_key, tc) else None,
+                                    unread_hold=(tc.get('id') in unread_hold_ids and outcomes.get(tc.get('id')) == denial.REFUSED))
                                 if draft.note:
                                     rejected_notes_by_id[tc.get("id")] = draft.note
                                 tc = draft.call

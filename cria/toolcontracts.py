@@ -164,7 +164,7 @@ class RejectedDraft:
 @dataclass(frozen=True)
 class DraftDefinition:
     policy: Policy
-    execute: Callable[[dict, str, EventLog | None], RejectedDraft]
+    execute: Callable[[dict, str, EventLog | None, bool], RejectedDraft]
 
 
 ToolDefinition = CompletionDefinition | OutboundDefinition | MutationDefinition | ReturnedDefinition | HistoryDefinition | DraftDefinition

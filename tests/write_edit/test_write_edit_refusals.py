@@ -95,6 +95,21 @@ def test_a_large_rejected_draft_leaves_the_argument_slot_and_rides_once_in_the_r
     assert json.loads(ok[0]["tool_calls"][0]["function"]["arguments"])["new_string"] == BIG       # landed bytes are never collapsed
 
 
+@pytest.mark.parametrize('case', ['syntax', 'parent'])
+def test_validation_refusals_keep_large_draft_for_correction(tmp_path, case):
+    if case == 'syntax':
+        (tmp_path / 'valid.py').write_text('x = 1\n')
+        path, draft = 'valid.py', '# draft line\n' * 50 + 'def broken(:\n'
+    else:
+        (tmp_path / 'parent').write_text('blocker\n')
+        path, draft = 'parent/child.txt', 'draft content\n' * 50
+    _, _, shown = do('write_file', {'path': path, 'content': draft}, tmp_path)
+    assert denial.refused(shown[1])
+    fn = shown[0]['tool_calls'][0]['function']
+    assert fn['name'] == 'write_file' and json.loads(fn['arguments']) == {'path': path}
+    assert shown[1]['content'].count(draft) == 1 and '⟦ctx:rejected-candidate⟧' in shown[1]['content']
+
+
 class Ledger:
     write_tracking, write_call_ids, call_counts, refused_write_ids = False, None, None, None
 

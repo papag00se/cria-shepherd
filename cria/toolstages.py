@@ -133,11 +133,11 @@ class ToolStages:
         for definition in self.history:
             definition.execute(replace(source, log=policy_log(source.log, definition.policy)))
 
-    def preserve_draft(self, call: dict, path: str, log=None) -> RejectedDraft:
+    def preserve_draft(self, call: dict, path: str, log=None, unread_hold: bool = False) -> RejectedDraft:
         definition = self.rejected_draft
         if definition is None:
             return RejectedDraft(call, '')
-        return definition.execute(call, path, policy_log(log, definition.policy))
+        return definition.execute(call, path, policy_log(log, definition.policy), unread_hold)
 
 
 _CURRENT: ContextVar[ToolStages | None] = ContextVar('tool_stage_bindings', default=None)

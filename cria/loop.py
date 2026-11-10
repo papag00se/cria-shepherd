@@ -9348,8 +9348,11 @@ def _read_results_ordered(messages: list[dict]):
                     calls[tc["id"]] = (p, args.get("start_line"), args.get("end_line"))
             elif fn.get('name') == 'apply_patch' and tc.get('id'):
                 paths = patch_paths(tc)
-                if len(paths) == 1:
-                    calls.setdefault(tc['id'], (paths[0], None, None))
+                # Held patches retain only their target, not the blind patch body.
+                # Attribution still requires the paired verified read below.
+                path = paths[0] if len(paths) == 1 else _path_of_args(fn.get('arguments') or '', patch_ok=False)
+                if path:
+                    calls.setdefault(tc['id'], (path, None, None))
                     answered_by_read.add(tc['id'])
             elif fn.get("name") in (writeproxy_names | writeproxy._EDIT_NAMES) and tc.get("id") \
                     and (p := _path_of_args(fn.get("arguments") or "", patch_ok=False)):

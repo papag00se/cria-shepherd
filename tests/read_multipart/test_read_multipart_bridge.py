@@ -121,6 +121,10 @@ def test_held_receipt_attributes_only_the_call_when_file_changes_before_read(tmp
         shown = writeproxy.represent_inbound(projected, workspace_root=str(workspace))
         result = next(m for m in shown if m.get('tool_call_id') == 'held')
         assert denial.refused(result) and denial.read_payload(result) == expected
+        represented_call = next(m for m in shown if m.get('role') == 'assistant')['tool_calls'][0]
+        assert represented_call['function']['name'] == name
+        assert json.loads(represented_call['function']['arguments']) == {'path': str(path)}
+        assert '⟦ctx:rejected-candidate⟧' not in str(shown)
         receipt = result['content'].split('⟦ctx:read-instead⟧', 1)[0]
         assert f'This {name} call was not run' in receipt
         assert receipt == f'⟦ctx:denied⟧ This {name} call was not run. The content read follows.\n'
@@ -137,6 +141,62 @@ def test_hold_path_templates_do_not_assert_file_state():
             lowered = text.lower()
             assert 'unchanged' not in lowered and 'already exists' not in lowered
             assert '{{size}}' not in lowered and ' bytes)' not in lowered
+
+
+@pytest.mark.parametrize('identical', [False, True], ids=['captured-blind-draft', 'byte-identical-control'])
+def test_captured_ruby_hold_discards_blind_draft_on_final_wire(tmp_path, identical):
+    from cria import initial_inventory, loop, upstream
+    from read_multipart_helpers import SHELL
+    import subprocess
+    repo = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / 'workspace'
+    shutil.copytree(repo / 'suite/tasks/shipping-rates-rb/seed', workspace)
+    original = json.loads((repo / 'tests/fixtures/unread_write/ruby.json').read_text())['calls'][0]
+    args = json.loads(original['function']['arguments'])
+    args['path'] = str(workspace / args['path'])
+    expected = Path(args['path']).read_text()
+    if identical:
+        args['content'] = expected
+    draft = args['content']
+    original['function']['arguments'] = json.dumps(args)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(workspace))],
+                                     capture_output=True, text=True, check=True).stdout)
+    view = wsview.View(str(workspace), 'sid:ruby-hold')
+    assert view.apply_initial_inventory(data, str(workspace))
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                       runs_dir='', workspace_root=str(workspace), assists=True), loop.LoopStore())
+    driver._put_session('sid:ruby-hold', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+    token = wsview.bind(view)
+    try:
+        bridge = Bridge(str(tmp_path / 'state'))
+        completion = {'choices': [{'message': {'tool_calls': [copy.deepcopy(original)]}}]}
+        writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+            injected={'write_file'}, workspace_root=str(workspace),
+            unread_target=driver.unread_target_check('sid:ruby-hold', [], str(workspace)),
+            multipart_command=lambda tc, effect, receipt: bridge.register('s', tc, effect, SHELL, receipt))
+        bridge.bind('s', completion)
+        lowered = completion['choices'][0]['message']['tool_calls'][0]
+        messages = [{'role': 'assistant', 'tool_calls': [lowered]},
+                    {'role': 'tool', 'tool_call_id': lowered['id'], 'content': run_call(lowered)}]
+        projected, _ = page_through(bridge, messages, restart=lambda: Bridge(str(tmp_path / 'state')))
+        shown = writeproxy.represent_inbound(projected, workspace_root=str(workspace))
+        assert denial.read_payload(shown[1]) == expected
+        body = {'model': 'm', 'messages': [{'role': 'user', 'content': 'task'}, *shown]}
+        log = SimpleNamespace(session=None, phase='coder-s1', emit=lambda *a, **k: None)
+        upstream.Upstream('http://unused', context_window=49152, engagement_level=5)._prep(body, False, log)
+        wire = json.dumps(body, ensure_ascii=False)
+        call = body['messages'][-2]['tool_calls'][0]['function']
+        assert call['name'] == 'write_file' and json.loads(call['arguments']) == {'path': args['path']}
+        assert '⟦ctx:rejected-candidate⟧' not in wire
+        assert body['messages'][-1]['content'].count(draft) == (1 if identical else 0)
+        if not identical:
+            assert 'EXPRESS_ZONE_BASE' not in wire
+        assert body['messages'][-1]['content'] == '⟦ctx:denied⟧ This write_file call was not run. The content read follows.\n⟦ctx:read-instead⟧\n' + expected
+        print('Rendered assistant call:', json.dumps(call, ensure_ascii=False))
+        print('Rendered tool result:', body['messages'][-1]['content'])
+        assert Path(args['path']).read_text() == expected
+    finally:
+        wsview.unbind(token)
 
 
 @pytest.mark.parametrize('name', ['edit_file', 'str_replace', 'create_file'])

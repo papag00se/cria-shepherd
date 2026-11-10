@@ -405,7 +405,12 @@ def _note_dependency_search(source: ReturnedHistory) -> None:
                   ecosystem=eco or "", root=root, searched=searched)
 
 
-def preserve_rejected_draft(call: dict, path: str, log=None) -> RejectedDraft:
+def preserve_rejected_draft(call: dict, path: str, log=None, unread_hold: bool = False) -> RejectedDraft:
+    if unread_hold:
+        # The operator chose not to replay blind drafts for a proven unread-file hold.
+        # Keep the call and target only, including for small payloads and native patches.
+        fn = call.get('function') or {}
+        return RejectedDraft({**call, 'function': {**fn, 'arguments': json.dumps({'path': path})}}, '')
     note = _rejected_payload_note(call, path)
     return RejectedDraft(_collapse_rejected_payload(call, path, log), note)
 
