@@ -238,7 +238,7 @@ class GuardState:
     # Private initial-inventory observations; never proof of what the coder has read.
     inventory_root: str = ""
     inventory_observations: dict = field(default_factory=dict)
-    inventory_mutation_ids: set = field(default_factory=set)
+    inventory_event_ids: set = field(default_factory=set)
     # Whole-task satisfaction re-checks on a plan-ON completion (all steps verified INDIVIDUALLY, but is
     # the user's task actually done end-to-end?). Bounds the re-open-and-fix loop so a task the coder
     # genuinely can't finish still completes instead of looping forever. Parity with the plan-off critic.
@@ -3247,7 +3247,7 @@ class Loop:
         # sessions ever carried it), and the spilled-search lookup (#23).
         sess.web_session = session_key
         if sess.inventory_root:
-            _invalidate_inventory_observations(sess, messages, wsview.current(sess.inventory_root))
+            _refresh_inventory_notes(sess, messages, wsview.current(sess.inventory_root), rlog)
 
         # PLAN-OFF HAND-BACK: the reading step was the ONLY plan machinery plan-off is entitled to.
         # The moment the current item IS the raw task (the reading step verified, or was never
@@ -3446,7 +3446,7 @@ class Loop:
                               turn_index=sess.coder_timed_turns)
                 return ""
             view = wsview.current(root)
-            _invalidate_inventory_observations(sess, messages, view)
+            _refresh_inventory_notes(sess, messages, view, rlog)
             rel = view.rel(path)
             _track_content_fingerprints(sess, messages, view)
             seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
@@ -3472,9 +3472,14 @@ class Loop:
             # The initial inventory belongs to the session, not the request-local view. Only a
             # still-valid observation in this exact workspace may supply an otherwise absent fact.
             inventory = (sess.inventory_observations.get(rel) if rel and sess.inventory_root == view.root else None)
+            if blank is None and inventory is not None and inventory.get('missing'):
+                return admitted('missing')
             from_inventory = blank is None and inventory is not None and inventory.get('blank') is not None
             if from_inventory:
                 blank = inventory['blank']
+                if rlog is not None and inventory.get('digest'):
+                    rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
+                              turn_index=sess.coder_timed_turns, reason='current_bytes_unavailable')
             if blank is True:
                 return admitted('blank')
             if blank is None:
@@ -5740,7 +5745,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "content_fingerprints": sess.content_fingerprints or {},
         "inventory_root": sess.inventory_root,
         "inventory_observations": sess.inventory_observations,
-        "inventory_mutation_ids": sorted(sess.inventory_mutation_ids),
+        "inventory_event_ids": sorted(sess.inventory_event_ids),
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
         "generation_errors": sess.generation_errors,
@@ -5798,7 +5803,7 @@ def _session_from_dict(d) -> PlanSession | None:
                         and type(fact.get('observed_at')) in (int, float)} if isinstance(observations, dict) else {}
         return PlanSession(plan=plan, summary=str(d.get("summary", "")), content_fingerprints=fingerprints,
                            inventory_root=str(d.get('inventory_root') or ''), inventory_observations=observations,
-                           inventory_mutation_ids={x for x in d.get('inventory_mutation_ids', []) if isinstance(x, str)},
+                           inventory_event_ids={x for x in d.get('inventory_event_ids', []) if isinstance(x, str)},
                            generation_errors=list(d.get("generation_errors") or []),
                            unexecuted_nudges=int(d.get("generation_refusal_count", 0)),
                            prior_work=str(d.get("prior_work", "")),
@@ -6768,53 +6773,29 @@ def whole_file_ruling(answer: str) -> str:
 
 
 def _coder_has_seen_current(view, rel: str, sess, messages: list[dict]) -> bool:
-    """Do not credit visible old reads or writes past a later possible mutation."""
+    """Does the coder still HOLD this file's whole text (:func:`_coder_has_seen`) — and is it still the
+    file? A changed file is found by its CONTENT HASH alone: the read whose result is latest is compared
+    with the file's current freshness-validated bytes. No later command is read for what it might have
+    done; when current bytes are unavailable the retained-history credit stands (the caller logs it)."""
     if any(view.rel(p) == rel for p in (getattr(sess, 'restored_current', None) or {})):
         return True
     shell_reads = {tid for tid, command, _ in _shell_runs(messages)
                    if _prints_whole_file(command, rel, view)}
     if not _coder_has_seen(view, rel, sess, messages) and not shell_reads:
         return False
-    observations = [(idx, tid) for idx, tid, path, start, end, text in _read_results_ordered(messages)
+    observations = [idx for idx, tid, path, start, end, text in _read_results_ordered(messages)
                     if view.rel(path) == rel and isinstance(text, str) and _read_is_whole(start, end, text)]
-    observations += [(idx, message.get('tool_call_id')) for idx, message in enumerate(messages or [])
+    observations += [idx for idx, message in enumerate(messages or [])
                      if message.get('role') == 'tool' and message.get('tool_call_id') in shell_reads]
-    observations += [(idx, tid) for idx, tid, path, *_ in _write_events(messages) if view.rel(path) == rel]
+    observations += [idx for idx, tid, path, *_ in _write_events(messages) if view.rel(path) == rel]
     if not observations:
         return False  # a compacted-away own write is no longer visible to the coder
-    from . import denial
-    position, observed_id = max(observations, key=lambda item: item[0])
-    unlanded = denial.unlanded_call_ids(messages)
-    for target in _write_paths_after(messages, position, view.root, skip=unlanded):
-        if target is _ANY_PATH or view.rel(target) == rel:
-            return False
+    position = max(observations)
     current = view.capture_edit_preimage(rel)
     reads = [(idx, text) for idx, _, path, start, end, text in _read_results_ordered(messages)
              if view.rel(path) == rel and not start and not end and isinstance(text, str)]
     if current is not None and reads and reads[-1][0] == position and _content_digest(reads[-1][1]) != _content_digest(current[0]):
         return False
-    # Tool results are ordered in the transcript, but peers in one assistant batch may run in parallel.
-    # The result's position cannot place its read after a peer mutation. Reuse the same target classifier
-    # as later mutations; only the read itself and proven unlanded peers are excluded.
-    batch = next((m for m in reversed(messages[:position]) if m.get('role') == 'assistant'
-                  and any(tc.get('id') == observed_id for tc in m.get('tool_calls') or [])), None)
-    if batch is not None:
-        for tc in batch.get('tool_calls') or []:
-            if tc.get('id') == observed_id or tc.get('id') in unlanded:
-                continue
-            targets = _mutation_targets(tc.get('function') or {}, view.root)
-            if targets is _ANY_PATH or any(view.rel(target) == rel for target in targets):
-                # A freshly validated current body matching the exact read can settle an otherwise
-                # unordered overlap. A shell envelope is used only when its exit and payload are known.
-                exact = next((_content_digest(text) for idx, text in reads if idx == position), None)
-                if exact is None and observed_id in shell_reads:
-                    from .resultnotes import exec_envelope
-                    result = messages[position].get('content')
-                    envelope = exec_envelope(result) if isinstance(result, str) else None
-                    if envelope is not None and envelope.exit_code == 0:
-                        exact = _content_digest(result[envelope.payload_start:])
-                if current is None or exact is None or exact != _content_digest(current[0]):
-                    return False
     return True
 
 
@@ -11083,117 +11064,105 @@ def grounded_rumination_step(gs, messages: list[dict]) -> str:
 _ANY_PATH = object()   # a mutation whose targets cannot be fully determined: any file may have changed
 
 
-def _inventory_shell_targets(command, root):
-    """Named simple shell mutations, or ANY when their effects cannot be bounded.
+_PATCH_HEADER_RE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+?)\s*$", re.M)
+_DELETE_NAME_PARTS = frozenset({'delete', 'remove', 'rm'})
 
-    Bulk operations and nonliteral/compound shell are deliberately unknown. This classifier only
-    expires private inventory facts; it does not change the stricter read-credit classifier.
-    """
-    if dirguard.command_only_reads(command, root, no_writes=True):
-        return []
-    if any(c in command for c in '\n\r$`*?[]{}~;|&()'):
-        return _ANY_PATH
+
+def _noted_content(note: dict, text: str) -> dict:
+    """The note after an observation that carried the file's WHOLE text (a verified read or the coder's own
+    whole write): the same facts the initial inventory program records from the bytes."""
     try:
-        lex = shlex.shlex(command, posix=True, punctuation_chars='<>')
-        lex.whitespace_split = True
-        lex.commenters = ''
-        words = list(lex)
-    except ValueError:
-        return _ANY_PATH
-    if not words:
-        return _ANY_PATH
-    cmd, args = words[0], words[1:]
-    if cmd in ('echo', 'printf', 'cat') and any(w in ('>', '>>', '>|') for w in args):
-        targets = []
-        for i, word in enumerate(args):
-            if word in ('>', '>>', '>|'):
-                if i + 1 == len(args) or args[i + 1].startswith('>'):
-                    return _ANY_PATH
-                targets.append(args[i + 1])
-            elif word.startswith('<'):
-                return _ANY_PATH
-        return targets or _ANY_PATH
-    if any(w.startswith(('<', '>')) for w in args):
-        return _ANY_PATH
-    if cmd == 'tee':
-        return [x for x in args if not x.startswith('-')] or _ANY_PATH
-    if cmd in ('rm', 'mv'):
-        if cmd == 'rm' and any(x.startswith('-') and ('r' in x[1:].lower() or x == '--recursive') for x in args):
-            return _ANY_PATH
-        return [x for x in args if not x.startswith('-')] or _ANY_PATH
-    if cmd == 'sed' and any(x == '-i' or x.startswith('-i') or x.startswith('--in-place') for x in args):
-        if any((x.startswith('-i') and x != '-i') or x.startswith('--in-place=') for x in args):
-            return _ANY_PATH  # a backup suffix creates another path
-        operands = [x for x in args if not x.startswith('-')]
-        return operands[1:] if len(operands) > 1 else _ANY_PATH
-    # git tree operations, recursive copies, rsync, extractors, generators, and every other
-    # unproved command may change arbitrary paths. No command's exit text proves otherwise.
-    return _ANY_PATH
+        size = len(text.encode('utf-8'))
+    except UnicodeEncodeError:
+        return {**note, 'blank': None, 'digest': None, 'missing': False}
+    return {**note, 'digest': _content_digest(text), 'size': size, 'missing': False,
+            'blank': None if '\0' in text else (not text or text.isspace())}
 
 
-def _invalidate_inventory_observations(sess, messages, view):
-    if not sess.inventory_observations or sess.inventory_root != view.root:
+def _own_file_effects(fn: dict) -> list:
+    """``(path, effect)`` for what ONE recognized file-tool call names: ``edit`` (a partial change whose
+    result bytes only the file knows), ``delete``. Shell is never classified: no command is read for its
+    effect on a file (a changed file is found by its hash alone)."""
+    name, raw = fn.get('name'), fn.get('arguments') or ''
+    args = _args_of(raw)
+    if name == 'apply_patch':
+        blob = next((args[k] for k in ('input', 'patch', 'diff') if isinstance(args.get(k), str)),
+                    raw if isinstance(raw, str) and not args else '')
+        return [(path.strip().strip('"'), 'delete' if kind == 'Delete' else 'edit')
+                for kind, path in _PATCH_HEADER_RE.findall(blob)]
+    path = _path_of_args(raw, patch_ok=False)
+    if not path:
+        return []
+    if name in writeproxy._EDIT_NAMES:
+        return [(path, 'edit')]
+    if _DELETE_NAME_PARTS & set(re.split(r"[_\-. ]+", str(name or '').lower())):
+        return [(path, 'delete')]
+    return []
+
+
+def _refresh_inventory_notes(sess, messages, view, rlog=None):
+    """Keep the session's initial-inventory notes true to what was OBSERVED, never to what commands might do.
+
+    A note changes only through (1) a verified whole read that carried the file's text, (2) cria's own proof
+    that the path is not there (its read-failure answer, or a complete survey that lacks it), (3) the coder's
+    own recognized whole write / edit / patch / delete of that exact path, or (4) a stored content hash that
+    disagrees with the file's CURRENT bytes, when freshness-validated bytes exist. No shell command, however
+    destructive it looks, is read for its effect: unavailable bytes leave the note as it was."""
+    notes = sess.inventory_observations
+    if not notes or sess.inventory_root != view.root:
         return
     from . import denial
-    for _, _, path, start, end, text in _read_results_ordered(messages):
-        rel = view.rel(path)
-        fact = sess.inventory_observations.get(rel)
-        if fact and fact.get('digest') and isinstance(text, str) and not start and not end and _read_is_whole(start, end, text):
-            try:
-                changed = _content_digest(text) != fact['digest']
-            except UnicodeError:
-                changed = True
-            if changed:
-                sess.inventory_observations[rel] = {**fact, 'blank': None, 'invalidated_by': 'content_changed'}
-    for path, fact in list(sess.inventory_observations.items()):
-        digest = fact.get('digest')
-        current = view.capture_edit_preimage(path)
-        if digest and current is not None and _content_digest(current[0]) != digest:
-            sess.inventory_observations[path] = {**fact, 'blank': None, 'invalidated_by': 'content_changed'}
+    folded = sess.inventory_event_ids
+    paired = denial.paired_results(messages)
     unlanded = denial.unlanded_call_ids(messages)
+    position = {m.get('tool_call_id'): i for i, m in enumerate(messages or [])
+                if isinstance(m, dict) and m.get('role') == 'tool'}
+    missing_prose = prompts.load_map('read_failed')['missing']
+    events = []   # (position of the result, call id, path, effect, whole text)
+    for idx, tid, path, start, end, _ in _read_results_ordered(messages):
+        text = denial.read_payload(paired.get(tid))
+        if tid not in folded and not start and not end and text is not None:
+            events.append((idx, tid, path, 'text', text))
+    written = {tid for _, tid, *_ in _write_events(messages)}
     for message in messages or []:
         if not isinstance(message, dict) or message.get('role') != 'assistant':
             continue
         for tc in message.get('tool_calls') or []:
-            cid = tc.get('id')
-            if not cid or cid in sess.inventory_mutation_ids:
+            tid, fn = tc.get('id'), tc.get('function') or {}
+            if not tid or tid in folded or tid not in paired:
                 continue
-            sess.inventory_mutation_ids.add(cid)
-            if cid in unlanded:
-                continue
-            fn = tc.get('function') or {}
             command = writeproxy._command_of(fn.get('arguments') or '')
             original = writeproxy.original_call(command)
             if original is not None:
                 fn = original
-            elif writeproxy.is_crias_own(command):
+            elif writeproxy.is_crias_own(command) or is_shell_tool_name(fn.get('name')):
                 continue
-            if is_shell_tool_name(fn.get('name')):
-                args = _args_of(fn.get('arguments') or '')
-                text = _command_text(fn.get('arguments') or '')
-                targets = _inventory_shell_targets(text, view.root) if text is not None else _ANY_PATH
-                cwd = next((args[k] for k in ('workdir', 'cwd', 'working_directory') if args.get(k)), None)
-                if cwd and targets is not _ANY_PATH:
-                    if not isinstance(cwd, str) or any(c in cwd for c in '$`*?[]{}~'):
-                        targets = _ANY_PATH
-                    else:
-                        targets = [os.path.join(view.root, cwd, target) for target in targets]
-            else:
-                targets = _mutation_targets(fn, view.root)
-                if not targets and shelltool.is_write_tool_name(fn.get('name')) and shelltool.is_file_tool_name(fn.get('name')):
-                    targets = writerecord._targets(fn.get('name'), fn.get('arguments')) or _ANY_PATH
-            if targets is _ANY_PATH:
-                paths = list(sess.inventory_observations)
-            else:
-                rels = [view.rel(p) for p in targets]
-                if any(not p or p == '.' for p in rels):
-                    paths = list(sess.inventory_observations)
-                else:
-                    paths = [p for p in sess.inventory_observations
-                             if any(p == r or p.startswith(r.rstrip('/') + '/') for r in rels)]
-            for path in paths:
-                fact = sess.inventory_observations[path]
-                sess.inventory_observations[path] = {**fact, 'blank': None, 'invalidated_by': cid}
+            path = _path_of_args(fn.get('arguments') or '', patch_ok=False)
+            result = paired[tid]
+            content = result.get('content') if isinstance(result.get('content'), str) else ''
+            if path and denial.refused(result) and prompts.fill(missing_prose, path=path) in content:
+                events.append((position[tid], tid, path, 'missing', None))
+            elif tid in written and isinstance(body := _args_of(fn.get('arguments')).get('content'), str):
+                events.append((position[tid], tid, path, 'text', body))
+            elif tid not in unlanded:
+                events += [(position[tid], tid, p, effect, None) for p, effect in _own_file_effects(fn)]
+    for _, tid, path, effect, text in sorted(events, key=lambda e: e[0]):
+        folded.add(tid)
+        rel = view.rel(path)
+        note = notes.get(rel)
+        if note is None:
+            continue
+        notes[rel] = (_noted_content(note, text) if effect == 'text' else
+                      {**note, 'missing': True} if effect in ('missing', 'delete') else
+                      {**note, 'digest': None})
+    for rel, note in list(notes.items()):
+        current = view.capture_edit_preimage(rel)
+        if current is not None and note.get('digest') and _content_digest(current[0]) != note['digest']:
+            notes[rel] = {**note, 'blank': None, 'digest': None, 'invalidated_by': 'content_changed'}
+            if rlog is not None:
+                rlog.emit('loop.inventory_content_changed', path=rel)
+        elif current is None and view.observation_fingerprint is not None and view.isfile(rel) is False:
+            notes[rel] = {**note, 'missing': True}
 
 _PATCH_ALL_TARGETS_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$", re.M)
 

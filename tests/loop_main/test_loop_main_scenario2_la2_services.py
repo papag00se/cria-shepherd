@@ -79,64 +79,71 @@ def test_unread_hold_uses_current_inventory_blankness_and_logs_unknown(tmp_path)
         wsview.unbind(token)
 
 
-@pytest.mark.parametrize('command,invalidated', [
-    ('echo changed > source', {'source'}), ('tee source', {'source'}),
-    ('mv source moved', {'source'}), ('rm source', {'source'}), ('sed -i s/a/b/ source', {'source'}),
-    *[(f'git {op}', {'source', 'other'}) for op in
-      ('checkout -- .', 'restore .', 'reset --hard', 'stash', 'clean -fd', 'switch main',
-       'pull', 'merge main', 'rebase main', 'apply patch')],
-    ('rm -rf dir', {'source', 'other'}),
-    ('cp -r dir dest', {'source', 'other'}), ('rsync -a src/ dest/', {'source', 'other'}),
-    ('tar xf archive.tar', {'source', 'other'}), ('unzip archive.zip', {'source', 'other'}),
-    ('cargo init', {'source', 'other'}), ('npm create vite', {'source', 'other'}),
-])
-def test_inventory_observations_expire_by_mutation(tmp_path, command, invalidated):
-    driver = make()
-    sess = synthetic()
-    sess.inventory_root = str(tmp_path)
-    sess.inventory_observations = {p: {'blank': False, 'size': 3, 'origin': 'initial_inventory',
-                                        'observed_at': 1.0} for p in ('source', 'other')}
-    history = [{'role': 'assistant', 'tool_calls': [{'id': 'cmd', 'type': 'function',
-                'function': {'name': 'exec_command', 'arguments': json.dumps({'cmd': command})}}]},
-               {'role': 'tool', 'tool_call_id': 'cmd', 'content': 'done'}]
-    view = wsview.View(str(tmp_path), 'sid:mutations')
-    loop._invalidate_inventory_observations(sess, history, view)
-    assert {p for p, f in sess.inventory_observations.items() if f['blank'] is None} == invalidated
-    # The same retained history is not a new mutation after a later fresh observation.
-    sess.inventory_observations['source']['blank'] = False
-    loop._invalidate_inventory_observations(sess, history, view)
-    assert sess.inventory_observations['source']['blank'] is False
-
-
-def test_inventory_observations_expire_on_native_delete_and_changed_bytes(tmp_path):
+def noted(tmp_path, *paths, digest=b'abc'):
     import hashlib
     sess = synthetic()
     sess.inventory_root = str(tmp_path)
-    sess.inventory_observations = {p: {'blank': False, 'size': 3, 'origin': 'initial_inventory',
-        'observed_at': 1.0, 'digest': hashlib.sha256(b'abc').hexdigest()} for p in ('source', 'other')}
+    sess.inventory_observations = {p: {'blank': False, 'size': len(digest), 'origin': 'initial_inventory',
+        'observed_at': 1.0, 'digest': hashlib.sha256(digest).hexdigest()} for p in paths}
+    return sess
+
+
+def call_pair(cid, name, args, result='done'):
+    return [{'role': 'assistant', 'tool_calls': [{'id': cid, 'type': 'function',
+             'function': {'name': name, 'arguments': json.dumps(args)}}]},
+            {'role': 'tool', 'tool_call_id': cid, 'content': result}]
+
+
+@pytest.mark.parametrize('name,args', [
+    ('write_stdin', {'session_id': 1, 'chars': "gem 'x'\n"}),
+    *[('exec_command', {'cmd': cmd}) for cmd in (
+        "bundle add countries --version '~> 2.7' --conservative", 'bundle install', "gem 'countries', '~> 2.7'",
+        'npm install', 'cargo build', 'go mod tidy', 'pip install -r requirements.txt',
+        'echo changed > source', 'tee source', 'mv source moved', 'rm source', 'sed -i s/a/b/ source',
+        'git checkout -- .', 'git restore .', 'git reset --hard', 'git stash', 'git clean -fd', 'git switch main',
+        'git pull', 'git merge main', 'git rebase main', 'git apply patch', 'rm -rf dir', 'cp -r dir dest',
+        'rsync -a src/ dest/', 'tar xf archive.tar', 'unzip archive.zip', 'cargo init', 'npm create vite',
+        'ruby generate.rb', 'cd sub && echo abc > source')],
+])
+def test_no_command_clears_an_inventory_note(tmp_path, name, args):
+    """A changed file is found by its content hash and nothing else: no command, however destructive it
+    looks, is read for its effect on a file's recorded state."""
+    sess = noted(tmp_path, 'source', 'other')
+    before = {p: dict(f) for p, f in sess.inventory_observations.items()}
+    loop._refresh_inventory_notes(sess, call_pair('cmd', name, args), wsview.View(str(tmp_path), 'sid:mutations'))
+    assert sess.inventory_observations == before
+
+
+def test_a_content_hash_that_disagrees_with_current_bytes_clears_the_note_and_unavailable_bytes_do_not(tmp_path):
+    class Log:
+        events = []
+        def emit(self, kind, **fields): self.events.append((kind, fields))
+    sess = noted(tmp_path, 'source', 'same', 'unseen')
     view = wsview.View(str(tmp_path), 'sid:change')
     view.note_written('source', 'xyz')
-    loop._invalidate_inventory_observations(sess, [], view)
-    assert sess.inventory_observations['source']['invalidated_by'] == 'content_changed'
-    assert sess.inventory_observations['other']['blank'] is False
-    history = [{'role': 'assistant', 'tool_calls': [{'id': 'del', 'type': 'function',
-        'function': {'name': 'delete_file', 'arguments': json.dumps({'path': 'other'})}}]}]
-    loop._invalidate_inventory_observations(sess, history, view)
-    assert sess.inventory_observations['other']['invalidated_by'] == 'del'
+    view.note_written('same', 'abc')
+    log = Log()
+    loop._refresh_inventory_notes(sess, [], view, log)
+    notes = sess.inventory_observations
+    assert notes['source']['blank'] is None and notes['source']['invalidated_by'] == 'content_changed'
+    assert notes['same']['blank'] is False and notes['unseen']['blank'] is False   # equal bytes / no bytes: unchanged
+    assert log.events == [('loop.inventory_content_changed', {'path': 'source'})]
 
 
-def test_inventory_mutation_targets_respect_shell_workdir(tmp_path):
-    sess = synthetic()
-    sess.inventory_root = str(tmp_path)
-    sess.inventory_observations = {p: {'blank': False, 'size': 3, 'origin': 'initial_inventory',
-        'observed_at': 1.0} for p in ('source', 'sub/source')}
-    history = [{'role': 'assistant', 'tool_calls': [{'id': 'c', 'function': {'name': 'exec_command',
-        'arguments': json.dumps({'cmd': 'echo abc > source', 'workdir': 'sub'})}}]}]
-    loop._invalidate_inventory_observations(sess, history, wsview.View(str(tmp_path), 'sid:cwd'))
-    assert sess.inventory_observations['source']['blank'] is False
-    assert sess.inventory_observations['sub/source']['blank'] is None
+def test_the_coders_own_recognized_delete_makes_the_note_missing_and_is_folded_once(tmp_path):
+    sess = noted(tmp_path, 'gone', 'rewritten')
+    view = wsview.View(str(tmp_path), 'sid:own')
+    history = (call_pair('del', 'delete_file', {'path': 'gone'})
+               + call_pair('patch', 'apply_patch', {'input': '*** Begin Patch\n*** Delete File: gone\n*** End Patch'}))
+    loop._refresh_inventory_notes(sess, history, view)
+    assert sess.inventory_observations['gone']['missing'] is True
+    assert not sess.inventory_observations['rewritten'].get('missing')
+    # Replayed, the same retained history is folded once: a later observation is not overwritten by it.
+    sess.inventory_observations['gone'] = {**sess.inventory_observations['gone'], 'missing': False}
+    loop._refresh_inventory_notes(sess, history, view)
+    assert sess.inventory_observations['gone']['missing'] is False
     restored = loop._session_from_dict(loop._session_to_dict(sess))
-    assert restored.inventory_mutation_ids == {'c'}
+    assert restored.inventory_event_ids == {'del', 'patch'}
 
 
 def test_captured_reads_are_credited_before_unknown_blankness(tmp_path):
