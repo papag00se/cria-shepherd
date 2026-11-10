@@ -8,6 +8,7 @@ now does not have."""
 import json
 import os
 import pathlib
+import re
 import shutil
 
 import pytest
@@ -19,7 +20,11 @@ FIXTURE = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'write_char
 
 
 def norm(text):
-    return text.replace('\r\n', '\n').rstrip('\n')
+    """The checker's own words, without what depends on which Node answered: its version and the frames of its own internals (the fixture was recorded with
+    v20.19.5; the checker is looked up in the safe path, so on another machine it is another Node)."""
+    text = re.sub(r'\r+\n', '\n', text)             # a pty doubles the carriage returns of what a checker printed
+    text = re.sub(r'\n    at [^\n]*\(node:internal[^\n]*\)', '', text)
+    return re.sub(r'Node\.js v[\d.]+', 'Node.js v<version>', text.rstrip('\n'))
 
 
 def refused(*fragments):

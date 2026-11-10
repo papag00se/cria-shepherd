@@ -63,7 +63,7 @@ def test_toml_layers_merge_cwd_over_home_and_defaults_normalize(tmp_path):
     ('[retention]\nauto_prune_after = "30m"\n', "below the minimum of 60m"),
     ('[retention]\nauto_prune_after = "14d"\nauto_prune_every = "10s"\n', "auto_prune_every.*below the minimum"),
     ('[retention]\nauto_prune_after = "14d"\nauto_prune_every = 3600\n', "auto_prune_every must be an age string"),
-    ('[retention]\nauto_prune_after = "14d"\nidle_days = 3\n', "supports only auto_prune_after and auto_prune_every"),
+    ('[retention]\nauto_prune_after = "14d"\nidle_days = 3\n', "supports only auto_prune_after, auto_prune_every, ops_idle_after and ops_sweep_every"),
     ('[roles.coder]\nbackend = "nope"\n', "no matching"),
     ('[backends.g]\ntransport = "http"\napi_key_env = "K"\n[roles.coder]\nbackend = "g"\n', "needs a base_url"),
     ('[backends.cx]\ntransport = "cli"\ntool = "codex"\n[roles.r]\nbackend = "cx"\n', "codex exec"),

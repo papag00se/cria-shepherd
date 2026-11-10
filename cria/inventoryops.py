@@ -16,7 +16,10 @@ One operation in the ledger that cria asks before the first coder turn and answe
   ``[harness] symbols_max_file_bytes`` are not handed to it. A file's symbol list is ALL OR NOTHING (the model is never shown part of a list):
   one with more than ``symbols_max_per_file`` symbols, and every file whose output lies beyond the ``symbols_max_output_bytes`` that one inventory
   reads back (chunks and files in path order, so the same tree gives the same answer), has ``symbols: None``, the convention the inventory
-  already states for "unavailable or no tags returned". The inventory text carries no label for it.
+  already states for "unavailable or no tags returned". The inventory text carries no label for it. ctags is asked in its terse one-line-per-tag
+  format for the classes, functions, methods and types only (``ctags_script``), and the ledger records the tags of each page of its output (:func:`condense`),
+  never the page. Which files are shown WITH their symbols, within ``[harness] symbols_budget_tokens``, is decided when the listing is rendered
+  (:func:`cria.initial_inventory.render`).
 
 What it learned is the dictionary the loop has always been given (``files``, ``symlinks``, ``errors``, ``excluded_names``,
 ``symbol_indexer_error``), computed from the frames the ledger holds: a pure function of the ledger.
@@ -295,7 +298,6 @@ class InventoryOps:
                 issue.append(('ils', {'dir': d, 'mode': mode, 'rung': 0, 'after': after}))
         if issue:
             return Issue(self._next_many(steps, issue[:WAVE]))
-        names = sorted(self._files(tree))
         # the symbols ----------------------------------------------------------
         chunks = _chunks(_indexable_names(self._files(tree), op.ctx))
         runs = _runs(steps)
