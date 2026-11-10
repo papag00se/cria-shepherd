@@ -119,6 +119,8 @@ def test_bootstrap_adopts_inventory_before_the_coder_turn(tmp_path, monkeypatch)
     from loop_orientation_helpers import Log
 
     (tmp_path / 'seed').write_text('nonblank')
+    (tmp_path / 'blank').write_text(' \n')
+    (tmp_path / 'binary').write_bytes(b'\xff')
     data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
                                      capture_output=True, text=True, check=True).stdout)
     observed = []
@@ -150,6 +152,13 @@ def test_bootstrap_adopts_inventory_before_the_coder_turn(tmp_path, monkeypatch)
                                                         private_readonly_calls={'probe'})
         driver.drive(body, 'sid:inventory', Classification('task', 'coding', 'test'), log)
         assert observed == [False]
+        session = driver._store.get('sid:inventory')
+        facts = session.inventory_observations
+        assert {p: f['blank'] for p, f in facts.items()} == {'seed': False, 'blank': True, 'binary': None}
+        assert all(f['origin'] == 'initial_inventory' and f['observed_at'] > 0 for f in facts.values())
+        assert session.inventory_root == str(tmp_path)
+        restored = loop._session_from_dict(loop._session_to_dict(session))
+        assert restored.inventory_observations == facts and restored.inventory_root == str(tmp_path)
         assert any(kind == 'loop.survey_bootstrap_finished' and fields['surveyed']
                    for kind, fields in log.events)
     finally:

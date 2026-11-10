@@ -234,6 +234,9 @@ class GuardState:
     # when present, KEPT when a later turn (harness compaction) drops it — so the gate/steer/disk-facts
     # always target the harness's repo, NEVER cria's own dir. None = still unknown (callers skip, never ".").
     workspace_root: str | None = None
+    # Private initial-inventory observations; never proof of what the coder has read.
+    inventory_root: str = ""
+    inventory_observations: dict = field(default_factory=dict)
     # Whole-task satisfaction re-checks on a plan-ON completion (all steps verified INDIVIDUALLY, but is
     # the user's task actually done end-to-end?). Bounds the re-open-and-fix loop so a task the coder
     # genuinely can't finish still completes instead of looping forever. Parity with the plan-off critic.
@@ -2796,7 +2799,9 @@ class Loop:
                                 web_session=session_key,
                                 initial_call_ids=getattr(previous, 'initial_call_ids', ()),
                                 initial_calls=dict(getattr(previous, 'initial_calls', {})),
-                                initial_listing=getattr(previous, 'initial_listing', ''))
+                                initial_listing=getattr(previous, 'initial_listing', ''),
+                                inventory_root=getattr(previous, 'inventory_root', ''),
+                                inventory_observations=dict(getattr(previous, 'inventory_observations', {})))
         _pin_pilot_runtime(state, self._ctx.pilot_runtime, previous)
         return state
 
@@ -2806,6 +2811,9 @@ class Loop:
         if bootstrap is not None and bootstrap.initial_call_ids:
             sess.initial_private_ids = bootstrap.initial_call_ids
             sess.initial_private_calls = dict(bootstrap.initial_calls)
+        if bootstrap is not None and bootstrap.inventory_root:
+            sess.inventory_root = bootstrap.inventory_root
+            sess.inventory_observations = dict(bootstrap.inventory_observations)
         _pin_pilot_runtime(sess, self._ctx.pilot_runtime, bootstrap)
         self._store.put(key, sess)
         if bootstrap is not None:
@@ -3054,6 +3062,13 @@ class Loop:
                         if not isinstance(data, dict) or not isinstance(data.get('files'), list):
                             raise ValueError('invalid inventory')
                         initial_surveyed = wsview.current().apply_initial_inventory(data, bootstrap.workspace_root or '')
+                        if initial_surveyed:
+                            observed_at = time.time()
+                            bootstrap.inventory_root = wsview.current().root
+                            bootstrap.inventory_observations = {
+                                item['path']: {'blank': item.get('blank'), 'size': item['size'],
+                                               'origin': 'initial_inventory', 'observed_at': observed_at}
+                                for item in data['files']}
                         ask = None
                         if self._ctx.reasoner_role is not None and self._ctx.reasoner_buffered_chat is not None:
                             task = bootstrap.initial_task or latest_user_text(messages)
@@ -3208,6 +3223,9 @@ class Loop:
                         rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
                         self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
 
+        if bootstrap_finished and bootstrap is not None and bootstrap.inventory_root:
+            sess.inventory_root = bootstrap.inventory_root
+            sess.inventory_observations = dict(bootstrap.inventory_observations)
         if bootstrap_finished and bootstrap is not None and bootstrap.initial_call_ids:
             sess.initial_private_ids = bootstrap.initial_call_ids
             sess.initial_private_calls = dict(bootstrap.initial_calls)
@@ -5705,6 +5723,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         },
         "summary": sess.summary,
         "content_fingerprints": sess.content_fingerprints or {},
+        "inventory_root": sess.inventory_root,
+        "inventory_observations": sess.inventory_observations,
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
         "generation_errors": sess.generation_errors,
@@ -5753,7 +5773,15 @@ def _session_from_dict(d) -> PlanSession | None:
                                 and re.fullmatch(r'[0-9a-f]{64}', digest)}
                         for path, calls in fingerprints.items()
                         if isinstance(path, str) and isinstance(calls, dict)} if isinstance(fingerprints, dict) else {}
+        observations = d.get('inventory_observations') or {}
+        observations = {path: fact for path, fact in observations.items()
+                        if isinstance(path, str) and isinstance(fact, dict)
+                        and (fact.get('blank') is None or type(fact.get('blank')) is bool)
+                        and type(fact.get('size')) is int and fact['size'] >= 0
+                        and fact.get('origin') == 'initial_inventory'
+                        and type(fact.get('observed_at')) in (int, float)} if isinstance(observations, dict) else {}
         return PlanSession(plan=plan, summary=str(d.get("summary", "")), content_fingerprints=fingerprints,
+                           inventory_root=str(d.get('inventory_root') or ''), inventory_observations=observations,
                            generation_errors=list(d.get("generation_errors") or []),
                            unexecuted_nudges=int(d.get("generation_refusal_count", 0)),
                            prior_work=str(d.get("prior_work", "")),
