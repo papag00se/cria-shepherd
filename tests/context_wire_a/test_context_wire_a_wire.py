@@ -35,6 +35,24 @@ def text(msgs):
     return "\n".join(str(m.get("content") or "") for m in msgs)
 
 
+def test_hold_hint_hides_mutators_for_one_wire_request_without_rewriting_history():
+    names = ['read_file', 'write_file', 'create_file', 'edit_file', 'str_replace', 'apply_patch',
+             'exec_command', 'task_complete', 'list_dir']
+    tools = [{'type': 'function', 'function': {'name': n, 'parameters': {'type': 'object'}}} for n in names]
+    history = [{'role': 'user', 'content': 'work'},
+               {'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'w', 'type': 'function',
+                'function': {'name': 'edit_file', 'arguments': '{"path":"a"}'}}]},
+               {'role': 'tool', 'tool_call_id': 'w', 'content': 'not run; content follows'}]
+    up = upstream.Upstream('http://unused', context_window=49152, engagement_level=5)
+    body = {'model': 'm', 'messages': history, 'tools': tools}
+    baseline = up._prep(body, False, Rlog())[0]
+    hinted = up._prep({**body, bodykeys.HOLD_WRITE_TOOLS: True}, False, Rlog())[0]
+    sent = json.loads(hinted)
+    assert [t['function']['name'] for t in sent['tools']] == ['read_file', 'task_complete', 'list_dir']
+    assert sent['messages'] == history and b'cria_' not in hinted
+    assert up._prep(body, False, Rlog())[0] == baseline
+
+
 def test_floor_never_moves_a_later_result_before_a_surviving_user_instruction():
     from cria import selfcompact
     failure = selfcompact.internal_evidence_message("EARLY CHECK FAILED")

@@ -64,6 +64,10 @@ HISTORY_SELECTION = 'cria_history_selection'
 #: model that does not need it ships a byte-identical body. Consumed and stripped at the wire.
 MERGE_TURNS = "cria_merge_turns"
 
+#: One coder request delivering an unread-mutation hold; consumed at the wire.
+HOLD_WRITE_TOOLS = "cria_hold_write_tools"
+UNREAD_HOLD = "cria_unread_hold"
+
 #: How much of the window the role wants left free for the answer — distinct from `max_tokens`, which
 #: is the runaway backstop (principle 6). Written by the role, read by the context floor.
 OUTPUT_RESERVE = "cria_output_reserve"
@@ -179,5 +183,5 @@ MULTIPART_UNVERIFIED = "cria_multipart_unverified"
 # It never carries authority and is not an active internal contract in ALL.
 LEGACY_MESSAGE_KEYS = ("_multipart_unverified",)
 
-ALL = (ROLE_ORIGIN, MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
+ALL = (HOLD_WRITE_TOOLS, UNREAD_HOLD, ROLE_ORIGIN, MULTIPART_UNVERIFIED, CODER_ROUTE, CODER_OBSERVER, CODER_ROLE_INTENT, PROTECTED_READS, READ_FIT_CALLBACKS, MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
        CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE, ACTION_ORIGIN, DENSITY_KIND, RESULT_OUTCOME, READ_OBSERVATION, RESULT_REPORT, CHAT_WIRE, HISTORY_SELECTION)

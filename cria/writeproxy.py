@@ -1639,7 +1639,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
                     cmd = _seq_release(edit_seq[ti]) + cmd
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool,
-                                           f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey, declaration.marks)}\n{cmd}",
+                                           f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey, declaration.marks, read_in_place)}\n{cmd}",
                                            0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
@@ -1996,6 +1996,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     called_ids = {tc.get("id") for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
                   for tc in (m.get("tool_calls") or []) if isinstance(tc, dict) and tc.get("id")}
     ambiguous = called_ids - paired    # a call exists but the id does not name exactly one call and one result after it
+    unread_hold_ids: set[str] = set()
     lowered_ids: set[str] = set()     # calls cria itself lowered (their result carries cria's frame, or is unknown)
     failed_ids = set(outcomes)          # proven: cria's own refusal ran, or its edit program reported 'not applied'
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
@@ -2050,6 +2051,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                             mutation_ids.add(tc.get("id"))
                             view.note_possible_effect()
                     if orig is not None:
+                        declaration = _declaration(_command_of(fn.get('arguments')), tc.get('id'))
+                        if declaration and declaration.get('uh') == 1:
+                            unread_hold_ids.add(tc.get('id'))
                         lowered_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1
@@ -2112,7 +2116,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             tid = m.get("tool_call_id")
             # THE PROVEN OUTCOME IS SET HERE, BEFORE any transform, preserve or recovery reads this message, and
             # whatever the client sent under that key is overwritten: a native client cannot nominate its own result.
-            m = {k: v for k, v in m.items() if k not in (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT)}
+            m = {k: v for k, v in m.items() if k not in (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.UNREAD_HOLD)}
             survey_text = ""
             pending_mutations.discard(tid)
             view.observation_pending(bool(pending_mutations))
@@ -2129,6 +2133,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             if proof is not None:
                 m["content"] = proof.content       # exactly cria's own records removed; the payload keeps its bytes
                 m[bodykeys.RESULT_OUTCOME] = proof.kind
+                if tid in unread_hold_ids and proof.kind == denial.REFUSED:
+                    m[bodykeys.UNREAD_HOLD] = True
                 if proof.rep:
                     m[bodykeys.RESULT_REPORT] = proof.rep
                 survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation

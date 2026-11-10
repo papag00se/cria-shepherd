@@ -174,6 +174,17 @@ def _is_write_tool(name) -> bool:
     return name in _WRITE_TOOLS
 
 
+def _recent_unread_hold(messages):
+    """A proven hold among the latest assistant's results, not an older turn."""
+    for message in reversed(messages or []):
+        if isinstance(message, dict) and message.get('role') == 'assistant':
+            ids = {tc.get('id') for tc in message.get('tool_calls') or [] if isinstance(tc, dict)}
+            return bool(ids and any(isinstance(m, dict) and m.get('role') == 'tool'
+                                    and m.get('tool_call_id') in ids and m.get(bodykeys.UNREAD_HOLD) is True
+                                    for m in messages))
+    return False
+
+
 class Phase(Enum):
     WORK = auto()  # driving items
     DONE = auto()
@@ -3275,6 +3286,9 @@ class Loop:
         stalled_offer = sess.stalled_reply
         sess.stalled_reply = None
         framed[bodykeys.PINNED_TASK] = getattr(sess.plan, "task", "") or ""
+        framed.pop(bodykeys.HOLD_WRITE_TOOLS, None)
+        if _recent_unread_hold(body.get('messages', [])):
+            framed[bodykeys.HOLD_WRITE_TOOLS] = True
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         sess.restored_current = {}      # credit is earned per call, from what the wire says it delivered

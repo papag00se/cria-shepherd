@@ -942,6 +942,20 @@ class Upstream:
                    assistruntime.AssistRuntime.select(level=self._engagement_level))
         wire_folds = runtime.wire_folds if self._context_fixes and not body.get(bodykeys.PROTECTED_READS) else ()
         out = {**body, "stream": stream}
+        if body.get(bodykeys.HOLD_WRITE_TOOLS) is True and isinstance(out.get('tools'), list):
+            from .loop import _is_write_tool
+            from .shelltool import is_shell_tool_name
+            def hidden(tool):
+                fn = tool.get('function', tool) if isinstance(tool, dict) else {}
+                name = fn.get('name')
+                return _is_write_tool(name) or is_shell_tool_name(name)
+            out['tools'] = [tool for tool in out['tools'] if not hidden(tool)]
+            choice = out.get('tool_choice')
+            if not out['tools']:
+                out.pop('tools', None)
+                out.pop('tool_choice', None)
+            elif isinstance(choice, dict) and hidden(choice):
+                out.pop('tool_choice', None)
         msgs = body.get("messages")
         fitted_source = None
         reduced = invalidated = False
@@ -993,7 +1007,7 @@ class Upstream:
             repeat_ptrs_in = modelview.repeat_pointers(msgs)
             if window:
                 reserve = contextfloor.reserve_for(body, window)  # reads cria_output_reserve (stripped below)
-                tools_in = body.get("tools")
+                tools_in = out.get("tools")
                 from . import capacitypolicy
                 safety = (safety_override if safety_override is not None else
                           capacitypolicy.fit_density(_density_key(body.get("model"), rlog, body),
@@ -1053,7 +1067,7 @@ class Upstream:
                     lvl = "warning" if rep.over_budget else "info"
                     rlog.emit("context.floor", reshape="floor-trim", level=lvl, safety=round(safety, 2),
                               **rep.as_event())
-                if tools != body.get('tools') and tools is not None:
+                if tools != out.get('tools') and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
             # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
             # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
@@ -1146,7 +1160,7 @@ class Upstream:
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
                                              bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE, bodykeys.ACTION_ORIGIN,
                                              bodykeys.HISTORY_SELECTION,
-                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED,
+                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED, bodykeys.UNREAD_HOLD,
                                              *bodykeys.LEGACY_MESSAGE_KEYS)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         # Historical arguments are a final-wire invariant: role merges/folds can

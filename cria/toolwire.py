@@ -96,7 +96,7 @@ _SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ 
 _GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
-def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, marks: str = "") -> str:
+def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, marks: str = "", unread_hold: bool = False) -> str:
     """The leading comment line that lets inbound rebuild the original tool call, statelessly.
 
     It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound) and
@@ -107,6 +107,8 @@ def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, mar
     body = {"name": name, "arguments": args_str}
     if receipt:
         body["rcpt"] = receipt
+        if unread_hold:
+            body["uh"] = 1
         if survey:
             body["sv"] = 1          # the command carries a survey record, on the line after its first record
         if marks:

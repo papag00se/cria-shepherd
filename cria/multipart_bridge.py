@@ -320,7 +320,11 @@ class Bridge:
         command = filecommands.build_multipart_page(spec, assembly.offset, live=assembly.live_pages, limit=assembly.limit,
                                                     refetch=bool(assembly.refetches))
         if pending == spec.call_id:
-            command = writeproxy._sentinel(fn['name'], fn['arguments'], spec.receipt, False) + '\n' + command
+            legacy = writeproxy._sentinel(fn['name'], fn['arguments'], spec.receipt, False) + '\n' + command
+            command = writeproxy._sentinel(fn['name'], fn['arguments'], spec.receipt, False,
+                                          unread_hold=spec.read_instead) + '\n' + command
+            if entry.calls[pending] == writeproxy._shell_call(pending, entry.shell, legacy, 0):
+                return  # an in-flight read registered by an older version
         if entry.calls[pending] != writeproxy._shell_call(pending, entry.shell, command, 0):
             entry.failure_id, entry.failure_kind, entry.failure_code = pending, 'invalid', None
 

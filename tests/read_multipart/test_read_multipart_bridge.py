@@ -59,6 +59,22 @@ def test_incident_mutations_are_held_and_delivered_through_multipart(tmp_path, l
             assert denial.refused(result) and denial.read_payload(result) == expected
             assert f'This {name} call was not run' in result['content']
             assert args['path'] in loop._extract_reads(shown)
+            assert loop._recent_unread_hold(shown)
+            assert not loop._recent_unread_hold(shown + [{'role': 'assistant', 'content': 'next turn'}])
+            # Exercise the shared coder driver, not just the helper or wire in isolation.
+            from cria import bodykeys
+            received = []
+            class StopBeforeGeneration(Exception): pass
+            def capture(body, log):
+                received.append(body.copy())
+                raise StopBeforeGeneration
+            driver._ctx.coder_chat = capture
+            session = loop._plan_off_session(loop._synthetic_plan('task'), '')
+            for history, expected_hint in ((shown, True), (shown + [{'role': 'assistant', 'content': 'next'}], False)):
+                with pytest.raises(StopBeforeGeneration):
+                    driver._coder_turn_impl(session, {'messages': history}, {'messages': history}, step=1,
+                                           rlog=SimpleNamespace(emit=lambda *a, **k: None))
+                assert bool(received[-1].get(bodykeys.HOLD_WRITE_TOOLS)) is expected_hint
             assert path.read_text() == expected
         finally:
             wsview.unbind(token)
