@@ -49,5 +49,5 @@ def write(root, rel, new, ex, *, sp='-', payload=None, staged=False, mk=1, cwd=N
     return run('write', args, None if staged else (new if payload is None else payload), cwd=cwd or root, env=env)
 
 
-def ls(root, rel='', depth=0, mx=1000, fold=0, skip=(), *, cwd=None, env=None, **more):
-    return run('ls', [root, rel, depth, mx, fold, json.dumps(list(skip))], cwd=cwd or root, env=env, **more)
+def ls(root, rel='', depth=0, mx=1000, fold=0, skip=(), after='', *, cwd=None, env=None, **more):
+    return run('ls', [root, rel, depth, mx, fold, json.dumps(list(skip)), after], cwd=cwd or root, env=env, **more)

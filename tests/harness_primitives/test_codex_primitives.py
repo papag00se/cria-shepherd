@@ -82,7 +82,7 @@ def test_every_stub_runs_under_the_sandbox_the_command_is_echoed_byte_for_byte_a
     commands = [
         harnessprims.compose('read', nonces[0], [ws, 'src/a.py', 0, 100], comment='read src/a.py'),
         harnessprims.compose('write', nonces[1], [ws, 'out/new.txt', '-', '-', sha(new), 0, 1, GROUP], new),
-        harnessprims.compose('ls', nonces[2], [ws, '', 0, 100, 0, '[]']),
+        harnessprims.compose('ls', nonces[2], [ws, '', 0, 100, 0, '[]', '']),
         harnessprims.compose('run', nonces[3], ['start', scratch, 'tok1', 20, 10, ws, 0], text='true'),
         harnessprims.compose('write', nonces[4], [ws, 'big.bin', '-', '-', sha(big), 0, 1, GROUP], big),
         harnessprims.compose('write', nonces[5], [ws, 'huge.bin', '-', '-', sha(huge), 0, 1, GROUP], huge),
@@ -110,7 +110,7 @@ def test_per_round_trip_latency_of_a_lowered_primitive_call_through_the_sandboxe
         (sandbox.workspace / f'file-{i}.txt').write_text('x' * i)
     commands = []
     for i in range(24):
-        commands.append(harnessprims.compose('ls', '%032x' % (100 + i), [ws, '', 1, 1000, 0, '[]'], comment='list_dir .'))
+        commands.append(harnessprims.compose('ls', '%032x' % (100 + i), [ws, '', 1, 1000, 0, '[]', ''], comment='list_dir .'))
     with Scripted(commands) as server:
         done = sandbox.run(server.url)
         assert done.returncode == 0, done.stderr[-2000:]

@@ -93,5 +93,5 @@ def test_a_request_with_no_python_on_the_harness_has_no_frame(tmp_path):
 
 
 def test_the_composed_command_never_contains_the_product_name_or_a_single_quote_inside_the_stub():
-    command = harnessprims.compose('ls', N, ['/w', '', 1, 10, 0, '[]'], comment='list_dir .')
+    command = harnessprims.compose('ls', N, ['/w', '', 1, 10, 0, '[]', ''], comment='list_dir .')
     assert 'cria' not in command.lower()

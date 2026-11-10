@@ -114,13 +114,13 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 
 _LS = r'''import stat
 try:
-    rt,rel,dp,mx,fold,skip=sys.argv[2:8];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);R=[];q=[]
+    rt,rel,dp,mx,fold,skip,af=sys.argv[2:9];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);R=[];q=[]
     k=lambda m:"l" if stat.S_ISLNK(m) else "d" if stat.S_ISDIR(m) else "f" if stat.S_ISREG(m) else "o"
     fd,nm=at(rt,rel);s=os.stat(nm,dir_fd=fd,follow_symlinks=False)
     if k(s.st_mode)=="d":q=[(rel.strip("/"),1)]
     else:R=[[k(s.st_mode),rel,s.st_size,s.st_mtime_ns,stat.S_IMODE(s.st_mode)]+([os.readlink(nm,dir_fd=fd)] if k(s.st_mode)=="l" else [])]
     while q and len(R)<mx:
-        d,n=q.pop(0);fd,_=at(rt,d+"/x");es=sorted(os.scandir(fd),key=lambda e:e.name)
+        d,n=q.pop(0);fd,_=at(rt,d+"/x");es=sorted((e for e in os.scandir(fd) if e.name>af),key=lambda e:e.name)
         if fold and sum(not e.is_dir(follow_symlinks=False) for e in es)>fold:R.append(["x",d,len(es),0,0]);continue
         for e in es:
             t=e.stat(follow_symlinks=False);c=k(t.st_mode);p=(d+"/" if d else "")+e.name

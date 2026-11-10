@@ -110,6 +110,14 @@ def test_ls_walks_sorted_without_following_links_and_marks_what_it_did_not_enter
     assert [r for r in ls(root, fold=10).records if r[0] == 'x'] == [['x', 'many', 30, 0, 0]]
     capped = ls(root, mx=5)
     assert capped.header['done'] == 0 and len(capped.records) == 5                           # done:0 is "unknown beyond", never "absent"
+    names, after = [], ''                                                                   # AFTER is the resume cursor of a depth-1 listing
+    while True:
+        page = ls(root, 'many', 1, 7, after=after)
+        names += [r[1].rsplit('/', 1)[-1] for r in page.records]
+        if page.header['done']:
+            break
+        after = names[-1]
+    assert names == [f'f{i:02}' for i in range(30)] and ls(root, 'many', 1, 7, after='f29').records == []   # each entry once; past the last name: nothing
 
 
 def test_run_returns_exit_and_output_detached_runs_outlive_the_caller_and_a_deadline_kills_the_group(root, tmp_path):

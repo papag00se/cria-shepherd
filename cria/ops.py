@@ -28,8 +28,10 @@ from .toolwire import _command_of, _refusal_command, _shell_call
 LIST_DIR = 'list_dir'
 # Records one ls frame asks for, largest first: a frame the harness cut (more than ~10,000 bytes) is asked again smaller.
 # Measured: a frame holds about 2,500 records of regular names, 350-650 of real ones (15-29 bytes each on this repository's
-# directories and /usr/lib); a directory the first rung does not cover is `done:0` (unknown beyond), never complete.
+# directories and /usr/lib). A directory one frame does not hold is `done:0` (unknown beyond): cria asks for the next page with
+# `AFTER` = the last name it received, one call per frame, and the rung that fitted is kept for the next page.
 LS_MAX = (1000, 400, 150, 50, 20)
+LS_MAX_PAGES = 200    # pages of one listing (200,000 entries at the first rung): beyond it the listing is labelled incomplete
 MAX_HOPS = 8          # symbolic links followed while resolving a path (ELOOP beyond)
 _TYPE = {'f': '-', 'd': 'd', 'l': 'l', 'o': '?'}
 
@@ -154,7 +156,7 @@ class Ops:
         record = {'t': 'op', 'op': op, 'kind': LIST_DIR, 'ctx': ctx,
                   'call': {'id': call.get('id'), 'name': fn.get('name'), 'arguments': fn.get('arguments')}}
         try:
-            step = self._step(op, ctx, 0, 'ls', {'wave': 0, 'root': root, 'rel': rel, 'max_i': 0, 'hop': 0})
+            step = self._step(op, ctx, 0, 'ls', {'wave': 0, 'root': root, 'rel': rel, 'max_i': 0, 'hop': 0, 'after': ''})
             if len(step[1].encode()) > COMMAND_ARG_BUDGET:
                 # An argument the kernel would refuse (E2BIG) is answered here, without sending it: one short refusal call.
                 text = prompts.render('list_dir_path_too_long', size=len(path.encode()), limit=COMMAND_ARG_BUDGET - 3000)
@@ -176,10 +178,10 @@ class Ops:
     def _command(op: str, ctx: dict, s: int, what: str, args: dict) -> str:
         nonce = callauth.nonce(op, s)
         if what == 'ls':
-            words, payload = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]'], None
+            words, payload = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', args['after']], None
             comment = 'list_dir ' + ctx['path']
         elif what == 'stat':
-            words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]'], None, 'list_dir ' + ctx['path']
+            words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]', ''], None, 'list_dir ' + ctx['path']
             what = 'ls'
         elif what == 'say':
             return _refusal_command(args['text'])
@@ -314,11 +316,17 @@ class Ops:
         shown = op.ctx['path']
         if header.get('ok') == 1:
             records = [json.loads(line) for line in st.frame['text'].split('\n') if line]
-            single = bool(records and args['rel'] and records[0][1] == args['rel'])
-            text = render_listing(records, shown, header.get('done') == 1, single)
+            pages = [st2 for st2 in steps if st2.what == 'ls' and st2.s < st.s and st2.frame['hdr'].get('ok') == 1]
+            single = bool(records and args['rel'] and not pages and records[0][1] == args['rel'])
+            done = header.get('done') == 1
+            if not done and records and len(pages) + 1 < LS_MAX_PAGES:
+                # More entries follow this page: ask for those after the last name received, at the size that fitted.
+                return _Issue(self._next(steps, 'ls', {**args, 'after': records[-1][1].rsplit('/', 1)[-1]}))
+            records = [json.loads(line) for st2 in pages for line in st2.frame['text'].split('\n') if line] + records
+            text = render_listing(records, shown, done, single)
             if externalization.stdout_size(text.encode('utf-8', 'surrogateescape')) <= INLINE_RESULT_MAX_BYTES:
                 return _Final(denial.RAN, text)
-            return self._spill(op, steps, text, header.get('done') == 1, len(records))
+            return self._spill(op, steps, text, done, len(records))
         if header.get('ok') == 0:
             code = header.get('errno')
             parts = [p for p in args['rel'].split('/') if p]
@@ -358,7 +366,7 @@ class Ops:
             if refusal:
                 return _Final(denial.REFUSED, denial.mark(refusal))
             root, rel = split(resolved, ctx.get('wsroot'))
-            return _Issue(self._next(steps, 'ls', {'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1}))
+            return _Issue(self._next(steps, 'ls', {'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1, 'after': ''}))
         return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(wave[0].args['errno'])))
 
     @staticmethod

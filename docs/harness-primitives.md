@@ -79,7 +79,7 @@ How cria reads it (`cria/harnessprims.py`, phase 3):
 2. Text before or after the frame (a noisy login shell, the harness's own envelope) is ignored; it is never parsed and never given authority.
 3. CR is stripped (a pty may expand LF). The payload line is decoded, decompressed with a hard output bound of `n`, and must match `n` and `h`. A cut result fails this check and is re-requested at a smaller size (the existing refetch ladder in `probegate` moves into cria's frame reader unchanged: 1,500 / 750 / 375 bytes).
 4. cria bounds what it will accept before it decodes: `n` ≤ its frame limit (1 MiB), decompression uses `zlib.decompressobj().decompress(data, n + 1)`. (Implemented in `harnessprims.read_frame`; a result that fails any rule is recorded as an unknown frame and the step is asked again smaller: `ops.LS_MAX` = 1000 / 400 / 150 / 50 / 20 records for `ls`.)
-5. Page size: the harness cut limit is the existing `STDOUT_LIMIT` = 10,000 bytes per result. A frame carries at most about 7 KB of compressed bytes. At the measured median compression of 2.7x on source text (439 files of this repository, p10 2.2x, p90 3.3x) one page holds 16–20 KB of source. For `ls` (phase 3, measured through the shipped stub): 15–29 bytes of frame per record on real directories (this repository's `cria/`, `/usr/lib`), about 3.5 on regular names, so one frame holds roughly 350–650 real entries and `MAX` is the only knob: **`ls` has no resume cursor, so a directory beyond one frame is returned as its first entries with `done:0`** (labelled "not absent"; the saved file of such a listing says it is incomplete). The old `ls -la` spilled the complete listing. The minimal repair is one more `ls` argument `AFTER` (list only entries sorting after this name, depth 1); it changes the normative stub, so it needs this file's sign-off first.
+5. Page size: the harness cut limit is the existing `STDOUT_LIMIT` = 10,000 bytes per result. A frame carries at most about 7 KB of compressed bytes. At the measured median compression of 2.7x on source text (439 files of this repository, p10 2.2x, p90 3.3x) one page holds 16–20 KB of source. For `ls` (phase 3, measured through the shipped stub): 15–29 bytes of frame per record on real directories (this repository's `cria/`, `/usr/lib`), about 3.5 on regular names, so one frame holds roughly 350–650 real entries and `MAX` is the only knob: a directory beyond one frame is returned as its first entries with `done:0` ("unknown beyond this point", never "absent"), and cria asks again with `AFTER` = the last name it received until the listing is complete (one call per frame; operator-approved in phase 4, step 0).
 
 ## 5. The stubs
 
@@ -90,12 +90,12 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | `read` | return a byte range of a file and its identity | 1,486 B | `ROOT REL OFF LEN` |
 | `write` | replace or create a file atomically, compare-and-swap | 2,647 B | `ROOT REL EX SP NEW ST MK G` + stdin |
 | `put` | stage one chunk of a payload too big for one command | 1,127 B | `ROOT REL G OFF MK` + stdin |
-| `ls` | stat a path, or list a tree, without following links | 2,059 B | `ROOT REL DEPTH MAX FOLD SKIP` |
+| `ls` | stat a path, or list a tree, without following links | 2,088 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
 | `rm` | delete a file, an empty directory or an owned tree | 1,695 B | `ROOT REL MODE EX` |
 | `run` | run a command with a timeout, detached, output to a file | 2,149 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
 | `search` | regex search over a file list cria chose | 1,598 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
 
-Total 12,761 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 12,790 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -215,20 +215,20 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 
 ### 5.4 `ls`
 
-`ls N ROOT REL DEPTH MAX FOLD SKIP`. `REL` empty means `ROOT` itself. A non-directory yields one record (so this is also `stat`). A directory is listed breadth-first, sorted by name, never following links. `DEPTH` 1 lists one level, 0 is unlimited. `MAX` caps records; `done:1` in the header says the listing is complete, `done:0` means "unknown beyond this point", never "absent". `FOLD` N>0: a directory with more than N non-directory entries is not listed, one `x` record gives its entry count instead. `SKIP` is a JSON list of directory names that are reported but not entered (their record carries a trailing `1`).
+`ls N ROOT REL DEPTH MAX FOLD SKIP AFTER`. `REL` empty means `ROOT` itself. A non-directory yields one record (so this is also `stat`). A directory is listed breadth-first, sorted by name, never following links. `DEPTH` 1 lists one level, 0 is unlimited. `MAX` caps records; `done:1` in the header says the listing is complete, `done:0` means "unknown beyond this point", never "absent". `FOLD` N>0: a directory with more than N non-directory entries is not listed, one `x` record gives its entry count instead. `SKIP` is a JSON list of directory names that are reported but not entered (their record carries a trailing `1`). `AFTER` is a name (empty: no filter): only entries whose name sorts after it are listed. It is the resume cursor of `DEPTH 1` listings (cria asks for the next page with `AFTER` = the last name it received, `FOLD` 0); with `FOLD` set it would count only the entries after the name, so the two are not combined.
 
 Payload: one JSON array per line, `[type, path, size, mtime_ns, mode, extra?]`, `type` ∈ `f d l o x`, `path` relative to `ROOT`, `extra` = link text for `l`, `1` for a skipped directory. JSON escapes make every file name (newlines, invalid UTF-8 as lone surrogates) round-trip.
 
 ```python
 import stat
 try:
-    rt,rel,dp,mx,fold,skip=sys.argv[2:8];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);R=[];q=[]
+    rt,rel,dp,mx,fold,skip,af=sys.argv[2:9];dp=int(dp);mx=int(mx);fold=int(fold);skip=json.loads(skip);R=[];q=[]
     k=lambda m:"l" if stat.S_ISLNK(m) else "d" if stat.S_ISDIR(m) else "f" if stat.S_ISREG(m) else "o"
     fd,nm=at(rt,rel);s=os.stat(nm,dir_fd=fd,follow_symlinks=False)
     if k(s.st_mode)=="d":q=[(rel.strip("/"),1)]
     else:R=[[k(s.st_mode),rel,s.st_size,s.st_mtime_ns,stat.S_IMODE(s.st_mode)]+([os.readlink(nm,dir_fd=fd)] if k(s.st_mode)=="l" else [])]
     while q and len(R)<mx:
-        d,n=q.pop(0);fd,_=at(rt,d+"/x");es=sorted(os.scandir(fd),key=lambda e:e.name)
+        d,n=q.pop(0);fd,_=at(rt,d+"/x");es=sorted((e for e in os.scandir(fd) if e.name>af),key=lambda e:e.name)
         if fold and sum(not e.is_dir(follow_symlinks=False) for e in es)>fold:R.append(["x",d,len(es),0,0]);continue
         for e in es:
             t=e.stat(follow_symlinks=False);c=k(t.st_mode);p=(d+"/" if d else "")+e.name
@@ -509,7 +509,7 @@ Syntax-on-stdin facts (§8.2) were checked directly: `ruby -c`, `node --check`, 
 
 Against the shipped constants, not scratch copies:
 
-* **Source:** the stubs equal §5's code blocks byte for byte (12,761 B; per-stub registry budgets hold; no stub holds a single quote).
+* **Source:** the stubs equal §5's code blocks byte for byte (12,761 B at phase 3, 12,790 B with `AFTER`; per-stub registry budgets hold; no stub holds a single quote).
 * **Isolation and containment:** the prototype's tests, lifted: a workspace shadowing 16 stdlib modules plus `sitecustomize`, a planted `python3` first on `PATH` and `PYTHONPATH`/`PYTHONSTARTUP` at the workspace ran against all seven stubs and through a real `list_dir`: no marker was created. The controls hold (plain `python3 -c` and `python3 -I -c` under a planted `PATH` do run the planted interpreter). Containment: `..`, a final-component link (`ELOOP`), a link in the directory path (`ENOTDIR`), a FIFO and a directory, for `read`, `write`, `ls`, `rm`, `search`; outside files unchanged.
 * **Write semantics:** CAS, splice, wrong `NEW`, mode kept, byte-exact CRLF and `\xff`, `mk`, a 300,000-byte payload staged out of order and replayed (the consumed staging file answers `FileNotFoundError`, then `read`'s `fsha` shows it landed), 16 concurrent writers (one lands, 15 `stale`), 45,000 raw bytes in one command; `run`: exit, detached, timeout kill, 20,000-byte output, token reuse refused, the child's own environment.
 * **Frames and authentication:** nine alterations of a real frame (cut, duplicated, flipped, wrong nonce, ...) are all UNKNOWN; a frame for another nonce is plain output; a payload that inflates past its declared length is refused before it is inflated; a file *named* like a complete frame with the right nonce is data inside the payload; a result for an id cria never issued, for a command changed by one byte, delivered twice, or carrying another call's nonce is not taken; a model-authored `ctx_` id is renamed before the harness sees it; a key that is not private verifies nothing.

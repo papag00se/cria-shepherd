@@ -136,7 +136,13 @@ def test_a_listing_whose_text_needs_more_than_one_command_is_staged_in_chunks_an
     assert sorted(p.name for p in (ws / target).parent.iterdir()) == [os.path.basename(target)]
 
 
-def test_a_frame_the_harness_cut_is_asked_again_smaller_and_what_cannot_be_listed_is_labelled_incomplete(tmp_path):
+def _asked(harness):
+    """(records asked for, AFTER) of each `ls` call the harness ran, in order."""
+    return [(int(m.group(1)), m.group(2).strip("'")) for c in harness.ran
+            if (m := re.search(r" (\d+) 0 '\[\]' (\S*)$", command_of(c)))]
+
+
+def test_a_directory_one_frame_cannot_hold_is_paged_one_call_per_frame_and_comes_back_complete(tmp_path):
     ws = tmp_path / 'ws'
     ws.mkdir()
     names = sorted(hashlib.sha256(str(i).encode()).hexdigest() for i in range(700))          # dense names: one frame cannot hold 700
@@ -147,12 +153,48 @@ def test_a_frame_the_harness_cut_is_asked_again_smaller_and_what_cannot_be_liste
     with start_in(Wire(tmp_path, backend), ws) as w:
         w.drive(harness)
     result = listing(backend)['content']
-    asked = [int(re.search(r" (\d+) 0 '\[\]'$", command_of(c)).group(1)) for c in harness.ran if command_of(c).endswith("'[]'")]
-    assert asked[0] == ops.LS_MAX[0] and asked == sorted(asked, reverse=True) and len(asked) >= 2      # asked again, smaller each time
-    shown = re.search(r'first (\d+) entries', result)
-    assert shown and 0 < int(shown.group(1)) < 700 and 'not absent' in result                      # never passed off as the whole directory
+    asked = _asked(harness)
+    assert asked[0] == (ops.LS_MAX[0], '') and len(asked) >= 3                                # the first frame was cut, then pages
+    assert [a for _, a in asked if a] and all(a in names for _, a in asked if a)             # each later page resumes after a name it received
+    sizes = [n for n, _ in asked]
+    assert sizes == sorted(sizes, reverse=True)                                              # a cut is asked again smaller, a fitting rung is kept
+    assert 'not absent' not in result and 'NOT complete' not in result and 'first ' not in result
     saved = re.search(r'\./tmp/\w+/stdout-[0-9a-f]{64}\.txt', result)
-    assert saved and (ws / saved.group(0)).read_text().split('\n')[0].endswith(names[0]) and 'saved' in result and 'NOT complete' in result
+    assert saved and [l.split()[-1] for l in (ws / saved.group(0)).read_text().split('\n')] == names    # every entry once, in order
+    assert len(backend.bodies) == 2                                                          # the model was asked once, after the whole listing
+
+
+def test_a_2500_file_directory_is_listed_completely_through_pages_and_a_staged_save(tmp_path):
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    names = sorted(f'f{i:04}.txt' for i in range(2500))
+    for name in names:
+        (ws / name).write_text('')
+    backend = ListBackend(ws)
+    harness = Harness(ws)
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        w.drive(harness)
+    result = listing(backend)['content']
+    asked = _asked(harness)
+    assert [a for _, a in asked] == ['', names[999], names[1999]]                           # three pages of 1,000: one call per frame
+    saved = re.search(r'\./tmp/\w+/stdout-[0-9a-f]{64}\.txt', result)
+    lines = (ws / saved.group(0)).read_text().split('\n')
+    assert [l.split()[-1] for l in lines] == names and 'NOT complete' not in result and 'not absent' not in result
+    assert all(len(command_of(c).encode()) < 64 * 1024 for c in harness.ran)
+
+
+def test_a_listing_past_the_page_bound_is_still_labelled_incomplete_never_passed_off_as_the_directory(tmp_path, monkeypatch):
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    monkeypatch.setattr(ops, 'LS_MAX', (10,))
+    monkeypatch.setattr(ops, 'LS_MAX_PAGES', 2)
+    for i in range(35):
+        (ws / f'f{i:02}').write_text('')
+    backend = ListBackend(ws)
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        w.drive(Harness(ws))
+    result = listing(backend)['content']
+    assert 'first 20 entries' in result and 'not absent' in result and result.count('\n') == 20 and 'f19' in result and 'f20' not in result
 
 
 def test_an_oversize_path_is_refused_before_anything_is_sent(tmp_path):
