@@ -182,73 +182,170 @@ def test_captured_ruby_batches_hold_only_the_first_unread_readme(tmp_path):
         wsview.unbind(token)
 
 
-@pytest.mark.parametrize('case', ['compact', 'whitespace', 'checkout', 'unlisted', 'delete'])
-def test_inventory_state_survives_compaction_but_not_mutation(tmp_path, case):
-    class Log:
-        def __init__(self): self.events = []
-        def emit(self, event, **fields): self.events.append((event, fields))
+class Log:
+    def __init__(self): self.events = []
+    def emit(self, kind, **fields): self.events.append((kind, fields))
+    def states(self, reason):
+        return [f for k, f in self.events if k == 'loop.unread_target_state' and f.get('reason') == reason]
+
+
+def seed_target(tmp_path, text='seed content', *, git=False):
+    path = tmp_path / 'target.txt'
+    path.write_text(text)
+    if git:
+        def run_git(*args):
+            return subprocess.run(['git', *args], cwd=tmp_path, capture_output=True, text=True, check=True)
+        run_git('init', '-q')
+        run_git('add', 'target.txt')
+        run_git('-c', 'user.email=test@example.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'seed')
+    return path
+
+
+def write_target(driver, tmp_path, history, log, cid='write', content='replacement'):
+    check = driver.unread_target_check('sid:state', history, str(tmp_path), log)
+    return do('write_file', {'path': 'target.txt', 'content': content}, tmp_path,
+              cid=cid, root=str(tmp_path), unread_target=check)[2]
+
+
+@pytest.mark.parametrize('case', ['compact', 'whitespace', 'checkout', 'unlisted'])
+def test_inventory_note_survives_compaction_and_every_command(tmp_path, case):
+    """The seed's note is cleared by nothing but its own hash against current bytes: not by compaction (which only
+    drops credit), not by `git checkout -- .`. A blank or unlisted seed was never held."""
     path = tmp_path / 'target.txt'
     if case != 'unlisted':
-        path.write_text(' \n\t' if case == 'whitespace' else 'seed content')
-    if case == 'checkout':
-        def git(*args):
-            return subprocess.run(['git', *args], cwd=tmp_path, capture_output=True, text=True, check=True)
-        git('init', '-q')
-        git('add', 'target.txt')
-        git('-c', 'user.email=test@example.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'seed')
+        seed_target(tmp_path, ' \n\t' if case == 'whitespace' else 'seed content', git=case == 'checkout')
     driver = inventory_session(tmp_path, 'sid:state')
     log, history = Log(), []
-    if case in ('checkout', 'delete'):
-        command = 'git checkout -- .' if case == 'checkout' else 'rm target.txt'
+    if case == 'checkout':
+        command = 'git checkout -- .'
         result = subprocess.run(['bash', '-c', command], cwd=tmp_path, capture_output=True, text=True, check=True)
         history = [{'role': 'assistant', 'tool_calls': [call('exec_command', {'cmd': command}, 'mutation')]},
                    {'role': 'tool', 'tool_call_id': 'mutation', 'content': result.stdout}]
     token = wsview.bind(wsview.View(str(tmp_path), 'sid:state'))
     try:
-        check = driver.unread_target_check('sid:state', history, str(tmp_path), log)
-        _, _, result = do('write_file', {'path': 'target.txt', 'content': 'replacement'}, tmp_path,
-                          cid='write', root=str(tmp_path), unread_target=check)
-        if case == 'compact':
+        result = write_target(driver, tmp_path, history, log)
+        if case in ('compact', 'checkout'):
             assert denial.read_payload(result[1]) == 'seed content'
             assert path.read_text() == 'seed content'
+            assert driver._store.get('sid:state').inventory_observations['target.txt']['blank'] is False
         else:
             assert denial.landed(result[1]) and path.read_text() == 'replacement'
-        if case in ('checkout', 'unlisted', 'delete'):
-            assert any(event == 'loop.unread_target_state' and fields['target'] == 'target.txt'
-                       and fields['state'] == 'state_unknown' and fields['reason'] == 'blankness_unavailable'
-                       for event, fields in log.events)
-        if case == 'delete':
-            check = driver.unread_target_check('sid:state', history + result, str(tmp_path), log)
-            _, _, next_result = do('write_file', {'path': 'target.txt', 'content': 'again'}, tmp_path,
-                                   cid='next', root=str(tmp_path), unread_target=check)
-            assert denial.landed(next_result[1]) and path.read_text() == 'again'
+        assert bool(log.states('blankness_unavailable')) is (case == 'unlisted')
     finally:
         wsview.unbind(token)
 
 
-def test_changed_same_size_read_invalidates_inventory_even_after_compaction(tmp_path):
-    path = tmp_path / 'target.txt'
-    path.write_text('abc')
-    driver = inventory_session(tmp_path, 'sid:changed')
-    path.write_text('xyz')
-    _, _, read = do('read_file', {'path': 'target.txt'}, tmp_path, cid='read',
-                    injected=('read_file',), root=str(tmp_path))
-    token = wsview.bind(wsview.View(str(tmp_path), 'sid:changed'))
+def test_a_deleted_seed_is_held_once_then_read_as_missing_and_no_longer_held(tmp_path):
+    seed_target(tmp_path)
+    driver = inventory_session(tmp_path, 'sid:state')
+    (tmp_path / 'target.txt').unlink()
+    log = Log()
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:state'))
     try:
-        check = driver.unread_target_check('sid:changed', read, str(tmp_path))
+        first = write_target(driver, tmp_path, [], log)
+        assert denial.refused(first[1]) and 'is not there' in first[1]['content'] and not (tmp_path / 'target.txt').exists()
+        check = driver.unread_target_check('sid:state', first, str(tmp_path), log)
+        assert check(str(tmp_path / 'target.txt')) == ''
+        assert driver._store.get('sid:state').inventory_observations['target.txt']['missing'] is True
+        second = write_target(driver, tmp_path, first, log, cid='next', content='again')
+        assert denial.landed(second[1]) and (tmp_path / 'target.txt').read_text() == 'again'
+    finally:
+        wsview.unbind(token)
+
+
+def test_a_hash_mismatch_from_current_bytes_clears_the_note_so_the_write_is_not_held_on_a_stale_claim(tmp_path):
+    path = seed_target(tmp_path)
+    driver = inventory_session(tmp_path, 'sid:state')
+    view = wsview.View(str(tmp_path), 'sid:state')
+    assert view.apply_initial_inventory(json.loads(subprocess.run(
+        ['bash', '-c', initial_inventory.command(str(tmp_path))], capture_output=True, text=True, check=True).stdout), str(tmp_path))
+    path.write_text('changed outside the coder\'s sight')
+    view.note_read('target.txt', path.read_text())      # a freshness-validated survey body: the current bytes
+    log = Log()
+    token = wsview.bind(view)
+    try:
+        check = driver.unread_target_check('sid:state', [], str(tmp_path), log)
+        assert 'target.txt' in check('target.txt')      # current bytes are non-blank and unread: held on THEM
+        assert driver._store.get('sid:state').inventory_observations['target.txt']['blank'] is None
+        assert ('loop.inventory_content_changed', {'path': 'target.txt'}) in log.events
+    finally:
+        wsview.unbind(token)
+
+
+def test_unavailable_bytes_fall_back_to_the_note_and_say_so_never_changed(tmp_path):
+    seed_target(tmp_path)
+    driver = inventory_session(tmp_path, 'sid:state')
+    log = Log()
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:state'))
+    try:
+        result = write_target(driver, tmp_path, [], log)
+        assert denial.read_payload(result[1]) == 'seed content'
+        assert log.states('current_bytes_unavailable')
+        assert not [k for k, _ in log.events if k == 'loop.inventory_content_changed']
+        assert driver._store.get('sid:state').inventory_observations['target.txt']['blank'] is False
+    finally:
+        wsview.unbind(token)
+
+
+def test_a_read_updates_the_note_and_after_compaction_the_unread_write_is_still_held(tmp_path):
+    path = seed_target(tmp_path, 'abc')
+    driver = inventory_session(tmp_path, 'sid:state')
+    path.write_text('xyz')       # same size, different bytes: the read is the newest observation
+    _, _, read = do('read_file', {'path': 'target.txt'}, tmp_path, cid='read', injected=('read_file',), root=str(tmp_path))
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:state'))
+    try:
+        check = driver.unread_target_check('sid:state', read, str(tmp_path))
         assert check('target.txt') == ''  # the actual read has credit
-        assert driver._store.get('sid:changed').inventory_observations['target.txt']['blank'] is None
-        # Dropping the read must not revive the older inventory observation.
-        class Log:
-            def __init__(self): self.events = []
-            def emit(self, kind, **fields): self.events.append((kind, fields))
-        log = Log()
-        compacted = driver.unread_target_check('sid:changed', [], str(tmp_path), log)
-        _, _, result = do('write_file', {'path': 'target.txt', 'content': 'new'}, tmp_path,
-                          root=str(tmp_path), unread_target=compacted)
-        assert denial.landed(result[1])
-        assert any(k == 'loop.unread_target_state' and f['reason'] == 'blankness_unavailable'
-                   for k, f in log.events)
+        note = driver._store.get('sid:state').inventory_observations['target.txt']
+        assert note['blank'] is False and note['digest'] == loop._content_digest('xyz')
+        # Compaction drops the read's credit, not what was observed.
+        result = write_target(driver, tmp_path, [], Log())
+        assert denial.read_payload(result[1]) == 'xyz' and path.read_text() == 'xyz'
+    finally:
+        wsview.unbind(token)
+
+
+def test_a_coders_own_whole_write_updates_the_note_and_survives_compaction(tmp_path):
+    path = seed_target(tmp_path, 'seed content')
+    driver = inventory_session(tmp_path, 'sid:state')
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:state'))
+    try:
+        _, _, own = do('write_file', {'path': 'target.txt', 'content': 'mine'}, tmp_path, cid='own', root=str(tmp_path))
+        assert denial.landed(own[1])
+        check = driver.unread_target_check('sid:state', own, str(tmp_path))
+        assert check('target.txt') == ''                 # own-credited while visible
+        note = driver._store.get('sid:state').inventory_observations['target.txt']
+        assert note['digest'] == loop._content_digest('mine') and note['blank'] is False
+        result = write_target(driver, tmp_path, [], Log())
+        assert denial.read_payload(result[1]) == 'mine'   # compaction: credit gone, the note holds
+    finally:
+        wsview.unbind(token)
+
+
+def test_verify3_dependency_attempts_leave_every_seed_known_and_the_readme_write_is_held(tmp_path):
+    """Captured live Ruby run (request 0012): write_stdin, then bundle add / bundle install / gem ... used to wipe every
+    note, so the unread README write was admitted as state_unknown. The recorded notes stay, and the same captured
+    write is answered with the file."""
+    repo = Path(__file__).resolve().parents[2]
+    fixtures = repo / 'tests/fixtures/unread_write'
+    shutil.copytree(repo / 'suite/tasks/shipping-rates-rb/seed', tmp_path, dirs_exist_ok=True)
+    driver = inventory_session(tmp_path, 'sid:verify3')
+    history = json.loads((fixtures / 'ruby-verify3-0012.json').read_text())['body']['messages']
+    response = json.loads((fixtures / 'ruby-verify3-0012-response.json').read_text())
+    tc = next(c for c in response['choices'][0]['message']['tool_calls'] if c['function']['name'] == 'write_file'
+              and json.loads(c['function']['arguments'])['path'] == 'README.md')
+    seed = (tmp_path / 'README.md').read_text()
+    log = Log()
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:verify3'))
+    try:
+        check = driver.unread_target_check('sid:verify3', history, str(tmp_path), log)
+        _, _, result = do('write_file', json.loads(tc['function']['arguments']), tmp_path,
+                          cid=tc['id'], root=str(tmp_path), unread_target=check)
+        assert denial.read_payload(result[1]) == seed and (tmp_path / 'README.md').read_text() == seed
+        state = driver._store.get('sid:verify3').inventory_observations
+        assert all(state[p]['blank'] is False for p in ('README.md', 'lib/shipping/rates.rb', 'test/test_rates.rb'))
+        assert not log.states('blankness_unavailable')
+        assert check('lib/shipping/rates.rb') == '' and check('test/test_rates.rb') == ''   # their reads are still visible
     finally:
         wsview.unbind(token)
 
@@ -311,6 +408,8 @@ def test_own_write_credit_requires_retained_history(tmp_path, retained, mutated,
         data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
                                          capture_output=True, text=True, check=True).stdout)
         assert view.apply_initial_inventory(data, str(tmp_path))
+        if mutated:   # freshness-validated current bytes: the hash of the coder's own write no longer matches
+            view.note_read('x.txt', target.read_text())
         driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
                            runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
         session = loop._plan_off_session(loop._synthetic_plan('task'), '')
@@ -530,13 +629,14 @@ def test_large_content_fingerprinting_is_streamed_without_truncation():
     ('readonly', 'same', False),
 ])
 def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch, held):
-    """The harness runs a real read before its peer; response order cannot prove parallel execution order."""
+    """A read and a peer that rewrites the file: no command is read for its effect; the read's call-bound content hash
+    against the file's current (survey-validated) bytes decides, and an identical restoration matches."""
     from cria import writeproxy
     from write_edit_helpers import ENVELOPE, lower, run
     target = tmp_path / 'x.txt'
     target.write_text('old\n')
     (tmp_path / 'other.txt').write_text('other\n')
-    read = call('exec_command', {'cmd': 'cat x.txt'}, 'r')
+    read = lower([call('read_file', {'path': 'x.txt'}, 'r')], root=str(tmp_path), injected=('read_file',))[0]
     if peer == 'same-shell':
         mutation = call('exec_command', {'cmd': "printf 'new\\n' > x.txt"}, 'm')
     elif peer == 'same-edit':
@@ -550,7 +650,7 @@ def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch,
     else:
         mutation = call('exec_command', {'cmd': 'cat other.txt'}, 'm')
     read_result = run(read, tmp_path)
-    assert read_result.returncode == 0 and read_result.stdout == 'old\n'
+    assert read_result.returncode == 0 and 'old' in read_result.stdout
     mutation_result = run(mutation, tmp_path)
     assert mutation_result.returncode == 0
     result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
