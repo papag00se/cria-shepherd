@@ -32,7 +32,8 @@ def test_stub_sizes_stay_within_the_registry_budgets_and_hold_no_quote():
     assert set(budgets) == set(NAMES)
     for name, source in harnessprims.STUBS.items():
         assert "'" not in source and len(source.encode()) <= budgets[name], (name, len(source.encode()), budgets[name])
-    assert sum(len(s.encode()) for s in harnessprims.STUBS.values()) == 12_824
+    stated = int(re.search(r'Total ([\d,]+) B\.', (DOCS / 'harness-primitives.md').read_text()).group(1).replace(',', ''))
+    assert sum(len(s.encode()) for s in harnessprims.STUBS.values()) == stated <= 13_600
 
 
 def test_compose_is_a_pure_function_with_the_documented_prefix_and_a_display_comment_that_carries_no_line_break():
@@ -43,7 +44,7 @@ def test_compose_is_a_pure_function_with_the_documented_prefix_and_a_display_com
     assert first == '# list_dir x' and second.startswith('/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \\')
     assert "'src/a b.py'" in one and one.endswith("' /w 'src/a b.py' '*'") is False and one.rstrip().endswith("'*'")
     run = harnessprims.compose('run', 'cd' * 16, ['start'], text='CTX_EOF\n')
-    assert run.startswith('/usr/bin/env CTX_PATH="$PATH" PATH=/usr/bin') and "<<'CTX_EOF_" in run       # the script holds the terminator: a derived one is used
+    assert run.startswith('/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin CTX_ENV="$(/usr/bin/env -0 |') and "<<'CTX_EOF_" in run       # the script holds the terminator: a derived one is used
     import pytest
     with pytest.raises(ValueError):
         harnessprims.compose('ls', 'zz', [])

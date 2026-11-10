@@ -89,14 +89,14 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | Stub | Verb | Sent size | Arguments after the nonce |
 |---|---|---|---|
 | `read` | return a byte range of a file and its identity | 1,486 B | `ROOT REL OFF LEN` |
-| `write` | replace or create a file atomically, compare-and-swap | 2,647 B | `ROOT REL EX SP NEW ST MK G` + stdin |
-| `put` | stage one chunk of a payload too big for one command | 1,127 B | `ROOT REL G OFF MK` + stdin |
+| `write` | replace or create a file atomically, compare-and-swap | 2,675 B | `ROOT REL EX SP NEW ST MK G` + stdin |
+| `put` | stage one chunk of a payload too big for one command | 1,256 B | `ROOT REL G OFF MK` + stdin |
 | `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
-| `rm` | delete a file, an empty directory or an owned tree | 1,695 B | `ROOT REL MODE EX` |
-| `run` | run a command with a timeout, detached, output to a file | 2,149 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
-| `search` | regex search over a file list cria chose | 1,598 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
+| `rm` | delete a file, an empty directory or an owned tree | 1,709 B | `ROOT REL MODE EX` |
+| `run` | run a command with a timeout, detached, output to a file | 2,371 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
+| `search` | regex search over a file list cria chose | 1,692 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
 
-Total 12,824 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 13,311 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -167,9 +167,9 @@ try:
     fd,nm=at(rt,rel,mk=="1");fcntl.flock(fd,fcntl.LOCK_EX)
     if st=="0":b=base64.b64decode(sys.stdin.read())
     else:
-        with os.fdopen(os.open(pf,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd),"rb") as g:b=g.read()
+        with os.fdopen(os.open(pf,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd),"rb") as g:b=g.read()
     try:
-        o=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd);s=os.fstat(o)
+        o=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(o)
         if not stat.S_ISREG(s.st_mode):out(dict(ok=0,err="notfile"))
         with os.fdopen(o,"rb") as g:old=g.read()
     except FileNotFoundError:s=old=None
@@ -185,9 +185,9 @@ try:
     except FileNotFoundError:pass
     t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);os.write(t,new);os.fsync(t)
     if s:
-        os.fchmod(t,stat.S_IMODE(s.st_mode))
         try:os.fchown(t,s.st_uid,s.st_gid)
         except OSError:pass
+        os.fchmod(t,stat.S_IMODE(s.st_mode))
         n=os.stat(nm,dir_fd=fd,follow_symlinks=False)
         if (n.st_ino,n.st_size,n.st_mtime_ns)!=(s.st_ino,s.st_size,s.st_mtime_ns):out(dict(ok=0,err="stale",sha=None))
     if ex=="-":os.link(tf,nm,src_dir_fd=fd,dst_dir_fd=fd,follow_symlinks=False);os.unlink(tf,dir_fd=fd)
@@ -207,9 +207,11 @@ finally:
 `put N ROOT REL G OFF MK` writes one chunk at byte offset `OFF` of the staging file `.ctx<G16>.part` (mode 0600, no-follow) in the target's directory and answers its current size. Chunks may arrive in any order and in parallel (disjoint ranges); re-sending a chunk is harmless. The final `write ... ST=1` verifies the assembled bytes against `NEW` before anything lands.
 
 ```python
+import stat
 try:
     rt,rel,gr,off,mk=sys.argv[2:7];fd,nm=at(rt,rel,mk=="1")
-    g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,384,dir_fd=fd)
+    g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
+    if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
     os.pwrite(g,base64.b64decode(sys.stdin.read()),int(off));out(dict(ok=1,staged=os.fstat(g).st_size))
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 ```
@@ -254,7 +256,7 @@ try:
     rt,rel,md,ex=sys.argv[2:6];fd,nm=at(rt,rel);s=os.stat(nm,dir_fd=fd,follow_symlinks=False)
     if md=="f":
         if ex!="*":
-            with os.fdopen(os.open(nm,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd),"rb") as g:c=hashlib.sha256(g.read()).hexdigest()
+            with os.fdopen(os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd),"rb") as g:c=hashlib.sha256(g.read()).hexdigest()
             if c!=ex:out(dict(ok=0,err="stale",sha=c))
         os.unlink(nm,dir_fd=fd)
     elif md=="d":os.rmdir(nm,dir_fd=fd)
@@ -274,9 +276,12 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 Why this cannot live in cria: the command has to run where the files are, outlive a harness exec that returns after ~10 s, and be bounded by a timeout that does not depend on any connection to cria. Authority: exactly the harness's, including whatever the project's own checks do (running the project's tests *is* running project code; the supervisor's isolation protects the supervisor, not the child).
 
 ```python
-import time,subprocess,shutil
-md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(os.environ,PATH=os.environ.get("CTX_PATH",""));E.pop("CTX_PATH",None)
+import time,subprocess,shutil,stat
+md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(l.split("=",1) for l in base64.b64decode(os.environ["CTX_ENV"]).decode("utf-8","surrogateescape").split("\0") if "=" in l)
 try:
+    if md!="start":
+        s=os.lstat(d)
+        if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.getuid() or s.st_mode&63:raise OSError(13,"not our run directory")
     if md=="start":
         os.mkdir(d,448)
         with open(W("s.sh"),"wb") as f:f.write(sys.stdin.buffer.read())
@@ -311,7 +316,9 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 `search N ROOT PATTERN FLAGS MAX MAXFILE`, stdin is a JSON list of relative paths **chosen by cria** (from a listing, after its own generated-directory and ignore logic). Each file is opened with the same no-follow walk and matched line by line with Python `re` (the regex dialect `grep` already offers the model today). Records: `["m", path, lineno, line]`, `["s", path, size]` (over `MAXFILE`, not read), `["!", path, errno]`, and a final `["#"]` when `MAX` matches were reached. The harness never decides which files to search and never filters output.
 
 ```python
-import re
+import re,signal
+def T(*a):raise TimeoutError("regex")
+signal.signal(signal.SIGALRM,T);signal.alarm(10)
 try:
     rt,pat,fl,mx,mf=sys.argv[2:7];mx=int(mx);mf=int(mf);rx=re.compile(pat,int(fl));R=[]
     for rel in json.loads(sys.stdin.read()):
@@ -513,7 +520,7 @@ Syntax-on-stdin facts (§8.2) were checked directly: `ruby -c`, `node --check`, 
 
 Against the shipped constants, not scratch copies:
 
-* **Source:** the stubs equal §5's code blocks byte for byte (12,761 B at phase 3, 12,824 B with `AFTER`; per-stub registry budgets hold; no stub holds a single quote).
+* **Source:** the stubs equal §5's code blocks byte for byte (12,761 B at phase 3, 13,311 B after the review fixes; per-stub registry budgets hold; no stub holds a single quote).
 * **Isolation and containment:** the prototype's tests, lifted: a workspace shadowing 16 stdlib modules plus `sitecustomize`, a planted `python3` first on `PATH` and `PYTHONPATH`/`PYTHONSTARTUP` at the workspace ran against all seven stubs and through a real `list_dir`: no marker was created. The controls hold (plain `python3 -c` and `python3 -I -c` under a planted `PATH` do run the planted interpreter). Containment: `..`, a final-component link (`ELOOP`), a link in the directory path (`ENOTDIR`), a FIFO and a directory, for `read`, `write`, `ls`, `rm`, `search`; outside files unchanged.
 * **Write semantics:** CAS, splice, wrong `NEW`, mode kept, byte-exact CRLF and `\xff`, `mk`, a 300,000-byte payload staged out of order and replayed (the consumed staging file answers `FileNotFoundError`, then `read`'s `fsha` shows it landed), 16 concurrent writers (one lands, 15 `stale`), 45,000 raw bytes in one command; `run`: exit, detached, timeout kill, 20,000-byte output, token reuse refused, the child's own environment.
 * **Frames and authentication:** nine alterations of a real frame (cut, duplicated, flipped, wrong nonce, ...) are all UNKNOWN; a frame for another nonce is plain output; a payload that inflates past its declared length is refused before it is inflated; a file *named* like a complete frame with the right nonce is data inside the payload; a result for an id cria never issued, for a command changed by one byte, delivered twice, or carrying another call's nonce is not taken; a model-authored `ctx_` id is renamed before the harness sees it; a key that is not private verifies nothing.

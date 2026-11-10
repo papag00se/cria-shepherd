@@ -107,13 +107,13 @@ Seven stubs, literal source and tests in [`harness-primitives.md`](harness-primi
 | Stub | Why it must run where the files are | Sent size | Budget |
 |---|---|---|---|
 | `read` | Only the harness can open the file; no-follow open, whole-file hash and byte range in one pass | 1,486 B | 1.6 KB |
-| `write` | Atomic same-directory replace, compare-and-swap and a no-follow walk are only meaningful at the file | 2,647 B | 2.8 KB |
-| `put` | Chunks of a payload larger than one command must be staged beside the target | 1,127 B | 1.2 KB |
+| `write` | Atomic same-directory replace, compare-and-swap and a no-follow walk are only meaningful at the file | 2,675 B | 2.8 KB |
+| `put` | Chunks of a payload larger than one command must be staged beside the target | 1,256 B | 1.3 KB |
 | `ls` | A recursive tree walk cannot be done in one round trip per directory; no-follow `lstat` records | 2,122 B | 2.2 KB |
-| `rm` | Unlink / rmdir / tree removal without following links | 1,695 B | 1.8 KB |
-| `run` | Run a command where the project is, outlive a harness exec that yields after ~10 s, kill the process group at a deadline, capture output to a file | 2,149 B | 2.3 KB |
-| `search` (D3) | Searching a tree is bounded by bytes, not round trips; reading every file to cria to grep it would put the repository in the transcript | 1,598 B | 1.7 KB |
-| **Total** | | **12,824 B** | **13.6 KB** |
+| `rm` | Unlink / rmdir / tree removal without following links | 1,709 B | 1.8 KB |
+| `run` | Run a command where the project is, outlive a harness exec that yields after ~10 s, kill the process group at a deadline, capture output to a file | 2,371 B | 2.4 KB |
+| `search` (D3) | Searching a tree is bounded by bytes, not round trips; reading every file to cria to grep it would put the repository in the transcript | 1,692 B | 1.7 KB |
+| **Total** | | **13,311 B** | **13.6 KB** |
 
 Allowed alongside (shell text, not programs; each under 1 KB plus data): probe scripts (R21, R24, R25), syntax-check scripts (a single tool line fed the candidate text), `command -v`, `ls -1 $PATH`, the `ctags` invocation, answer/refusal `printf` (R26).
 

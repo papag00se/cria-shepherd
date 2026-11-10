@@ -72,9 +72,9 @@ try:
     fd,nm=at(rt,rel,mk=="1");fcntl.flock(fd,fcntl.LOCK_EX)
     if st=="0":b=base64.b64decode(sys.stdin.read())
     else:
-        with os.fdopen(os.open(pf,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd),"rb") as g:b=g.read()
+        with os.fdopen(os.open(pf,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd),"rb") as g:b=g.read()
     try:
-        o=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd);s=os.fstat(o)
+        o=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(o)
         if not stat.S_ISREG(s.st_mode):out(dict(ok=0,err="notfile"))
         with os.fdopen(o,"rb") as g:old=g.read()
     except FileNotFoundError:s=old=None
@@ -90,9 +90,9 @@ try:
     except FileNotFoundError:pass
     t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);os.write(t,new);os.fsync(t)
     if s:
-        os.fchmod(t,stat.S_IMODE(s.st_mode))
         try:os.fchown(t,s.st_uid,s.st_gid)
         except OSError:pass
+        os.fchmod(t,stat.S_IMODE(s.st_mode))
         n=os.stat(nm,dir_fd=fd,follow_symlinks=False)
         if (n.st_ino,n.st_size,n.st_mtime_ns)!=(s.st_ino,s.st_size,s.st_mtime_ns):out(dict(ok=0,err="stale",sha=None))
     if ex=="-":os.link(tf,nm,src_dir_fd=fd,dst_dir_fd=fd,follow_symlinks=False);os.unlink(tf,dir_fd=fd)
@@ -107,9 +107,11 @@ finally:
         except OSError:pass
 '''
 
-_PUT = r'''try:
+_PUT = r'''import stat
+try:
     rt,rel,gr,off,mk=sys.argv[2:7];fd,nm=at(rt,rel,mk=="1")
-    g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,384,dir_fd=fd)
+    g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
+    if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
     os.pwrite(g,base64.b64decode(sys.stdin.read()),int(off));out(dict(ok=1,staged=os.fstat(g).st_size))
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 '''
@@ -142,7 +144,7 @@ try:
     rt,rel,md,ex=sys.argv[2:6];fd,nm=at(rt,rel);s=os.stat(nm,dir_fd=fd,follow_symlinks=False)
     if md=="f":
         if ex!="*":
-            with os.fdopen(os.open(nm,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd),"rb") as g:c=hashlib.sha256(g.read()).hexdigest()
+            with os.fdopen(os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd),"rb") as g:c=hashlib.sha256(g.read()).hexdigest()
             if c!=ex:out(dict(ok=0,err="stale",sha=c))
         os.unlink(nm,dir_fd=fd)
     elif md=="d":os.rmdir(nm,dir_fd=fd)
@@ -152,9 +154,12 @@ try:
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 '''
 
-_RUN = r'''import time,subprocess,shutil
-md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(os.environ,PATH=os.environ.get("CTX_PATH",""));E.pop("CTX_PATH",None)
+_RUN = r'''import time,subprocess,shutil,stat
+md,tmp,tok,tmo,wait,cwd,keep=sys.argv[2:9];tmo=float(tmo);wait=float(wait);d=os.path.join(tmp,".ctx-run-"+tok);W=lambda n:os.path.join(d,n);sh=shutil.which("bash") or shutil.which("sh");E=dict(l.split("=",1) for l in base64.b64decode(os.environ["CTX_ENV"]).decode("utf-8","surrogateescape").split("\0") if "=" in l)
 try:
+    if md!="start":
+        s=os.lstat(d)
+        if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.getuid() or s.st_mode&63:raise OSError(13,"not our run directory")
     if md=="start":
         os.mkdir(d,448)
         with open(W("s.sh"),"wb") as f:f.write(sys.stdin.buffer.read())
@@ -184,7 +189,9 @@ try:
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 '''
 
-_SEARCH = r'''import re
+_SEARCH = r'''import re,signal
+def T(*a):raise TimeoutError("regex")
+signal.signal(signal.SIGALRM,T);signal.alarm(10)
 try:
     rt,pat,fl,mx,mf=sys.argv[2:7];mx=int(mx);mf=int(mf);rx=re.compile(pat,int(fl));R=[]
     for rel in json.loads(sys.stdin.read()):
@@ -238,7 +245,10 @@ def compose(stub: str, nonce: str, args=(), payload: bytes | None = None, *, com
     if safe_path != safe_path.strip() or not safe_path or any(not p.startswith('/') for p in safe_path.split(':')):
         raise ValueError('safe_path must be absolute system directories')
     head = shlex.quote(safe_path)
-    prefix = f'{ENV} CTX_PATH="$PATH" PATH={head}' if stub == 'run' else f'{ENV} -i PATH={head}'
+    # `run` hands the user's own environment to the project's commands, but not to the supervisor's interpreter: it starts under `env -i`
+    # and receives the environment as one base64 value (NUL-separated entries) that only the command it starts reads.
+    prefix = (f'{ENV} -i PATH={head} CTX_ENV="$({ENV} -0 | /usr/bin/base64 | /usr/bin/tr -d \'\\n\')"'
+              if stub == 'run' else f'{ENV} -i PATH={head}')
     words = ' '.join(shlex.quote(str(a)) for a in (nonce, *args))
     command = f"{prefix} \\\n  python3 -I -S -c '{STUBS[stub]}' {words}"
     if payload is not None:

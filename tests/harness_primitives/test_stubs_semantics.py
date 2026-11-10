@@ -139,3 +139,62 @@ def test_run_returns_exit_and_output_detached_runs_outlive_the_caller_and_a_dead
     assert run('run', ['start', scratch, 'tokb', 5, 1, root, 0], cwd=root, text='echo x').header['err'] == 'FileExistsError'   # a retried start never adopts a directory
     paged = run('read', [scratch / '.ctx-run-tokb', 'out', 0, 100], cwd=root)
     assert paged.header['fsha'] == big.header['osha']
+
+
+# ---- phase 3 review, low items -------------------------------------------------------------------------------------
+
+def test_a_fifo_is_refused_without_hanging_and_without_holding_the_directory_lock(root):
+    os.mkfifo(root / 'pipe')
+    started = time.monotonic()
+    assert write(root, 'pipe', b'x', '*').header['err'] == 'notfile'
+    assert write(root, 'pipe', b'x', sha(b'x'), sp=json.dumps([[0, 0, 1]]), payload=b'x').header['ok'] == 0
+    os.mkfifo(root / ('.ctx' + GROUP[:16] + '.part'))
+    assert write(root, 'g.txt', b'x', '-', staged=True).header['ok'] == 0              # an empty (non-regular) staging file never lands anything
+    assert run('put', [root, 'other', GROUP, 0, 1], b'x', cwd=root).header['ok'] == 0   # put onto a FIFO staging name: refused, not blocked
+    os.mkfifo(root / 'p2')
+    assert run('rm', [root, 'p2', 'f', sha(b'x')], cwd=root).header['ok'] == 0
+    assert write(root, 'after.txt', b'ok', '-').header['landed'] == 1                    # no flock was left held by the stuck calls
+    assert time.monotonic() - started < 30
+
+
+def test_put_never_writes_through_a_hard_link_to_a_file_outside(root, tmp_path):
+    victim = tmp_path / 'victim.txt'
+    victim.write_text('PRECIOUS')
+    os.link(victim, root / ('.ctx' + GROUP[:16] + '.part'))
+    done = run('put', [root, 'f', GROUP, 0, 1], b'OVERWRITTEN', cwd=root)
+    assert done.header['ok'] == 0 and victim.read_text() == 'PRECIOUS'
+
+
+def test_write_keeps_setuid_and_setgid_bits_not_only_the_permission_bits(root):
+    (root / 'f').write_bytes(b'a')
+    os.chmod(root / 'f', 0o4755)
+    assert write(root, 'f', b'b', sha(b'a')).header['landed'] == 1
+    assert (root / 'f').stat().st_mode & 0o7777 == 0o4755
+
+
+def test_run_starts_the_supervisor_with_a_clean_environment_and_hands_the_command_the_users_own(root, tmp_path):
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+    env = {**os.environ, 'MYVAR': 'kept', 'LD_PRELOAD': ''}
+    done = run('run', ['start', scratch, 'tokE', 10, 5, root, 0], cwd=root, env=env,
+               text='echo "child=$MYVAR"; echo "supervisor=$(tr "\\0" "\\n" < /proc/$PPID/environ | grep -c "^MYVAR=")"')
+    assert done.data.decode().split() == ['child=kept', 'supervisor=0']
+
+
+def test_run_wait_refuses_a_directory_it_did_not_make(root, tmp_path):
+    scratch = tmp_path / 'scratch'
+    scratch.mkdir()
+    planted = scratch / '.ctx-run-tokP'
+    planted.mkdir(mode=0o777)
+    os.chmod(planted, 0o777)
+    (planted / 'done').write_text(json.dumps(dict(exit=0, timeout=0, size=6)))
+    (planted / 'out').write_text('forged')
+    (planted / 's.sh').write_text('')
+    assert run('run', ['wait', scratch, 'tokP', 5, 1, root, 0], cwd=root).header['ok'] == 0
+
+
+def test_search_gives_up_on_a_pathological_pattern(root):
+    (root / 'f.txt').write_text('a' * 40 + 'b\n')
+    started = time.monotonic()
+    done = run('search', [root, '(a+)+$', 0, 10, 1 << 20], text='["f.txt"]', cwd=root)
+    assert done.header['ok'] == 0 and done.header['err'] == 'TimeoutError' and time.monotonic() - started < 30
