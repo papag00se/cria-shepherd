@@ -89,7 +89,7 @@ def test_two_writers_of_one_file_lose_no_update(tmp_path):
     assert denial.landed(two[1]) and (tmp_path / 'f.txt').read_text() == 'a = 10\nb = 20\n'
 
 
-@pytest.mark.parametrize('case', ['dir_link_inside', 'dir_link_outside', 'staged_through_link'])
+@pytest.mark.parametrize('case', ['dir_link_inside', 'dir_link_outside'])
 def test_a_link_in_the_path_is_followed_by_cria_only_inside_the_workspace_and_roots(tmp_path, case):
     outside = tmp_path / 'outside'
     outside.mkdir()
@@ -97,15 +97,56 @@ def test_a_link_in_the_path_is_followed_by_cria_only_inside_the_workspace_and_ro
     (ws / 'real').mkdir(parents=True)
     os.symlink('real', ws / 'ln')
     os.symlink(outside, ws / 'esc')
-    content = 'x = 1\n' if case != 'staged_through_link' else body(100_000).decode()
     path = 'esc/f.txt' if case == 'dir_link_outside' else 'ln/f.txt'
-    _, _, shown = do('write_file', {'path': path, 'content': content}, ws, external_dir_permission='none')
+    _, _, shown = do('write_file', {'path': path, 'content': 'x = 1\n'}, ws, external_dir_permission='none')
     if case == 'dir_link_outside':
         assert denial.refused(shown[1]) and 'outside the project directory' in shown[1]['content'] and not list(outside.iterdir())
-    elif case == 'dir_link_inside':
-        assert denial.landed(shown[1]) and (ws / 'real' / 'f.txt').read_text() == content
-    else:    # a payload past one command is staged beside the target by `put`, which follows no link: said (did not run), nothing half-written
-        assert denial.unlanded(shown[1]) and not list((ws / 'real').iterdir()) and not [n for n in os.listdir(ws) if n.startswith('.ctx')]
+    else:
+        assert denial.landed(shown[1]) and (ws / 'real' / 'f.txt').read_text() == 'x = 1\n'
+
+
+def _links(ws, outside):
+    (ws / 'real' / 'deeper').mkdir(parents=True)
+    (ws / 'real' / 'target.txt').write_text('OLD\n')
+    (ws / 'twin.txt').write_text('OLD\n')
+    os.symlink('real', ws / 'ln')                                  # a directory link
+    os.symlink('twin.txt', ws / 'same_dir_link')                   # a file link whose target is beside it
+    os.symlink('real/deeper/../target.txt', ws / 'other_dir_link')  # a file link whose target is in another directory
+    os.symlink(outside / 'out.txt', ws / 'out_link')               # a file link that leaves the workspace
+    os.symlink(outside, ws / 'esc')                                # a directory link that leaves it
+
+
+@pytest.mark.parametrize('path,landed_in', [('ln/new.txt', 'real/new.txt'), ('ln/target.txt', 'real/target.txt'), ('same_dir_link', 'twin.txt'),
+                                            ('other_dir_link', 'real/target.txt')],
+                         ids=['through a directory link', 'through one onto an existing file', 'a file link beside its target', 'a file link to another directory'])
+def test_a_payload_over_one_command_through_a_link_inside_the_workspace_lands_at_the_links_target_and_leaves_nothing_behind(tmp_path, path, landed_in):
+    """A whole write over 45,000 bytes is staged beside its target by `put`, which follows no link. It was refused with words that were
+    false (`Not a directory` through a directory link; a link "to another directory" for a link beside its target) and the model was
+    sent to write 100 KB again. cria resolves the link itself, stages where the target is and lands the write; the staging file left
+    in the link's directory (when that is another) is removed; the link is still a link."""
+    ws, outside = tmp_path / 'ws', tmp_path / 'outside'
+    ws.mkdir(), outside.mkdir()
+    _links(ws, outside)
+    content = body(100_000).decode()
+    ran = []
+    tc = lower([call('write_file', {'path': path, 'content': content}, 'w')], root=str(ws), external_dir_permission='none')[0]
+    first = run(tc, ws)
+    shown = settle([{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first.stdout}], ws, ran=ran)
+    assert denial.landed(shown[1]), shown[1]['content'][:300]
+    assert (ws / landed_in).read_text() == content and (ws / path.split('/')[0]).is_symlink()
+    assert not [p for p in ws.rglob('.ctx*')] and not list(outside.iterdir())
+    assert all(len(c.encode()) < 64 * 1024 for c in [command_of(tc)] + ran)               # and nothing past the budget was sent to get there
+
+
+@pytest.mark.parametrize('path', ['esc/f.txt', 'out_link'])
+def test_a_payload_over_one_command_through_a_link_that_leaves_the_workspace_is_refused_in_the_words_for_that_and_nothing_is_sent_or_left(tmp_path, path):
+    ws, outside = tmp_path / 'ws', tmp_path / 'outside'
+    ws.mkdir(), outside.mkdir()
+    _links(ws, outside)
+    tc, done, shown = do('write_file', {'path': path, 'content': body(100_000).decode()}, ws, external_dir_permission='none')
+    text = shown[1]['content']                                      # (the refused draft itself follows, as for every refused write: the F15 policy)
+    assert denial.refused(shown[1]) and 'outside the project directory' in text and 'Not a directory' not in text and 'another directory' not in text
+    assert not list(outside.iterdir()) and not list(ws.rglob('.ctx*'))
 
 
 @pytest.mark.skipif(not shutil.which('ruby'), reason='no ruby')

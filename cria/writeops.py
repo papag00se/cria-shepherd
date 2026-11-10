@@ -310,11 +310,11 @@ class WriteOps:
 
     def _cleaned(self, op, args: dict, steps: list, results: list):
         self._carry.pop((op.op, args['nw']), None)
-        staged = any(st.what == 'mput' for st in steps)
-        if staged and not any(st.what == 'mrm' for st in steps):
-            parent = args['rel'].rpartition('/')[0]
-            part = f".ctx{callauth.group(op.op)[:16]}.part"
-            return Issue(self._next(steps, 'mrm', {'root': args['root'], 'rel': f'{parent}/{part}' if parent else part, 'results': results}))
+        rel = args.get('rel0') or args['rel']
+        parent, part = rel.rpartition('/')[0], f".ctx{callauth.group(op.op)[:16]}.part"
+        where = f'{parent}/{part}' if parent else part
+        if any(st.what == 'mput' for st in steps) and not any(st.what == 'mrm' and (st.args['root'], st.args['rel']) == (args['root'], where) for st in steps):
+            return Issue(self._next(steps, 'mrm', {'root': args['root'], 'rel': where, 'results': results}))
         return self._m_finish(op, results)
 
     # ---------------------------------------------------------------- the decisions, after each wave
@@ -548,9 +548,13 @@ class WriteOps:
 
     # the landing -----------------------------------------------------
     def _m_staged(self, op, wave: list, steps: list):
+        wave = [st for st in wave if st.what == 'mput']              # (a removal of a staging file that was left behind rode with them)
         args = wave[0].args
         bad = next((st for st in wave if st.frame['hdr'].get('ok') != 1), None)
         if bad is not None:
+            code = bad.frame['hdr'].get('errno')
+            if bad.frame['hdr'].get('ok') == 0 and code in (errno_.ELOOP, errno_.ENOTDIR) and args['rel']:
+                return self._m_walk(op, args, steps, code)           # a link in the path: `put` follows none; cria resolves it, then stages there
             tries = sum(1 for st in steps if st.what == 'mput' and st.args['off'] == bad.args['off'])
             if bad.frame['hdr'].get('ok') == -1 and tries < 2:
                 return Issue(self._next(steps, 'mput', *({**st.args} for st in wave if st.frame['hdr'].get('ok') != 1)))
@@ -558,7 +562,7 @@ class WriteOps:
                 return self._uncertain(op, args, 'the harness did not confirm the content it was sent', steps)
             return self._unwritable(op, args, readops_reason(bad.frame['hdr']), steps)
         size = len(_bytes(op.blobs, args['blob']))
-        staged = {st.args['off'] for st in steps if st.what == 'mput'}
+        staged = {st.args['off'] for st in steps if st.what == 'mput' and (st.args['root'], st.args['rel']) == (args['root'], args['rel'])}
         more = [off for off in range(0, size, harnessprims.CHUNK_BYTES) if off not in staged][:harnessprims.PUT_WAVE]
         base = {k: v for k, v in args.items() if k != 'off'}
         if more:
@@ -581,19 +585,41 @@ class WriteOps:
                 return Issue(self._next(steps, readops.READ, {'root': args['root'], 'rel': args['rel'], 'off': 0, 'len': 0, 'sk': 0,
                                                                'hop': args['hop'], 'rung': 0, 'round': 1, 'for': 'notfile', 'write': st.s}))
             if code in (errno_.ELOOP, errno_.ENOTDIR) and args['rel']:
-                parts = [p for p in args['rel'].split('/') if p]
-                prefix, prefixes = '', []
-                for part in parts:
-                    prefix = f'{prefix}/{part}' if prefix else part
-                    prefixes.append(prefix)
-                if args['hop'] >= readops.MAX_HOPS:
-                    return self._unwritable(op, args, os.strerror(errno_.ELOOP), steps)
-                return Issue(self._next(steps, 'stat', *({**args, 'rel': p, 'errno': code or 0, 'at': i, 'full': args['rel'], 'stage': 'write',
-                                                           'rel0': args['rel']} for i, p in enumerate(prefixes))))
+                return self._m_walk(op, args, steps, code)
             if code == errno_.ENOENT and not args['mk'] and not args.get('staged'):
                 return self._m_all_final_with(op, args, steps, 'absent')
         return Issue(self._next(steps, readops.READ, {'root': args['root'], 'rel': args['rel'], 'off': 0, 'len': 0, 'sk': 0, 'hop': args['hop'],
                                                        'rung': 0, 'round': 1, 'for': 'verify', 'write': st.s, 'verified': 0}))
+
+    def _m_walk(self, op, args: dict, steps: list, code):
+        """A link somewhere in the path the stub was asked to write: ask what each part of the path is (one `ls` of each), to resolve it here."""
+        if args['hop'] >= readops.MAX_HOPS:
+            return self._unwritable(op, args, os.strerror(errno_.ELOOP), steps)
+        prefix, prefixes = '', []
+        for part in (p for p in args['rel'].split('/') if p):
+            prefix = f'{prefix}/{part}' if prefix else part
+            prefixes.append(prefix)
+        return Issue(self._next(steps, 'stat', *({**args, 'rel': p, 'errno': code or 0, 'at': i, 'full': args['rel'], 'stage': 'write',
+                                                   'rel0': args['rel']} for i, p in enumerate(prefixes))))
+
+    def _m_restaged(self, op, args: dict, steps: list, root: str, rel: str, hop: int):
+        """A payload staged (or about to be) beside a target that turned out to be a link, now resolved to ``root``/``rel``. Where the staging
+        file already is the target's directory the write is simply sent again; otherwise the payload is staged in the target's directory and
+        the staging file left in the link's is removed (a link is not one directory's business: the model is not asked to write again)."""
+        here = os.path.normpath(os.path.join(args['root'], args['rel0'].rpartition('/')[0]))
+        there = os.path.normpath(os.path.join(root, rel.rpartition('/')[0]))
+        base = {k: v for k, v in args.items() if k not in ('errno', 'at', 'full', 'stage', 'rel0', 'wave', 'off', 'staged')}
+        base = {**base, 'root': root, 'rel': rel, 'hop': hop, 'lost': 0}
+        if args.get('staged') and here == there:
+            return Issue(self._next(steps, 'mwrite', {**base, 'staged': True}))
+        size = len(_bytes(op.blobs, args['blob']))
+        puts = [{**base, 'off': off} for off in range(0, size, harnessprims.CHUNK_BYTES)[:harnessprims.PUT_WAVE]]
+        stale = []
+        if args.get('staged'):
+            parent, part = args['rel0'].rpartition('/')[0], f".ctx{callauth.group(op.op)[:16]}.part"
+            stale = [{'root': args['root'], 'rel': f'{parent}/{part}' if parent else part, 'results': args['results']}]
+        return Issue((*self._next(steps, 'mput', *puts), *((steps[-1].s + 1 + len(puts) + i, 'mrm', {**a, 'wave': steps[-1].args['wave'] + 1})
+                                                            for i, a in enumerate(stale))))
 
     def _garbled(self, op, args: dict) -> list:
         results = []
@@ -685,9 +711,8 @@ class WriteOps:
                 return Issue(self._next(steps, readops.READ, {'root': new_root, 'rel': new_rel, 'off': 0, 'len': self._first_len(ctx), 'sk': 0,
                                                                'hop': hop, 'rung': 0, 'round': args['round'] + 1, 'for': 'base',
                                                                'replans': args.get('replans', 0)}))
-            if args.get('staged'):
-                return self._unwritable(op, args, 'a link in the path leads to another directory than the one the content was staged in; '
-                                                  'write the link\'s target directly', steps)
+            if args.get('staged') or 'off' in args:
+                return self._m_restaged(op, args, steps, new_root, new_rel, hop)
             moved = {k: v for k, v in args.items() if k not in ('errno', 'at', 'full', 'stage', 'rel0', 'wave')}
             return Issue(self._next(steps, 'mwrite', {**moved, 'root': new_root, 'rel': new_rel, 'hop': hop, 'lost': 0}))
         return self._m_stat_failed(op, wave[0], steps)
