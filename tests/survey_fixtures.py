@@ -57,7 +57,7 @@ def survey_of_disk(root, bodies=(), progs=(), outside=(), session="sv", env=None
                   lambda ops: ops.survey_of(next(o for o in ops.ledger.ops(session).values() if o.kind == "survey")))
 
 
-def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, session="inv", rounds=None, cwd=None, facts=True):
+def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, session="inv", rounds=None, cwd=None, facts=True, limits=None):
     """The real initial inventory of the real directory ``root``: the operation is issued and every primitive call it asks for is run with
     bash where the files are, until it is done. Returns the listing dictionary the loop reads (None when there is none).
 
@@ -65,7 +65,8 @@ def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, sessi
     it (`probe_of_disk`), and puts the answer in the item: the listing the loop had when the inventory carried those facts, for the tests of the rule that
     stand on them. ``facts=False`` is the inventory as it is."""
     data = _drive(lambda ops: ops.issue_inventory(session, SHELL, str(root))[1], cwd or root, session, env, ran, alter, restart, rounds,
-                  lambda ops: next(ops.inventory_of(session, o.op) for o in ops.ledger.ops(session).values() if o.kind == "inventory"))
+                  lambda ops: next(ops.inventory_of(session, o.op) for o in ops.ledger.ops(session).values() if o.kind == "inventory"),
+                  limits=limits)
     if facts and data:
         for item in data["files"]:
             learned = probe_of_disk(root, item["path"], cwd=cwd)
@@ -109,13 +110,13 @@ def probe_of_disk(root, rel, session="pr", env=None, ran=None, alter=None, resta
                   restart, rounds, lambda ops: next(o.final["facts"] for o in ops.ledger.ops(session).values() if o.kind == "probe"))
 
 
-def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=None, skip=(), harness=None):
+def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=None, skip=(), harness=None, limits=None):
     """``harness(call)`` answers each call of cria's with the harness's text (the default runs the command with bash where the files are)."""
     home = tempfile.mkdtemp(prefix="survey-home-")
     saved = privatepaths.CRIA_HOME
     privatepaths.CRIA_HOME = type(saved)(home) / ".cria"
     try:
-        ops = Ops()
+        ops = Ops(inventory_limits=limits)
         calls = issue(ops)
         messages = []
         index = -1
@@ -138,7 +139,7 @@ def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=
                                       capture_output=True, text=True, timeout=300)
                 text = done.stdout + done.stderr
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": alter(command, text) if alter else text})
-            ops = Ops() if restart else ops
+            ops = Ops(inventory_limits=limits) if restart else ops
             calls = ops.incoming(session, messages).calls
             if step is not None and step(calls, ops):
                 break

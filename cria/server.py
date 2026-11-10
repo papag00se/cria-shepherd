@@ -40,7 +40,7 @@ from . import content_reduce
 from .content_reduce import est_tokens
 from . import config, assistruntime
 from .config import Config
-from . import brave, envfile, webfetch
+from . import brave, envfile, inventoryops, webfetch
 from .events import EventLog
 from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
@@ -979,7 +979,7 @@ class CriaServer(ThreadingHTTPServer):
         self.stats_store = StatsStore()
         self.retention = None   # AutoPruner, only when the operator configured [retention] auto_prune_after
         from .ops import Ops
-        self.ops = Ops(safe_path=cfg.harness.safe_path)   # operations carried out through the harness primitives (ledger under ~/.cria/ops)
+        self.ops = Ops(safe_path=cfg.harness.safe_path, inventory_limits=inventoryops.limits_of(cfg.harness))   # operations carried out through the harness primitives (ledger under ~/.cria/ops)
         # In-flight streaming responses (Heartbeat -> resp_id), so a shutdown can END each one with a
         # clean, RETRYABLE terminal event instead of the bare mid-stream EOF that wedges the client.
         self.active_streams: dict = {}

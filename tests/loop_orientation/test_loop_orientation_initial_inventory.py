@@ -53,21 +53,70 @@ def test_multilanguage_symbols_from_the_real_indexer(tmp_path):
 
 
 @needs_ctags
-def test_large_tag_rich_source_is_indexed_where_it_lives_and_returned_without_truncation(tmp_path):
-    source = tmp_path / 'large.py'
-    with source.open('w') as f:
-        f.write('#' + 'x' * (9 * 1024 * 1024) + '\n')
-        for i in range(20000):
-            f.write(f'def item_{i}(): pass\n')
-        f.write('def final_symbol(): pass\n')
-    (tmp_path / 'z_after.py').write_text('def after_large_file(): pass\n')
-    data = inventory_of_disk(tmp_path)
+def test_a_tag_rich_source_is_indexed_where_it_lives_whole_or_not_at_all(tmp_path):
+    """A file's list is all or nothing (the model is never shown part of one): 500 symbols are listed in full, 501 are not listed at all."""
+    (tmp_path / 'at_limit.py').write_text(''.join(f'def item_{i}(): pass\n' for i in range(500)))
+    (tmp_path / 'over_limit.py').write_text(''.join(f'def item_{i}(): pass\n' for i in range(501)))
+    (tmp_path / 'z_after.py').write_text('def after_the_big_ones(): pass\n')
+    files = {item['path']: item for item in inventory_of_disk(tmp_path, facts=False)['files']}
+    assert [s['name'] for s in files['at_limit.py']['symbols']] == [f'item_{i}' for i in range(500)]
+    assert files['over_limit.py']['symbols'] is None and files['over_limit.py']['size'] > 0           # the inventory's own words for it: unavailable
+    assert files['z_after.py']['symbols'][0]['name'] == 'after_the_big_ones'
+
+
+def bounded_tree(ws):
+    """Normal sources beside what ctags must not be asked about: an 8 MB JSON, a 540 KB package-lock.json, other data formats, a minified bundle, a source
+    over the size limit and one over the symbol limit."""
+    (ws / 'src').mkdir()
+    for i in range(40):
+        (ws / 'src' / f'm{i:02}.py').write_text(f'class Thing{i}:\n    def method(self): pass\n')
+    (ws / 'tokenizer.json').write_text('{"model":{"vocab":{' + ','.join(f'"tok{i:06}":{i}' for i in range(520_000)) + '}}}')
+    (ws / 'package-lock.json').write_text('{"packages":{' + ','.join(f'"node_modules/p{i}":{{"version":"1.0.{i}","resolved":"https://r/p{i}.tgz"}}' for i in range(7000)) + '}}')
+    (ws / 'config.yaml').write_text(''.join(f'key{i}: {i}\n' for i in range(1000)))
+    (ws / 'Cargo.toml').write_text('[package]\nname = "x"\n')
+    (ws / 'table.csv').write_text('a,b\n1,2\n')
+    (ws / 'Gemfile.lock').write_text('GEM\n  specs:\n    rake (13.0.6)\n')
+    (ws / 'app.min.js').write_text('function minified(){}\n')
+    (ws / 'generated.py').write_text('x = 1\n' + '#' * 2_000_000 + '\ndef too_big_to_index(): pass\n')
+    (ws / 'many.py').write_text(''.join(f'def item_{i}(): pass\n' for i in range(600)))
+
+
+@needs_ctags
+def test_data_files_and_oversize_sources_are_never_handed_to_the_indexer_and_the_sources_beside_them_are_indexed_in_a_bounded_number_of_calls(tmp_path):
+    """The incident: ctags emits a tag per key of a data file (an 8 MB tokenizer.json was 79 MB of output, cria paged it through `read`: 3,464 harness calls, 218 s,
+    before the coder's first turn; a 540 KB package-lock.json was 129 calls). Before the limits this kind of tree took more than a thousand calls; now the data
+    files, the file over the size limit and the one over the symbol limit are listed with symbols null, and everything else is indexed exactly as before."""
+    bounded_tree(tmp_path)
+    ran, rounds = [], []
+    data = inventory_of_disk(tmp_path, ran=ran, rounds=rounds, facts=False)
     files = {item['path']: item for item in data['files']}
-    symbols = files['large.py']['symbols']
-    assert files['z_after.py']['symbols'][0]['name'] == 'after_large_file'
-    assert len(symbols) == 20001 and symbols[0]['name'] == 'item_0' and symbols[-1]['name'] == 'final_symbol'
-    assert not data['errors'] and data['symbol_indexer_error'] is None
-    assert files['large.py']['blank'] is False and files['large.py']['digest'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert files['tokenizer.json']['size'] > 8_000_000 and 500_000 < files['package-lock.json']['size'] < 600_000
+    nulls = {path for path, item in files.items() if item['symbols'] is None}
+    assert nulls == {'tokenizer.json', 'package-lock.json', 'config.yaml', 'Cargo.toml', 'table.csv', 'Gemfile.lock', 'app.min.js', 'generated.py', 'many.py'}
+    assert all(files[f'src/m{i:02}.py']['symbols'] == [{'name': f'Thing{i}', 'kind': 'class'}, {'name': 'method', 'kind': 'member', 'scope': f'Thing{i}'}]
+               for i in range(40))
+    assert len(ran) <= 10 and len(rounds) <= 5 and sum(map(len, ran)) < 40_000                 # the walk, one indexer run, the 54 KB of its output (the sources' tags), its removal
+    names = [line for c in ran if 'CTX_NAMES_' in c for line in c.split('\n') if line.endswith(('.py', '.json', '.yaml', '.toml', '.csv', '.lock', '.js'))]
+    assert names == ['many.py'] + [f'src/m{i:02}.py' for i in range(40)]                          # ctags was given the sources' names and nothing else (many.py is only known to be over the symbol limit once it is read)
+    assert data['symbol_indexer_error'] is None and not data['errors']
+
+
+@needs_ctags
+def test_the_output_one_inventory_reads_back_is_bounded_and_a_file_is_listed_whole_or_not_at_all(tmp_path):
+    """Files in path order are read until the budget runs out; the file the cut goes through and every file after it get symbols null, never half a list; the
+    same tree always gives the same answer."""
+    for i in range(30):
+        (tmp_path / f'f{i:02}.py').write_text(''.join(f'def f{i}_{j}(): pass\n' for j in range(300)))
+    limits = lambda budget: {'file_bytes': 1 << 20, 'symbols': 500, 'output_bytes': budget}
+    free_ran, ran = [], []
+    everything = inventory_of_disk(tmp_path, facts=False, limits=limits(100 << 20), ran=free_ran)['files']
+    first = inventory_of_disk(tmp_path, facts=False, limits=limits(300_000), ran=ran)['files']
+    again = inventory_of_disk(tmp_path, facts=False, limits=limits(300_000), restart=True)['files']
+    assert [i['symbols'] for i in first] == [i['symbols'] for i in again]                  # a pure function of the tree and the limits
+    listed = [i['path'] for i in first if i['symbols'] is not None]
+    assert 3 <= len(listed) < 30 and listed == [f'f{i:02}.py' for i in range(len(listed))]    # a prefix of the path order
+    assert all(len(i['symbols']) == 300 and i['symbols'] == e['symbols'] for i, e in zip(first, everything) if i['symbols'] is not None)
+    assert len(ran) < len(free_ran) and len(ran) <= 3 + 300_000 // 8_000                    # the pages read are bounded by the budget, not by the output
 
 
 def test_the_indexer_missing_is_uniform_and_what_each_file_is_is_decided_from_its_bytes(tmp_path, no_ctags):

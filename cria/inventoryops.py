@@ -10,7 +10,13 @@ One operation in the ledger that cria asks before the first coder turn and answe
   in the harness's transcript (a 2,500-file tree was 160 calls, 455 KB of commands, against 43 calls and 60 KB before). The unread-write rule asks the
   file when a write names it and nothing known settles it (:mod:`cria.probeops`), so every item carries ``blank: None`` here, never guessed.
 * the symbols are the real ``ctags`` run through the ``run`` stub on the files cria chose (shell text, no program): names, kinds and
-  scopes, one list per file, ``None`` where the indexer gave nothing, one uniform error where it is missing or failed.
+  scopes, one list per file, ``None`` where the indexer gave nothing, one uniform error where it is missing or failed. cria chooses
+  BEFORE it runs ctags, from the size and the name ``ls`` already gave it: a data file (``DATA_SUFFIXES``: ctags emits a tag per key of a
+  JSON, YAML or TOML document, which are not starting points; an 8 MB ``tokenizer.json`` was 79 MB of output, 3,464 calls and 218 s) and a file over
+  ``[harness] symbols_max_file_bytes`` are not handed to it. A file's symbol list is ALL OR NOTHING (the model is never shown part of a list):
+  one with more than ``symbols_max_per_file`` symbols, and every file whose output lies beyond the ``symbols_max_output_bytes`` that one inventory
+  reads back (chunks and files in path order, so the same tree gives the same answer), has ``symbols: None``, the convention the inventory
+  already states for "unavailable or no tags returned". The inventory text carries no label for it.
 
 What it learned is the dictionary the loop has always been given (``files``, ``symlinks``, ``errors``, ``excluded_names``,
 ``symbol_indexer_error``), computed from the frames the ledger holds: a pure function of the ledger.
@@ -22,6 +28,7 @@ import shlex
 import time
 
 from . import callauth, denial, groundtruth, harnessprims
+from .config import HarnessConfig
 from .opsteps import Final, Issue
 from .readops import LEN_FLOOR, merge
 from .readfacts import error as _error
@@ -40,6 +47,18 @@ NOT_FOUND = 'indexer not found'
 # that mode (it takes file contents over a protocol, not a name list), but its XML symbols are also the least useful ones (generated `nsprefix`
 # names, every `id` of an SVG) and parsing untrusted XML is the parsers' attack surface, so they are never asked for.
 XML_PARSERS = ('Ant', 'DBusIntrospect', 'Glade', 'Maven2', 'PlistXML', 'RelaxNG', 'SVG', 'XML', 'XRC', 'XSLT')
+
+
+# What ctags cannot usefully index: tags that are the keys of a data document, and generated or minified output (docs/harness-programs.md, "The
+# ctags inventory's bound"). By name only: a data file with an unusual name is left to the size and symbol limits.
+DATA_SUFFIXES = ('.json', '.jsonc', '.json5', '.jsonl', '.ndjson', '.geojson', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.lock', '.ini', '.conf', '.cfg',
+                 '.properties', '.map', '.min.js', '.min.mjs', '.min.css')
+DEFAULT_LIMITS = {'file_bytes': HarnessConfig().symbols_max_file_bytes, 'symbols': HarnessConfig().symbols_max_per_file,
+                  'output_bytes': HarnessConfig().symbols_max_output_bytes}
+
+
+def limits_of(harness: HarnessConfig) -> dict:
+    return {'file_bytes': harness.symbols_max_file_bytes, 'symbols': harness.symbols_max_per_file, 'output_bytes': harness.symbols_max_output_bytes}
 
 
 def skip_names() -> list:
@@ -68,8 +87,9 @@ def ctags_script(names: list) -> str:
             f"<<'{terminator}'\n" + '\n'.join(names) + f'\n{terminator}\n')
 
 
-def _indexable(rel: str) -> bool:
-    return _clean(rel)
+def _indexable(rel: str, size: int, limits: dict) -> bool:
+    """Whether ctags is handed this file: a name it can carry, not a data file, not over the size limit (decided from what ``ls`` said)."""
+    return _clean(rel) and size <= limits['file_bytes'] and not rel.lower().endswith(DATA_SUFFIXES)
 
 
 def _chunks(files: list) -> list:
@@ -82,6 +102,42 @@ def _chunks(files: list) -> list:
         cur.append(rel)
         size += width
     return out + ([cur] if cur else [])
+
+
+def _limits(ctx: dict) -> dict:
+    """The limits the operation was issued with (recorded in its ledger, so a restarted cria decides what the first process did); an
+    operation recorded before they existed has the defaults."""
+    return ctx.get('limits') or DEFAULT_LIMITS
+
+
+def _indexable_names(files: dict, ctx: dict) -> list:
+    """The files ctags is handed, in path order: the order every bound below is applied in."""
+    limits = _limits(ctx)
+    return [rel for rel in sorted(files) if _indexable(rel, files[rel], limits)]
+
+
+def _runs(steps: list) -> dict:
+    """chunk -> the latest ctags run step for it."""
+    return {st.args['chunk']: st for st in sorted((x for x in steps if x.what == 'irun'), key=lambda x: x.s)}
+
+
+def _rooms(steps: list, count: int, budget: int) -> list:
+    """Per chunk, how many bytes of its run's output this inventory reads: the run's own size, as far as the budget of the whole inventory
+    reaches when the chunks are taken in order (so the same tree always gives the same answer). 0 for a run that failed (nothing in its output
+    is used); None for a chunk that comes after a run still going (the budget it will find is not known yet)."""
+    runs, left, rooms, known = _runs(steps), budget, [], True
+    for i in range(count):
+        st = runs.get(i)
+        header = st.frame['hdr'] if st is not None and st.frame is not None else {}
+        if header.get('ok') == 1 and header.get('state') == 'done':
+            room = 0 if header.get('exit') != 0 or header.get('timeout') else min(header['size'], left)
+        elif header.get('ok') == 1 and header.get('state') == 'running' and st.args['n'] <= CTAGS_WAITS or st is None or st.frame is None:
+            known, room = False, None
+        else:
+            room = 0
+        rooms.append(room if known else None)
+        left -= room or 0
+    return rooms
 
 
 def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> str:
@@ -118,7 +174,7 @@ class InventoryOps:
         from .toolwire import _shell_call
         with self._lock:
             op = callauth.new_op()
-            ctx = {'shell': shell_tool, 'safe': self.safe_path, 'root': root, 'ws': root, 'wsroot': root}
+            ctx = {'shell': shell_tool, 'safe': self.safe_path, 'root': root, 'ws': root, 'wsroot': root, 'limits': self.inventory_limits}
             record = {'t': 'op', 'op': op, 'kind': INVENTORY, 'ctx': ctx, 'call': {}}
             try:
                 built = self._step(op, ctx, 0, 'ils', {'wave': 0, 'dir': '', 'mode': 'tree', 'rung': 0})
@@ -144,8 +200,10 @@ class InventoryOps:
             return Issue(self._next_many(steps, issue[:WAVE]))
         names = sorted(self._files(tree))
         # the symbols ----------------------------------------------------------
-        runs = {st.args['chunk']: st for st in sorted((x for x in steps if x.what == 'irun'), key=lambda x: x.s)}
-        for i, chunk in enumerate(_chunks([rel for rel in names if _indexable(rel)])):
+        chunks = _chunks(_indexable_names(self._files(tree), op.ctx))
+        runs = _runs(steps)
+        room = _rooms(steps, len(chunks), _limits(op.ctx)['output_bytes'])
+        for i, chunk in enumerate(chunks):
             st = runs.get(i)
             if st is None:
                 issue.append(('irun', {'mode': 'start', 'chunk': i, 'n': 1, 'names': chunk}))
@@ -154,7 +212,7 @@ class InventoryOps:
             if header.get('ok') == 1 and header.get('state') == 'running' and st.args['n'] <= CTAGS_WAITS:
                 issue.append(('irun', {'mode': 'wait', 'chunk': i, 'n': st.args['n'] + 1, 'names': chunk}))
             elif header.get('ok') == 1 and header.get('state') == 'done' and not header.get('removed'):
-                issue += self._i_output(i, header, steps)
+                issue += self._i_output(i, header, steps, room[i])
         if issue:
             return Issue(self._next_many(steps, issue[:WAVE]))
         return Final(denial.RAN, '', {'observed_at': time.time()})
@@ -164,9 +222,12 @@ class InventoryOps:
         base, wave = steps[-1].s + 1, steps[-1].args['wave'] + 1
         return tuple((base + i, what, {**args, 'wave': wave}) for i, (what, args) in enumerate(items))
 
-    def _i_output(self, i: int, header: dict, steps: list) -> list:
-        """What a ctags run's output still needs: the pages of its ``out`` file beyond what the frame held (read by cria, asked smaller
-        after each one the harness cut), then the removal of its directory."""
+    def _i_output(self, i: int, header: dict, steps: list, room: int | None) -> list:
+        """What a ctags run's output still needs: the pages of its ``out`` file beyond what the frame held, up to ``room`` bytes of it (read by
+        cria, asked smaller after each one the harness cut), then the removal of its directory. ``room`` None: an earlier run is still going,
+        and how much of the inventory's output budget is left for this one is not known yet."""
+        if room is None:
+            return []
         pages = [st for st in steps if st.what == 'iout' and st.args['chunk'] == i and st.frame is not None]
         cut = sum(1 for st in pages if st.frame['hdr'].get('ok') == -1)
         length = self._length(cut)
@@ -178,10 +239,10 @@ class InventoryOps:
         gaps, pos = [], 0
         for a, b in ranges:
             if a > pos:
-                gaps.append((pos, a))
+                gaps.append((pos, min(a, room)))
             pos = max(pos, b)
-        if pos < header['size']:
-            gaps.append((pos, header['size']))
+        if pos < room:
+            gaps.append((pos, room))
         wanted = [off for a, b in gaps for off in range(a, b, length)]
         if wanted:
             return [('iout', {'chunk': i, 'dir': header['dir'], 'off': off, 'len': length}) for off in wanted]
@@ -205,37 +266,48 @@ class InventoryOps:
         if len(tree.records) >= MAX_ENTRIES:
             errors.append({'path': '.', 'error': 'inventory bound reached: the rest is not listed'})
         names = sorted(files)
-        tags, indexer = self._symbols(steps, [rel for rel in names if _indexable(rel)])
+        tags, indexer = self._symbols(steps, _indexable_names(files, op.ctx), _limits(op.ctx))
         items = [{'path': rel, 'size': files[rel], 'symbols': tags.get(rel), 'blank': None, 'observed_at': observed_at} for rel in names]
         return {'files': items, 'symlinks': links, 'errors': errors,
                 'excluded_names': [n for n in skip_names() if 'cria' not in n.lower()], 'symbol_indexer_error': indexer}
 
     @staticmethod
-    def _symbols(steps: list, names: list) -> tuple:
-        """``({path: [{name, kind, scope}...]}, error)`` from the ctags runs' output, read in this process (a path with no tag is absent)."""
+    def _symbols(steps: list, names: list, limits: dict) -> tuple:
+        """``({path: [{name, kind, scope}...]}, error)`` from the ctags runs' output, read in this process (a path with no tag is absent).
+        A file's list is whole or absent: one over ``limits['symbols']`` is dropped, and where the inventory's output budget cut a run's output
+        the file it cut through is dropped with every file after it (they were never read)."""
         chunks = _chunks(names)
         tags, error = {}, None
-        runs = {st.args['chunk']: st for st in sorted((x for x in steps if x.what == 'irun'), key=lambda x: x.s)}
+        runs = _runs(steps)
+        rooms = _rooms(steps, len(chunks), limits['output_bytes'])
         for i in range(len(chunks)):
             st = runs.get(i)
             header = st.frame['hdr'] if st is not None and st.frame is not None else {}
             if header.get('ok') != 1 or header.get('state') != 'done' or header.get('exit') != 0 or header.get('timeout'):
                 error = error or 'indexer failed: ' + ('TimeoutError' if header.get('timeout') or header.get('state') == 'running' else 'OSError')
                 continue
+            room = rooms[i]
+            if not room:
+                continue
             data = _bytes(st.frame)
-            if header['size'] > len(data):
+            if room > len(data):
                 pages = [(0, data)] + [(p.args['off'], _bytes(p.frame)) for p in steps if p.what == 'iout' and p.args['chunk'] == i
-                                       and p.frame is not None and p.frame['hdr'].get('ok') == 1]
+                                       and p.frame is not None and p.frame['hdr'].get('ok') == 1 and p.frame['hdr'].get('fsha') == header.get('osha')]
                 data, _ = merge(pages)
-                data = data[:header['size']]
-                if len(data) < header['size'] or hashlib.sha256(data).hexdigest() != header.get('osha'):
+                if len(data) < room:
                     error = error or 'indexer failed: OSError'
                     continue
+            data = data[:room]
+            cut = room < header['size']
+            if not cut and hashlib.sha256(data).hexdigest() != header.get('osha'):
+                error = error or 'indexer failed: OSError'
+                continue
             lines = data.decode('utf-8', 'replace').split('\n')
             if lines[0] == 'I\tmissing':
                 error = error or NOT_FOUND
                 continue
-            for line in lines[1:]:
+            found = {}
+            for line in lines[1:-1] if cut else lines[1:]:             # a cut output ends in the middle of a line: that line is not read
                 if not line.startswith('{'):
                     continue
                 try:
@@ -244,7 +316,10 @@ class InventoryOps:
                     continue
                 if (isinstance(record, dict) and record.get('_type') == 'tag' and isinstance(record.get('name'), str)
                         and isinstance(record.get('kind'), str) and isinstance(record.get('path'), str)):
-                    tags.setdefault(record['path'], []).append({k: record[k] for k in ('name', 'kind', 'scope') if isinstance(record.get(k), str)})
+                    found.setdefault(record['path'], []).append({k: record[k] for k in ('name', 'kind', 'scope') if isinstance(record.get(k), str)})
+            if cut and found:
+                del found[next(reversed(found))]                        # the file the cut went through: its list is not whole
+            tags.update({path: symbols for path, symbols in found.items() if len(symbols) <= limits['symbols']})
         return tags, error
 
     def inventory_of(self, session: str, op_id: str) -> dict | None:

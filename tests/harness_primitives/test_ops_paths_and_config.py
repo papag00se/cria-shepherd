@@ -1,5 +1,6 @@
 """How a path the model named becomes ROOT and REL, what an unavailable key or ledger does, and the [harness] table."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -87,3 +88,22 @@ def test_a_safe_path_with_a_control_character_is_rejected_at_the_config_and_at_t
         HarnessConfig(safe_path=value)
     with pytest.raises(ValueError):
         harnessprims.compose('ls', 'ab' * 16, [], safe_path=value)
+
+
+def test_the_symbol_limits_are_config_values_documented_with_defaults_and_recorded_in_the_inventory_operation(tmp_path):
+    from cria import inventoryops
+    assert (HarnessConfig().symbols_max_file_bytes, HarnessConfig().symbols_max_per_file, HarnessConfig().symbols_max_output_bytes) == (1_048_576, 500, 2_097_152)
+    assert inventoryops.DEFAULT_LIMITS == {'file_bytes': 1_048_576, 'symbols': 500, 'output_bytes': 2_097_152}
+    for bad in (0, -1, 1.5, '5', True):
+        with pytest.raises(ValueError, match='symbols_max_per_file'):
+            HarnessConfig(symbols_max_per_file=bad)
+    path = tmp_path / 'c.toml'
+    path.write_text('[harness]\nsymbols_max_file_bytes = 2000\nsymbols_max_per_file = 7\nsymbols_max_output_bytes = 90000\n')
+    limits = inventoryops.limits_of(Config.load(path).harness)
+    assert limits == {'file_bytes': 2000, 'symbols': 7, 'output_bytes': 90000}
+    engine = ops.Ops(inventory_limits=limits)
+    _, calls = engine.issue_inventory('s', SHELL, str(tmp_path))
+    assert next(iter(engine.ledger.ops('s').values())).ctx['limits'] == limits and calls
+    import tomllib
+    example = tomllib.loads((Path(__file__).resolve().parents[2] / 'cria.example.toml').read_text())['harness']            # the documented example is the defaults
+    assert inventoryops.limits_of(HarnessConfig(**example)) == inventoryops.DEFAULT_LIMITS

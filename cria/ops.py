@@ -102,9 +102,10 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
 
 
 class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, ProbeOps, floorops.FloorOps, GateOps):
-    def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
+    def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH, inventory_limits: dict | None = None):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
+        self.inventory_limits = inventory_limits or inventoryops.DEFAULT_LIMITS        # what the initial inventory hands ctags and reads back
         self.cache = FileCache()
         self.command_budget = COMMAND_ARG_BUDGET
         self.menu = None            # the harness's tool menu and the room one result may take in the model's measured window,

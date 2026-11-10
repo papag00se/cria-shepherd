@@ -44,6 +44,13 @@ external_dir_permission = "none"   # none = no external reads/writes | read = ex
 # `env -i PATH=<safe_path> python3 -I -S -c ...` so nothing in the workspace can stand in for the interpreter or its modules.
 # safe_path is the PATH python3 is looked up through: absolute system directories only.
 safe_path = "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+# The first coder turn's inventory lists every file; ctags supplies each source file's symbols. Data files (JSON, YAML, TOML, CSV, lock files,
+# minified output) are never handed to it. A file's symbol list is all or nothing: a file over symbols_max_file_bytes is not indexed, one with more
+# than symbols_max_per_file symbols, or whose output lies beyond the symbols_max_output_bytes one inventory reads back (files in path order), is listed
+# with symbols null, which the inventory already says means "unavailable or no tags returned".
+symbols_max_file_bytes = 1048576
+symbols_max_per_file = 500
+symbols_max_output_bytes = 2097152
 
 [retention]
 # cria keeps private state for multipart reads (~/.cria/multipart) and image sessions (~/.cria/images). No harness

@@ -134,6 +134,36 @@ def test_the_inventory_of_a_tree_with_xml_files_indexes_the_sources_through_the_
     assert not [p for p in ws.rglob('*') if p.name.startswith(('tags', '.ctx-run-'))]       # no temporary file of the indexer in the workspace
 
 
+def test_the_inventory_of_a_tree_with_big_data_files_indexes_the_sources_in_a_bounded_number_of_calls_through_the_pinned_codex(sandbox, tmp_path):
+    """An 8 MB-class tokenizer.json and a 540 KB-class package-lock.json beside normal sources (the incident: ctags emitted a tag per key, 79 MB of output cria paged back
+    through `read`, 3,464 harness calls before the coder's first turn): the data files are not handed to ctags, are listed with symbols null, and the sources are
+    indexed; no page of ctags output is read at all."""
+    ws = sandbox.workspace
+    (ws / 'thing.py').write_text('def pinned_codex_symbol(): pass\n')
+    (ws / 'tokenizer.json').write_text('{"model":{"vocab":{' + ','.join(f'"tok{i:06}":{i}' for i in range(520_000)) + '}}}')
+    (ws / 'package-lock.json').write_text('{"packages":{' + ','.join(f'"node_modules/p{i}":{{"version":"1.0.{i}","resolved":"https://r/p{i}.tgz"}}' for i in range(7000)) + '}}')
+    wire = l5_wire(tmp_path)
+    try:
+        try:
+            sandbox.run(f'http://127.0.0.1:{wire.cria.server_address[1]}/v1', prompt='Implement it', timeout=int(os.environ.get('CODEX_T', '45')))
+        except subprocess.TimeoutExpired:
+            pass
+        coder = [b for _, b in wire.fake.chats if any('Initial harness workspace inventory' in str(m.get('content')) for m in b.get('messages', []))]
+        assert coder, 'the first coder turn did not carry the inventory'
+        text = json.dumps(coder[0]['messages']).replace('\\"', '"')
+        assert 'pinned_codex_symbol' in text and 'Symbol indexer unavailable' not in text
+        import re
+        assert int(re.search(r'"path":"tokenizer.json","size":(\d+),"symbols":null\}', text).group(1)) > 8_000_000
+        assert 500_000 < int(re.search(r'"path":"package-lock.json","size":(\d+),"symbols":null\}', text).group(1)) < 700_000
+        from cria import privatepaths
+        records = [json.loads(line) for f in (privatepaths.CRIA_HOME / 'ops').iterdir() for line in f.read_text().splitlines()]
+        op = next(r['op'] for r in records if r['t'] == 'op' and r['kind'] == 'inventory')
+        whats = [r['what'] for r in records if r['t'] == 'step' and r['op'] == op]
+        assert 'irun' in whats and 'iout' not in whats and len(whats) <= 4, whats          # the walk, the indexer, its removal; the output fits the first frame
+    finally:
+        wire.close()
+
+
 def test_a_survey_follows_a_landing_write_through_the_pinned_codex_and_costs_a_round_trip_not_a_program(sandbox, tmp_path):
     from codex_rig import Timeline  # noqa: F401
     from test_codex_write_edit import serve
