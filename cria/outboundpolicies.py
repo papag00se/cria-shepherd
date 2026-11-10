@@ -176,7 +176,7 @@ def candidate_safety(source: OutboundCall, command: str) -> str:
                      + repr(_b64(path)) + ').decode()); sys.exit(0 if p.read_bytes()==base64.b64decode('
                      + repr(_b64(previous)) + ') else 1)')
             stale = _refusal_command(prompts.load('cleanup_stale'))
-            return f'if python3 -c {_qbash(check)}; then\n{_refusal_command(refusal)}\nelse\n{stale}\nfi'
+            return f'if python3 -I -c {_qbash(check)}; then\n{_refusal_command(refusal)}\nelse\n{stale}\nfi'
     elif log is not None:
         log.emit('safety.cleanup_review', path=path, verdict='UNKNOWN', reason='complete exact edit candidate unavailable')
     return command

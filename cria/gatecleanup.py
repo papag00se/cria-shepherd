@@ -161,7 +161,7 @@ if mode=='launch':
         _gate_create(context,'survey.sh',request['survey'].encode())
         _gate_create(context,_gate_spool_name(token))
         os.mkdir('aux',0o700,dir_fd=context['fd'])
-        subprocess.Popen([sys.executable,'-c',_gate_program,'worker',token,context['parent_path']],
+        subprocess.Popen([sys.executable,'-I','-c',_gate_program,'worker',token,context['parent_path']],
                          stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
                          start_new_session=True,close_fds=True)
     finally:

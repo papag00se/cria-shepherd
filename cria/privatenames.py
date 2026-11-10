@@ -4,9 +4,14 @@ A harness keeps the history it was given, so a conversation outlives the release
 earlier release carry (a) the private marker and directory names that release used and (b) a leading declaration without
 the receipt later releases require before they re-present a lowered call as the tool the model made
 (`toolwire._declaration`: an unreceipted header is honoured for `read_file` only, because a command a coder wrote itself
-may quote one). Replayed through the current release, those calls reached the model as what they are: a heredoc program
-with the product's name in it, a survey the model never ran, a frame of base64 in a result. Measured by replaying real
-harness requests of 2026-10-22/23 through a fresh session.
+may quote one). Replayed through the current release, those calls reach the model as what they are: a heredoc program
+with the product's name in it, a survey the model never ran, a frame of base64 in a result.
+
+NOTHING IS RECONSTRUCTED FROM COMMAND TEXT (operator decision D2, docs/harness-programs.md). A command's first line is
+text any author can write, so a header there is not evidence that cria composed the call, and re-presenting such a
+command as a different tool call let a model-authored command rewrite its own history (finding F4). A call lowered by an
+earlier release therefore stays what it is in the model's view: a session that began before this change shows its old
+private commands raw (a campaign is simply restarted).
 
 Two steps, both stateless (the evidence is the history itself, so a restart or a resumed session behaves the same):
 
@@ -14,9 +19,9 @@ Two steps, both stateless (the evidence is the history itself, so a restart or a
   the earlier shapes to the current ones, but only inside commands cria composed (the first line is a declaration or a
   survey header) and the results of exactly those calls. Text the model or the workspace wrote is never touched: a file
   that quotes a marker keeps it, because the model must be able to edit what it read.
-* :func:`restore_wire` - applied at the wire only, after every consumer has had the history - shows the model the call
-  it made. A header-declared lowering of an earlier release is re-presented as the declared tool, its result loses the
-  survey frame riding on it, and a survey cria composed itself (nobody's tool call) leaves with its result.
+* :func:`restore_wire` - applied at the wire only, after every consumer has had the history - removes a survey cria
+  composed itself (nobody's tool call) together with its result. (The first-line survey headers have the same
+  text-authority shape and leave with the survey route, phase 6.)
 
 The earlier names are assembled here from parts so that no source line, prompt or log of the present release spells them.
 """
@@ -125,53 +130,28 @@ def upgrade_names(messages: list) -> list:
     return out
 
 
-def _declared_call(command: str):
-    """``(name, arguments)`` of the tool an UNRECEIPTED declaration names, else None. A declaration that carries a receipt is
-    the current release's own, already re-presented (or rejected, because the header was copied) by `represent_inbound`."""
-    declaration = toolwire._decode_sentinel(command)
-    if declaration is None or declaration.get("rcpt") or declaration["name"] == "read_file":
-        return None
-    return declaration["name"], declaration.get("arguments") or "{}"
-
-
 def restore_wire(messages: list) -> list:
     """The history as the model should read it: see the module docstring. Identity when there is nothing private left."""
     messages = upgrade_names(messages)
     if not isinstance(messages, list):
         return messages
-    restored: set[str] = set()      # calls re-presented as the declared tool: their result drops the survey riding on it
     private: set[str] = set()       # a survey cria composed on its own: the call and its result leave
     for m in messages:
         if isinstance(m, dict) and m.get("role") == "assistant":
             for call in m.get("tool_calls") or []:
                 command = _call_command(call) if isinstance(call, dict) and call.get("id") else ""
-                if not command:
-                    continue
-                if _first_line(command) in _SURVEY_HEADERS:
+                if command and _first_line(command) in _SURVEY_HEADERS:
                     private.add(call["id"])
-                elif _declared_call(command) is not None:
-                    restored.add(call["id"])
-    if not restored and not private:
+    if not private:
         return messages
     out = []
     for m in messages:
         if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
-            calls = []
-            for call in m["tool_calls"]:
-                if call.get("id") in private:
-                    continue
-                if call.get("id") in restored:
-                    name, arguments = _declared_call(_call_command(call))
-                    call = {**call, "function": {"name": name, "arguments": arguments}}
-                calls.append(call)
+            calls = [call for call in m["tool_calls"] if call.get("id") not in private]
             if not calls and not any(t.strip() for t in _text_parts(m)):
                 continue                  # nothing of the turn is left once the private survey is gone
             m = {**m, "tool_calls": calls} if calls else {k: v for k, v in m.items() if k != "tool_calls"}
-        elif _is_tool_result(m):
-            call_id = m.get("tool_call_id") or m.get("call_id")
-            if call_id in private:
-                continue
-            if call_id in restored:
-                m = _map_text(m, lambda text: wsview.strip_survey(text)[0])
+        elif _is_tool_result(m) and (m.get("tool_call_id") or m.get("call_id")) in private:
+            continue
         out.append(m)
     return out
