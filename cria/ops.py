@@ -21,7 +21,7 @@ import shlex
 import threading
 from dataclasses import dataclass, field
 
-from . import bodykeys, callauth, denial, externalization, gateops, harnessprims, inventoryops, probeops, prompts, readops, searchops, stagesweep, surveyops, writeops, wsview
+from . import bodykeys, callauth, denial, externalization, floorops, gateops, harnessprims, inventoryops, probeops, prompts, readops, searchops, stagesweep, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
@@ -101,7 +101,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, ProbeOps, GateOps):
+class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, ProbeOps, floorops.FloorOps, GateOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -167,6 +167,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return probeops.command(op, ctx, s, what, args, blobs or {})
         if what in gateops.WHATS:
             return gateops.command(op, ctx, s, what, args, blobs or {})
+        if what in floorops.WHATS:
+            return floorops.command(op, ctx, s, what, args, blobs or {})
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what in writeops.WHATS:
             return writeops.command(op, ctx, s, what, args, blobs or {})

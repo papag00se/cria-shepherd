@@ -7,6 +7,7 @@ gate's characterisation); what the MODEL READS of the gate is compared, byte for
 import json
 import os
 import pathlib
+import re
 
 import pytest
 
@@ -19,12 +20,11 @@ BIG_TOML = ''.join(f'[table{i}]\nkey = "value {i}"\nnumbers = [1, 2, 3]\n\n' for
 BIG_JSON = '{"items": [' + ','.join('{"a": %d, "b": "x"}' % i for i in range(20000)) + ']}'
 
 
-NAMES = []
+CASES = {}                      # this module's own: the gate characterisation parametrises over `rig.CASES`, which must stay what it captured
 
 
 def floor(name, files, expect, **extra):
-    NAMES.append(name)
-    rig.case(name, files, expect=expect, **extra)
+    CASES[name] = dict(files=files, script=[('text', 'Done.')], expect=expect, **extra)
 
 
 # toml
@@ -62,17 +62,36 @@ floor('all_three_bad', {'pyproject.toml': '[x\n', 'package.json': '{', 'composer
 floor('toml_symlink', {'real/conf.toml': '[package\n'}, 'conf.toml', setup=lambda ws: (ws / 'pyproject.toml').symlink_to('real/conf.toml'))
 floor('toml_dir_named_like_a_file', {'a.py': 'x = 1\n', 'test_app.py': PASS_TEST}, 'pytest -q — exit 0', setup=lambda ws: (ws / 'package.json').mkdir())
 
-# name -> (what changed on purpose, whether the new text is the intended one)
-INTENDED = {}
+# The checks of a clean gate are listed with the command each one ran. The three one-liners were Python programs of several lines, shown to the model whole
+# (`python3 -I -c 'import sys ...' <files>`); cria evaluates these checks itself now and shows the check's name where the command stood.
+PROGRAMS = re.compile(r"python3 -I -c 'import sys(?:, json)?\n(?:try:|from xml\.etree|bad = 0).*?sys\.exit\(bad\)\n' ", re.S)
+
+
+def name_of(match):
+    text = match.group(0)
+    return 'toml-syntax ' if 'tomllib' in text else 'xml-syntax ' if 'ElementTree' in text else 'json-syntax '
+
+
+def same_but_the_program_shown(got, old):
+    """Every block the model read in the old route is read now with the program replaced by the check's name. (The new route takes one round trip more per
+    gate, so the capture window can also hold a later gate's block; those are not compared, the red cases below compare every block.)"""
+    seen = [e['text'] for e in got['evidence']]
+    return all(PROGRAMS.sub(name_of, e['text']) in seen for e in old['evidence'])
+
+
+INTENDED = {name: ('the three one-liners were shown to the model whole in the list of checks that ran (a clean gate); the check is named where its command stood',
+                   same_but_the_program_shown)
+            for name in ('json_good', 'toml_good', 'toml_empty', 'toml_big_good', 'xml_good', 'xml_bom', 'xml_latin1', 'xml_not_a_build_file')}
 
 
 def text_of(block):
-    return block.get('text') or block['head'] + block['tail']
+    return block['text']
 
 
-@pytest.mark.parametrize('name', sorted(NAMES))
+@pytest.mark.parametrize('name', sorted(CASES))
 def test_case(tmp_path, monkeypatch, name):
-    got = rig.run_case(rig.CASES[name], tmp_path, monkeypatch)
+    monkeypatch.setattr(rig, 'shape', lambda text: {'text': text})            # the whole text of every block: the fixture is small
+    got = rig.run_case(CASES[name], tmp_path, monkeypatch, limit=120)
     target = os.environ.get('CRIA_CHARACTERIZE')
     if target:
         path = pathlib.Path(target)

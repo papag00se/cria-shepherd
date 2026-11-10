@@ -57,7 +57,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import ignore, prompts, toolpath, wsview, probeclassify
+from . import configfloor, ignore, prompts, toolpath, wsview, probeclassify
 
 # Walk depth bound: entries of root are checked with depth=0; children of a dir
 # at nesting root/a/b/c are checked with depth=3 and thus never recursed.
@@ -222,6 +222,9 @@ class ProbeCandidate:
     Stated here, at the one place that knows, so no reader downstream has to recognise cria's own
     text to hide it — which is a thing readers cannot do, and three patched matchers in one day were
     the proof (#4, #12)."""
+    # ``toml``, ``json`` or ``xml`` for a syntax check cria evaluates in its own process (`cria.configfloor`): the harness is asked for the files' bytes
+    # (`cria.floorops`) and no program of this check runs there. Its argv is the name of the check and the files, not a command.
+    parsed_by_cria: str = ""
 
     def is_safe(self) -> bool:
         """Safe to run unattended: read-only, terminates, no external services.
@@ -487,11 +490,13 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
          ecosystem: Ecosystem | None = None,
          participation_inputs: tuple[str, ...] | None = None,
          participation_inputs_complete: bool | None = None,
-         private_python_cache: bool = False) -> ProbeCandidate:
+         private_python_cache: bool = False,
+         parsed_by_cria: str = "") -> ProbeCandidate:
     return ProbeCandidate(
         kind=kind,
         command=list(command),  # fresh list — callers may reuse prefixes
         private_python_cache=private_python_cache,
+        parsed_by_cria=parsed_by_cria,
         # A multi-line token is an inline PROGRAM: no project config produces one, so it is cria's
         # by construction and says so whether or not the caller remembered to. A future floor probe
         # cannot leak by omission.
@@ -1131,48 +1136,17 @@ MAX_FLOOR_FILES_PER_LANG = 100_000
 _COMPILEALL_SKIP_RE = r"(^|/)(\.git|__pycache__|venv|\.venv|node_modules|dist|build|lib|site-packages)(/|$)"
 
 # Config-file syntax floor (NOT in the Rust — a cria congruence add): a broken pyproject.toml /
-# Cargo.toml / *.toml has no compiler to catch it, so the model rewrites it blind. Parse each with
-# stdlib tomllib and print `<file>: <error>` (the message carries the line/column). Abstains if no
-# TOML parser is present (py<3.11 without tomli) — never blocks on a missing tool. (No JSON floor:
-# tsconfig.json / *.jsonc legitimately allow comments, so a strict json.load would false-positive
-# on valid config and wrongly block a 'done'.)
-_TOML_CHECK = (
-    "import sys\n"
-    "try:\n"
-    "    import tomllib\n"
-    "except ModuleNotFoundError:\n"
-    "    try:\n"
-    "        import tomli as tomllib\n"
-    "    except ModuleNotFoundError:\n"
-    "        sys.exit(0)\n"
-    "bad = 0\n"
-    "for f in sys.argv[1:]:\n"
-    "    try:\n"
-    "        with open(f, 'rb') as fh:\n"
-    "            tomllib.load(fh)\n"
-    "    except Exception as e:\n"
-    "        print('%s: %s' % (f, e))\n"
-    "        bad = 1\n"
-    "sys.exit(bad)\n"
-)
-
+# Cargo.toml / *.toml has no compiler to catch it, so the model rewrites it blind. The floor reads each file
+# and parses it with the standard library's `tomllib` (the message carries the line/column), `json` and
+# `xml.etree` IN CRIA (`cria.configfloor`, `cria.floorops`): the harness is asked for the file's bytes with
+# `read` and runs no program for it. The candidates name the check (`configfloor.HEADS`) and the files.
+# (No JSON floor for tsconfig.json / *.jsonc: they legitimately allow comments, so a strict json parse would
+# false-positive on valid config and wrongly block a 'done'.)
 # Strict-JSON floor — ONLY files that are strict JSON BY SPEC (no comments/trailing commas allowed),
 # so a stdlib json.load can't false-positive on valid config. Deliberately excludes tsconfig.json /
 # jsconfig.json / *.jsonc / .vscode/* (JSON-with-comments) — those must be validated by their own
 # tool (tsc), which understands the comment dialect.
 _STRICT_JSON_NAMES = ("package.json", "composer.json")
-_JSON_CHECK = (
-    "import sys, json\n"
-    "bad = 0\n"
-    "for f in sys.argv[1:]:\n"
-    "    try:\n"
-    "        with open(f) as fh:\n"
-    "            json.load(fh)\n"
-    "    except Exception as e:\n"
-    "        print('%s: %s' % (f, e))\n"
-    "        bad = 1\n"
-    "sys.exit(bad)\n"
-)
 
 
 # The floor's contract is that every file the coder can break has SOME parser that reads it. It was
@@ -1180,19 +1154,6 @@ _JSON_CHECK = (
 # library: a build file. Measured on the six-language battery — cria's own write path corrupted a
 # pom.xml and nothing in the gate read XML, so the damage surfaced only as `mvn` failing much later,
 # with no finding naming the file.
-_XML_CHECK = (
-    "import sys\n"
-    "from xml.etree import ElementTree as ET\n"
-    "bad = 0\n"
-    "for f in sys.argv[1:]:\n"
-    "    try:\n"
-    "        ET.parse(f)\n"
-    "    except Exception as e:\n"
-    "        print('%s: %s' % (f, e))\n"
-    "        bad = 1\n"
-    "sys.exit(bad)\n"
-)
-
 # Build/config XML a coder edits. Not every .xml in a tree — a fixture or a data file is the
 # project's business — but the ones whose corruption stops the build.
 _STRICT_XML_NAMES = ("pom.xml", "build.xml", "ivy.xml", "web.xml", "phpunit.xml", "phpunit.xml.dist")
@@ -1246,16 +1207,16 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
                         ecosystem=Ecosystem.Ruby, reason="Ruby file present: parse floor"))
     tomls = linterprobe.collect_files(str(root), ["toml"])[:MAX_FLOOR_FILES_PER_LANG]
     if tomls:
-        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-I", "-c", _TOML_CHECK, *tomls],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="TOML config present: parse floor"))
+        out.append(cand(ProbeKind.SyntaxCheck, [configfloor.HEADS["toml"], *tomls],
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, parsed_by_cria="toml", reason="TOML config present: parse floor"))
     jsons = _strict_json_files(root)[:MAX_FLOOR_FILES_PER_LANG]
     if jsons:
-        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-I", "-c", _JSON_CHECK, *jsons],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="strict-JSON config present: parse floor"))
+        out.append(cand(ProbeKind.SyntaxCheck, [configfloor.HEADS["json"], *jsons],
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, parsed_by_cria="json", reason="strict-JSON config present: parse floor"))
     xmls = _strict_xml_files(root)[:MAX_FLOOR_FILES_PER_LANG]
     if xmls:
-        out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-I", "-c", _XML_CHECK, *xmls],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="build XML present: parse floor"))
+        out.append(cand(ProbeKind.SyntaxCheck, [configfloor.HEADS["xml"], *xmls],
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, parsed_by_cria="xml", reason="build XML present: parse floor"))
     return out
 
 

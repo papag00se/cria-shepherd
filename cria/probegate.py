@@ -283,7 +283,10 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # cria still knows. A probe the coder could retype is one line of argv; a manifest check cria composed is a multi-line inline program.
     plan.shown = "\n".join(p for p in (" ".join(c.command) for c in plan.candidates if c.command and not c.composed_by_cria) if p.strip())
     plan.scope = tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else ()
-    plan.script, plan.sections = gatescript.compose(plan.candidates, workspace, COMPLETION_PROBE_TIMEOUT_S, plan.scope)
+    # The harness runs the project's own checks. A check cria evaluates itself (the config syntax floor: `cria.floorops` reads the files and parses them) is
+    # in the plan, and not in the script; the gate's result numbers every check by its place in the plan (`probe-<i>`).
+    plan.script, plan.sections = gatescript.compose([c for c in plan.candidates if not getattr(c, "parsed_by_cria", "")], workspace,
+                                                    COMPLETION_PROBE_TIMEOUT_S, plan.scope)
     plan.deadline_s = _gate_deadline_s(len(plan.sections))
     return plan
 

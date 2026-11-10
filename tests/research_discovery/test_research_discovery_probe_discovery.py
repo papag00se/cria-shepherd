@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cria import probediscovery as pd, proberun, wsview
+from cria import configfloor, probediscovery as pd, proberun, wsview
 from research_discovery_helpers import disk_view, surveyed, write  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("disk_view")
@@ -57,9 +57,10 @@ def test_maven_checkstyle_only_when_the_pom_declares_it_and_a_broken_pom_is_caug
     """feed-pipeline-java: an undeclared checkstyle applied sun_checks as 'the repo's own standard' (43 phantom violations)."""
     write(tmp_path, "pom.xml", "<project><unclosed>")
     write(tmp_path, "src/main/java/A.java", "class A {}\n")
-    xml = next(c for c in pd.syntax_floor_candidates(tmp_path) if "ElementTree" in " ".join(c.command))
-    done = subprocess.run(xml.command, capture_output=True, text=True)
-    assert done.returncode == 1 and "pom.xml" in done.stdout
+    xml = next(c for c in pd.syntax_floor_candidates(tmp_path) if c.parsed_by_cria == "xml")      # cria parses it itself (cria.configfloor, read through the gate)
+    path = xml.command[1]
+    assert xml.command[1:] == [str(tmp_path / "pom.xml")] and "no element found" not in path
+    assert configfloor.error("xml", (tmp_path / "pom.xml").read_bytes(), path).startswith(f"{path}: no element found")
     write(tmp_path, "pom.xml", "<project><build><plugins><plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin></plugins></build></project>")
     assert any("checkstyle" in c for c in cmds(proberun.select_completion_probes(tmp_path)))
 

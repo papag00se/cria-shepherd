@@ -248,6 +248,8 @@ def program_is_installed(candidate) -> bool:
     and the empty result was published as "no error-class problems" over a project that did not
     compile. The question is what the coder's shell can launch, so ``toolpath`` is what gets asked
     (#5b). The original bundler case still drops: `bundle` is absent from both paths."""
+    if getattr(candidate, "parsed_by_cria", ""):
+        return True         # cria reads the files and parses them itself: no program of the coder's shell is involved
     prog = _head_program(getattr(candidate, "command", candidate))
     if not prog:
         return True
