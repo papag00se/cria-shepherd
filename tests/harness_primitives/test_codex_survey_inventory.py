@@ -49,16 +49,35 @@ def l5_wire(tmp_path):
         failover={'coding': ('coder',)}, engagement_bias='task', engagement_level=5))
 
 
+def run_directories(sandbox):
+    """The harness's temporary directory's `.ctx-run-*` directories split by whether the operation that made each one had ended when Codex was stopped:
+    ``(of an operation cria finished, of an operation still running)``. cria removes a run's directory when it finishes the operation (a verdict, a deadline, a
+    cut or lost reply); it can only do that when the harness's next request reaches it. Stopping Codex while a gate is between its start and its removal leaves
+    that gate's directory (the scripted model never finishes, so the loop keeps running gates until Codex is stopped), and that is not a leak of a finished one."""
+    from cria import gateops, inventoryops, privatepaths, surveyops
+    records = [json.loads(line) for f in (privatepaths.CRIA_HOME / 'ops').iterdir() for line in f.read_text().splitlines()]
+    ended = {r['op'] for r in records if r['t'] == 'final'}
+    token = {'gate': lambda op, steps: [gateops.token(op)], 'survey': lambda op, steps: [surveyops._token(op)],
+             'inventory': lambda op, steps: [inventoryops._token(op, s['args']['chunk']) for s in steps if s['what'] == 'irun']}
+    finished, running = set(), set()
+    for r in records:
+        if r['t'] == 'op' and r['kind'] in token:
+            steps = [s for s in records if s['t'] == 'step' and s['op'] == r['op']]
+            (finished if r['op'] in ended else running).update('.ctx-run-' + t for t in token[r['kind']](r['op'], steps))
+    left = {n for n in os.listdir(sandbox.scratch) if n.startswith('.ctx-run-')}
+    return left & finished, left - finished - running
+
+
 def test_the_initial_inventory_through_the_pinned_codex(sandbox, tmp_path):
     ws = sandbox.workspace
     seed_workspace(ws)
     before = sorted(str(p.relative_to(ws)) for p in ws.rglob('*'))
     wire = l5_wire(tmp_path)
-    try:
-        try:           # the scripted model never finishes the task: Codex is stopped once the first coder turn has been served
-            sandbox.run(f'http://127.0.0.1:{wire.cria.server_address[1]}/v1', prompt='Implement the shipping rates feature', timeout=int(os.environ.get('CODEX_T', '45')))
-        except subprocess.TimeoutExpired:
-            pass
+
+    def served():
+        return any('Initial harness workspace inventory' in str(m.get('content')) for _, b in wire.fake.chats for m in b.get('messages', []))
+    try:        # the scripted model never finishes the task: Codex is stopped as soon as the first coder turn, which carries the inventory, has been served
+        sandbox.run_until(f'http://127.0.0.1:{wire.cria.server_address[1]}/v1', served, prompt='Implement the shipping rates feature', timeout=int(os.environ.get('CODEX_T', '45')))
         coder = [b for _, b in wire.fake.chats if any('Initial harness workspace inventory' in str(m.get('content')) for m in b.get('messages', []))]
         assert coder, 'the first coder turn did not carry the inventory'
         text = json.dumps(coder[0]['messages'])
@@ -79,7 +98,12 @@ def test_the_initial_inventory_through_the_pinned_codex(sandbox, tmp_path):
         wire.close()
     after = sorted(str(p.relative_to(ws)) for p in ws.rglob('*'))
     assert after == before
-    assert not [n for n in os.listdir(sandbox.scratch) if n.startswith('.ctx-run-')]
+    finished, unknown = run_directories(sandbox)
+    assert not finished and not unknown, (finished, unknown)       # the indexer's run directory, and that of every operation cria finished, are gone
+    planted = sandbox.scratch / ('.ctx-run-' + inventoryops._token(op, 0))        # the check itself: a directory of the finished inventory left behind is seen
+    planted.mkdir()
+    assert run_directories(sandbox)[0] == {planted.name}
+    planted.rmdir()
 
 
 def test_the_inventory_of_a_tree_with_xml_files_indexes_the_sources_through_the_pinned_codex(sandbox, tmp_path):
