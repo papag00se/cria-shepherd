@@ -73,4 +73,4 @@ def test_a_call_cria_lowered_to_a_shell_program_is_judged_by_what_the_coder_aske
     shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
     writeproxy.translate_outbound(comp, shell, injected={name}, workspace_root="/w")
     assert _write_path(comp["choices"][0]["message"]["tool_calls"][0]["function"]) == path
-    assert _write_path(sh(probegate._gate_sentinel(["pytest -q"]) + "\nif len(files) > FOLD_AT:\n  echo hi > out.txt")) is None
+    assert _write_path(sh("pytest -q\nif len(files) > FOLD_AT:\n  echo hi > out.txt")) is not None     # a command with no cria declaration is the coder's: its redirect is a write

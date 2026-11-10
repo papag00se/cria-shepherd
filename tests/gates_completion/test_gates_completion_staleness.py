@@ -93,5 +93,5 @@ def test_unused_is_advisory_only_where_the_program_still_runs(msg, advisory):
 def test_an_offline_fact_belongs_only_to_the_gate_that_measured_it():
     """Go L5: a later red gate left the earlier 'passed with the network taken away' in the confirmer's prompt."""
     plan = new_plan(offline_fact="The tests passed with the network taken away.")
-    out = probegate.clean_gate_output(sec(0, "go.mod:5: usage: require module/path v1.2.3", 1), deliver(plan, sec(0, "go.mod:5: usage: require module/path v1.2.3", 1)))
+    out = probegate.clean_gate_output(deliver(plan, sec(0, "go.mod:5: usage: require module/path v1.2.3", 1)))
     assert "go.mod:5" in out and plan.offline_fact == ""

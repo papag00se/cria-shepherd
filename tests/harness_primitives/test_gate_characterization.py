@@ -35,6 +35,21 @@ def sorted_removed(entry):
     return {'text': '\n'.join(out)}
 
 
+def text_of(block):
+    return block.get('text') or block['head'] + block['tail']
+
+
+# name -> (what changed on purpose, what the new text must be)
+INTENDED = {
+    'no_tests': ('the old gate was planned before the survey and ran the parse floor with a program that is not installed; the first gate now knows the project',
+                 lambda block, old: 'cover syntax only' in text_of(block) and 'No pytest tests were found by default' in text_of(block)),
+    'big_output': ('a check that prints 6,000 lines was lost whole by the old route ("no usable result"); it is paged complete now and the model reads the checker\'s own words',
+                   lambda block, old: block.get('n', 0) > 300_000 and 'FAILED test_app.py::test_a - AssertionError: the last word' in block['tail']),
+    'forged_frames': ('the old route removed every line that began with `EXIT:` from what a check printed (its own sentinel was text); a line a check printed is shown as printed',
+                      lambda block, old: any(block.get('text', '').replace('\nEXIT:0\n', '\n', 1) == o.get('text') for o in old)),
+}
+
+
 @pytest.mark.parametrize('name', sorted(rig.CASES))
 def test_case(tmp_path, monkeypatch, name):
     import shutil
@@ -49,7 +64,20 @@ def test_case(tmp_path, monkeypatch, name):
         path.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False))
         return
     fixture = json.loads(FIXTURE.read_text())
-    if name == 'hostile':      # the old route ran the planted interpreter and read nothing (UNKNOWN): Phase 7 is to read this project like any other
-        assert got['evidence'] == fixture['go_pass']['evidence'] or got['evidence'] == fixture['hostile']['evidence']
+    ws = tmp_path / 'ws'
+    assert not [p for p in os.listdir(ws) if p.startswith('MARK-')], "cria's own plumbing ran project code"
+    if name == 'hostile':               # the old route ran the planted interpreter in its own plumbing and read nothing (UNKNOWN)
+        ran = (ws / 'RAN').read_text().splitlines() if (ws / 'RAN').exists() else []
+        assert not [line for line in ran if line.startswith('env -i') or ' -S ' in line or ' -c ' in line], ran      # only the checks' own `env PYTHONPYCACHEPREFIX=... python3 -I -m compileall`
+        assert any('go test' in text_of(e) for e in got['evidence']) and not any('UNKNOWN' in text_of(e) for e in got['evidence'])
         return
-    assert [sorted_removed(e) for e in got['evidence']] == [sorted_removed(e) for e in fixture[name]['evidence']]
+    assert got['litter'] == []          # intended: the old route left its helper and a private directory in the harness's temp directory
+    # Every text the model read of the checks is one the old route showed, byte for byte, or an intended difference. The new route may show FEWER of
+    # them: the old gate was planned before the workspace was surveyed (it ran the parse floor, then the checks the survey delivered); the survey is
+    # now an operation of its own that has answered by the time the gate is planned, so the first gate already runs the project's own checks.
+    old = [sorted_removed(e) for e in fixture[name]['evidence']]
+    new = [sorted_removed(e) for e in got['evidence']]
+    extra = [e for e in new if e not in old]
+    assert new and all(INTENDED[name][1](e, old) for e in extra) if extra else bool(new), [text_of(e)[:300] for e in extra]
+    decisive = rig.CASES[name].get('expect', 'pytest -q')
+    assert any(decisive in text_of(e) for e in new), 'the checks the case is about never reached the model'

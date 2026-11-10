@@ -59,7 +59,7 @@ from .imageworkflow import (current as _image_current, review_view as _image_rev
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive, writerecord
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
-from . import admission, initial_inventory, shelltool
+from . import admission, gateseam, initial_inventory, shelltool
 from .opspath import OpsUnavailable
 from .probeops import UnreadProbe
 from .config import CONTEXT_FIXES
@@ -437,9 +437,6 @@ class GuardState:
     # ``gate_fresh`` so an already-surveyed project with no applicable probe keeps the bounded
     # attempted-gate exit, and a harness with no shell keeps its existing no-gate exit.
     gate_replan_required: bool = False
-    # N1: the harness holds this session's gate helper program (written by an earlier gate's launch),
-    # so later gate calls name it instead of carrying it. Copied from the live plan after every page.
-    gate_helpers_ready: bool = False
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
     # NB: there is deliberately NO search-escape state here. cria used to SUBSTITUTE a web_fetch for a
     # search-looping coder's own web_search (streak/volume counters, a convention URL, a domain-root
@@ -2590,6 +2587,8 @@ class LoopContext:
     # returns ``(operation, its first harness calls)``; ``inventory_result(session, operation)`` is what it learned (None: nothing).
     issue_inventory: object = None
     inventory_result: object = None
+    # the completion gate's engine (`cria.gateops`), as `gateseam.Seam` (issue a gate, ask for its result, carry an unfinished one on)
+    gate_seam: object = None
     # the unread-write probe (`cria.probeops`): ``take_released(session)`` is ``(the model's calls an answered probe was holding, the facts it learned)``, once
     take_released: object = None
     # Focus-trim the OUTBOUND coder view (collapse exact-duplicate tool calls). [context] focus_trim.
@@ -2816,7 +2815,7 @@ class Loop:
         probe_tc = guard_gate_op(bootstrap, body, rlog, workspace_root=bootstrap.workspace_root)
         if probe_tc is None:
             return None
-        bootstrap.probe_call_id = probe_tc["id"]
+        bootstrap.probe_call_id = probegate.gate_ref(probe_tc)
         self._store.put_bootstrap(session_key, bootstrap)
         rlog.emit("loop.planner_survey_deferred")
         return _completion_toolcalls([probe_tc])
@@ -2824,7 +2823,7 @@ class Loop:
     def drive(self, body: dict, session_key: str, classification, rlog, *, pasted_delivery=None) -> dict | None:
         """Return the completion (OpenAI dict) cria should send, or ``None`` to fall
         through to the normal proxy (not a plan-driven task)."""
-        with self._session_lock(session_key), assistruntime.bound(self._ctx.pilot_runtime):
+        with self._session_lock(session_key), assistruntime.bound(self._ctx.pilot_runtime), gateseam.bound(self._ctx.gate_seam):
             # BOTH owners are checked outside the finally that may first-pin new state.
             previous_session = self._store.get(session_key)
             for previous in (previous_session, self._store.get_bootstrap(session_key)):
@@ -3048,7 +3047,6 @@ class Loop:
             body = {**body, "messages": messages}
             rlog.emit("loop.survey_bootstrap_finished", surveyed=initial_surveyed, transport_unknown=False)
         elif bootstrap is not None:
-            raw = _read_tool_result(messages, bootstrap.probe_call_id)
             if rewritten:
                 recovered = _reissue_repository_checks(_NamedProbeState(bootstrap, "probe_call_id"),
                     body, rlog, workspace_root=bootstrap.workspace_root, rewritten=True)
@@ -3058,7 +3056,7 @@ class Loop:
             transport_tc = guard_gate_transport(bootstrap, body, rlog, call_id=bootstrap.probe_call_id)
             if transport_tc is not None:
                 return _completion_toolcalls([transport_tc])
-            outcome = read_gate(bootstrap.gate_plan, raw, rlog)
+            outcome = read_gate(bootstrap.gate_plan, _gate_result(bootstrap), rlog)
             # Keep provenance until a successor is published, including planner deferrals.
             bootstrap_finished = True
             messages = probegate.clean_gate_results(messages, bootstrap.gate_plan, drop_private_results=True)
@@ -3143,7 +3141,7 @@ class Loop:
                         probe_tc = guard_gate_op(bootstrap, body, rlog,
                                                  workspace_root=bootstrap.workspace_root)
                         if probe_tc is not None:
-                            bootstrap.probe_call_id = probe_tc["id"]
+                            bootstrap.probe_call_id = probegate.gate_ref(probe_tc)
                             self._store.put_bootstrap(session_key, bootstrap)
                             rlog.emit("loop.survey_bootstrap_started")
                             return _completion_toolcalls([probe_tc])
@@ -3669,7 +3667,7 @@ class Loop:
                 transport_tc = guard_gate_transport(
                     sess, body, rlog, call_id=sess.completion_probe_id)
                 if transport_tc is not None:
-                    sess.completion_probe_id = transport_tc["id"]
+                    sess.completion_probe_id = probegate.gate_ref(transport_tc)
                     return _completion_toolcalls(
                         [transport_tc], note="verifying — receiving the repo's complete check output")
                 sess.probe_call_id, sess.completion_probe_id = sess.completion_probe_id, ""
@@ -3679,7 +3677,7 @@ class Loop:
                     probe_tc = guard_gate_replan_after_survey(
                         sess, body, rlog, workspace_root=sess.workspace_root)
                     if probe_tc is not None:
-                        sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
+                        sess.completion_probe_id = sess.probe_call_id = probegate.gate_ref(probe_tc)
                         return _completion_toolcalls(
                             [probe_tc], note="verifying — running the repo's checks")
                 if errors:
@@ -3698,13 +3696,13 @@ class Loop:
                     rlog.emit("loop.gate", plan_off=False, at="completion", blocked=True,
                               reds=sess.completion_gate_reds)
                     sess.steer_source = "completion gate (repo checks failed)"
-                    steer = (errors if getattr(sess.gate_plan, "transport_error", "") else
+                    steer = (errors if getattr(sess.gate_plan, "error", "") else
                              prompts.render("gate_fail_steer", errors=errors))
                     return self._renudge(sess, key, body, steer, rlog)
             elif not sess.gate_fresh:
                 probe_tc = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)
                 if probe_tc is not None:
-                    sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
+                    sess.completion_probe_id = sess.probe_call_id = probegate.gate_ref(probe_tc)
                     rlog.emit("loop.completion_probe", plan_off=False)
                     return _completion_toolcalls([probe_tc], note="verifying — running the repo's checks")
                 # no shell tool → the objective gate can't run; the judge below decides alone (fail-open)
@@ -3951,7 +3949,7 @@ class Loop:
         probe_tc = self._gate_op(body, sess, rlog)
         if probe_tc is not None:
             sess.awaiting_probe = True
-            sess.probe_call_id = probe_tc["id"]
+            sess.probe_call_id = probegate.gate_ref(probe_tc)
             sess.pending_coder_text = _completion_text(coder)
             return _completion_toolcalls([probe_tc], note=f"verifying step {idx}/{total} — running checks")
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
@@ -4167,7 +4165,6 @@ class Loop:
                 return _completion_toolcalls([result.call], note=note)
             truth = result.text
             return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
-        probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
         recovered = _reissue_repository_checks(sess, body, rlog,
             workspace_root=sess.workspace_root, driver=repositorychecks.Driver.STEP,
             step=idx, rewritten=rewritten)
@@ -4185,7 +4182,7 @@ class Loop:
         sess.probe_reissues = sess.probe_poll_reissues = 0  # a result (or the capped fallback) resolves the streak
 
         # Interpret the gate output through the ported probe modules (floor + probes + git).
-        outcome = read_gate(sess.gate_plan, probe, rlog)
+        outcome = read_gate(sess.gate_plan, _gate_result(sess), rlog)
         # Guard-probe result (repetition redirect / wheel-spin ground truth) — shared with the
         # plan-off path via guard_probe_steer; the loop supplies its reasoner to author the redirect.
         # It records the reading itself (record_gate_state) before returning, so this early return
@@ -4208,7 +4205,7 @@ class Loop:
                 sess, body, rlog, workspace_root=sess.workspace_root)
             if probe_tc is not None:
                 sess.awaiting_probe = True
-                sess.probe_call_id = probe_tc["id"]
+                sess.probe_call_id = probegate.gate_ref(probe_tc)
                 return _completion_toolcalls(
                     [probe_tc], note=f"verifying step {idx}/{total} — running checks")
         participation_facts = participation.render_for_judge(
@@ -4365,7 +4362,6 @@ class Loop:
             return self._work(sess, key, body, rlog)
         idx = sess.plan.items.index(item) + 1
         total = len(sess.plan.items)
-        raw = _read_tool_result(body.get('messages', []), sess.probe_call_id)
         matched_result = any(message.get('role') == 'tool'
                              and message.get('tool_call_id') == sess.probe_call_id
                              for message in body.get('messages', []))
@@ -4377,13 +4373,10 @@ class Loop:
                          for tc in message.get('tool_calls') or ()
                          if tc.get('id') == sess.probe_call_id), None)
             if call is None:
-                tool = find_shell_tool(body.get('tools'))
-                command = probegate.continue_transport_command(sess.gate_plan) if sess.gate_plan else ''
-                if tool is None or not command:
+                call = repositorychecks._resume(_repository_input(body, rlog), sess, _repository_probes())
+                if call is None:
                     raise ValueError('Pending STEP observation requires its correlated harness result')
-                call = repositorychecks._shell_call(_repository_input(body, rlog),
-                    _repository_probes(), tool, command)
-                sess.probe_call_id = call['id']
+                sess.probe_call_id = probegate.gate_ref(call)
             sess.awaiting_probe = True
             return _completion_toolcalls([call], note=f'receiving workspace observation for step {idx}/{total}')
         transport_tc = guard_gate_transport(sess, body, rlog)
@@ -4391,15 +4384,14 @@ class Loop:
             sess.awaiting_probe = True
             return _completion_toolcalls(
                 [transport_tc], note=f"receiving workspace observation for step {idx}/{total}")
-        raw = _read_tool_result(body.get("messages", []), sess.probe_call_id)
-        outcome = read_gate(sess.gate_plan, raw, rlog)
+        outcome = read_gate(sess.gate_plan, _gate_result(sess), rlog)
         record_gate_state(sess, outcome, gate_error_text(outcome), rlog, body.get("messages"))
         if sess.gate_replan_required:
             probe_tc = guard_gate_replan_after_survey(
                 sess, body, rlog, workspace_root=sess.workspace_root)
             if probe_tc is not None:
                 sess.awaiting_probe = True
-                sess.probe_call_id = probe_tc["id"]
+                sess.probe_call_id = probegate.gate_ref(probe_tc)
                 return _completion_toolcalls(
                     [probe_tc], note=f"observing step {idx}/{total} — running the repo's checks")
         root = sess.workspace_root or _extract_cwd(body.get("messages", [])) or ""
@@ -4513,7 +4505,7 @@ class Loop:
                 if probe_tc is not None:
                     sess.periodic_observation = True
                     sess.awaiting_probe = True
-                    sess.probe_call_id = probe_tc["id"]
+                    sess.probe_call_id = probegate.gate_ref(probe_tc)
                     rlog.emit("loop.periodic_step_observation_scheduled", step=idx)
                     return _completion_toolcalls(
                         [probe_tc], note=f"observing workspace before verifying step {idx}/{total}")
@@ -4620,11 +4612,9 @@ class Loop:
         gate = getattr(sess, 'gate_plan', None)
         view = _surveyed_view(sess)
         participation = getattr(sess, 'last_gate_participation', None)
-        return (sess.action_seq, id(gate), getattr(gate, 'transport_id', None),
-            sess.probe_call_id, getattr(gate, 'transport_path', None),
-            len(getattr(gate, 'transport_data', ())), getattr(gate, 'transport_total', None),
-            getattr(gate, 'transport_sha256', None), getattr(gate, 'transport_complete', None),
-            getattr(gate, 'transport_error', None), sess.last_gate_seq, sess.last_gate_ran,
+        return (sess.action_seq, id(gate), getattr(gate, 'op', None),
+            sess.probe_call_id, getattr(gate, 'complete', None),
+            getattr(gate, 'error', None), sess.last_gate_seq, sess.last_gate_ran,
             sess.last_gate_red, sess.last_gate_flag, sess.gate_fresh,
             sess.last_gate_testless, sess.last_gate_skipped, repr(participation),
             tuple(sorted(sess.write_result_ids or ())), tuple(sorted(sess.refused_write_ids or ())),
@@ -5065,7 +5055,7 @@ class Loop:
         probe_tc = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True
-            sess.probe_call_id = probe_tc["id"]
+            sess.probe_call_id = probegate.gate_ref(probe_tc)
             # Held as PIECES, not as prose: the note's opening claim depends on whether the gate
             # actually ran, and that is not known until its result comes back next turn. The
             sess.pending_done_parts = (reason,)
@@ -5110,12 +5100,12 @@ class Loop:
             probe = guard_gate_replan_after_survey(sess, body, rlog, workspace_root=sess.workspace_root)
             if probe is not None:
                 sess.done_probe = True
-                sess.probe_call_id = probe["id"]
+                sess.probe_call_id = probegate.gate_ref(probe)
                 sess.pending_done_parts = parts
                 return _completion_toolcalls([probe], note="verifying — running the repo's checks")
         if errors:
             rlog.emit("loop.gate", plan_off=plan_off, blocked=True)
-            if getattr(sess.gate_plan, "transport_error", ""):
+            if getattr(sess.gate_plan, "error", ""):
                 sess.nudge_reason = errors
                 sess.steer_source = "completion gate (check evidence unknown)"
             else:
@@ -5366,7 +5356,7 @@ class Loop:
         probe = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)  # body, NOT framed
         if probe is not None:
             sess.done_probe = True
-            sess.probe_call_id = probe["id"]
+            sess.probe_call_id = probegate.gate_ref(probe)
             sess.pending_done = _completion_text(comp)
             rlog.emit("loop.completion_probe", plan_off=True)
             return _completion_toolcalls([probe], note="verifying — running the repo's checks")
@@ -5451,9 +5441,6 @@ class Loop:
                 'guidance_history', observations='\n\n'.join(_dated_guidance(sess, prior_guidance))),
                 bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.GUIDANCE_HISTORY}]
         authority = _capture_context_facts(sess, raw)
-        # The latest issued check is an observation, not a new coder action. Preserve
-        # its session-owned identity before the model-view cleaner removes gate framing.
-        raw = probegate.mark_current_gate(raw, getattr(sess, "probe_call_id", None))
         base = _required_coder_base(raw, tools=body.get("tools"), prior_work=sess.prior_work,
             workspace_root=sess.workspace_root, gate_plan=getattr(sess, "gate_plan", None),
             suspend_cursor=bool(sess.completion_remediation_subject or sess.replan_uncovered), rlog=rlog)
@@ -7215,7 +7202,7 @@ def _repository_probes():
 
 
 def _repository_evidence(gs):
-    return repositorychecks.EvidenceServices(_read_tool_result, read_gate, gate_error_text,
+    return repositorychecks.EvidenceServices(_gate_result, read_gate, gate_error_text,
         lambda findings, messages, **kw: track_gate_progress(gs, findings, messages, **kw))
 
 
@@ -7264,8 +7251,7 @@ def _repository_result(result, *, consumed=False, allow_pending=True):
 
 
 def _record_repository_evidence(gs, body, rlog):
-    raw = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = read_gate(gs.gate_plan, raw, rlog)
+    outcome = read_gate(gs.gate_plan, _gate_result(gs), rlog)
     _repository_outcome(outcome, consumed=True)
     record_gate_state(gs, outcome, gate_error_text(outcome), rlog, body.get("messages"))
     return outcome
@@ -7626,11 +7612,11 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
         if gs.stalled_probe is not result.probe:
             raise ValueError('Stalled probe must retain its actual pending identity')
         gs.awaiting_probe = True
-        if previous_probe is result.probe and gs.probe_call_id != result.probe.call.get('id'):
+        if previous_probe is result.probe and gs.probe_call_id != probegate.gate_ref(result.probe.call):
             # A mutable launch alias cannot replace current owned correlation,
             # including a newer page/reissue already installed by transport.
             return None
-        gs.probe_call_id = result.probe.call['id']
+        gs.probe_call_id = probegate.gate_ref(result.probe.call)
         return _completion_toolcalls([result.probe.call], note=(
             "running the repo's checks (repeated action detected)"
             if result.probe.trigger is stalledwork.Trigger.REFUSAL else
@@ -8163,7 +8149,15 @@ def _gate_test_green(outcome) -> bool:
     return False
 
 
-def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
+def _gate_result(gs) -> "probegate.GateResult | None":
+    """What the gate of this state's plan learned, once it is done: asked of cria's own ledger (never of a result found in the history)."""
+    seam, plan = gateseam.current(), getattr(gs, "gate_plan", None)
+    if seam is None or plan is None or not getattr(plan, "op", ""):
+        return None
+    return seam.result(getattr(gs, "web_session", "") or "", plan.op)
+
+
+def read_gate(plan, result, rlog) -> "probegate.GateOutcome":
     """``interpret_gate`` for every caller, with the two things that must never be silent.
 
     A harness can REFUSE the gate outright — Codex's sandbox rejects the exec if the script contains a
@@ -8175,7 +8169,7 @@ def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
     Also reports what the sweep took back, so litter removal is visible rather than assumed."""
     if plan is None:
         return probegate.GateOutcome(ran=False)
-    outcome = probegate.interpret_gate(plan, probe_text, rlog)
+    outcome = probegate.interpret_gate(plan, result, rlog)
     if outcome.refused:
         rlog.emit("loop.gate_refused", level="warn", reason=outcome.refused)
     if outcome.swept:
@@ -8447,8 +8441,7 @@ def _writes_since_last_gate(messages: list[dict], cap: int | None = None) -> lis
     msgs = messages or []
     last_gate = -1
     for i, m in enumerate(msgs):
-        c = m.get("content") if isinstance(m, dict) else None
-        if isinstance(c, str) and probegate.SECTION_PREFIX in c:
+        if isinstance(m, dict) and m.get("role") != "assistant" and probegate.is_automatic(m):     # the result of cria's own gate
             last_gate = i
     out: list[str] = []
     for m in msgs[last_gate + 1:]:
@@ -10961,8 +10954,7 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     if not cid or not any(m.get('role') == 'tool' and (m.get('tool_call_id') or m.get('call_id')) == cid
                for m in body.get('messages', []) if isinstance(m, dict)):
         return None
-    raw = _read_tool_result(body.get('messages', []), cid)
-    outcome = read_gate(gs.gate_plan, raw, rlog)
+    outcome = read_gate(gs.gate_plan, _gate_result(gs), rlog)
     if getattr(outcome, 'transport_pending', False):
         return None
     recorded = False
@@ -11340,15 +11332,6 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
 def _truncated_write_path(completion: dict) -> str | None:
     """Compatibility reader using the canonical cut policy's factual services."""
     return generationguards.truncated_write_path(completion, _generation_cut_services())
-
-
-def _read_tool_result(messages: list[dict], call_id: str) -> str:
-    """The harness's result for a tool call cria emitted (e.g. the ground-truth probe),
-    found by its call id in the message stream."""
-    for m in reversed(messages):
-        if m.get("role") == "tool" and m.get("tool_call_id") == call_id:
-            return str(m.get("content") or "")
-    return ""
 
 
 # Files whose on-disk facts are READ for the steer author's section. The list itself is not bounded:

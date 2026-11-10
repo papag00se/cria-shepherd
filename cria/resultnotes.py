@@ -9,7 +9,6 @@ import re
 from typing import NamedTuple
 
 from . import bodykeys, payloadboundary, wsview
-from .toolwire import SECTION_PREFIX
 
 # ONE grammar, at stdout offset zero. No search for an Output/status phrase in a
 # log or file. Optional fields have a fixed order; an unknown field/partial header
@@ -127,6 +126,6 @@ def _workspace_ecosystem(workspace_root) -> str:
         return ""
 
 
-def probegate_marker_in(text: str) -> bool:
-    """A gate result — proberun.dependency_note already speaks for those."""
-    return SECTION_PREFIX in text
+def is_gate_result(message: dict) -> bool:
+    """A finished gate's result (the tool result that carries its typed result, in process): proberun.dependency_note already speaks for those."""
+    return message.get(bodykeys.GATE_RESULT) is not None

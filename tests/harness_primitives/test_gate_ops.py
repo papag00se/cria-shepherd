@@ -209,3 +209,20 @@ def test_an_unfinished_gate_is_carried_on_after_the_harness_lost_its_calls(tmp_p
     messages = [{'role': 'assistant', 'tool_calls': again}, {'role': 'tool', 'tool_call_id': again[0]['id'], 'content': out}]
     calls = ops.incoming('res', messages).calls
     assert calls and 'repository checks (output)' in json.loads(calls[0]['function']['arguments'])['cmd']
+
+
+def test_every_poll_of_a_gate_asks_the_harness_for_the_time_a_poll_waits(tmp_path):
+    """Codex yields a command at its own ~10 s unless the call says otherwise (up to 30 s): a poll that waits 25 s and was not given the time came back
+    as 'Process running' with no frame, three times, and the gate was called broken (found through the pinned Codex)."""
+    from cria.ops import Ops
+    from cria.gatescript import compose
+    shell = {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}, 'yield_time_ms': {'type': 'integer'}}}}
+    ops = Ops()
+    script, sections = compose([sh(tmp_path, 'true')], str(tmp_path), 60, ())
+    op, first = ops.issue_gate('yield', shell, root=str(tmp_path), script=script, sections=sections, timeout=60, deadline=90, wait=25.0, facts=(), shown='')
+    assert json.loads(first[0]['function']['arguments'])['yield_time_ms'] >= 25_000
+    ledger_op = ops.ledger.ops('yield')[op]
+    again = ops.resume_gate('yield', op)
+    assert json.loads(again[0]['function']['arguments'])['yield_time_ms'] >= 25_000
+    waiting = Ops._harness_call(ledger_op, 'ctx_x', 'cmd')                    # what the engine's own continuation of a waiting gate hands over
+    assert json.loads(waiting['function']['arguments'])['yield_time_ms'] >= 25_000

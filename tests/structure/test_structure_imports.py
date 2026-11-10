@@ -53,7 +53,7 @@ def test_edge_collector_sees_every_import_spelling_at_any_depth_without_inventin
     assert cycle({"a": {"a"}})
 
 FACADES = {massage: (callsyntax, callformats, callliterals, outputpolicies),
-           writeproxy: (callliterals, filecommands, toolwire, resultnotes, outboundpolicies), probegate: (toolwire,)}
+           writeproxy: (callliterals, filecommands, toolwire, resultnotes, outboundpolicies)}
 ADAPTERS = {"promote_call", "_under_spill_dir", "_spill_relpath", "_respill_command", "_spill_read_command"}  # wrap, by design
 
 def test_tool_helper_facades_re_export_their_owners_objects():
@@ -66,7 +66,7 @@ def test_tool_helper_facades_re_export_their_owners_objects():
                         and hasattr(facade, name):
                     shared += 1
                     assert getattr(facade, name) is value, f"{facade.__name__}.{name} vs {owner.__name__}"
-        assert shared >= {massage: 100, writeproxy: 60, probegate: 2}[facade]   # the check is not vacuous
+        assert shared >= {massage: 100, writeproxy: 60}[facade]   # the check is not vacuous
 
 def test_every_test_file_actually_runs():
     """Every module defining tests matches pytest's collection name, and basenames are unique (no stale-bytecode collisions)."""

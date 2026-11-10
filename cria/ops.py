@@ -325,12 +325,19 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
                 records = [self._step(op_id, op.ctx, s, what, args, blobs) for s, what, args in action.steps]
                 self.ledger.append(session, *({'t': 'blob', 'op': op_id, 'h': h, 'text': t} for h, t in action.blobs.items()),
                                    *(r[0] for r in records))
-                calls += [_shell_call(r[0]['id'], op.ctx['shell'], r[1]) for r in records]
+                calls += [self._harness_call(op, r[0]['id'], r[1]) for r in records]
             else:                  # still waiting for a result; a step an earlier request issued and the harness never saw goes out again
                 wave = max(st.args['wave'] for st in op.steps.values())
-                calls += [_shell_call(st.id, op.ctx['shell'], self._command(op_id, op.ctx, st.s, st.what, st.args, op.blobs))
+                calls += [self._harness_call(op, st.id, self._command(op_id, op.ctx, st.s, st.what, st.args, op.blobs))
                           for st in sorted(op.steps.values(), key=lambda x: x.s) if st.args['wave'] == wave and st.id not in present]
         return calls
+
+    @staticmethod
+    def _harness_call(op: Op, call_id: str, command: str) -> dict:
+        """The tool call that hands the harness ``command``: a gate's polls also ask for the time its tool schema offers (a wait is longer than the harness's own yield)."""
+        if op.kind == gateops.GATE:
+            return gateops.GateOps._gate_call(op.ctx, ({'id': call_id}, command))
+        return _shell_call(call_id, op.ctx['shell'], command)
 
     # ---------------------------------------------------------------- the decisions
     def _plan(self, op: Op):

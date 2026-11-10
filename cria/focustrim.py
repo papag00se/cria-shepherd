@@ -43,11 +43,9 @@ from . import probegate, proberun, prompts, research, shelltool
 from .assistcontract import Policy, Reference
 from .memoryeffects import Effect, MessageEffect
 
-# cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
-# exits NON-ZERO by design (a failing check is the signal), so it trips the fail signatures — but it
-# is not a model dead-end: squashing it removes the exact ground truth cria injected and, worse,
-# folds it into a note that tells the model "don't repeat these". It must survive the squash.
-_GATE_MARKER = probegate.SECTION_PREFIX
+# cria's OWN ground-truth gate (marked in process by the projection of its operation: `probegate.is_automatic`) exits NON-ZERO by design
+# (a failing check is the signal), so it trips the fail signatures — but it is not a model dead-end: squashing it removes the exact ground truth
+# cria injected and, worse, folds it into a note that tells the model "don't repeat these". It must survive the squash.
 
 # Rule B keeps recent proven refusals as native pairs and folds older ones only
 # when at least two pairs can be folded. Native/unknown results never qualify.
@@ -192,13 +190,6 @@ def _is_hard_failure(content) -> bool:
     return isinstance(content, str) and any(p.search(content) for p in _HARD_FAIL_SIGNATURES)
 
 
-def _call_is_gate(tc: dict) -> bool:
-    """The tool call is cria's own gate probe — its command carries the ___CTX_GATE_ marker."""
-    args = (tc.get("function") or {}).get("arguments") or ""
-    args = args if isinstance(args, str) else json.dumps(args)
-    return _GATE_MARKER in args
-
-
 def _call_mutates(tc: dict) -> bool:
     """The tool call could have CHANGED the workspace — so cria may not tell the coder that
     repeating it is pointless. Delegates to `shelltool.writes_something`, the one owner of that
@@ -219,12 +210,6 @@ def _call_mutates(tc: dict) -> bool:
                 cmd = v if isinstance(v, str) else json.dumps(v)
                 break
     return shelltool.writes_something(str(fn.get("name") or ""), cmd)
-
-
-def _is_gate_probe(tc: dict, result: dict) -> bool:
-    """cria's own ground-truth gate probe (its command/result carries the ___CTX_GATE_ markers).
-    Exempt from the failure-squash: it is the ground truth, not a dead end to remove."""
-    return _call_is_gate(tc) or _GATE_MARKER in str(result.get("content") or "")
 
 
 def _tried_label(tc: dict) -> str:
@@ -276,7 +261,7 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
                 # moved every later write into `python3 <<'PYEOF'` heredocs, where cria's syntax
                 # floor cannot see them. A swallowed `\t` made `taxed` into `axed` and bash ate the
                 # struct tags. The cell's famous typo is an artifact of a write cria drove it to.
-                if cid is not None and not _call_is_gate(tc) and not _call_mutates(tc):
+                if cid is not None and not probegate.is_automatic(m) and not _call_mutates(tc):
                     name, norm = _fingerprint(tc)
                     occ.setdefault((name, norm, _result_key(result_by_id.get(cid, ""))), []).append(cid)
     drop_ids = {cid for cids in occ.values() if len(cids) > 1 for cid in cids[:-1]}
@@ -375,16 +360,7 @@ def _repeat_failed(messages: list[dict], call_id: str) -> bool:
     for m in messages:
         if m.get("role") != "tool" or m.get("tool_call_id") != call_id:
             continue
-        body = str(m.get("content") or "")
-        if denial.refused(m):
-            return True
-        # THE EXIT SENTINEL, READ THE ONE WAY IT IS WRITTEN. This scanned top-down for a literal
-        # "EXIT:" of its own — so a program that PRINTED that string ("EXIT:1" in a log line, a test
-        # name, a here-doc) was read as the shell's own exit code, and the first one won over the
-        # real one at the bottom. `proberun` owns the sentinel and already reads it bottom-up for
-        # exactly that reason; there is no second parser and no second spelling to keep in step.
-        _, code = proberun.scrape_exit(body)
-        return code not in (0, None)
+        return denial.refused(m)
     return False
 
 
@@ -410,7 +386,7 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
                 and bodykeys.READ_OBSERVATION not in nxt
                 and bodykeys.RESULT_REPORT not in nxt
                 and bodykeys.PAYLOAD_BOUNDARY not in nxt
-                and not _is_gate_probe(tc, nxt)):
+                and not probegate.is_automatic(messages[i]) and not probegate.is_automatic(nxt)):
             failed.append((i, i + 1, tc))
             i += 2
         else:

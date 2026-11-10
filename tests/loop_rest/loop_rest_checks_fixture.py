@@ -20,9 +20,12 @@ def pair(command, output, call_id="coder-check", name="exec_command", args=None)
 
 
 def gate(command="pytest -q"):
-    """cria's own producer-owned gate run that carried the findings."""
-    return pair(probegate._gate_sentinel([command]) + "\n" + command,
-                "___CTX_GATE_probe-0___\n" + FINDING + "\nEXIT:1", "gate")
+    """cria's own producer-owned gate run that carried the findings: the projection of its finished operation (marked in process, the typed result on the tool result)."""
+    from cria import gateops
+    mark = {bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
+    msgs = pair(command, "", "gate")
+    result = gateops.GateResult("a" * 12, "", "complete", sections={"probe-0": (FINDING, 1)}, removed=["aux/"])
+    return [{**msgs[0], **mark}, {**msgs[1], bodykeys.GATE_RESULT: result, **mark}]
 
 def refused(name, args, call_id="w"):
     """A native mutation cria itself refused (carries the proven outcome hint, not wording)."""

@@ -119,7 +119,7 @@ def test_the_ground_truth_the_coder_gets_is_the_failure_or_a_neutral_clean_note_
 
 
 def test_the_check_note_names_what_was_written_since_the_checks_ran_newest_first_and_claims_nothing_else():
-    gate = {"role": "tool", "tool_call_id": "g", "content": f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\nx"}
+    gate = {"role": "tool", "tool_call_id": "g", "content": "", loop.bodykeys.ANNOTATION_SOURCE: loop.bodykeys.AnnotationSource.AUTOMATIC_CHECK}      # the result of cria's own gate
     write = lambda cid, path: {"role": "assistant", "tool_calls": [{"id": cid, "function": {"name": "write_file", "arguments": json.dumps({"path": path, "content": "1"})}}]}   # noqa: E731
     msgs = [write("1", "old.py"), gate, write("2", "a.py"), write("3", "b.py"), write("4", "a.py"), "junk"]
     assert loop._writes_since_last_gate(msgs) == ["b.py", "a.py"] and loop._writes_since_last_gate(msgs, 1) == ["b.py"]

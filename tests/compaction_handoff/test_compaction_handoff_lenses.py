@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from cria import denial, filepresence, groundtruth, probegate, writerecord
+from gate_fixtures import gate_turn
 from cria.config import Role
 from cria.loop import validate_compaction_briefing
 from compaction_handoff_helpers import (TREE, call, chat_reply, lens_answer, lens_of, result, shell, survey_text, write)
@@ -165,7 +166,7 @@ def test_the_write_record_says_a_path_changed_unless_the_record_proves_nothing_c
     ([write("w"), GREEN_RUN], ""),
     ([write("w"), shell("c", "mvn -q compile 2>&1 | tail -3")], ""),                 # a pipeline's filter status is no verdict
     ([write("w"), RED_RUN, shell("c2", "./gradlew build", "Execution failed for task ':compileJava'.", 1)], ""),    # a later run nothing can read: unknown
-    ([write("w"), [call("g", "exec_command", cmd=probegate._gate_sentinel(["mvn -q compile"]) + "\ntrue"), result("g")]], ""),
+    ([write("w"), gate_turn("g", "", probes=("mvn -q compile",))], ""),
     ([write("w"), [call("c", "exec_command", cmd="pytest -q"), result("c", "blocked", denial.REFUSED)]], "no check ran"),   # a refused run is no run
     ([[{"role": "assistant", "content": "ran pytest, 6 passed"}]], "")])               # untyped transcript: not judged
 def test_the_check_record_supports_a_success_claim_only_when_a_run_could_back_it(parts, reason):

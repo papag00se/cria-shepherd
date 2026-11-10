@@ -77,9 +77,9 @@ _SPEC_SHAPE_MARKER = "[response shape —"
 # summarizing the last round's summary is how a transient hallucination hardened into authoritative
 # "Treat this as done" misdirection that inverted the task). ⟦ctx:continuation⟧ (loop's harness-
 # compaction reframe) is one such cria-authored summary and MUST be here for the same reason as
-# ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER; gate prefix is toolwire-owned.
+# ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER; a gate's result is an anchor by its typed result, not by a marker.
 # + webfetch.ROUTES_MARKER / SHAPE_MARKER (selfcompact is low-level; a test asserts sync).
-_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", toolwire.SECTION_PREFIX, SUMMARY_MARKER, TASK_MARKER,
+_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", SUMMARY_MARKER, TASK_MARKER,
                    FACTS_MARKER, _SPEC_ROUTES_MARKER, _SPEC_SHAPE_MARKER)
 
 
@@ -165,6 +165,8 @@ def _has_anchor(m: dict) -> bool:
     message stays verbatim, which loses nothing."""
     if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INTERNAL_EVIDENCE:
         return False
+    if probegate.gate_result_of(m) is not None:      # a finished gate's result that has not been cleaned: cria's ground truth, kept verbatim
+        return True
     own = _own_text(m)
     lines = own.splitlines()
     return any((any(ln.lstrip().startswith(mk) for ln in lines) if mk.startswith("⟦ctx:") else mk in own)
@@ -1269,7 +1271,7 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
                 continue
             args = toolargs.parse_args(fn.get("arguments"))
             cmd = next((str(args[k]) for k in _LEDGER_EXEC_ARGS if args.get(k)), "")
-            if cmd and not toolwire.is_crias_own(cmd):  # cria's own gate/lowering is not the coder's act
+            if cmd and not toolwire.is_crias_own(cmd) and not probegate.is_automatic(m):  # cria's own gate/lowering is not the coder's act
                 cmd = _one_line(clip(cmd.strip(), _LEDGER_CMD_CAP,
                                      f" [command continues; {len(cmd.strip())} characters in all]"))
                 state = "shell_refused" if refused else ("shell_unanswered" if result is None else "shell_answered")

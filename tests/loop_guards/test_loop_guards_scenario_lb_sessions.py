@@ -9,6 +9,7 @@ tool results are played by the test): what the coder is shown, what the harness 
 * scheduled check: a finished task that cannot stop is offered the off-ramp by a timer; its negative verdict reaches the
   coder, its positive one is verified by the repo's checks before the session ends.
 """
+import copy
 import json
 
 import pytest
@@ -17,7 +18,7 @@ from cria import bodykeys, denial, wsview
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
-from loop_guards_gatefixture import gate_page
+from gate_fixtures import FakeGateSeam, lost_result
 from loop_guards_helpers import Chat, Log, reply
 
 SHELL = {"type": "function", "function": {"name": "shell", "parameters": {
@@ -80,6 +81,8 @@ class Run:
 
     def __init__(self, tmp_path, coder, reasoner=None, tools=(SHELL,), **ctx):
         (tmp_path / "app.py").write_text("x = 1\n")
+        self.gates = FakeGateSeam()
+        ctx.setdefault("gate_seam", self.gates.seam)
         self.driver = Loop(LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner, runs_dir="",
                                        reasoner_role=Role(name="reasoner", backend="local") if reasoner else None,
                                        workspace_root=str(tmp_path), **ctx), LoopStore())
@@ -91,12 +94,12 @@ class Run:
     def turn(self, result=None):
         if self.out is not None:
             call = self.out["choices"][0]["message"]["tool_calls"][0]
-            content = result if result is not None else "wrote it"
-            if call["function"]["name"] == "shell":             # cria's own check probe: the page the harness would deliver
-                content = gate_page(self.sess.gate_plan, result)
-            self.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [call]},
-                                      {"role": "tool", "tool_call_id": call["id"], "content": content}]
-        self.out = self.driver.drive(json.loads(json.dumps(self.body)), "sid:k", None, self.log)
+            if self.gates.is_gate(call["id"]):              # cria's own check run: it finished with the stream the harness would have produced
+                self.body["messages"] += self.gates.finish(result)
+            else:
+                self.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [call]},
+                                          {"role": "tool", "tool_call_id": call["id"], "content": result if result is not None else "wrote it"}]
+        self.out = self.driver.drive(copy.deepcopy(self.body), "sid:k", None, self.log)
         return self.out["choices"][0]["message"]
 
     def ended(self):
@@ -116,7 +119,7 @@ def test_each_done_claim_is_settled_by_the_repos_checks_then_the_task_judge(tmp_
     run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [read]},
                              {"role": "tool", "tool_call_id": "r0", "content": "x = 1"}]
     probe = run.turn()                                        # claim 1 -> the repo's checks are run, not believed
-    assert "running the repo's checks" in probe["content"] and "CTX_GATE_probe-0" in probe["tool_calls"][0]["function"]["arguments"]
+    assert "running the repo's checks" in probe["content"] and run.gates.is_gate(probe["tool_calls"][0]["id"])
     assert run.sess.done_probe and run.sess.pending_done == "Fixed the name." and len(coder.bodies) == 2   # act-first re-ask, then the probe
     probe = run.turn(RED)                                     # RED: the checker's own message steers the coder
     assert "not done yet" in steer_seen(coder, 2) and "undefined name 'x'" in steer_seen(coder, 2)
@@ -366,14 +369,12 @@ def test_a_done_probe_survives_a_compaction_and_a_corrupt_page_is_never_read_as_
     probe_call = run.out["choices"][0]["message"]["tool_calls"][0]
     run.body["messages"] = [{"role": "user", "content": TASK}, {"role": "user", "content": "[CONTEXT COMPACTION] Summary: all done."}]
     def drive():
-        return run.driver.drive(json.loads(json.dumps(run.body)), "sid:k", None, run.log)["choices"][0]["message"]
+        return run.driver.drive(copy.deepcopy(run.body), "sid:k", None, run.log)["choices"][0]["message"]
     poll = drive()                                             # no result survives the fold -> the page is polled for, not guessed
     assert "history was compacted" in poll["content"] and "gate.transport_poll_after_rewrite" in run.log.names() and run.sess.done_probe
-    good = gate_page(run.sess.gate_plan, GREEN)
-    corrupt = good.replace("sha256\t", "sha256\t0")
     call = poll["tool_calls"][0]
-    run.body["messages"] += [{"role": "assistant", "content": None, "tool_calls": [call]},
-                             {"role": "tool", "tool_call_id": call["id"], "content": corrupt}]
+    assert run.gates.resumed == [run.sess.gate_plan.op]                      # the same run is waited for again, not a new one started
+    run.body["messages"] += run.gates.finish(result=lost_result(run.sess.gate_plan.op))       # the output that finally comes back cannot be read whole
     step = drive()
     heard = coder.bodies[-1]["messages"][-1]["content"]
     assert heard.startswith("⟦ctx:steer⟧") and "check result is UNKNOWN. This is not a clean or passing result" in heard

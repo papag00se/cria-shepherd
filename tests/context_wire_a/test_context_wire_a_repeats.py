@@ -6,7 +6,7 @@ import json
 import pytest
 
 from cria import bodykeys, dedup, denial, focustrim, toolwire, writeproxy
-from cria.probegate import SECTION_PREFIX as GATE
+from gate_fixtures import gate_turn
 
 
 @pytest.mark.parametrize("a,b", [
@@ -90,10 +90,8 @@ def test_only_calls_with_identical_arguments_and_output_collapse_keeping_the_las
     assert (rep.dropped_calls, rep.dropped_msgs) == (1, 1) and ids(out) == ["B", "C", "D"]
     assert [m["tool_call_id"] for m in out if m["role"] == "tool"] == ["B", "C", "D"]
     assert focustrim.trim(out)[0] is out
-    gate_args = json.dumps({"cmd": f"echo {GATE}probe-0___"})
-    gates = [asst("g1", "exec", gate_args), res("g1", f"{GATE}probe-0___\nEXIT:1\nSyntaxError"),
-             asst("g2", "exec", gate_args), res("g2", f"{GATE}probe-0___\nEXIT:1\nSyntaxError")]
-    assert ids(focustrim.trim(gates)[0]) == ["g1", "g2"]       # a gate probe is ground truth, never a duplicate
+    gates = [*gate_turn("g1", "", probes=("echo checks",)), *gate_turn("g2", "", probes=("echo checks",))]
+    assert ids(focustrim.trim(gates)[0]) == ["g1", "g2"]       # cria's own gate is ground truth, never a duplicate
 
 
 def refused(cid, cmd):
@@ -143,4 +141,5 @@ def test_an_empty_result_is_an_answer_not_a_failure(body):
     told the model its read 'failed the same way' 12 times and pushed it to view_image on a .py file."""
     call = [asst("c1", "read_file", '{"path":"orders/__init__.py"}'), res("c1", body)]
     assert not focustrim._repeat_failed(call, "c1")
-    assert focustrim._repeat_failed([call[0], res("c1", "boom\nEXIT:1")], "c1")
+    assert not focustrim._repeat_failed([call[0], res("c1", "boom\nEXIT:1")], "c1")        # a line a program printed is not a shell exit code
+    assert focustrim._repeat_failed([call[0], {**res("c1", denial.mark("outside the workspace")), bodykeys.RESULT_OUTCOME: denial.REFUSED}], "c1")

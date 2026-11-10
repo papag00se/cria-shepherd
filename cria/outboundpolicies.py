@@ -16,7 +16,7 @@ from .filecommands import (
     _prepare_file_mutation, _under_spill_dir, _spill_relpath, _respill_command,
 )
 from .toolwire import (
-    _refusal_command, _command_of, GATE_SENTINEL, _SENTINEL,
+    _refusal_command, _command_of, _SENTINEL,
 )
 from .shelltool import _CMD_FIELDS, is_shell_tool_name
 from .toolargs import PATH_KEYS as _PATH_KEYS, tool_path as _tool_path
@@ -171,19 +171,10 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         command = _command_of(fn.get("arguments"))
         # cria's own composed command → trust. ANCHORED, not a substring scan anywhere in the text: a
         # model-authored command that merely mentions either literal used to inherit cria's trust and
-        # skip the guard entirely. cria always writes the sentinel as the FIRST line (`# ⟦ctx:tool⟧<b64>`)
-        # and always opens the gate script with `cd <workspace> || exit 97` followed by the section
-        # echo — so requiring the marker in the first two lines authenticates the shape cria emits
-        # rather than any text containing the token.
+        # skip the guard entirely. cria always writes the sentinel as the FIRST line (`# ⟦ctx:tool⟧<b64>`).
+        # (The gate is not one of these: it is an operation cria issues itself, after this guard, under an id only its key makes.)
         head = "\n".join(command.lstrip().splitlines()[:2])
-        # BOTH cria command sentinels earn the exemption: `# ⟦ctx:tool⟧` leads a lowered synthetic
-        # tool call, `# ⟦ctx:gate⟧` (probegate.GATE_SENTINEL) leads the gate script AND its transport
-        # continuation. The continuation is a `python3 - <spool> <<HEREDOC` reader that NAMES the
-        # /tmp/.ctx-gate-* spool; recognising only the tool sentinel made cria refuse its own
-        # multi-page gate as "outside the working directory", so every large gate read UNKNOWN and the
-        # completion path could never verify (cart-billing-go, session 20260906T124743).
-        if (head.startswith("# " + _SENTINEL) or head.startswith("# " + GATE_SENTINEL)
-                or (head.startswith("cd ") and "___CTX_GATE_" in head)):
+        if head.startswith("# " + _SENTINEL):
             return None
         return dirguard.command_refusal(command, level, workspace, roots)
     return None

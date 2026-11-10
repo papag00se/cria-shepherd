@@ -5,7 +5,7 @@ import pytest
 
 from cria import probediscovery, probegate
 from cria.probediscovery import ProbeKind as K
-from gates_completion_helpers import gates_completion_view, cand, clean, deliver, new_plan, sec  # noqa: F401
+from gates_completion_helpers import P, S, gates_completion_view, cand, clean, deliver, new_plan, sec  # noqa: F401
 
 UNUSED = "a.py:1: 'os' imported but unused\na.py:2: 'sys' imported but unused"
 ECHO = "t.py:9: in test_totals\n    unused_variable = compute()  # unused variable\nE   AssertionError: 3 != 4"
@@ -39,7 +39,7 @@ def test_state_comes_from_the_measured_exit_code_and_only_the_checkers_own_lines
 
 def test_the_offline_rerun_is_an_instrument_reading_never_a_finding():
     """The same suite with the network removed is SUPPOSED to fail on a live suite; scraping it told the coder to fix passing tests."""
-    offline = f"{probegate.SECTION_PREFIX}offline{probegate.SECTION_SUFFIX}\nFAILED tests/t.py::test_live - ConnectionError\nEXIT:1\n"
+    offline = f"{P}offline{S}\nFAILED tests/t.py::test_live - ConnectionError\nEXIT:1\n"
     out = clean(sec(0, "3 passed in 0.1s") + offline, new_plan(candidates=[cand(["pytest", "-q"])]))
     assert "ConnectionError" not in out and "error-class" not in out and "exit 0" in out
 
@@ -55,10 +55,10 @@ def test_a_gate_that_lost_a_section_or_its_exit_is_a_gap_never_a_pass():
     """A truncated gate used to read clean: a selected check whose section never came back is `unran` and the gate partial;
     a header with no EXIT sentinel is 'did not finish'; no markers at all means nothing ran."""
     plan = new_plan(candidates=[cand(["pytest", "-q"]), cand(["pyflakes"])])
-    out = probegate.interpret_gate(deliver(plan, sec(0, "3 passed")), "")
+    out = probegate.interpret_gate(deliver(plan, sec(0, "3 passed")))
     assert out.ran and out.unran == ["pyflakes"] and probegate.gate_is_partial(out)
-    assert "did not finish" in clean(f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\nsome out\n")
-    assert not probegate.interpret_gate(deliver(new_plan(), "PROBE_EXIT=0 old-style"), "").ran
+    assert "did not finish" in clean(f"{P}probe-0{S}\nsome out\n")
+    assert not probegate.interpret_gate(deliver(new_plan(), "PROBE_EXIT=0 old-style")).ran
 
 
 def write(root, rel, text):

@@ -160,8 +160,6 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/writeops.py', 'WriteOps'),
             SourceOwner('cria/searchops.py', 'SearchOps'),
             SourceOwner('cria/answerops.py', 'AnswerOps'),
-            SourceOwner('cria/ownedfiles.py', 'ATOMIC_REPLACE_PROGRAM'),
-            SourceOwner('cria/ownedfiles.py', 'DIRECTORY_PROGRAM'),
             SourceOwner('cria/wsview.py', 'View.note_unknown_mutation'),
         ),
     ),
@@ -340,8 +338,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         ('A108', 'J58'),
         (
             SourceOwner('cria/probegate.py', 'sweep_litter'),
-            SourceOwner('cria/probegate.py', '_queue_spool_cleanup'),
-            SourceOwner('cria/gatecleanup.py', 'PROGRAM'),
+            SourceOwner('cria/gateops.py', 'GateOps'),
         ),
     ),
     AssistFamily(
@@ -522,12 +519,13 @@ _LINEAGE: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F41', 'Transport complete probe evidence',
         'Verification and guidance',
-        'One probe execution/transport lifecycle: budgets, spool hash/paging, polling/resume and legacy format admission. Unknown/incomplete is never clean.',
+        'One probe execution lifecycle (an operation of cria\'s own, cria/gateops.py): budgets, output files read back whole and hash-checked, polling/resume. Unknown/incomplete is never clean.',
         ('J38', 'J39', 'J40', 'J41', 'A125'),
         (
-            SourceOwner('cria/proberun.py', 'compose_probe_command'),
-            SourceOwner('cria/probegate.py', 'ingest_transport'),
-            SourceOwner('cria/probegate.py', 'fail_transport'),
+            SourceOwner('cria/gatescript.py', 'compose'),
+            SourceOwner('cria/gateops.py', 'GateOps'),
+            SourceOwner('cria/probegate.py', 'adopt'),
+            SourceOwner('cria/probegate.py', 'fail'),
             SourceOwner('cria/loop.py', 'guard_gate_transport'),
         ),
     ),

@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from survey_fixtures import ask_survey
+from gate_fixtures import gate_turn
 from cria import assistruntime, loop, toolwire, wsview
 
 
@@ -113,17 +114,16 @@ def test_with_the_assists_off_the_wire_view_gets_no_restored_block_and_no_ledger
     assert loop._plan_off_tail(msgs[:1], block, {"role": "user", "content": "F"}) == [msgs[0], block, {"role": "user", "content": "F"}]
 
 
-GATE_RESULT = f"{loop.probegate.SECTION_PREFIX}probe-0{loop.probegate.SECTION_SUFFIX}\nFAILED tests/test_a.py::t - assert 1 == 2\nEXIT:1\n"
+GATE_RESULT = "___CTX_GATE_probe-0___\nFAILED tests/test_a.py::t - assert 1 == 2\nEXIT:1\n"
 
 
 def test_the_judge_is_shown_the_task_and_the_session_without_the_harness_frame_or_the_gate_scaffolding():
-    gate_cmd = loop.probegate._gate_sentinel(["pytest -q"]) + "\ntrue\n"
     msgs = [{"role": "system", "content": "HARNESS FRAME"}, {"role": "user", "content": "Fix the cart total."},
-            call("g1", "exec_command", cmd=gate_cmd), {"role": "tool", "tool_call_id": "g1", "content": GATE_RESULT}]
+            *gate_turn("g1", GATE_RESULT, probes=("pytest -q",))]
     task, session = loop._periodic_judgment_evidence(loop.GuardState(), {"messages": msgs})
     assert task == "Fix the cart total." and "HARNESS FRAME" not in session
     assert session.startswith('user: Fix the cart total.\nassistant: exec_command({"cmd": "pytest -q"})\ntool: ')
-    assert "FAILED tests/test_a.py::t" in session and loop.probegate.GATE_SENTINEL not in session
+    assert "FAILED tests/test_a.py::t" in session and "⟦ctx:gate⟧" not in session and "___CTX_GATE_" not in session
 
 
 @pytest.mark.parametrize("level", [0, 3])

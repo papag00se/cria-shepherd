@@ -4,7 +4,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from cria import loop, probegate, proberun, prompts, repositorychecks as rcheck
+from cria import gateops, loop, probegate, proberun, prompts, repositorychecks as rcheck
+from gate_fixtures import FakeGateSeam
 from cria import probediscovery as pd
 from cria.probeparse import parse_output
 from loop_orientation_helpers import Log, local_workspace_view  # noqa: F401
@@ -12,25 +13,26 @@ from loop_orientation_helpers import Log, local_workspace_view  # noqa: F401
 SHELL = [{"type": "function", "function": {"name": "exec_command", "parameters": {
     "type": "object", "properties": {"cmd": {"type": "string"}, "yield_time_ms": {"type": "integer"}}}}}]
 
-def body(raw="", shell=True):
+def body(shell=True):
     return {"tools": SHELL if shell else [], "messages": [
         {"role": "user", "content": "Implement the complete task"},
-        {"role": "tool", "tool_call_id": "unrelated", "content": "unrelated output"},
-        {"role": "tool", "tool_call_id": "probe", "content": raw}]}
+        {"role": "tool", "tool_call_id": "unrelated", "content": "unrelated output"}]}
 
 def probes(plan=None):
     plan = plan or probegate.GatePlan("/workspace", surveyed_before=True, script="FAKE CHECK ONLY")
-    return rcheck.ProbeServices(lambda messages: "/workspace", lambda *a, **kw: copy.deepcopy(plan), lambda: "call_fixed")
+    return rcheck.ProbeServices(lambda messages: "/workspace", lambda *a, **kw: copy.deepcopy(plan), lambda: FAKE.seam)
 
-def evidence(state):
-    return rcheck.EvidenceServices(loop._read_tool_result, loop.read_gate, loop.gate_error_text,
+FAKE = FakeGateSeam()
+
+def evidence(state, result=None):
+    return rcheck.EvidenceServices(lambda st: result, loop.read_gate, loop.gate_error_text,
                                    lambda findings, messages, **kw: loop.track_gate_progress(state, findings, messages, **kw))
 
-def resume(raw, plan, **state_kw):
+def resume(result, plan, **state_kw):
     state = loop.GuardState(periodic_probe=True, awaiting_probe=True, probe_call_id="probe", gate_plan=plan, **state_kw)
     hooks = rcheck.ResumeHooks(reissue=rcheck.DEFINITION.reissue, replan=rcheck.DEFINITION.replan)
-    src = rcheck.Input(body(raw), Log(), 5)
-    return rcheck.resume(src, state, probes(), evidence(state), rcheck.JudgmentServices(), hooks), state, src
+    src = rcheck.Input(body(), Log(), 5)
+    return rcheck.resume(src, state, probes(), evidence(state, result), rcheck.JudgmentServices(), hooks), state, src
 
 @pytest.mark.parametrize("turns,shell,status", [(14, True, rcheck.Status.NOT_DUE), (15, True, rcheck.Status.PENDING),
                                                 (15, False, rcheck.Status.UNAVAILABLE)])
@@ -41,19 +43,18 @@ def test_the_check_in_is_due_on_the_fifteenth_coder_turn_and_only_with_a_shell(t
     assert state.coder_turns == (turns if status is rcheck.Status.NOT_DUE else 0)   # a due check-in restarts the clock, even unavailable
     assert (state.awaiting_probe, state.periodic_probe) == ((True, True) if status is rcheck.Status.PENDING else (False, False))
 
-@pytest.mark.parametrize("raw", ["permission denied", "cut"])
-def test_a_refused_or_cut_transport_is_unknown_never_a_green_run(raw):
-    """A red board stays red: neither a refusal nor a half-delivered page may be read as the repo's checks passing."""
-    plan = probegate.GatePlan("/workspace", surveyed_before=True, transport_required=True)
-    if raw == "cut":
-        raw = probegate._transport_marker(plan.transport_id) + "\ncut"
-    out, state, src = resume(raw, plan, last_gate_red=True)
+@pytest.mark.parametrize("why", ["permission denied", "cut"])
+def test_a_refused_or_cut_gate_is_unknown_never_a_green_run(why):
+    """A red board stays red: neither a refusal nor output that could not be read whole may be read as the repo's checks passing."""
+    plan = probegate.GatePlan("/workspace", surveyed_before=True, op="b" * 12)
+    result = gateops.GateResult(plan.op, "/workspace", "unknown", reason=why, refusal="Permission denied" if why == "permission denied" else "")
+    out, state, src = resume(result, plan, last_gate_red=True)
     assert out.outcome.transport_unknown and out.text == prompts.render("periodic_gate",
                                                                          truth=prompts.load("probe_transport_unknown"))
     assert state.last_gate_red and not state.gate_fresh and "gate.transport_unknown" in [k for k, _ in src.log.events]
-    out, state, src = resume("Permission denied: sandbox policy refused this command", probegate.GatePlan("/workspace", surveyed_before=True))
-    assert out.text is None and not state.last_gate_ran            # a sandbox refusal: harness words in the log, silence to the coder
-    assert any(k == "loop.gate_refused" and "Permission denied" in f["reason"] for k, f in src.log.events)
+    refused = gateops.GateResult("c" * 12, "/workspace", "complete", sections={})      # nothing ran to a result: harness words in the log, silence to the coder
+    out, state, src = resume(refused, probegate.GatePlan("/workspace", surveyed_before=True, op="c" * 12))
+    assert out.text is None and not state.last_gate_ran
 
 def test_a_passing_tally_regression_is_per_command_and_a_runner_without_a_tally_is_not_zero_tests():
     state = loop.GuardState()

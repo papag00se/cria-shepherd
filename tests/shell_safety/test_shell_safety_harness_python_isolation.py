@@ -7,7 +7,6 @@ import re
 import stat
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -36,23 +35,23 @@ def _environment(tmp_path, workspace):
     return {**os.environ, 'TMPDIR': str(scratch), 'PYTHONPATH': str(workspace), 'PYTHONUSERBASE': str(workspace)}
 
 
-def test_gate_and_its_detached_worker_do_not_import_workspace_modules(tmp_path):
+def test_the_gate_runs_no_workspace_code_in_crias_own_plumbing_and_uses_no_planted_python3_or_env(tmp_path):
+    """The gate is the `run` stub (a fixed text under `env -i PATH=<system dirs> python3 -I -S`) and the project's own checks as a shell text: in a
+    workspace that shadows the standard library, with PYTHONPATH and the user base pointing at it and a planted `python3` and `env` first on PATH,
+    cria's plumbing runs none of it. (A project's own check runs project code by design; this one is `true`.)"""
+    from survey_fixtures import gate_of_disk
+    from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
     workspace = _hostile_workspace(tmp_path)
-    environment = _environment(tmp_path, workspace)
-    plan = probegate.plan_gate(str(workspace))
-    result = subprocess.run(['bash', '-c', plan.script], cwd=workspace, env=environment,
-                            capture_output=True, timeout=120)
-    # the worker is detached: wait for it to finish its work (the spool's .done marker) before judging
-    deadline = time.monotonic() + 60
-    done = []
-    while time.monotonic() < deadline and not done:
-        done = list(pathlib.Path(environment['TMPDIR']).glob('.ctx-private-*/*.done'))
-        time.sleep(.2)
-    assert not (workspace / 'POISONED').exists(), result.stderr.decode(errors='replace')
-    # control: the legitimate worker ran to completion and the gate returned its output
-    assert done, result.stdout.decode(errors='replace')[-2000:]
-    assert result.returncode == 0, result.stderr.decode(errors='replace')
-    assert result.stdout.startswith(b'___CTX_GATE_TRANSPORT_') and b'___CTX_GATE_TRANSPORT_END_' in result.stdout
+    for tool, real in (('python3', os.path.realpath(sys.executable)), ('env', '/usr/bin/env')):
+        planted = workspace / 'bin' / tool
+        planted.write_text("#!/bin/sh\necho planted-%s >> POISONED\nexec %s \"$@\"\n" % (tool, real))
+        planted.chmod(planted.stat().st_mode | stat.S_IXUSR)
+    shim = pathlib.Path(harness_env(workspace)['PATH'].split(':')[0])
+    hostile = {'PYTHONPATH': str(workspace), 'PYTHONUSERBASE': str(workspace), 'PATH': f'{workspace / "bin"}:{shim}:/usr/bin:/bin'}
+    check = ProbeCandidate(ProbeKind.BuildCheck, ['true'], str(workspace), 100, 100, ProbeCost.Cheap, False, False, False, 'fixture')
+    result = gate_of_disk(workspace, [check], env=hostile)
+    assert result.complete and result.sections['probe-0'] == ('', 0) and result.failed == []          # the control: the legitimate gate ran to completion
+    assert not (workspace / 'POISONED').exists()
 
 
 def test_a_write_and_an_edit_run_no_workspace_code_and_use_no_planted_python3_or_env(tmp_path):

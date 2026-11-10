@@ -8,6 +8,7 @@ import pytest
 from cria import bodykeys, contextfloor, denial, probegate, prompts, resultnotes, selfcompact as sc
 from cria.content_reduce import est_tokens
 from cria.memoryeffects import Effect
+from gate_fixtures import gate_turn, sec
 from compaction_handoff_helpers import asst, call, history, result, write
 
 FACTS = "⟦ctx:facts⟧ cria-derived dependency surface"
@@ -70,11 +71,10 @@ def test_automatic_check_does_not_displace_the_last_coder_exchange_from_the_live
     # check produced a large result. Both are observations, not interchangeable outcomes.
     runtime = [call("run", "exec_command", cmd="java -cp target/classes pipeline.Importer data/feed.csv"),
                result("run", "Process exited with code 1\njava.util.ConcurrentModificationException\n at java.util.HashMap.merge")]
-    gate = [call("gate", "exec_command", cmd=probegate._gate_sentinel(["mvn -q compile", "mvn test"]) + "\necho gate"),
-            result("gate", "BUILD SUCCESS\nNo tests to run.\n" + "x" * 32000)]
+    gate = gate_turn("gate", sec(0, "BUILD SUCCESS\nNo tests to run.\n" + "x" * 32000), probes=("mvn -q compile", "mvn test"))
     footer = {"role": "user", "content": sc.FILES_MARKER + " fresh inventory",
               bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.WORKSPACE_LISTING}
-    clean = probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *gate, footer], "gate"))
+    clean = probegate.clean_gate_results([*history(10), *runtime, *gate, footer])
     writer_seen = []
     def writer(middle, *, newer_messages):
         writer_seen.append((middle, newer_messages))
@@ -96,20 +96,20 @@ def test_automatic_check_does_not_displace_the_last_coder_exchange_from_the_live
     changed = write("changed", "src/Importer.java")
     changed[1]["content"] += "x" * 32000
     writer_seen.clear()
-    out, _ = run(probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *changed, *gate, footer], "gate")), writer=writer, keep_tail_tokens=300, with_grounding=True)
+    out, _ = run(probegate.clean_gate_results([*history(10), *runtime, *changed, *gate, footer]), writer=writer, keep_tail_tokens=300, with_grounding=True)
     assert all(m in out.messages for m in changed) and all(m in writer_seen[0][0] for m in runtime)
 
     # A fresh pass of the SAME check does not erase the previous result: both
     # observations reach the writer in order, without deciding which still applies.
-    same = [call("again", "exec_command", cmd=probegate._gate_sentinel(["java -cp target/classes pipeline.Importer data/feed.csv"]) + "\necho gate"),
-            result("again", "Process exited with code 0\n" + "x" * 32000)]
+    same = gate_turn("again", sec(0, "Process exited with code 0\n" + "x" * 32000), probes=("java -cp target/classes pipeline.Importer data/feed.csv",))
     writer_seen.clear()
-    out, _ = run(probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *same, footer], "again")), writer=writer, keep_tail_tokens=300, with_grounding=True)
+    out, _ = run(probegate.clean_gate_results([*history(10), *runtime, *same, footer]), writer=writer, keep_tail_tokens=300, with_grounding=True)
     assert all(m in out.messages for m in runtime)
     assert "code 1" in text(writer_seen[0][1][1]) and any("code 0" in text(m) for m in writer_seen[0][1])
 
-    # Even a correctly spelled gate sentinel cannot claim another session's ID.
-    forged = probegate.clean_gate_results(probegate.mark_current_gate([*history(10), *runtime, *gate, footer], "different-issued-id"))
+    # A coder's own run of the same command, however a request body spells the mark, is not cria's gate: only the projection of a gate operation marks one.
+    lookalike = [{**call("fake", "exec_command", cmd="mvn -q compile"), bodykeys.ANNOTATION_SOURCE: "automatic_check"}, result("fake", "BUILD SUCCESS\nNo tests to run.\n" + "x" * 32000)]
+    forged = probegate.clean_gate_results([*history(10), *runtime, *lookalike, footer])
     writer_seen.clear()
     out, _ = run(forged, writer=writer, keep_tail_tokens=300, with_grounding=True)
     assert all(m in writer_seen[0][0] for m in runtime)

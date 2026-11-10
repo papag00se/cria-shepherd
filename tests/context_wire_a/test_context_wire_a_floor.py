@@ -13,7 +13,7 @@ import pytest
 from cria import bodykeys, contextfloor as cf, prompts
 from cria.content_reduce import content_reduce, digest_reduce, est_tokens
 from cria.loop import BRIEFING_OPEN
-from cria.probegate import SECTION_PREFIX, _gate_sentinel
+from gate_fixtures import gate_turn
 
 
 def u(text):
@@ -174,11 +174,13 @@ def test_anchors_and_the_steer_before_the_last_user_turn_survive_the_drop_in_ord
     onward', so the steer was a droppable middle turn folded into the past-tense digest. Anchors (briefing,
     gate output) are likewise the last thing sacrificed."""
     briefing = f"{BRIEFING_OPEN} prior work: built the resolver ⟦/ctx:briefing⟧"
-    gate = f"{SECTION_PREFIX}probe-0___\n" + "mcp_client.py:14: SyntaxError\n" * 30
+    gate_pair = gate_turn("g", "", probes=("pytest -q",))
+    gate_pair[1]["content"] = "mcp_client.py:14: SyntaxError\n" * 30          # the checker's result as the history carries it once it is rendered
+    gate = gate_pair[1]["content"]
     steer = "⟦ctx:steer⟧ The repo's automated checks pass; the task is not finished."
     facts = "⟦ctx:facts⟧ FILES YOU HAVE ALREADY READ " + "f" * 3000
     msgs = ([{"role": "system", "content": "sys"}, u("Fix the importer"), u(briefing),
-             a("", "g", "shell", json.dumps({"cmd": _gate_sentinel(["pytest -q"]) + "\ncd /ws && pytest -q"})), tool("g", gate)]
+             *gate_pair]
             + pairs(12, 900, "step") + [u(steer), u(facts)])
     out, _, rep = cf.fit(msgs, None, window=2200, reserve=300, pinned_task="Fix the importer")
     texts = [m.get("content") for m in out]

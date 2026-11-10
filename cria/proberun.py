@@ -24,13 +24,10 @@ model-facing renderings:
   nothing collected), timed out, or never launched. The critic needs it to
   tell "tests pass" apart from "tests never ran".
 
-WHO EXECUTES: cria owns no executors. The probe is expressed as one composed shell line
-(:func:`compose_probe_command`) that the harness's own shell tool runs, and the tool result that
-flows back is mapped onto the ProbeResult contract (:func:`interpret_probe_output`): coreutils
-``timeout`` stands in for the kill loop (exit 124), ``exit 127`` / "command not found" stands in for
-the spawn error, and a trailing ``EXIT:<n>`` sentinel recovers the exit code when the harness returns
-text only.  The gate transport spools the complete combined result on the harness and pages it back
-over later requests; this function therefore never selects or clips the checker's bytes.
+WHO EXECUTES: cria owns no executors. The probe is expressed as one shell line (composed by ``cria.gatescript``) that the harness runs, and
+what it measured (its output and its exit status, each in a file of the run's own directory that cria reads back whole) is mapped onto the
+ProbeResult contract (:func:`interpret_probe_output`): coreutils ``timeout`` stands in for the kill loop (exit 124), ``exit 127`` / "command
+not found" stands in for the spawn error. cria never selects or clips the checker's bytes.
 
 Timeout interplay (proxy path): the harness's own shell-tool timeout must
 exceed the probe timeout, or the harness kills the command before timeout(1)
@@ -88,18 +85,6 @@ LAUNCH_FAILURE_MARKER = "failed to launch"
 DIGEST_EXIT_NO_TESTS = _DIGEST["exit_no_tests"]
 DIGEST_MISSING_FMT = _DIGEST["missing_fmt"]
 
-# The offline re-run's non-model-visible raw parse fallback. Its tally lines travel whole above it;
-# this is not part of the completion gate's evidence transport.
-OFFLINE_TAIL_BYTES = 600
-# A RUNNER'S TALLY, BY SHAPE. `7 runs, 1 failures`, `12 passed, 1 failed`, `ok 3 - …`, `FAIL` — the
-# counts every runner prints, wherever they sit in the output. Used only to make sure the tally
-# survives a window; nothing is parsed here.
-_TALLY_LINE_RE = r"[0-9]+ (runs|tests|passed|failed|failures|errors|examples)|^(ok|not ok|FAIL|PASS)\b"
-
-
-# Trailing sentinel that smuggles the probe's exit code through a text-only
-# shell-tool result; scrape_exit() recovers it.
-PROBE_EXIT_SENTINEL = "EXIT:"
 # coreutils timeout(1) semantics standing in for upstream's kill loop.
 TIMEOUT_KILL_GRACE_S = 5     # timeout -k 5: SIGKILL follow-up for SIGTERM-ignoring tools
 TIMEOUT_EXIT_CODE = 124      # timeout(1) fired -> upstream's timed_out=true branch
@@ -712,178 +697,6 @@ def display_command(command) -> str:
     return shlex.join(command)
 
 
-def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
-    """The uncut probe invocation the harness writes into the gate spool.
-
-    The harness still supplies the execution mechanics: working directory, a hard
-    timeout, closed stdin, merged stdout/stderr, and the exit sentinel consumed by
-    :func:`scrape_exit`. Output is not held in a shell variable, filtered, or
-    clipped. :mod:`cria.probegate` redirects the complete combined gate stream to
-    a harness-side temporary file and transports it back losslessly over as many
-    request/response turns as are required.
-    """
-    if not c.command:
-        raise ValueError(EMPTY_COMMAND_SUMMARY)
-    argv = " ".join(shlex.quote(t) for t in c.command)
-    if c.private_python_cache:
-        argv = 'env PYTHONPYCACHEPREFIX="${CTX_PROBE_AUX:?}/pycache" ' + argv
-    return (
-        f"cd {shlex.quote(str(c.working_dir))} && "
-        f"timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} </dev/null 2>&1; "
-        f"__ctx_ec=$?; printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__ctx_ec\""
-    )
-# The network block for the OFFLINE re-run: an empty KERNEL network namespace, not a language shim.
-#
-# `unshare -rn` puts the test process in a namespace with no route to anywhere, so the block lands at
-# the syscall for EVERY runtime — measured against a static Go binary, which issues syscalls directly
-# and therefore walks straight through LD_PRELOAD, sitecustomize, and every other interpreter-level
-# patch. The earlier CPython-only sitecustomize was replaced by it: strictly weaker (blind to a test
-# that shells out to curl, to a C extension, to connect_ex, to UDP) and strictly narrower (silent on
-# `go test` and `cargo test`, which are 3 of the suite's 5 task families).
-#
-# Loopback is brought back UP inside the namespace. A test that stands up its own mock server on
-# 127.0.0.1 must still pass offline — that is precisely the shape this check exists to SEE. Only the
-# outside world is gone. (The sitecustomize version raised on loopback too, a latent false-red.)
-# THE SECOND EXECUTION MAY NOT TOUCH THE WORKSPACE. The leg re-runs the coder's own suite in the
-# coder's own directory, and a suite with side effects then has them twice: measured on
-# `orders-api-py x nemotron-elastic`, the model's tests append to one repo-relative `orders.db` that
-# nothing deletes, and the next gate read `assert 22.5 < 0.01` where 30.0 is FOUR rows of 3 x 2.50 —
-# one from the coder's run and three from cria's. The coder never saw the other three and spent the
-# tail of the run theorising about pytest parallelism. `sweep_litter` cannot help: it removes files
-# the probes CREATED, and this is a file that already existed being written to again.
-#
-# ATTEMPTED AND ABANDONED (do not re-try): running the leg against a COPY of the workspace. It
-# produced 7.0 GB of copied trees, because `cp -a` is not cheap and `working_dir` is not always the
-# workspace — one leaked mirror held 14,262 directories of `/tmp`.
-#
-# ALSO REJECTED: running the offline leg FIRST and skipping the online one when it passes. That
-# sounds like a removal and is a FALSE-GREEN generator — this module's own `_offline_fact` records
-# the hole: a live test can SKIP rather than fail when the service is gone, so an offline pass does
-# not imply an online pass, and the authoritative run has to be the unblocked one.
-#
-# What is bounded instead is what the second run CAN DO. The namespace already exists; adding a
-# mount namespace and re-binding the working directory onto itself read-only costs one syscall pair
-# and makes the whole class impossible. Reads are untouched, /tmp is untouched, and a suite that
-# genuinely writes inside its own tree now FAILS offline — which `_offline_fact` reads as "say
-# nothing" (it speaks only when both sides are green). Silence, never a manufactured red.
-#
-# MEASURED against the four real seeds that have a runnable suite (orders-api-py, feed-pipeline-py,
-# cart-billing-go, shipping-rates-rb): every one returns the SAME exit code read-only as writable.
-#
-# The capability probe performs the very same bind, so a kernel or sandbox that refuses it skips the
-# leg entirely and prints nothing. There is no writable fallback: an instrument cria cannot set up
-# is an instrument it does not read (#4, #11b).
-def _netns_readonly(working_dir) -> str:
-    ws = shlex.quote(str(working_dir))
-    return f"mount --bind {ws} {ws} && mount -o remount,bind,ro {ws}"
-
-
-def _netns_capable(working_dir) -> str:
-    return f"unshare -rnm -- sh -c {shlex.quote(_netns_readonly(working_dir))}"
-
-
-_NETNS_ENTER = "unshare -rnm -- sh -c"
-_NETNS_LOOPBACK_UP = "ip link set lo up 2>/dev/null; exec "
-
-# The shell variable the composed script parks the TEST probe's exit code in, so the offline leg can
-# ask whether the online run passed. ONE owner: `probegate` writes it, `offline_probe_command` reads
-# it, and `probegate._strip_gate_plumbing` drops every line that mentions it — three places that
-# must agree, and did not while it was a bare literal in each (#23).
-TEST_EC_VAR = "__ctx_test_ec"
-
-
-def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
-    """The same test command, re-run with the network blocked — or "" when cria cannot block it.
-
-    A test suite that mocks the thing it is testing passes whether or not the network exists, and
-    that is the shape behind the false greens: mellum2 1786047222 shipped five tests that patch
-    `requests.get` and assert the fixture the test itself supplied ("addr1x456..."), the gate said
-    "no error-class problems", and cria's satisfaction judge — which had read all three files and
-    could not run anything — passed a run verify scores 2/4.
-
-    Running the suite twice settles it deterministically. This is the same discriminator verify.py
-    already uses ("passed with network, fails without — provably live"). It produces a FACT for the
-    judge, never a verdict: an offline pass is not a defect on its own, because plenty of tasks have
-    no network in them. Whether it matters for THIS task is the judge's call (principle 8).
-
-    LANGUAGE-AGNOSTIC — the block is a kernel namespace (see _netns_capable), so any Test probe
-    qualifies. Where the kernel refuses the namespace (no unprivileged user namespaces, no unshare,
-    no bind mount) the whole leg is skipped and prints NOTHING: an absent section is silence, and
-    silence is the only honest output for a block cria did not actually establish.
-
-    THE WORKSPACE IS READ-ONLY INSIDE IT — see the note above _netns_readonly. cria's extra
-    execution of the coder's suite cannot write into the coder's tree, so it cannot manufacture the
-    failure the next check reports."""
-    if c.kind is not probediscovery.ProbeKind.Test or not c.command:
-        return ""
-    argv = " ".join(shlex.quote(t) for t in c.command)
-    # RE-ENTER THE DIRECTORY AFTER THE BIND, and this is not decoration. The outer script has
-    # already `cd`-ed here, and a process's cwd is a resolved dentry: mounting over the path does
-    # not move it, so the suite kept writing THROUGH the old cwd to the underlying directory and the
-    # read-only mount changed nothing. Caught by the fixture that appends to a repo-relative file.
-    inner = (f"{_netns_readonly(c.working_dir)} || exit 98; "
-             f"cd {shlex.quote(str(c.working_dir))} || exit 98; " + _NETNS_LOOPBACK_UP + argv)
-    return (
-        f"cd {shlex.quote(str(c.working_dir))} && "
-        # ONLY WHEN THE ONLINE RUN PASSED. The leg's single product is the COMPARISON — "these same
-        # tests also pass with the network gone". After a red online run there is nothing to compare:
-        # both runs fail, the sentence cannot be written, and all that is left is a second execution
-        # of the suite in the live workspace with its side effects.
-        #
-        # Measured, gemma4/python 0061-0077. The coder's own run: "8 passed in 2.08s", exit 0. The
-        # next gate reported a higher row count, because the tests had been run twice against the
-        # same database. The coder's theory: "The test `test_get_customer_orders` might be running
-        # multiple times in a loop within pytest (e.g., `pytest -n auto` for parallel execution)."
-        # It spent the rest of the run chasing a duplication cria had created. ~25 coder calls.
-        #
-        # A removal, and it uses a fact the script already holds (probegate saves the test probe's
-        # exit code into __ctx_test_ec). Unset means the test probe never ran, which is also a
-        # reason not to run it twice.
-        f'if [ "${{__ctx_test_ec:-1}}" -eq 0 ] && {_netns_capable(c.working_dir)} >/dev/null 2>&1; then '
-        f"__ctx_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
-        f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __ctx_ec=$?; "
-        # THE TALLY LINE BY ITS SHAPE, NOT BY BEING LAST. This was a bare `tail -c 600` — no marker,
-        # no named constant, and it is ALL the offline evidence there is: the section is skipped for
-        # findings entirely, so 600 bytes is the whole basis of the sentence cria then tells the
-        # model about whether the tests passed with the network gone. A runner that prints its tally
-        # and then anything else (a coverage table, a teardown, a warnings summary) lost the tally,
-        # and `_offline_fact` fell silently to its weaker wording or returned "" (#12).
-        # THE TALLY LINES GO WHOLE. They are what `_offline_fact` parses, and they are the entire
-        # basis of a sentence 3,218 model-facing prompts have carried — "the same tests pass with
-        # the network switched off … nothing in them reaches a service on the internet". `grep`
-        # already bounds this leg to lines that look like a runner's summary; putting a byte tail
-        # after it could only ever remove one of the few lines that matter, which is the failure the
-        # comment above records. Nothing here is shown to a model, so this is not rule 5 — it is 5b:
-        # a claim cria states as fact must not rest on bytes cria threw away.
-        f"printf '%s' \"$__ctx_out\" | grep -E {shlex.quote(_TALLY_LINE_RE)}; "
-        # The raw tail behind it is a PARSE fallback for a runner whose summary the pattern missed,
-        # never something a model reads. It stays bounded.
-        f"printf '%s' \"$__ctx_out\" | tail -c {OFFLINE_TAIL_BYTES}; "
-        f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__ctx_ec\"; "
-        f"fi"
-    )
-
-
-def scrape_exit(raw: str) -> tuple[str, Optional[int]]:
-    """Recover the EXIT:<n> sentinel from a text-only capture.
-
-    Scans bottom-up (probe output could itself mention "EXIT:"); returns the
-    output with the sentinel line removed plus the parsed code, or
-    ``(raw, None)`` when no sentinel survived (e.g. the ``cd`` failed and ``&&``
-    short-circuited before anything ran).
-    """
-    lines = raw.splitlines()
-    for i in range(len(lines) - 1, -1, -1):
-        stripped = lines[i].strip()
-        if stripped.startswith(PROBE_EXIT_SENTINEL):
-            try:
-                code = int(stripped[len(PROBE_EXIT_SENTINEL):].strip())
-            except ValueError:
-                continue
-            return "\n".join(lines[:i] + lines[i + 1:]), code
-    return raw, None
-
-
 def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
                            exit_code: Optional[int], timeout_s: float) -> ProbeResult:
     """Map a harness shell-tool result onto the upstream ProbeResult contract.
@@ -900,8 +713,6 @@ def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,
     if not c.command:
         return err_result(joined, EMPTY_COMMAND_SUMMARY)
     output = raw_output
-    if exit_code is None:
-        output, exit_code = scrape_exit(raw_output)
     read_line = source_line_reader(str(c.working_dir))
     if exit_code == TIMEOUT_EXIT_CODE:
         result = parse_output(joined, family_of(c.command), None, output, "",

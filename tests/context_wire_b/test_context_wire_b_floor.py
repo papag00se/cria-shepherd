@@ -3,11 +3,11 @@ import json
 from copy import deepcopy
 
 from context_wire_b_helpers import rows
-from cria import bodykeys, contextfloor, probegate
+from cria import bodykeys, contextfloor
+from gate_fixtures import gate_turn
 
 TASK = "Fix the rounding bug causing totals to be one cent low. Stop using float64 for money."
-GATE_PAIR = [{"role": "assistant", "content": "", "tool_calls": [{"id": "gate", "function": {"name": "shell", "arguments": json.dumps({"cmd": probegate._gate_sentinel(["pytest -q"]) + "\npytest -q"})}}]},   # cria's gate call: its stamp leads the command
-             {"role": "tool", "tool_call_id": "gate", "content": "___CTX_GATE_ exact checker result"}]
+GATE_PAIR = gate_turn("gate", "", probes=("pytest -q",))      # cria's gate: the call and result its operation's projection leaves, marked in process
 u = lambda text: {"role": "user", "content": text}
 a = lambda text: {"role": "assistant", "content": text}
 tool = lambda name, text="x": {"type": "function", "function": {"name": name, "description": text, "parameters": {"type": "object", "properties": {"choice": {"type": "string", "description": text}}}}}

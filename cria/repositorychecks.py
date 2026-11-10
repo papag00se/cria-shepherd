@@ -4,7 +4,7 @@ The optional policy owns admission, cadence, pending correlation, bounded survey
 rewrite recovery and result settlement. Probe planning/transport/parsing, shell
 schemas, raw result reading and shared progress measurement are foundations.
 EvidenceServices.read/error/raw/progress bind the ACTUAL existing read_gate,
-gate_error_text, _read_tool_result and track_gate_progress implementations (or
+gate_error_text, the gate's result (asked of cria's own ledger) and track_gate_progress implementations (or
 those same functions relocated by integration), not old guard policy callbacks.
 Runner and module judgments are separately selected authorities, in that order.
 Foundation events keep their original untagged identity; only policy events claim
@@ -13,13 +13,11 @@ existing session fields; do not keep a second check-state mirror alongside it.
 """
 from dataclasses import dataclass
 from enum import Enum
-import json
 from typing import Callable, Protocol
-import uuid
 
-from . import participation, probegate, proberun, prompts
+from . import gateseam, participation, probegate, proberun, prompts
 from .assistcontract import Policy, Reference
-from .shelltool import find_shell_tool, shell_args, with_time_budget, tool_declares_time_budget
+from .shelltool import find_shell_tool, tool_declares_time_budget
 
 GATE_EVERY_CODER_TURNS = 15
 MAX_PROBE_REISSUES = 2
@@ -42,7 +40,6 @@ class State(Protocol):
     probe_reissues: int
     probe_poll_reissues: int
     gate_plan: probegate.GatePlan | None
-    gate_helpers_ready: bool
     gate_replan_required: bool
     gate_fresh: bool
     last_gate_ran: bool
@@ -110,20 +107,21 @@ class Input:
 
 class PlanBuilder(Protocol):
     def __call__(self, workspace: str, session: str, log: Log, *,
-                 poll_wait_s: float, helpers_ready: bool) -> probegate.GatePlan: ...
+                 poll_wait_s: float) -> probegate.GatePlan: ...
 
 
 @dataclass(frozen=True)
 class ProbeServices:
+    """Planning is policy (here); running a plan is an operation of cria's engine, reached through ``gateseam`` (nothing bound: no gate can be issued)."""
     extract_cwd: Callable[[list[dict]], str | None]
     plan: PlanBuilder = probegate.plan_gate
-    call_id: Callable[[], str] = lambda: "call_" + uuid.uuid4().hex[:16]
+    seam: Callable[[], gateseam.Seam | None] = gateseam.current
 
 
 @dataclass(frozen=True)
 class EvidenceServices:
-    raw: Callable[[list[dict], str], str]
-    read: Callable[[probegate.GatePlan | None, str, Log], probegate.GateOutcome]
+    result: Callable[[State], "probegate.GateResult | None"]
+    read: Callable[[probegate.GatePlan | None, "probegate.GateResult | None", Log], probegate.GateOutcome]
     error: Callable[[probegate.GateOutcome], str]
     # Shared factual progress/write bookkeeping, not F44's author/admit/vet policy.
     progress: Callable[..., None]   # (finding, messages, *, count_stall=True)
@@ -139,9 +137,8 @@ def _event(source: Input, event: str, **fields) -> None:
     source.log.emit(event, assist_id=DEFINITION.policy.id, family_id=DEFINITION.policy.family_id, **fields)
 
 
-def _shell_call(source: Input, services: ProbeServices, tool: dict, command: str) -> dict:
-    return {"id": services.call_id(), "type": "function", "function": {
-        "name": tool["name"], "arguments": json.dumps(with_time_budget(tool, shell_args(tool, command)))}}
+def _session(state: State) -> str:
+    return getattr(state, "web_session", "") or ""
 
 
 def compose(source: Input, state: State, services: ProbeServices) -> dict | None:
@@ -158,15 +155,20 @@ def compose(source: Input, state: State, services: ProbeServices) -> dict | None
         root = ""
     wait = probegate.GATE_POLL_WAIT_LONG_S if tool_declares_time_budget(tool) else probegate.GATE_POLL_WAIT_S
     try:
-        plan = services.plan(root, getattr(state, "web_session", "") or "", source.log,
-                             poll_wait_s=wait, helpers_ready=state.gate_helpers_ready)
+        plan = services.plan(root, _session(state), source.log, poll_wait_s=wait)
     except OSError as error:
         source.log.emit("loop.gate_error", level="warn", error=str(error))
         state.gate_plan = None
         return None
+    seam = services.seam()
+    call = seam.issue(_session(state), tool, plan) if seam is not None else None
+    if call is None:
+        source.log.emit("loop.gate_error", level="warn", error="the gate could not be issued")
+        state.gate_plan = None
+        return None
     state.gate_plan = plan
     state.gate_replan_required = False
-    return _shell_call(source, services, tool, plan.script)
+    return call
 
 
 def admit(source: Input, state: State, services: ProbeServices) -> Result:
@@ -187,7 +189,7 @@ def admit(source: Input, state: State, services: ProbeServices) -> Result:
     if periodic:
         state.awaiting_probe = state.periodic_probe = True
         state.periodic_replan_done = False
-        state.probe_call_id = call["id"]
+        state.probe_call_id = probegate.gate_ref(call)
         _event(source, "loop.periodic_gate", steer="periodic-gate", plan_off=source.workspace_root is None)
     return Result(Status.PENDING, call, note="periodic check-in — running the repo's checks" if periodic else "",
                   pending_kind=PendingKind.CHECK)
@@ -214,59 +216,57 @@ def replan(source: Input, state: State, services: ProbeServices, *, periodic: bo
     if periodic:
         if call is not None:
             state.periodic_probe = state.awaiting_probe = True
-            state.probe_call_id = call["id"]
+            state.probe_call_id = probegate.gate_ref(call)
         _event(source, "loop.periodic_replan_after_survey", available=call is not None)
     return Result(Status.PENDING if call else Status.UNAVAILABLE, call,
                   pending_kind=PendingKind.SURVEY_REPLAN if call else None)
 
 
+def _resume(source: Input, state: State, services: ProbeServices) -> dict | None:
+    """The harness call that carries an unfinished gate on (one more wait for the same run), or None."""
+    plan, seam = state.gate_plan, services.seam()
+    if plan is None or not plan.op or seam is None or find_shell_tool(source.body.get("tools")) is None:
+        return None
+    calls = seam.resume(_session(state), plan.op)
+    return calls[0] if calls else None
+
+
 def transport(source: Input, state: State, services: ProbeServices, evidence: EvidenceServices,
               *, call_id: str = "") -> Result:
-    """Required checked-page transport support, usable independently of selection.
-
-    Existing probegate owns bytes, digest, deadline, refusal/UNKNOWN and cleanup.
-    Never interpret a still-pending page, and never manufacture a clean result.
+    """Adopt the gate's result once it is done. cria's engine answers every poll and every page of the checks itself, so the loop is asked about a
+    gate that is NOT done only when the harness's own compaction took the calls out of the history: the run is where it was, and one more wait asks
+    for it. Never interpret a gate that is not done, and never manufacture a clean result.
     """
     plan = state.gate_plan
-    if plan is None or not plan.transport_required:
+    if plan is None or not plan.op:
         return Result(Status.NOT_DUE)
-    raw = evidence.raw(source.body.get("messages", []), call_id or state.probe_call_id)
-    status = probegate.ingest_transport(plan, raw)
-    state.gate_helpers_ready = plan.helpers_ready
-    if status not in ("pending", "running"):
+    status = probegate.adopt(plan, evidence.result(state))
+    if status != "pending":
         if status == "unknown":
-            source.log.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
-                            received=len(plan.transport_data), total=plan.transport_total)
+            source.log.emit("gate.transport_unknown", level="warn", reason=plan.error)
         return Result(Status.OBSERVED)
-    command = probegate.continue_transport_command(plan)
-    tool = find_shell_tool(source.body.get("tools"))
-    if not command or tool is None:
-        probegate.fail_transport(plan, "the harness no longer offers a shell for the next page")
-        source.log.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
-                        received=len(plan.transport_data), total=plan.transport_total)
+    call = _resume(source, state, services)
+    if call is None:
+        probegate.fail(plan, "the harness no longer offers a shell for the next poll")
+        source.log.emit("gate.transport_unknown", level="warn", reason=plan.error)
         return Result(Status.OBSERVED)
-    call = _shell_call(source, services, tool, command)
-    state.probe_call_id = call["id"]
-    source.log.emit("gate.transport_running" if status == "running" else "gate.transport_page",
-                    received=len(plan.transport_data), total=plan.transport_total)
+    state.probe_call_id = probegate.gate_ref(call)
+    source.log.emit("gate.transport_running")
     return Result(Status.PENDING, call, pending_kind=PendingKind.PAGE)
 
 
 def poll_after_rewrite(source: Input, state: State, services: ProbeServices) -> dict | None:
     plan = state.gate_plan
-    if (plan is None or not plan.transport_required or plan.transport_complete or plan.transport_error
+    if (plan is None or not plan.op or plan.result is not None or plan.error
             or state.probe_poll_reissues >= MAX_PROBE_REISSUES):
         return None
-    command = probegate.continue_transport_command(plan)
-    tool = find_shell_tool(source.body.get("tools"))
-    if not command or tool is None:
+    call = _resume(source, state, services)
+    if call is None:
         return None
-    call = _shell_call(source, services, tool, command)
-    state.probe_call_id = call["id"]
+    state.probe_call_id = probegate.gate_ref(call)
     state.awaiting_probe = True
     state.probe_poll_reissues += 1
-    _event(source, "gate.transport_poll_after_rewrite", attempt=state.probe_poll_reissues,
-           received=len(plan.transport_data), total=plan.transport_total)
+    _event(source, "gate.transport_poll_after_rewrite", attempt=state.probe_poll_reissues)
     return call
 
 
@@ -281,7 +281,7 @@ def reissue(source: Input, state: State, services: ProbeServices, evidence: Evid
         return Result(Status.NOT_DUE)
     if not (state.done_probe or state.awaiting_probe):
         return Result(Status.NOT_DUE)
-    if evidence.raw(source.body.get("messages", []), state.probe_call_id).strip():
+    if evidence.result(state) is not None:
         if source.driver is Driver.TASK:
             state.probe_reissues = state.probe_poll_reissues = 0
         return Result(Status.OBSERVED)
@@ -296,7 +296,7 @@ def reissue(source: Input, state: State, services: ProbeServices, evidence: Evid
     call = compose(source, state, services)
     if call is None:
         return Result(Status.UNAVAILABLE)
-    state.probe_call_id = call["id"]
+    state.probe_call_id = probegate.gate_ref(call)
     state.probe_reissues += 1
     fields = {"step": source.step} if source.driver is Driver.STEP else {"plan_off": source.workspace_root is None}
     if source.driver is Driver.STEP:
@@ -314,7 +314,7 @@ def _count_unknown(state: State, outcome: probegate.GateOutcome) -> None:
         state.gate_unknown_streak, state.gate_unknown_sig = 0, ""
         return
     plan = state.gate_plan
-    token = plan.transport_id if plan is not None else ""
+    token = plan.op if plan is not None else ""
     sig = outcome.transport_reported.replace(token, "") if token else outcome.transport_reported
     state.gate_unknown_streak = state.gate_unknown_streak + 1 if sig == state.gate_unknown_sig else 1
     state.gate_unknown_sig = sig
@@ -381,8 +381,7 @@ def periodic_result(source: Input, state: State, evidence: EvidenceServices,
     if not state.periodic_probe:
         return Result(Status.NOT_DUE)
     state.periodic_probe = state.awaiting_probe = False
-    raw = evidence.raw(source.body.get("messages", []), state.probe_call_id)
-    outcome = evidence.read(state.gate_plan, raw, source.log)
+    outcome = evidence.read(state.gate_plan, evidence.result(state), source.log)
     error = evidence.error(outcome)
     _event(source, "loop.periodic_gate_result", ran=outcome.ran, spoke=bool(error))
     fresh = state.gate_fresh
@@ -407,8 +406,7 @@ def periodic_result(source: Input, state: State, evidence: EvidenceServices,
 
 def completion_result(source: Input, state: State, evidence: EvidenceServices) -> Result:
     """Objective checks only. None text means no checker veto, NOT task approval."""
-    raw = evidence.raw(source.body.get("messages", []), state.probe_call_id)
-    outcome = evidence.read(state.gate_plan, raw, source.log)
+    outcome = evidence.read(state.gate_plan, evidence.result(state), source.log)
     findings = evidence.error(outcome)
     record(source, state, outcome, findings, evidence)
     if outcome.transport_unknown:
@@ -502,9 +500,9 @@ DEFINITION = Definition(Policy(
     "repository-check-lifecycle", "repository-checks", 4, family_id="F40", triggers=(("periodic", 5),),
     prompts=("periodic_gate", "probe_transport_unknown", "probe_transport_reported", "tests_regressed",
              "checks_completed", "checks_completed_section", "checks_no_output",
-             "checks_artifacts_removed", "checks_cleanup_failed", "checks_cleanup_unknown", "checks_original_scope"),
-    state="existing task/session probe id/plan, helper readiness, periodic flags/cadence/replan/reissue counters, check mirror and per-command passing highs; fresh session on a new task",
-    services=("probe-plan", "shell-schema", "raw-tool-result", "gate-reader", "checker-findings", "shared-progress", "selected-runner-judgment", "selected-module-judgment"),
+             "checks_artifacts_removed", "checks_cleanup_failed", "checks_original_scope"),
+    state="existing task/session probe id/plan, periodic flags/cadence/replan/reissue counters, check mirror and per-command passing highs; fresh session on a new task",
+    services=("probe-plan", "shell-schema", "gate-result", "gate-reader", "checker-findings", "shared-progress", "selected-runner-judgment", "selected-module-judgment"),
     hooks=tuple(Reference("cria/loop.py", name) for name in (
         "guard_gate_op", "guard_gate_replan_after_survey", "guard_periodic_replan_after_survey", "guard_gate_transport",
         "guard_periodic_gate", "guard_periodic_result", "guard_gate_verdict", "record_gate_state", "guard_probe_reissue",

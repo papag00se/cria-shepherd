@@ -7,7 +7,7 @@ import pytest
 
 from survey_fixtures import ask_survey, survey_of_disk
 from cria import probegate, wsview
-from gates_completion_helpers import gates_completion_view, run_in_harness  # noqa: F401
+from gates_completion_helpers import gates_completion_view, run_plan  # noqa: F401
 
 SESS = "blind-plan"
 
@@ -49,11 +49,7 @@ def test_a_gate_planned_after_a_mutating_command_is_replanned_once_its_survey_de
         assert plan.surveyed_before and _tests(plan) == [] and manifest in plan.unanswered_reads
         assert wsview.apply_survey(view, ask_survey(root, SESS))      # cria's own survey, asked for what the plan read blind, delivers the manifest
         subprocess.run(["git", "init", "-q", root], check=True)
-        raw = run_in_harness(plan.script, tmp_path, "sh")
-        outcome = probegate.interpret_gate(plan, raw)
-        while outcome.transport_pending:
-            raw = run_in_harness(probegate.continue_transport_command(plan), tmp_path)
-            outcome = probegate.interpret_gate(plan, raw)
+        outcome = probegate.interpret_gate(plan, run_plan(plan, tmp_path))
         assert outcome.ran and outcome.replan_after_survey
         assert _tests(probegate.plan_gate(root, SESS)) == [expected]
     finally:
@@ -76,11 +72,7 @@ def test_gate_refreshes_discovery_input_after_a_check_changes_it(tmp_path):
         assert view.read(root + "/package.json") is not None
         plan = probegate.plan_gate(root, session)
         assert _tests(plan) == ["npm run test"]
-        raw = run_in_harness(plan.script, tmp_path, "sh")
-        outcome = probegate.interpret_gate(plan, raw)
-        while outcome.transport_pending:
-            raw = run_in_harness(probegate.continue_transport_command(plan), tmp_path)
-            outcome = probegate.interpret_gate(plan, raw)
+        outcome = probegate.interpret_gate(plan, run_plan(plan, tmp_path))
         assert outcome.ran
         assert wsview.fresh_demands(session)                  # the gate wants a survey once the checks have run, and the plan queued the manifest again
         assert wsview.apply_survey(view, ask_survey(root, session))

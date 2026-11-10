@@ -75,6 +75,8 @@ def plan_off_loop(coder, *, store=None, reasoner=None, **ctx):
     ops = Ops()
     ctx.setdefault("issue_inventory", ops.issue_inventory)
     ctx.setdefault("inventory_result", ops.inventory_of)
+    from cria import gateseam, probegate
+    ctx.setdefault("gate_seam", gateseam.Seam(issue=lambda session, tool, plan: probegate.issue(ops, session, tool, plan), result=ops.gate_of, resume=ops.resume_gate))
     return Loop(LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner or coder,
                             reasoner_buffered_chat=reasoner or coder, runs_dir="", **ctx),
                 store or LoopStore())

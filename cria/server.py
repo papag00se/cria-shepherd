@@ -34,7 +34,7 @@ from .imageprotocol import ImageUnavailable
 from . import bodykeys, callauth, repohealth, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
-from . import admission, classify, loweringoptions
+from . import admission, classify, gateseam, loweringoptions
 from .classify import JUDGE_MAX_TOKENS, Classifier
 from . import content_reduce
 from .content_reduce import est_tokens
@@ -1061,6 +1061,9 @@ class CriaServer(ThreadingHTTPServer):
                     issue_inventory=lambda session, tool, root: self.ops.issue_inventory(session, tool, root),
                     inventory_result=lambda session, op: self.ops.inventory_of(session, op),
                     take_released=lambda session: self.ops.release(session),
+                    gate_seam=gateseam.Seam(issue=lambda session, tool, plan: probegate.issue(self.ops, session, tool, plan),
+                                            result=lambda session, op: self.ops.gate_of(session, op),
+                                            resume=lambda session, op: self.ops.resume_gate(session, op)),
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,

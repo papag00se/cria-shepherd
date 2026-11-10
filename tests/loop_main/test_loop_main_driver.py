@@ -5,7 +5,6 @@ import pytest
 
 from cria.classify import Classification
 from cria.loop import LoopStore, completion_to_sse
-from cria.probegate import GATE_SENTINEL
 
 from loop_main_helpers import Chat, Rlog, acting, body, completion, drive_after_initial_inventory, plan_off_loop, synthetic, loop_main_local_view  # noqa: F401
 
@@ -27,8 +26,9 @@ def test_a_prose_empty_or_undecodable_coder_reply_never_ends_the_harness_turn_wh
     rlog = Rlog()
     driver = plan_off_loop(lambda b, r: coder_reply, workspace_root=str(tmp_path))
     out = drive_after_initial_inventory(driver, body(), "sid:a", CODING, rlog)
-    assert GATE_SENTINEL in " ".join(args_of(out)["command"])
-    assert "loop.completion_probe" in rlog.kinds()
+    # cria's own gate ran (an operation of its own: the checks started through the run primitive, answered by the engine without the model) and its
+    # result was read before the turn was allowed to end
+    assert rlog.kinds().index("loop.completion_probe") < rlog.kinds().index("loop.gate") and "tool_calls" not in out["choices"][0]["message"]
 
 
 def test_with_no_shell_and_no_reasoner_nothing_can_verify_so_the_done_claim_is_forwarded_whole():

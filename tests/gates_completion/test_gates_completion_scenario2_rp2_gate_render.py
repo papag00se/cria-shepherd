@@ -49,7 +49,7 @@ def test_staleness_is_stated_for_findings_and_a_clean_run_says_what_it_covered(t
     p = new_plan(candidates=cands, untested=["No test files were found."], ran_in="sub")
     out = clean(sec(0, "ok") + sec(1, "fine") + sec(2, "compiled"), p)
     assert "mypy — exit 0\nok" in out and "cover syntax, lint and build only — no test command was composed" in out
-    assert "had to be run inside `sub`" in out and out.rstrip().endswith("No test files were found.")
+    assert "had to be run inside `sub`" in out and out.split("\nThese checks use the original workspace")[0].rstrip().endswith("No test files were found.")
 
 
 def test_a_diagnostic_is_followed_by_counted_facts_and_the_flagged_line_read_from_the_workspace(tmp_path):

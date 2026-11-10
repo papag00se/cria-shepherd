@@ -11,7 +11,7 @@ import pytest
 
 from cria import loop, probegate, proberun, repositorychecks as rc
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
-from gates_completion_helpers import Log, gates_completion_view, run_in_harness  # noqa: F401
+from gates_completion_helpers import GateRig, Log, gates_completion_view  # noqa: F401
 
 TOOLS = [{"type": "function", "function": {"name": "exec_command", "parameters": {
     "type": "object", "properties": {"cmd": {"type": "string"}, "yield_time_ms": {"type": "integer"}}}}}]
@@ -29,19 +29,17 @@ class Driver:
     def __init__(self, tmp_path, **state):
         self.tmp, self.log, self.messages = tmp_path, Log(), [{"role": "user", "content": "build it"}]
         self.state = loop.GuardState(**state)
-        self.probes = rc.ProbeServices(lambda m: str(tmp_path), probegate.plan_gate, iter(f"call_{i}" for i in range(99)).__next__)
-        self.evidence = rc.EvidenceServices(loop._read_tool_result, loop.read_gate, loop.gate_error_text,
+        self.rig = GateRig(tmp_path)
+        self.probes = rc.ProbeServices(lambda m: str(tmp_path), probegate.plan_gate, lambda: self.rig.seam)
+        self.evidence = rc.EvidenceServices(lambda state: self.rig.seam.result("", state.gate_plan.op) if state.gate_plan and state.gate_plan.op else None,
+                                            loop.read_gate, loop.gate_error_text,
                                             lambda f, m, **kw: loop.track_gate_progress(self.state, f, m, **kw))
 
     def source(self, **kw):
         return rc.Input({"tools": TOOLS, "messages": self.messages}, self.log, 5, workspace_root=str(self.tmp), **kw)
 
     def run(self, call, *, answer=True):
-        import json
-        cmd = json.loads(call["function"]["arguments"])["cmd"]
-        self.messages.append({"role": "assistant", "tool_calls": [call]})
-        if answer:
-            self.messages.append({"role": "tool", "tool_call_id": call["id"], "content": run_in_harness(cmd, self.tmp, "sh")})
+        self.rig.drive(self.messages, call, answer=answer, session="")
 
     def resume(self):
         return rc.resume(self.source(), self.state, self.probes, self.evidence, rc.JudgmentServices(),
@@ -49,14 +47,11 @@ class Driver:
 
 
 def pump(d, first):
-    """Deliver the check, then every continuation page the transport asks for, to the final periodic result."""
+    """Deliver the check (the engine reads every output back itself), then the loop's reading of it: the final periodic result."""
     d.run(first.call)
-    for _ in range(20):
-        out = d.resume()
-        if out.pending_kind is not rc.PendingKind.PAGE:
-            return out
-        d.run(out.call)
-    raise AssertionError("transport never settled")
+    out = d.resume()
+    assert out.pending_kind is not rc.PendingKind.PAGE, "the gate was not done"
+    return out
 
 
 def test_a_red_check_is_surfaced_in_the_checkers_words_then_a_green_one_clears_the_veto(tmp_path, monkeypatch):

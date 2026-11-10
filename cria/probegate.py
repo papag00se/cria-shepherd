@@ -1,47 +1,35 @@
-"""The completion gate's transport: the HARNESS runs and spools one complete script,
-then pages its bytes back for the existing probe parsers — cria owns no executors.
+"""The completion gate: which of the project's own checks to run, how to read what they said, and what the model is shown of it.
 
-The gate is CONGRUENT across ecosystems (operator direction): there is no privileged
-per-language floor anymore. ``proberun.select_completion_probes`` returns one ranked
-candidate list — tier-0 parse/compile checks for every language present (compileall,
-node --check, php -l, ruby -c by file presence; cargo check / go build / tsc /
-mvn-gradle compile / dotnet build / mix compile via their ecosystems' tier≤1
-candidates) plus the top-ranked probe and the top TEST probe. This module:
+The gate is CONGRUENT across ecosystems (operator direction): there is no privileged per-language floor. ``proberun.select_completion_probes``
+returns one ranked candidate list - tier-0 parse/compile checks for every language present (compileall, node --check, php -l, ruby -c by
+file presence; cargo check / go build / tsc / mvn-gradle compile / dotnet build / mix compile via their ecosystems' tier<=1 candidates) plus
+the top-ranked probe and the top TEST probe. This module:
 
-* :func:`plan_gate` — select the candidates (READ-ONLY workspace inspection) and
-  compose one marker-delimited script: each candidate via
-  :func:`cria.proberun.compose_probe_command` (timeout-bounded, uncut,
-  EXIT-sentineled). The combined stream is written to a temporary file on the
-  harness machine and returned in checked pages over later request/response turns.
-  The plan REMEMBERS what it composed so interpretation doesn't re-inspect a
-  possibly-changed world.
-* :func:`interpret_gate` — split the harness's result into sections and map each onto
-  the upstream ProbeResult contract (:func:`cria.proberun.interpret_probe_output`):
-  timeout → 124, launch failure → 127/"command not found", findings via the per-tool
-  parsers (tier-0 checks included — every ecosystem's parse floor yields file:line).
+* :func:`plan_gate` - select the candidates (READ-ONLY workspace inspection) and compose the shell text that runs them
+  (:mod:`cria.gatescript`). The plan REMEMBERS what it composed so interpretation does not re-inspect a possibly-changed world.
+* :func:`adopt` - take the result of the gate's operation (:mod:`cria.gateops`: the harness ran the text, cria read every output back, one file
+  per check) into the plan.
+* :func:`interpret_gate` - map the adopted sections onto the upstream ProbeResult contract (:func:`cria.proberun.interpret_probe_output`):
+  timeout -> 124, launch failure -> 127/"command not found", findings via the per-tool parsers (tier-0 checks included - every ecosystem's
+  parse floor yields file:line).
+* :func:`clean_gate_results` - what the MODEL reads of a finished gate in the history: the checks it could retype and cria's rendering of the
+  result, taken from the typed result the history carries (``bodykeys.GATE_RESULT``), never from text.
 
-Only a complete byte count plus SHA-256 is handed to the existing section parser.
-A missing, cut, reordered, or malformed transport page is explicit UNKNOWN and can
-never become a clean gate.
+Only a complete, hash-verified reading is handed to the parsers. A check whose output could not be read whole is explicit UNKNOWN and can never
+become a clean gate.
 """
 
 from __future__ import annotations
 
-import base64
-import functools
-import hashlib
 import json
 import os
 import re
-import secrets
-import shlex
 import time
-import zlib
-from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import bodykeys, denial, dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
+from . import bodykeys, denial, dirguard, dedup, gatescript, jsontext, wsview
 from . import groundtruth, participation, probediscovery, probeparse, prompts, proberun
+from .gateops import GateResult, SectionFact, refusal_reason  # noqa: F401
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
@@ -49,19 +37,10 @@ from . import groundtruth, participation, probediscovery, probeparse, prompts, p
 _LOC_PREFIX = re.compile(r"^\S.*?:\d+(?::\d+)?:?\s+")
 
 from .proberun import ProbeReport
-from .harnessprims import PAGE_BYTES as STDOUT_LIMIT
 # runner_tally lives in probeparse now (it parses runner OUTPUT, and the tally must be taken at
 # parse time while the raw text still exists). Re-exported so existing callers are unmoved.
 from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: F401
 
-# Marker line delimiting each section of the composed script's output. The id after the
-# prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
-from .toolwire import SECTION_PREFIX, GATE_SENTINEL, _GATE_LINE, gate_probes_of, gate_command_text as _command_text, gate_call  # noqa: F401
-SECTION_SUFFIX = "___"
-# Historical path listings are not removal acknowledgements. New gates finish cleanup on the
-# harness and carry actual removed paths / failures before the final workspace survey.
-LITTER_SECTION = "litter"  # historical listings, not confirmation of removal
-LITTER_REMOVED_SECTION = "litter-removed"
 # Per-probe wall-clock bound. Was 45 s (codex-local's COMPLETION_PROBE_TIMEOUT), which is fine for a
 # syntax floor and far too short for what this gate actually selects: a full test suite, a cold
 # `cargo check`, a `tsc` build. That is not merely a slow gate — `completion_block_nudge` fails CLOSED
@@ -69,347 +48,22 @@ LITTER_REMOVED_SECTION = "litter-removed"
 # un-completable: every round re-nudges with "TIMEOUT after 45s" and no edit can ever clear it.
 COMPLETION_PROBE_TIMEOUT_S = 240.0
 
-# The raw gate may be arbitrarily larger than one harness result. The harness keeps it in a
-# temporary file OUTSIDE the workspace and returns one base64 page per request. 6,000 raw bytes
-# encode to 8,000 characters, leaving room for the harness envelope under the observed ~9–10 KiB
-# result boundary. This is a TRANSPORT page size, not an evidence budget: every page is requested.
-TRANSPORT_CHUNK_BYTES = 6_000
-# N1: a page's WIRE payload stays bounded by TRANSPORT_CHUNK_BYTES, but when the harness's python3 has
-# zlib the page carries as many RAW spool bytes as compress into that bound (offset/total/sha256 are
-# always over the raw bytes — compression is invisible to every integrity check). This caps how much
-# raw one page may decompress to, so a hostile/garbled page cannot balloon cria's memory.
-TRANSPORT_RAW_PAGE_MAX = 65_536
-# THE HARNESS'S RESULT BOUND AND HOW A NOISY SHELL SPENDS IT. A harness result over TRANSPORT_RESULT_BYTES keeps the first and the last half
-# and cuts the middle; a login shell that prints before/after the page (mise, direnv) leaves the page less room, and a page cut in the
-# middle used to end the whole transport UNKNOWN (the gate was then re-composed, and re-cut, until the run's wall clock ended). Each page
-# says how much noise surrounded it (`_learn_noise`), the next page is asked for at the size that fits beside it, and a page the harness
-# cut anyway is asked for again at the next of TRANSPORT_REFETCH_BUDGETS (never more than three times in a row, then the old UNKNOWN).
-TRANSPORT_RESULT_BYTES = STDOUT_LIMIT      # the harness's own bound (harnessprims.PAGE_BYTES)
-
-
-def room_beside_noise(before: int, after: int, cut_side: str | None) -> int:
-    """The bytes one record may occupy on the wire beside what a login shell printed around it (``before`` / ``after``, measured off a
-    result the record survived in). The harness keeps a result whole up to STDOUT_LIMIT, else only its first and last halves: a record
-    fits whole when the result is not cut (the limit less both noises, or a half less either: the larger), in the head (a half less
-    the noise before it) or in the tail (a half less the noise after it). ``cut_side`` is where the record sat relative to the
-    harness's cut marker: ``"head"`` (before it), ``"tail"`` (after it) or None (no cut)."""
-    half = STDOUT_LIMIT // 2
-    if cut_side == 'tail':
-        return half - after
-    if cut_side == 'head':
-        return half - before
-    return max(STDOUT_LIMIT - before - after, half - before, half - after)
-TRANSPORT_REFETCH_BUDGETS = (1_500, 750, 375)
-TRANSPORT_MIN_BUDGET = 128
-TRANSPORT_SAFETY_BYTES = 300       # envelope header, CRLF expansion and anything else the measure cannot see
-_RUNNING_PAGE_OVERHEAD = 700       # a `running` reply carries no data field to measure the page envelope from
-_HARNESS_CUT_MARK = re.compile(r"…\s*[\d,]+\s+(?:chars|tokens)\s+truncated\s*…")
-TRANSPORT_PREFIX = "___CTX_GATE_TRANSPORT_"
-TRANSPORT_SUFFIX = "___"
-TRANSPORT_END_PREFIX = "___CTX_GATE_TRANSPORT_END_"
-_TRANSPORT_HEREDOC = "__CTX_GATE_TRANSPORT_PY__"
-
-# C28: a harness exec's DEFAULT yield does not have to honor the 300s budget `with_time_budget`
-# asks for (Codex clamped/returned early at ~10s in the captured incident, mid-pytest, with no
-# transport opener at all — `inbound-ce7f6c3d-responses.json`, session 01a0d2c3). So the composed
-# probe block now runs DETACHED (see `_gate_launch_guard`) and this is merely how long ONE read of
-# it waits for a completion marker before answering with a typed "still running" envelope instead of
-# silently going empty-handed. Kept safely under the observed ~10s default so the reader's OWN typed
-# envelope — running or complete — has time to print before the harness's yield can cut it too.
+# C28: a harness exec's DEFAULT yield does not have to honor a long wait (Codex clamped/returned early at ~10s in a captured incident, mid-pytest).
+# The checks therefore run DETACHED (the `run` stub) and this is how long ONE poll of them waits for the run to be done before answering `running`
+# instead of silently going empty-handed. Kept safely under the observed ~10s default.
 GATE_POLL_WAIT_S = 8.0
 
-# C28b: chosen at COMPOSE time (loop.guard_gate_op, from the tool's own schema — never a harness
-# name), not a runtime probe. A tool whose schema declares an ms-unit time-budget field is one
-# `with_time_budget` can actually widen (reviewer measured Codex honoring ~30s for such a call), so
-# its poll reader can afford to wait far longer per turn before answering — fewer, cheaper polls for
-# a slow gate. A tool with no such field keeps GATE_POLL_WAIT_S: cria never learned it can ask for
-# more, so it must not assume a wait longer than the harness's own unbudgeted default yield.
+# C28b: chosen at COMPOSE time (from the tool's own schema - never a harness name). A tool whose schema declares an ms-unit time-budget field is
+# one a call can ask for more time on (reviewer measured Codex honoring ~30s for such a call), so its poll can wait longer per turn: fewer, cheaper
+# polls for a slow gate. A tool with no such field keeps GATE_POLL_WAIT_S.
 GATE_POLL_WAIT_LONG_S = 25.0
 
-# The cria-side deadline for the WHOLE detached block, derived from the plan's OWN composed
-# timeouts, never guessed: every selected probe (and the offline re-run leg, when present) is
-# individually bounded by `timeout -k {TIMEOUT_KILL_GRACE_S} {COMPLETION_PROBE_TIMEOUT_S}` inside
-# the block and they run SERIALLY, so the worst legitimate case is their sum. The slack absorbs the
-# git/litter/survey bookkeeping that isn't under any single probe's own timeout. Exceeding this is
-# the ONLY way a running gate becomes terminal UNKNOWN (fail closed, #13) — every other malformed/
-# cut/hash/offset check is unchanged.
+# The cria-side deadline for the WHOLE run, derived from the plan's OWN composed timeouts, never guessed: every selected probe (and the offline
+# re-run leg, when present) is individually bounded by `timeout -k {TIMEOUT_KILL_GRACE_S} {COMPLETION_PROBE_TIMEOUT_S}` and they run SERIALLY, so the
+# worst legitimate case is their sum. The run is killed by the harness (the `run` stub's own timeout) GATE_KILL_SLACK_S after that sum; cria waits
+# GATE_DEADLINE_SLACK_S. Exceeding the deadline is the ONLY way a running gate becomes terminal UNKNOWN (fail closed, #13).
+GATE_KILL_SLACK_S = 30.0
 GATE_DEADLINE_SLACK_S = 60.0
-
-# Supervisor review: the plan-wide deadline (minutes) is the RIGHT bound for a check that is
-# genuinely still running — the reader answers within GATE_POLL_WAIT_S every time, so a typed
-# `running` envelope is trustworthy evidence of life. An OPENERLESS result is different: the reader
-# always answers inside GATE_POLL_WAIT_S (well under the harness's own yield), so getting NOTHING
-# recognizable back means the poll itself was cut, or the reader could not even run (no `python3`,
-# a sandbox rejection `refusal_reason` doesn't recognise). That is a channel fact, not a liveness
-# fact, and letting it ride the multi-minute deadline would silently retry a genuinely broken
-# channel for ~100 cria-only turns before ever saying so. Bounded separately and small: covers the
-# captured P18 launch shape (one openerless read) plus one cut poll, and resets the instant a real
-# envelope (running or a page) arrives.
-GATE_OPENERLESS_MAX = 2
-
-
-def _transport_marker(transport_id: str, *, end: bool = False) -> str:
-    prefix = TRANSPORT_END_PREFIX if end else TRANSPORT_PREFIX
-    return f"{prefix}{transport_id}{TRANSPORT_SUFFIX}"
-
-# --------------------------------------------------------------------------- harness-side helper (N1)
-HELPER_GONE_FIELD = "helper-gone"
-_HELPER_HEREDOC = "__CTX_GATE_HELPER_PY__"
-
-
-def _helper_reader_program() -> str:
-    """The page reader as the helper's ``reader`` mode. argv: ``reader PATH OFFSET TRANSPORT_ID WAIT_S [BUDGET]`` (BUDGET: the most wire
-    bytes a page may carry, at most :data:`TRANSPORT_CHUNK_BYTES`; cria lowers it beside a shell that prints around the page).
-
-    Behaviour is the reader this replaced (typed ``gone`` / ``running`` / page / ``error`` envelopes,
-    never deletes anything) plus ONE addition: when the harness's python3 has zlib, a page carries the
-    RAW bytes that compress into :data:`TRANSPORT_CHUNK_BYTES` (up to :data:`TRANSPORT_RAW_PAGE_MAX`)
-    and says so with an ``enc`` field; without zlib it is the old raw page (``enc raw``). ``offset``,
-    ``total`` and ``sha256`` are over the raw spool either way, and the next offset is the raw bytes
-    delivered, so cria's offset/hash/total checks are unchanged."""
-    return f'''if sys.argv[1] == "reader":
-    import atexit, base64, hashlib, os, time
-    try:
-        import zlib
-    except ImportError:
-        zlib = None
-    path, offset, tid, wait_s = sys.argv[2], int(sys.argv[3]), sys.argv[4], float(sys.argv[5])
-    budget = min({TRANSPORT_CHUNK_BYTES}, int(sys.argv[6])) if len(sys.argv) > 6 else {TRANSPORT_CHUNK_BYTES}
-    opening = {TRANSPORT_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
-    closing = {TRANSPORT_END_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
-    path = os.path.abspath(path)
-    try:
-        context, descriptor = _gate_reader_open(path,tid)
-        atexit.register(os.close,descriptor)
-        atexit.register(_owned_close,context)
-        complete = _gate_reader_wait(context,tid,wait_s)
-    except FileNotFoundError:
-        print(opening)
-        print("gone\\t1")
-        print(closing)
-        sys.exit(0)
-    except Exception as exc:
-        print(opening)
-        print("error\\t" + base64.b64encode(str(exc).encode()).decode())
-        print(closing)
-        sys.exit(0)
-    if not complete:
-        elapsed = max(0.0,time.time()-os.fstat(descriptor).st_ctime)
-        print(opening)
-        print("path\\t" + base64.b64encode(path.encode()).decode())
-        print("running\\t" + str(round(elapsed, 1)))
-        print(closing)
-        sys.exit(0)
-    try:
-        total = os.fstat(descriptor).st_size
-        if offset < 0 or offset > total:
-            raise ValueError("offset outside spool")
-        digest = hashlib.sha256()
-        with os.fdopen(os.dup(descriptor), "rb") as source:
-            for block in iter(lambda: source.read(65536), b""):
-                digest.update(block)
-            source.seek(offset)
-            window = source.read({TRANSPORT_RAW_PAGE_MAX})
-        if not _owned_valid(context):
-            raise ValueError("namespace_identity_changed")
-        chunk, wire, enc = window[:budget], None, "raw"
-        if zlib is not None:
-            n = len(window)
-            while True:
-                packed = zlib.compress(window[:n], 6)
-                if len(packed) <= budget or n <= 1:
-                    break
-                n = max(1, min(n - 1, int(n * budget / len(packed) * 0.9)))
-            if len(packed) <= budget:
-                chunk, wire, enc = window[:n], packed, "zlib"
-        print(opening)
-        print("path\\t" + base64.b64encode(path.encode()).decode())
-        print("offset\\t" + str(offset))
-        print("total\\t" + str(total))
-        print("sha256\\t" + digest.hexdigest())
-        print("bounds\\t" + base64.b64encode(_gate_bounds(context,tid)).decode())
-        print("enc\\t" + enc)
-        print("data\\t" + base64.b64encode(chunk if wire is None else wire).decode())
-        print(closing)
-    except Exception as exc:
-        print(opening)
-        print("error\\t" + base64.b64encode(str(exc).encode()).decode())
-        print(closing)
-    sys.exit(0)
-'''
-
-
-@functools.lru_cache(maxsize=1)
-def _helper_source() -> str:
-    """The ONE harness-side program: page transport and gate cleanup.
-
-    Pure function of cria's own constants — no session, path or probe in it — so its text, and the
-    content hash its file is named by, are identical in every call and every process. A cria change
-    that alters either program changes the name, so a stale helper can never answer for new code."""
-    return ("import sys\n" + gatecleanup.NAMESPACE_PROGRAM + _helper_reader_program()
-            + 'if sys.argv[1] == "gate":\n    sys.argv=sys.argv[1:]\n'
-            + f'    _gate_program={gatecleanup.PROGRAM!r}\n    exec(_gate_program)\n    sys.exit(0)\n'
-            + 'sys.exit(2)\n')
-
-
-def _helper_name() -> str:
-    return ".ctx-helper-" + hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()[:16] + ".py"
-
-
-def _helper_digest() -> str:
-    return hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()
-
-
-def _helper_loader(*, verify_only: bool = False) -> str:
-    """The verifying loader every helper invocation goes through (a ``python3 -c`` program).
-
-    B1: the helper's path is predictable and its directory shared, so a file there is NOT trusted
-    because it exists. The loader reads the bytes ONCE, compares their full SHA-256 with the digest
-    cria composed in, and executes those same bytes (no check-then-run window). A missing, unreadable
-    or different file exits 3 having run nothing of it. ``verify_only`` stops after the check (the
-    install leg's "is the right program already there?"). No single quote, so it rides in one
-    shell-quoted argument."""
-    return ("import hashlib,sys\n"
-            "p=sys.argv[1]\n"
-            'try: s=open(p,"rb").read()\n'
-            "except OSError: sys.exit(3)\n"
-            f'if hashlib.sha256(s).hexdigest()!="{_helper_digest()}": sys.exit(3)\n'
-            + ("" if verify_only else 'sys.argv=sys.argv[1:]\nexec(compile(s,p,"exec"))\n'))
-
-
-HELPER_BAD_EXIT = 3
-
-
-def helper_path_expr() -> str:
-    """The shell expression for the helper's path. ``${TMPDIR:-/tmp}`` is the HARNESS's own value
-    (#23c: cria composes, the harness resolves) — the same directory the spool lives in, which is the
-    one place the sandbox lets a gate write."""
-    return f'"${{TMPDIR:-/tmp}}/{_helper_name()}"'
-
-
-def helper_runner() -> str:
-    """Shell words that run the helper THROUGH the verifying loader: append the mode and its args."""
-    return f'python3 -I -c {shlex.quote(_helper_loader())} {helper_path_expr()}'
-
-
-def _helper_install_leg() -> str:
-    """Make the harness hold the helper, unless the file there already verifies. Idempotent, atomic
-    (write beside it, then ``os.replace`` — a reader never sees half a program; not ``mv``, a verb the
-    harness sandbox has not been shown to allow), never an ``rm``.
-
-    "Already there" means its bytes hash to cria's digest (B1), not that the path exists: a wrong,
-    planted or truncated file is OVERWRITTEN by the same atomic replace. cria's own invariant code,
-    named by the hash of its text."""
-    h = helper_path_expr()
-    check = f'python3 -I -c {shlex.quote(_helper_loader(verify_only=True))} {h}'
-    # The harness may wrap the whole command in its own shell snapshot. Keep the shared helper
-    # lossless but compact enough not to exhaust the OS's per-argument limit in that wrapper.
-    source = base64.b64encode(zlib.compress(_helper_source().encode())).decode()
-    installer = (ownedfiles.ATOMIC_REPLACE_PROGRAM + 'import base64,sys,zlib\n'
-                 + f'_atomic_replace(sys.argv[1],zlib.decompress(base64.b64decode({source!r})))\n')
-    return (f'if ! {check} 2>/dev/null; then\n'
-            f'python3 -I - {h} <<\'{_HELPER_HEREDOC}\'\n{installer}{_HELPER_HEREDOC}\n'
-            'fi\n')
-
-
-def _helper_reader_call(path_arg: str, offset: int, transport_id: str, wait_s: float, budget: int = TRANSPORT_CHUNK_BYTES) -> str:
-    """Run the helper's page reader through the verifying loader, or say — in a typed envelope cria
-    fails closed on — that the helper is missing or is not cria's program. Never silent: a vanished
-    or substituted helper must not look like a check that is "running" or, worse, finished."""
-    gone = (f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' "
-            f"{shlex.quote(_transport_marker(transport_id))} "
-            f"{shlex.quote(_transport_marker(transport_id, end=True))}")
-    narrower = f" {budget}" if budget != TRANSPORT_CHUNK_BYTES else ""
-    return (f'{helper_runner()} reader {path_arg} {offset} {transport_id} {wait_s!r}{narrower}; '
-            f'if [ $? -eq {HELPER_BAD_EXIT} ]; then {gone}; fi')
-
-
-def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
-                      wait_s: float = GATE_POLL_WAIT_S, helper_ready: bool = False, budget: int = TRANSPORT_CHUNK_BYTES) -> str:
-    """Harness-side page reader. ``path_arg`` is a shell expression or quoted path.
-
-    Waits up to ``wait_s`` for the sibling ``.done`` marker the detached probe block writes when it
-    finishes (see :func:`_gate_launch_guard`) before deciding what to answer: DONE → the existing
-    page (unchanged shape: path/offset/total/sha256/data). NOT DONE → a typed "running" envelope
-    (same opener/closer, never a data field) so the harness's OWN result always carries a real
-    envelope instead of going back empty — the exact P18 shape ("Process running … Output:", no
-    marker at all) that made `ingest_transport` terminal on a check that was still alive.
-
-    C28b: the ``running`` reply ALSO carries ``path`` — the resolved spool path, validated exactly
-    like a page's own path field — not just the elapsed hint. Without it, `continue_transport_command`
-    cannot learn the path from a running-only reply and keeps re-sending the WHOLE multi-KB launch
-    script on every poll instead of switching to a narrow offset-0 re-read the instant the check is
-    known to be alive. Live P24 Orders (session 01a0d4fa): ~12 such full-script polls (~95s) landed
-    before Codex compacted the coder's history and dropped them, and cria — unable to tell "the check
-    is running" from "nothing ever happened" once its own probe result vanished with the rewrite —
-    abandoned the still-running gate and started a brand new one, repeating every ~100s with zero
-    coder progress.
-
-    Reviewer 6510f2dd follow-up: the FINAL read used to unlink the spool (and its ``.done`` marker)
-    the instant it delivered the completing chunk. If THAT harness response was itself lost to a
-    compaction — plausible, since the final page is usually the largest result — cria's own
-    ``transport_complete`` was never set, a re-poll of the SAME plan followed (C28b), and the reader
-    found no spool AND no ``.done``: indistinguishable from "not finished yet", so it answered
-    ``running 0.0`` forever until the multi-minute plan deadline discarded a check that had already
-    passed. The reader now NEVER deletes anything itself: the spool persists after delivering the
-    final chunk, so a lost-and-repolled final read simply re-delivers the SAME bytes/hash at the
-    SAME offset cria already asked for — no restart-from-0 or renegotiated-offset logic needed, the
-    existing offset/hash checks already accept an identical re-delivery. This is the SIMPLEST correct
-    fix: removing a premature deletion, not adding a recovery protocol. A spool that is GENUINELY
-    missing (some other cause entirely — cria never assumes which) gets its own typed ``gone``
-    envelope instead of being folded into "running", so cria fails closed immediately rather than
-    riding the deadline on a check that cannot possibly still be alive. Cleanup of a spool cria HAS
-    fully ingested is deferred to :func:`spool_cleanup_command`, queued the instant
-    :func:`ingest_transport` verifies the hash — never an `rm`, never a glob, only paths cria itself
-    already finished with.
-
-    The final page is read into the helper's memory; a cut result still shows a missing close/count/
-    hash and reports UNKNOWN, and never interprets the prefix as a complete check.
-
-    N1 — THE PROGRAM IS NOT IN THE CALL. The reader (≈1.6 KB) and the workspace survey (≈4.8 KB) are
-    invariant text that used to ride, whole, in the ARGUMENTS of every gate launch and every poll —
-    harness history the model never reads, counted by the harness against its own compaction trigger
-    (phi4 A6: 18 compactions in 30 min). They are now written ONCE into the harness's own temp dir as
-    a content-addressed helper (:func:`_helper_install_leg`) and every later call just names it. This
-    function is the whole reader call: the install leg (skipped once the session knows the helper is
-    there) plus the invocation. A helper that has since vanished answers with a typed ``helper-gone``
-    envelope, which :func:`ingest_transport` makes terminal UNKNOWN — never clean.
-    """
-    return (_helper_install_leg() if not helper_ready else "") + _helper_reader_call(
-        path_arg, offset, transport_id, wait_s, budget)
-
-
-def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str],
-                       poll_wait_s: float = GATE_POLL_WAIT_S, scope_dirs: tuple[str, ...] = (),
-                       budget: int = TRANSPORT_CHUNK_BYTES) -> list[str]:
-    """Launch one authenticated private harness resource, idempotently.
-
-    A detached Python supervisor owns the entire lifetime: native commands with
-    original cwd/argv/umask, private auxiliary cleanup, original-workspace survey,
-    then the completion marker. Reaping the caller's process group cannot split
-    that lifecycle. The cache helper is installed once before this call.
-
-    Positive exclusive directory/file allocation replaces name-only truncation.
-    The marker credential and descriptor identities authorize retries; an existing
-    unrelated path is never adopted. Source files are neither copied nor deleted.
-    """
-    launch = gatecleanup.launch_command(helper_runner(), transport_id, workspace,
-        "\n".join(parts) if parts else ":", _marker(LITTER_REMOVED_SECTION), scope_dirs)
-    opening, closing = shlex.quote(_transport_marker(transport_id)), shlex.quote(_transport_marker(transport_id, end=True))
-    error_encoder = shlex.quote('import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')
-    return [
-        '__ctx_launch_error=$({\n' + launch + '} 2>&1)',
-        '__ctx_launch_status=$?',
-        'if [ "$__ctx_launch_status" -eq 0 ]; then',
-        _helper_reader_call('"$__ctx_gate_file"', 0, transport_id, poll_wait_s, budget),
-        'elif [ "$__ctx_launch_status" -eq 3 ]; then',
-        f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' {opening} {closing}",
-        'else',
-        f"printf '%s\\nerror\\t' {opening}",
-        f'printf %s "$__ctx_launch_error" | python3 -I -c {error_encoder}',
-        f"printf '%s\\n' {closing}",
-        'fi',
-    ]
 
 
 @dataclass
@@ -419,14 +73,17 @@ class GatePlan:
     workspace: str
     # Probe discovery reads the session-scoped workspace view, never cria's local filesystem.  On
     # the first gate that view may still be empty, so the plan contains no candidates and its only
-    # useful result is the survey appended below.  The reader needs to retain that provenance: once
+    # useful result is the survey that follows.  The reader needs to retain that provenance: once
     # the survey lands, this plan is obsolete and a newly discovered gate must run before completion.
     surveyed_before: bool = False
     # Manifest/config reads the view could not answer while this plan was composed. A non-empty set
-    # means the candidates below were chosen blind to those files; the survey riding with this gate
-    # delivers them, and `interpret_gate` re-selects against it.
+    # means the candidates below were chosen blind to those files; cria's own survey delivers them,
+    # and `interpret_gate` re-selects against it.
     unanswered_reads: frozenset = frozenset()
-    script: str = ""
+    script: str = ""        # the shell text the harness runs: the project's own checks (cria.gatescript)
+    sections: list = field(default_factory=list)       # the ids of its checks, in order ("probe-0", ..., "offline")
+    scope: tuple = ()       # the directories whose identity the run's start and end are compared on
+    shown: str = ""         # the checks the coder could retype, one per line: all the model's history keeps of the call
     candidates: list = field(default_factory=list)  # selected ProbeCandidates, in section order
     # Authored default-discovery observations (probediscovery.undiscoverable_tests), not checker output.
     # Computed with the selection, so the clean-gate render reads a fact instead of re-walking the tree.
@@ -438,57 +95,19 @@ class GatePlan:
     dependency_facts: list = field(default_factory=list)
     # cria-facing observations about the PLAN itself (not about the repo).
     notes: list = field(default_factory=list)
-    # Lossless asynchronous transport state. The path names the HARNESS-side spool and is learned
-    # only from its first response; cria never opens it. Bytes accumulate in session-scoped plan
-    # state until the declared total and hash both verify. Any protocol gap is terminal UNKNOWN.
-    transport_required: bool = False
-    transport_id: str = field(default_factory=lambda: secrets.token_hex(12))
-    transport_path: str = ""
-    transport_total: int | None = None
-    transport_sha256: str = ""
-    # The producer-declared extents of the completed stream (checker output | cleanup report | survey), as
-    # `(checker_end, report_end)` byte offsets, or None when the transport carried none (unknown, never inferred).
-    transport_bounds: "tuple[int, int] | None" = None
-    # The byte offset each checker section header was DECLARED to start at (`section id -> offset`), or None when the worker
-    # declared none (then only the producer's own header vocabulary is recognised inside checker bytes).
-    transport_sections: "dict[str, int] | None" = None
-    transport_data: bytearray = field(default_factory=bytearray)
-    transport_complete: bool = False
-    transport_error: str = ""
-    # When the HARNESS's own page reader reported the failure (the `error` envelope), the last line of what it said,
-    # exactly as it said it — the line a traceback ends with names the exception. Empty for every failure cria itself
-    # diagnosed (a cut page, a bad hash): those are cria's words about the stream, not the tool's.
-    transport_reported: str = ""
-    # C28: the cria-side wall-clock this plan was composed at, and the deadline (in seconds from
-    # there) past which a still-"running" transport becomes terminal UNKNOWN rather than being
-    # retried forever. `plan_gate` sets `transport_deadline_s` from the plan's own probe timeouts;
-    # left at 0.0 (e.g. a hand-built plan in a test, or historical replay in `clean_gate_results`)
-    # a running transport is retried without ever timing out on its own — those callers only care
-    # whether replay ever reached `transport_complete`, not how long it took.
-    transport_started: float = field(default_factory=time.monotonic)
-    transport_deadline_s: float = 0.0
-    # Consecutive OPENERLESS reads (no envelope at all, not even a typed `running` one) since the
-    # last real envelope. Bounded by `GATE_OPENERLESS_MAX`, independently of `transport_deadline_s`
-    # — see the constant's own comment for why the two must not share a bound.
-    transport_openerless_streak: int = 0
-    # C28b: how long ONE poll of this plan may wait for the `.done` marker, chosen once at compose
-    # time (`plan_gate`'s ``poll_wait_s``) from the LAUNCHING tool's own schema (GATE_POLL_WAIT_LONG_S
-    # when it declares an ms-unit time-budget field, else GATE_POLL_WAIT_S) and reused by every
-    # continuation read of this same plan so a mid-transport tool swap can never silently change it.
-    transport_poll_wait_s: float = GATE_POLL_WAIT_S
-    # The most wire bytes the NEXT page may carry (the reader's BUDGET argument): the page size that fits beside the noise a login shell
-    # printed around the pages seen so far (`_learn_noise`), or the next narrower probe after a page the harness cut. Starts at the
-    # full page; the count of consecutive cut pages is bounded by TRANSPORT_REFETCH_BUDGETS.
-    transport_budget: int = TRANSPORT_CHUNK_BYTES
-    transport_cuts: int = 0
-    # The launch script at a given page budget, for the re-sends that happen while the spool path is still unknown (set by `plan_gate`).
-    transport_compose: "object | None" = field(default=None, repr=False, compare=False)
-    # N1: does the harness already hold this session's helper program (see :func:`_helper_install_leg`)?
-    # Set at compose time from the session's own knowledge, turned True by any real envelope a helper
-    # call answered with (it ran, so it is there), and False by a typed ``helper-gone`` reply. The
-    # caller copies it back to the session after every ingest, so the NEXT gate re-installs a vanished
-    # helper while THIS gate is terminal UNKNOWN.
-    helpers_ready: bool = False
+    # THE GATE'S OPERATION (cria.gateops): its id once issued, and what it learned once it is done (`adopt`). A plan whose gate is not done has
+    # no result; a result that is not complete says why (`error`, `reported`) and is never read as a pass.
+    op: str = ""
+    result: "GateResult | None" = None
+    error: str = ""         # why the evidence did not arrive, in cria's words (a log line)
+    reported: str = ""      # the harness's own last line about why, verbatim: the line a traceback ends with names the exception
+    refused: str = ""       # the harness declined to run the gate: its own words
+    # The cria-side clock of this gate: when it was composed, how long the harness may run it and how long cria waits (cria.gateops holds the
+    # operation's own copy; this is for a plan built without one).
+    started: float = field(default_factory=time.monotonic)
+    deadline_s: float = 0.0
+    # How long ONE poll of this gate may wait for the run to be done, chosen once at compose time from the LAUNCHING tool's own schema.
+    poll_wait_s: float = GATE_POLL_WAIT_S
     # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
     # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
     # again with the network taken away — and it reached the coder in 20 prompts of L5
@@ -501,22 +120,23 @@ class GatePlan:
     # Structured build/source/test reach from THIS plan's interpreted gate event.  Populated only
     # by :func:`interpret_gate`; selection alone never creates participation facts.
     participation: participation.ParticipationReport | None = None
-    # False only for historical transports whose originating request facts are unavailable.
-    # A receipt cannot authenticate itself by supplying its own workspace claim.
-    transport_scope_known: bool = True
     # THE SESSION'S UNRESOLVED WRITES, from cria's own operation ledger (`ledger.Ledger.unresolved_writes`): ``{operation: target
     # path}`` for each file mutation whose outcome the harness never confirmed and the file could not settle; empty when none.
     marks_paths: dict = field(default_factory=dict)
 
+    @property
+    def complete(self) -> bool:
+        return self.result is not None and self.result.complete
+
 
 @dataclass
 class GateOutcome:
-    ran: bool = False  # False → no markers came back; keep don't-wedge semantics
+    ran: bool = False  # False → no section came back; keep don't-wedge semantics
     report: ProbeReport | None = None
-    unran: list = field(default_factory=list)  # selected checks whose section never came back — a GAP,
-    #                                            not a pass: without this, a truncated gate read clean
+    unran: list = field(default_factory=list)  # selected checks whose output never came back — a GAP,
+    #                                            not a pass: without this, a cut gate read clean
     refused: str = ""  # the harness REFUSED to run the gate (sandbox policy) — its own words, for the log
-    swept: list = field(default_factory=list)  # untracked paths the probes created, removed by sweep_litter
+    swept: list = field(default_factory=list)  # private scratch the run reclaimed (relative to it)
     # DID THE NETWORK-OFF LEG COME BACK? None = it was never composed (no Test probe). False = it was
     # composed and printed nothing, which means the guard in front of it declined — the online run was
     # red, or the kernel/harness refused the namespace. That second case is the one worth seeing: the
@@ -529,357 +149,41 @@ class GateOutcome:
     # the caller must plan once more against the newly populated view.
     replan_after_survey: bool = False
     participation: participation.ParticipationReport | None = None
-    transport_pending: bool = False  # more checked pages are required before parsing
-    transport_unknown: bool = False  # transport ended incomplete/invalid; never a clean result
-    transport_reported: str = ""  # the harness's own last line about why (see GatePlan.transport_reported)
-    scope_unknown: bool = False  # original source identity or owned auxiliary closure not established
+    transport_pending: bool = False  # the gate is not done yet
+    transport_unknown: bool = False  # its evidence did not arrive whole; never a clean result
+    transport_reported: str = ""  # the harness's own last line about why (see GatePlan.reported)
+    scope_unknown: bool = False  # the original workspace's identity, or the private scratch, could not be settled
     # Write calls whose reply cria never had and whose completion this gate could NOT establish before its checks ran: ``[(receipt,
     # path, state)]``. A gate that verified a tree some write may still change (or that changed under it) has not verified it.
     unsettled_writes: list = field(default_factory=list)
 
 
-def _marker(section_id: str) -> str:
-    return f"{SECTION_PREFIX}{section_id}{SECTION_SUFFIX}"
-
-
-def fail_transport(plan: GatePlan, reason: str) -> str:
-    """Make this gate's transport terminally UNKNOWN."""
-    plan.transport_error = reason
-    plan.transport_complete = False
-    return "unknown"
-
-
 def _gate_deadline_s(candidate_count: int) -> float:
-    """The cria-side deadline (seconds) for a detached gate block with this many timed probes."""
+    """The cria-side deadline (seconds) for a gate with this many timed probes."""
     per = COMPLETION_PROBE_TIMEOUT_S + proberun.TIMEOUT_KILL_GRACE_S
     return max(candidate_count, 1) * per + GATE_DEADLINE_SLACK_S
 
 
-def _retry_or_deadline(plan: GatePlan, now: float | None) -> str:
-    """``running`` while the plan's own cria-side deadline hasn't passed, else terminal UNKNOWN.
-
-    Shared by two shapes of "the check is still going": the reader's own typed ``running`` envelope,
-    and total silence (no opener at all — the captured P18 shape, `inbound-ce7f6c3d-responses.json`:
-    a harness exec yield that cut the WHOLE call before the reader printed a byte). Both are read-only
-    and idempotent to retry, so neither is made terminal on its own; only running out of the plan's
-    own composed timeout budget is (fail closed, #13, with an honest reason — never silently clean).
-    """
-    elapsed = (now if now is not None else time.monotonic()) - plan.transport_started
-    if plan.transport_deadline_s and elapsed > plan.transport_deadline_s:
-        return fail_transport(
-            plan, "the check exceeded its own composed timeout budget while still running")
-    return "running"
-
-
-def _decode_page_data(data: str, enc: str) -> bytes:
-    """One page's raw spool bytes from its ``data`` field. ``enc`` is ``raw`` (the original shape: at
-    most TRANSPORT_CHUNK_BYTES) or ``zlib`` (compressed to at most TRANSPORT_CHUNK_BYTES, expanding to
-    at most TRANSPORT_RAW_PAGE_MAX). Anything else, or a stream that is not exactly one complete
-    zlib stream within the bound, is a ValueError — the page is then terminal UNKNOWN."""
-    wire = base64.b64decode(data, validate=True)
-    if len(wire) > TRANSPORT_CHUNK_BYTES:
-        raise ValueError("page payload exceeds the transport bound")
-    if enc == "raw":
-        return wire
-    if enc != "zlib":
-        raise ValueError("unknown page encoding")
-    try:
-        inflater = zlib.decompressobj()
-        raw = inflater.decompress(wire, TRANSPORT_RAW_PAGE_MAX + 1)
-    except zlib.error as exc:
-        raise ValueError("page payload is not valid zlib") from exc
-    if not inflater.eof or inflater.unused_data or inflater.unconsumed_tail or len(raw) > TRANSPORT_RAW_PAGE_MAX:
-        raise ValueError("page payload is not exactly one bounded zlib stream")
-    return raw
-
-
-def _cut_page(plan: GatePlan, reason: str) -> str:
-    """The harness cut the result around the page (a login shell's noise left it no room): ask for the SAME offset again at the next
-    narrower budget, ``pending`` (nothing is learned from a cut page and nothing is read from it). After the last probe size the
-    transport is terminal UNKNOWN exactly as before."""
-    if plan.transport_cuts >= len(TRANSPORT_REFETCH_BUDGETS):
-        return fail_transport(plan, reason + ", repeatedly — the page does not fit beside what the shell prints")
-    plan.transport_budget = min(plan.transport_budget, TRANSPORT_REFETCH_BUDGETS[plan.transport_cuts])
-    plan.transport_cuts += 1
-    return "pending"
-
-
-def _learn_noise(plan: GatePlan, text: str, start: int, stop: int, data_len: int | None) -> None:
-    """A page ``text[start:stop]`` arrived whole: size the next one to fit beside what the shell printed around it.
-
-    The harness keeps a result whole up to TRANSPORT_RESULT_BYTES, else only its first and last halves (the cut is in the middle). A page
-    therefore fits when it lies in the head (room: half less the noise before it), in the tail (half less the noise after it) or the
-    result is not cut at all (the whole less both). Everything is measured off THIS result (the noise before the opener, the bytes after
-    the closer, where the harness's own cut marker sits); the bound itself is the one the reader was sized for."""
-    from .resultnotes import exec_envelope
-    envelope = exec_envelope(text)
-    base = envelope.record_start if envelope is not None else 0
-    cut = _HARNESS_CUT_MARK.search(text)
-    before, after = start - base, len(text) - stop
-    room = room_beside_noise(before, after, None if cut is None else 'tail' if cut.end() <= start else 'head')
-    overhead = (stop - start) - data_len if data_len is not None else _RUNNING_PAGE_OVERHEAD
-    plan.transport_budget = max(TRANSPORT_MIN_BUDGET, min(TRANSPORT_CHUNK_BYTES, 3 * ((room - overhead - TRANSPORT_SAFETY_BYTES) // 4)))
-    plan.transport_cuts = 0
-
-
-def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = None) -> str:
-    """Ingest one harness-returned page: ``pending``, ``running``, ``complete``, ``unknown`` or
-    ``legacy``.
-
-    No prefix is ever parsed as evidence. A page is accepted only when both envelope markers are
-    present, all fields occur exactly once, its offset is the next byte cria needs, its path/total/
-    hash agree with earlier pages, and the decoded chunk stays inside the declared total. Only the
-    complete byte string is eligible for :func:`split_sections`.
-
-    ``running`` (C28) is NON-TERMINAL: the detached probe block hasn't finished yet (or the harness
-    cut this particular poll before it could say so). It is retried — see
-    :func:`cria.loop.guard_gate_transport` — until either a real page arrives or
-    :func:`_gate_deadline_s` is exceeded, at which point it becomes terminal UNKNOWN.
-
-    ``legacy`` preserves old gate results already present in a conversation and hand-built parser
-    fixtures. A newly composed transport never emits raw section markers outside its base64 page.
-    """
-    # C39b: register THIS transport's per-section facts as soon as this plan is known to own it —
-    # `plan.candidates` and `plan.transport_id` are both set at compose time, independent of how far
-    # the transport itself has progressed, so this need not wait for completion. A no-op once
-    # already registered (see `_register_transport_facts`) and retains scope even with no
-    # candidates (a git-only gate, `transport_required=False` fixtures).
-    _register_transport_facts(plan.transport_id, plan.candidates, plan.workspace,
-                              scope_known=plan.transport_scope_known)
-    if not plan.transport_required:
-        return "legacy"
-    if plan.transport_complete:
-        return "complete"
-    if plan.transport_error:
-        return "unknown"
-    # Raw marker-delimited results predate this transport and remain readable from history. The
-    # current script redirects every such marker into the spool, so a live page cannot take this arm.
-    if SECTION_PREFIX in (result_text or "") and TRANSPORT_PREFIX not in (result_text or ""):
-        return "legacy"
-    opening = _transport_marker(plan.transport_id)
-    closing = _transport_marker(plan.transport_id, end=True)
-    text = result_text or ""
-    start = text.find(opening)
-    if start < 0:
-        if _HARNESS_CUT_MARK.search(text):
-            return _cut_page(plan, "transport page opener did not arrive (the harness cut the result)")
-        if not text.strip() or refusal_reason(text):
-            # GENUINELY ABSENT (no tool message answered this call at all — the harness declined
-            # this turn, or a caller asks before any result could exist) and an explicit REFUSAL
-            # (the harness's OWN words for why it would not even attempt the script — already
-            # vetted, generic sandbox/permission phrasing reused from `refusal_reason`, not a new
-            # runner/language keying) are the SAME fact: nothing was ever launched. That is the
-            # pre-existing fail-open contract every caller already has — terminal UNKNOWN, not a
-            # retry — and stays exactly as it was before C28.
-            return fail_transport(plan, "transport page opener did not arrive")
-        # A REAL, non-empty reply that still carries no envelope and no refusal wording is the exact
-        # P18 shape (`inbound-ce7f6c3d-responses.json`: "Wall time: 30.0008 seconds\nProcess running
-        # …") — the harness's own exec yield cut the call before the reader printed a byte. Read-only
-        # and idempotent to retry, so this is the ONE existing failure this candidate softens — but
-        # ONLY up to GATE_OPENERLESS_MAX consecutive times (see its own comment): the reader answers
-        # within GATE_POLL_WAIT_S every time, so repeated total silence means the poll itself is
-        # broken, not that the check is merely slow, and that must not ride the multi-minute deadline.
-        plan.transport_openerless_streak += 1
-        if plan.transport_openerless_streak > GATE_OPENERLESS_MAX:
-            return fail_transport(
-                plan, "transport page opener did not arrive, repeatedly — the poll itself is broken")
-        return _retry_or_deadline(plan, now)
-    end = text.find(closing, start + len(opening))
-    if end < 0:
-        if _HARNESS_CUT_MARK.search(text, start):
-            return _cut_page(plan, "transport page was cut before its closing marker")
-        return fail_transport(plan, "transport page was cut before its closing marker")
-    if _HARNESS_CUT_MARK.search(text, start, end):
-        return _cut_page(plan, "the harness cut the transport page")
-    if text.count(opening) != 1 or text.count(closing) != 1:
-        return fail_transport(plan, "transport page contains duplicate envelope markers")
-    body = text[start + len(opening):end].strip("\r\n")
-    fields: dict[str, str] = {}
-    for line in body.splitlines():
-        key, sep, value = line.partition("\t")
-        if not sep or key in fields:
-            return fail_transport(plan, "transport page contains malformed or duplicate fields")
-        fields[key] = value
-    if set(fields) == {HELPER_GONE_FIELD}:
-        # N1: the helper file this call was composed to run is not on the harness. The reader never ran,
-        # so nothing is known about the check — terminal UNKNOWN (#13), never clean. The plan stops
-        # claiming the helper exists so the session's next gate writes it again.
-        plan.helpers_ready = False
-        return fail_transport(plan, "the gate's harness-side helper program is gone — the check "
-                                    "cannot be read")
-    if set(fields) == {"gone"}:
-        # Reviewer 6510f2dd follow-up: the reader itself found NO spool at all — distinct from
-        # "not finished yet" (which always carries `running`+`path`). Genuinely missing can only mean
-        # the check cannot possibly still be alive to observe, so this fails CLOSED immediately
-        # (#13) instead of reading as `running 0.0` for the rest of the plan's multi-minute deadline.
-        # `_poll_running_plan_after_rewrite` already declines once `transport_error` is set, so the
-        # next compaction-triggered recovery falls through to its existing new-gate reissue.
-        return fail_transport(plan, "transport spool is gone — the check cannot still be running")
-    if set(fields) == {"path", "running"}:
-        # The reader's own typed envelope: it waited, the completion marker still wasn't there, and it
-        # said so instead of returning nothing. Never data — bounded by the plan-wide deadline, not
-        # the openerless streak: THE POLL ITSELF WORKED (it printed a real envelope), so this is
-        # genuine evidence of life, not a broken channel.
-        #
-        # C28b: the ``path`` field is validated exactly like a real page's own — decoded, checked
-        # against this transport's expected spool name, and held consistent across replies — and then
-        # LEARNED, so `continue_transport_command` can switch to a narrow offset-0 re-read instead of
-        # re-sending the whole launch script on every subsequent poll (the P24 wedge: ~12 full-script
-        # polls before a harness compaction dropped them all and cria, unable to tell the check was
-        # still alive, abandoned it for a brand new gate).
-        try:
-            running_path = base64.b64decode(fields["path"], validate=True).decode("utf-8")
-        except (ValueError, UnicodeError):
-            return fail_transport(plan, "transport page contains undecodable fields")
-        if not running_path or "\x00" in running_path or "\n" in running_path or "\r" in running_path:
-            return fail_transport(plan, "transport page path or hash is invalid")
-        if not os.path.basename(running_path).startswith(f".ctx-gate-{plan.transport_id}."):
-            return fail_transport(plan, "transport page named an unexpected spool")
-        if plan.transport_path and running_path != plan.transport_path:
-            return fail_transport(plan, "transport spool changed between pages")
-        plan.transport_path = running_path
-        plan.helpers_ready = True
-        plan.transport_openerless_streak = 0
-        _learn_noise(plan, text, start, end + len(closing), None)
-        return _retry_or_deadline(plan, now)
-    if "error" in fields:
-        try:
-            detail = base64.b64decode(fields["error"], validate=True).decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 — an unreadable error is still a transport failure
-            detail = "harness-side page reader failed"
-        else:
-            lines = [ln.strip() for ln in detail.splitlines() if ln.strip()]
-            plan.transport_reported = lines[-1] if lines else ""
-        return fail_transport(plan, detail)
-    declared = {"bounds"} & set(fields)
-    if set(fields) - declared not in ({"path", "offset", "total", "sha256", "data"},
-                                      {"path", "offset", "total", "sha256", "data", "enc"}):
-        return fail_transport(plan, "transport page is missing required fields")
-    # A REAL page envelope arrived — the poll channel works, whatever this page's own contents
-    # turn out to validate to below. Reset the openerless streak here, not only on eventual success.
-    plan.transport_openerless_streak = 0
-    plan.helpers_ready = True
-    try:
-        path = base64.b64decode(fields["path"], validate=True).decode("utf-8")
-        offset, total = int(fields["offset"]), int(fields["total"])
-        chunk = _decode_page_data(fields["data"], fields.get("enc", "raw"))
-    except (ValueError, UnicodeError):
-        return fail_transport(plan, "transport page contains undecodable fields")
-    digest = fields["sha256"].lower()
-    if (not path or "\x00" in path or "\n" in path or "\r" in path
-            or not re.fullmatch(r"[0-9a-f]{64}", digest)):
-        return fail_transport(plan, "transport page path or hash is invalid")
-    expected_name = f".ctx-gate-{plan.transport_id}."
-    if not os.path.basename(path).startswith(expected_name):
-        return fail_transport(plan, "transport page named an unexpected spool")
-    if offset != len(plan.transport_data) or total < 0 or len(chunk) > TRANSPORT_RAW_PAGE_MAX:
-        return fail_transport(plan, "transport page offset, total, or chunk size is inconsistent")
-    if plan.transport_path and path != plan.transport_path:
-        return fail_transport(plan, "transport spool changed between pages")
-    if plan.transport_total is not None and total != plan.transport_total:
-        return fail_transport(plan, "transport total changed between pages")
-    if plan.transport_sha256 and digest != plan.transport_sha256:
-        return fail_transport(plan, "transport hash changed between pages")
-    if offset + len(chunk) > total or (offset < total and not chunk):
-        return fail_transport(plan, "transport page made no valid forward progress")
-    plan.transport_path = path
-    plan.transport_total = total
-    plan.transport_sha256 = digest
-    plan.transport_bounds = _declared_bounds(fields.get("bounds"), total)
-    plan.transport_sections = _declared_sections(fields.get("bounds"))
-    plan.transport_data.extend(chunk)
-    _learn_noise(plan, text, start, end + len(closing), len(fields["data"]))
-    if len(plan.transport_data) < total:
+def adopt(plan: GatePlan, result: "GateResult | None") -> str:
+    """Take the gate's result into the plan: ``pending`` (no result yet), ``complete`` or ``unknown``. A result that is not complete is
+    explicit UNKNOWN - never a pass - and carries what cria and the harness said about why."""
+    if result is None:
+        if plan.deadline_s and time.monotonic() - plan.started > plan.deadline_s:
+            plan.error = plan.error or "the check exceeded its own composed timeout budget while still running"
+            return "unknown"
         return "pending"
-    if len(plan.transport_data) != total:
-        return fail_transport(plan, "transport delivered more bytes than declared")
-    if hashlib.sha256(plan.transport_data).hexdigest() != digest:
-        return fail_transport(plan, "transport hash did not match the delivered bytes")
-    plan.transport_complete = True
-    # cria will never ask for another byte of this spool (`continue_transport_command` returns ""
-    # once complete) — queue it for the NEXT gate's launch leg to reclaim (`spool_cleanup_command`).
-    # Not unlinked HERE or by the reader itself: a spool this plan still needs might be re-read after
-    # a harness compaction (see `_transport_reader`'s own docstring), so only a plan cria has verified
-    # complete, and only from THIS hash-verified moment, is ever queued for removal.
-    _queue_spool_cleanup(plan.workspace, plan.transport_path)
+    plan.result = result
+    if not result.complete:
+        plan.error, plan.reported, plan.refused = result.reason, result.reported, result.refusal
+        return "unknown"
     return "complete"
 
 
-def _declared_bounds(field: "str | None", total: int) -> "tuple[int, int] | None":
-    """The extents the gate worker declared for the finished spool, or None (a page without them, or a declaration
-    that is not self-consistent with the spool). Read as data the producer wrote — never searched for in the stream."""
-    if not field:
-        return None
-    try:
-        declared = json.loads(base64.b64decode(field, validate=True).decode("utf-8"))
-        checker_end, report_end = declared["checker_end"], declared["report_end"]
-    except (ValueError, UnicodeError, KeyError, TypeError):
-        return None
-    if (isinstance(checker_end, int) and isinstance(report_end, int) and not isinstance(checker_end, bool)
-            and not isinstance(report_end, bool) and declared.get("total") == total
-            and 0 <= checker_end <= report_end <= total):
-        return checker_end, report_end
-    return None
-
-
-def unsettled_writes(plan: "GatePlan") -> list:
-    """The write calls this gate could not account for: each file mutation the operation ledger holds as unconfirmed (the harness
-    never said whether it landed and the file did not say either). Nothing is approved on them; the notice says so."""
-    return [(operation, path, "incomplete") for operation, path in (plan.marks_paths or {}).items()]
-
-
-def _declared_sections(field: "str | None") -> "dict[str, int] | None":
-    """The `section id -> header offset` map the script declared, or None (absent, or not a clean map of non-negative ints)."""
-    if not field:
-        return None
-    try:
-        declared = json.loads(base64.b64decode(field, validate=True).decode("utf-8"))["sections"]
-    except (ValueError, UnicodeError, KeyError, TypeError):
-        return None
-    if isinstance(declared, dict) and all(isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
-                                          for k, v in declared.items()):
-        return {k: v for k, v in declared.items() if v >= 0}      # -1 marks a name declared twice: no declaration
-    return None
-
-
-def transported_parts(plan: GatePlan) -> "tuple[str, str, str] | None":
-    """``(checker output, cleanup report, survey)`` of the verified complete stream, split at the producer-declared
-    byte extents; None when the transport declared none (the caller then knows no boundary — it never guesses one)."""
-    if not plan.transport_complete or plan.transport_bounds is None:
-        return None
-    data, (checker_end, report_end) = bytes(plan.transport_data), plan.transport_bounds
-    return tuple(part.decode("utf-8", "replace") for part in (data[:checker_end], data[checker_end:report_end], data[report_end:]))
-
-
-def transported_result(plan: GatePlan) -> str:
-    """The verified complete gate stream as text, or ``""`` until transport completes."""
-    if not plan.transport_complete:
-        return ""
-    return bytes(plan.transport_data).decode("utf-8", "replace")
-
-
-def continue_transport_command(plan: GatePlan) -> str:
-    """The next harness-side page request, or ``""`` when transport cannot continue.
-
-    Once a real page has taught cria the resolved spool path, this is the existing narrow
-    offset-based re-read (unchanged shape). Until then — total silence, or only the reader's own
-    typed ``running`` envelope so far — cria does not know the path (`${TMPDIR:-/tmp}` is the
-    HARNESS's own value, #23c: cria composes, the harness resolves) and cannot compose a narrower
-    request, so it re-sends the WHOLE launch script. That is exactly `plan.script`, made idempotent
-    for this (:func:`_gate_launch_guard` skips relaunching a block whose spool or ``.done`` marker
-    already exists), read-only in effect, and safe to repeat until page 0 lands or the plan's own
-    deadline gives up.
-    """
-    if not plan.transport_required or plan.transport_complete or plan.transport_error:
-        return ""
-    if not plan.transport_path:
-        return plan.transport_compose(plan.transport_budget) if plan.transport_compose else plan.script
-    return "\n".join([
-        _gate_sentinel([]),
-        _transport_reader(shlex.quote(plan.transport_path), len(plan.transport_data),
-                          plan.transport_id, wait_s=plan.transport_poll_wait_s,
-                          helper_ready=plan.helpers_ready, budget=plan.transport_budget),
-    ])
+def fail(plan: GatePlan, reason: str) -> str:
+    """Make this gate's evidence terminally UNKNOWN (the harness no longer offers a shell, the history was rewritten past recovery)."""
+    plan.error = reason
+    plan.result = None
+    return "unknown"
 
 
 def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
@@ -915,9 +219,8 @@ def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
     # the coder somewhere it is not working.
     return "" if where.startswith("..") or os.path.isabs(where) else where
 
-
 def plan_gate(workspace: str, session: str = "", rlog=None, *,
-              poll_wait_s: float = GATE_POLL_WAIT_S, helpers_ready: bool = False) -> GatePlan:
+              poll_wait_s: float = GATE_POLL_WAIT_S) -> GatePlan:
     """Inspect the workspace read-only and compose the gate script.
 
     Selection is re-run on EVERY gate (like upstream's ``discover`` per gate run):
@@ -937,9 +240,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     plan = GatePlan(
         workspace=workspace,
         surveyed_before=bool(wsview.current(workspace or None).surveyed),
-        transport_required=True,
-        transport_poll_wait_s=poll_wait_s,
-        helpers_ready=helpers_ready,
+        poll_wait_s=poll_wait_s,
     )
     if workspace:
         wsview.take_unanswered_reads(session)        # only the reads THIS plan makes
@@ -960,61 +261,10 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         plan.ran_in = _checks_ran_elsewhere(workspace, plan.candidates)
         plan.dependency_facts = probediscovery.undeclared_gem_sentences(workspace)
 
-    parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
-    # Reviewer 6510f2dd follow-up: reclaim any PRIOR gate's spool (+``.done``) cria has already fully
-    # ingested — the reader no longer self-deletes on the final read (see `_transport_reader`), so
-    # this is the one remaining place cleanup happens. Same shape as the litter leg above: queued when
-    # `ingest_transport` verified the hash, removed here by the NEXT gate, never an `rm`, never a glob.
-    spool_cleanup = spool_cleanup_command(workspace) if workspace else ''
-    # Native build/test output belongs to the project. No snapshot or untracked
-    # enumeration gives this gate ownership of ANY original-workspace path.
-    # The supervisor separately allocates and settles its own private scratch.
-    # EVERY SECTION HEADER IS DECLARED AT ITS POSITION. Before each header the script records the spool's size — the byte
-    # offset the header is about to start at — in a private side file the worker folds into the completed transport's
-    # metadata. A header line is a section boundary only where its id and offset were declared; a checker that prints a
-    # header-shaped line (any id, any text around it) cannot have declared its position, so it is just output.
-    parts.append(SECTION_DECLARATION)
-    for i, c in enumerate(plan.candidates):
-        parts.append(f"__ctx_declare probe-{i}")
-        parts.append(f"echo {_marker(f'probe-{i}')}")
-        parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
-        if c.kind is probediscovery.ProbeKind.Test:
-            # Remember THIS probe's exit code for the offline leg below. compose_probe_command
-            # leaves it in __ctx_ec, which the next probe overwrites, so it is captured here under
-            # a name of its own.
-            parts.append(f"{proberun.TEST_EC_VAR}=$__ctx_ec")
-    # The OFFLINE re-run of the test probe — see proberun.offline_probe_command.
-    # Emitted last among the probes so a failure here can never mask a real check result.
-    test_c = next((c for c in plan.candidates
-                   if c.kind is probediscovery.ProbeKind.Test), None)
-    offline = proberun.offline_probe_command(test_c, COMPLETION_PROBE_TIMEOUT_S) if test_c else ""
-    if offline:
-        parts.append("__ctx_declare offline")
-        parts.append(f"echo {_marker('offline')}")
-        parts.append(offline)
-    # Private scratch cleanup and the following survey are supervisor-finalized,
-    # even when the native body exits early. They never inherit its last cwd.
-    # THE CHANGED-FILES SIGNAL IS GONE, and it never was one. `git status --porcelain | sha1sum` ran
-    # on EVERY gate — roughly 1,500 round trips over twelve days of logs — was parsed into
-    # `GateOutcome.git_state`, stored on `GuardState.gate_git`, and read by NOTHING: `grep -rn
-    # git_state\|gate_git` over the package returns the write, the store and one test assertion.
-    # Untouched since the original port on 2026-07-11. Its stated job — "workspace-change signal
-    # across gates" — is answered by two live mechanisms that came later, `wsview.may_have_changed`
-    # and `_writes_since_last_gate`, both from facts cria already holds.
-    #
-    # The section marker goes with it: the survey is stripped before `split_sections` runs, so the
-    # last real section simply runs to the end of the text, as it would have anyway.
-    # THE WORKSPACE SURVEY RIDES HOME WITH THE GATE. This is already a harness round trip, so it
-    # costs nothing extra, and it is the one place guaranteed to happen in a session where the
-    # harness offers its own file tools and cria lowers nothing. Appended AFTER the last marker and
-    # taken back off by `interpret_gate`, so no section ever contains a byte of it.
-    #
-    # The survey rides inside the same lossless spool. It keeps its own structural tree bound (a
-    # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
-    # harness result and therefore needs no per-gate byte arithmetic.
-    # …AND IT CARRIES THE BODIES THE JUDGE OF THIS GATE WILL READ. The completion judge is seeded from
-    # the view at the moment it is composed; a body the view cannot vouch for is only QUEUED by that
-    # read, for a survey that comes too late (see `groundtruth.want_judge_bodies`).
+    # THE WORKSPACE SURVEY IS CRIA'S OWN OPERATION (`cria.surveyops`), asked while the checks run and again after them: this gate only says
+    # what it will need. It carries the bodies the judge of this gate will read too: the completion judge is seeded from the view at the
+    # moment it is composed; a body the view cannot vouch for is only QUEUED by that read, for a survey that comes too late (see
+    # `groundtruth.want_judge_bodies`).
     if workspace:
         groundtruth.want_judge_bodies(workspace)
         # Unknown judge inputs take precedence over refreshes of already-known
@@ -1026,36 +276,59 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # sent again, before the model is consulted): only a mutation the file could not settle is still open when a gate is planned.
     from .ledger import Ledger
     plan.marks_paths = dict(Ledger().unresolved_writes(session))
-    # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
-    # manifest check cria composed is a multi-line inline program. The distinction is free here and
-    # unrecoverable downstream — see GATE_SENTINEL.
-    retypable = [" ".join(c.command) for c in plan.candidates
-                 if c.command and not c.composed_by_cria]
-    # The harness owns the filesystem and the asynchronous clock. It writes the complete aggregate
-    # outside the workspace, then sends only the first checked page now. Later pages are requested by
-    # :func:`continue_transport_command`; cria never reaches into the remote machine itself.
-    #
-    # C28: the spool/launch-script paths are DETERMINISTIC off `plan.transport_id` (cria's own
-    # 96-bit-random token, not a guessed value) rather than `mktemp`'s random suffix. cria still
-    # cannot know `${TMPDIR:-/tmp}`'s resolved value (#23c — that's the HARNESS's environment), but a
-    # fixed name lets `continue_transport_command` retry this exact launch text verbatim while it has
-    # learned nothing yet, and `_gate_launch_guard` makes that retry a no-op once the block is started.
-    spool = f'"${{TMPDIR:-/tmp}}/{gatecleanup.PRIVATE_PREFIX}{plan.transport_id}/.ctx-gate-{plan.transport_id}.spool"'
-    plan.transport_deadline_s = _gate_deadline_s(len(plan.candidates) + (1 if offline else 0))
-    def compose(budget: int = TRANSPORT_CHUNK_BYTES) -> str:
-        return "\n".join([
-            _gate_sentinel(retypable),
-            f"__ctx_gate_file={spool}",
-            # The helper owns positive allocation before detaching any native work.
-            *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
-            *([spool_cleanup] if spool_cleanup else []),
-            *_gate_launch_guard(plan.transport_id, workspace, parts, plan.transport_poll_wait_s,
-                               tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else (),
-                               budget=budget),
-        ])
-    plan.script = compose()
-    plan.transport_compose = compose
+    # A COMMAND THE CODER COULD RETYPE IS WORTH SHOWING; A PROGRAM CRIA WROTE IS NOT (see the note above `gate_call_ids`): state it now, while
+    # cria still knows. A probe the coder could retype is one line of argv; a manifest check cria composed is a multi-line inline program.
+    plan.shown = "\n".join(p for p in (" ".join(c.command) for c in plan.candidates if c.command and not c.composed_by_cria) if p.strip())
+    plan.scope = tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else ()
+    plan.script, plan.sections = gatescript.compose(plan.candidates, workspace, COMPLETION_PROBE_TIMEOUT_S, plan.scope)
+    plan.deadline_s = _gate_deadline_s(len(plan.sections))
     return plan
+
+
+def unsettled_writes(plan: "GatePlan") -> list:
+    """The write calls this gate could not account for: each file mutation the operation ledger holds as unconfirmed (the harness
+    never said whether it landed and the file did not say either). Nothing is approved on them; the notice says so."""
+    return [(operation, path, "incomplete") for operation, path in (plan.marks_paths or {}).items()]
+
+
+
+def issue(ops, session: str, shell_tool: dict, plan: GatePlan) -> "dict | None":
+    """Issue the plan's gate through the engine ``ops``: the harness call that starts it, or None when it cannot be issued (nothing was
+    recorded). The plan learns its operation."""
+    from .opspath import OpsUnavailable
+    facts = tuple(SectionFact(c.kind, bool(getattr(c, "composed_by_cria", False)), tuple(getattr(c, "command", None) or ()))
+                  for c in plan.candidates)
+    try:
+        op, calls = ops.issue_gate(session, shell_tool, root=plan.workspace, script=plan.script, sections=plan.sections, timeout=run_seconds(plan),
+                                   deadline=plan.deadline_s, wait=plan.poll_wait_s, facts=facts, shown=plan.shown, scope=plan.scope)
+    except OpsUnavailable:
+        return None
+    plan.op = op
+    plan.started = time.monotonic()
+    return calls[0]
+
+
+def gate_ref(call: dict) -> str:
+    """The id the loop keeps for a gate call it issued: the id of the call the history shows for it once it is done (the harness is
+    handed a primitive call under an id of its own, which the projection takes out of the history)."""
+    from . import callauth
+    op = callauth.op_of(call.get("id"))
+    return callauth.display_id(op) if op else str(call.get("id") or "")
+
+
+def run_seconds(plan: GatePlan) -> float:
+    """How long the harness may run the whole gate before it kills it: the sum of the checks' own bounds and a little more; cria waits longer."""
+    return plan.deadline_s - GATE_DEADLINE_SLACK_S + GATE_KILL_SLACK_S
+
+
+def sections_of(plan: "GatePlan | None") -> dict:
+    """``{section id: (text, exit status or None)}`` of a gate whose result is complete; nothing otherwise (UNKNOWN is never read as sections)."""
+    return dict(plan.result.sections) if plan is not None and plan.complete else {}
+
+
+def cleanup_of(plan: "GatePlan | None") -> "tuple[list[str], list[dict]] | None":
+    """What the gate reclaimed and what it could not settle, or None when the gate has no complete result."""
+    return plan.result.cleanup() if plan is not None and plan.complete else None
 
 
 def _plan_signature(candidates) -> tuple:
@@ -1081,74 +354,6 @@ def gate_is_partial(outcome) -> bool:
                 or getattr(outcome, "transport_unknown", False)
                 or getattr(outcome, "scope_unknown", False)
                 or bool(getattr(outcome, "unsettled_writes", None)))
-
-
-def gate_sections(stream: str, plan: "GatePlan | None") -> "tuple[dict[str, str], str]":
-    """``(sections, survey text)`` of a gate stream. THE ONE READER of the stream's private segments.
-
-    The gate worker declared where native checker output ends, where cria's cleanup report ends, where cria's survey begins
-    and where each section header starts (`gatecleanup`: byte extents carried in the completed transport's own metadata).
-    With them, checker sections come from the checker bytes ONLY and only at their declared header offsets, the cleanup
-    report from its declared bytes, and the survey from its declared bytes — a checker that prints a valid-looking survey,
-    a cleanup header, a cleanup record or a section header cannot supply any of them.
-
-    EVERYTHING ELSE IS UNKNOWN. A stream that did not arrive as a completed, hash-verified transport — an old raw result in a
-    history, an unframed or unproven byte string — has no declared boundary: it yields no section, no cleanup report and no
-    survey (the bytes stay visible to whoever shows them), and a completed transport whose worker declared no extents claims
-    no cleanup report and no survey (`_cleanup_record` answers unknown). Nothing is ever found by searching."""
-    if not declared_transport(plan):
-        return {}, ""
-    checker, report, survey = transported_parts(plan)
-    # Inside the checker bytes a header is a boundary ONLY at the offset the script declared for its id (an explicitly EMPTY
-    # map declares no check section at all): quoted header-shaped lines, real ids included, are the checker's own output.
-    sections = split_sections(checker, _CHECKER_HEADER, plan.transport_sections)
-    sections.update(split_sections(report))               # the cleanup report's section comes from its declared bytes only
-    return sections, survey
-
-
-def declared_transport(plan: "GatePlan | None") -> bool:
-    """Did this gate arrive as a COMPLETED, hash-verified transport whose worker declared BOTH the segment extents and the
-    header-offset map (valid, self-consistent)? Only then is anything in it a section, a cleanup report or a survey; otherwise
-    the bytes stay visible and establish nothing (unknown) — the hash attests the bytes, it cannot declare their meaning."""
-    return bool(plan is not None and plan.transport_complete and plan.transport_bounds is not None
-                and plan.transport_sections is not None)
-
-
-_CHECKER_HEADER = re.compile(r"probe-\d+|offline|git|litter")      # cria's own section vocabulary (git/litter: historical)
-
-# The script-side half of the declaration: append `<section id> <spool size>` to the worker's private side file. `wc -c` is
-# the size of everything printed so far (every earlier probe has exited and the spool is append-only), i.e. exactly where
-# the next header line will start. Failing quietly declares nothing, which leaves that header unrecognised (never guessed).
-SECTION_DECLARATION = ('__ctx_declare(){ printf \'%s %s\\n\' "$1" "$(wc -c < "${CTX_GATE_SPOOL:-/dev/null}" 2>/dev/null | tr -d \' \')" '
-                       '>> "${CTX_GATE_SECTIONS:-/dev/null}" 2>/dev/null; }')
-
-
-def split_sections(text: str, header: "re.Pattern | None" = None,
-                   declared: "dict[str, int] | None" = None) -> dict[str, str]:
-    """Marker-delimited output → {section_id: body}. Unknown text before the first
-    marker is ignored (harness banners etc.). ``header``: when given, a marker line whose id does not
-    fullmatch it is body text, not a header. ``declared``: when given (the producer's own section offsets), a marker line is
-    a header ONLY at the byte offset the script declared for its id — a header-shaped line anywhere else is output."""
-    sections: dict[str, str] = {}
-    current: str | None = None
-    buf: list[str] = []
-    offset = 0
-    for line in (text or "").splitlines(keepends=True):
-        at, offset = offset, offset + len(line.encode("utf-8"))
-        line = line.rstrip("\r\n")
-        stripped = line.strip()
-        if (stripped.startswith(SECTION_PREFIX) and stripped.endswith(SECTION_SUFFIX)
-                and (header is None or header.fullmatch(stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]))
-                and (declared is None or declared.get(stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]) == at)):
-            if current is not None:
-                sections[current] = "\n".join(buf).strip("\r\n")
-            current = stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]
-            buf = []
-        elif current is not None:
-            buf.append(line)
-    if current is not None:
-        sections[current] = "\n".join(buf).strip("\r\n")
-    return sections
 
 
 _DELIM_PAIRS = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
@@ -1436,83 +641,6 @@ def _line_on_disk(finding: str, workspace: str) -> "str | None":
     return _source_line(*location, workspace)
 
 
-@dataclass(frozen=True)
-class _SectionFact:
-    """The three facts a rendered gate section needs about the CANDIDATE that produced it, once the
-    real ``ProbeCandidate`` (and the plan that held it) is gone. Shaped like the slice of
-    ``ProbeCandidate`` both :func:`_is_hard_failure` and :func:`_command_for_sid` actually read
-    (``kind``, ``command``) plus ``composed_by_cria`` for parity with the design's own three named
-    facts -- nothing else is needed to render a section honestly, and nothing else is kept."""
-    kind: object
-    composed_by_cria: bool
-    command: tuple
-
-
-# C39b: A SECTION'S OWN COMMAND MUST SURVIVE ITS GATE BECOMING AN OLDER, SUPERSEDED TRANSPORT.
-# `clean_gate_results` replaces `sess.gate_plan` every turn (loop.py ~6471); the newest gate's
-# transport renders through that live plan (real `ProbeCandidate`s, real `.command`), but an OLDER
-# transport is rebuilt from its own wire bytes alone (`historical = GatePlan(workspace="", ...)`,
-# no candidates attached) -- so a timeout's command name, known at PLAN time, was gone by the time
-# the same bytes render a second time under a newer plan.
-#
-# Reviewer's option A: persist the per-transport facts needed to render (kind, composed_by_cria, the
-# plain command label) keyed by the transport_id that already uniquely names this gate, and hand them
-# to the rebuilt historical plan. Keyed on `transport_id` (``secrets.token_hex(12)``, 96 bits) rather
-# than threaded through `GuardState` as a new mutable field: a transport_id is never reused (a fresh
-# one is minted per `GatePlan`, never mutated once a plan carries it), so there is nothing here to
-# keep in SYNC with `sess.gate_plan` replacement the way a live field would need to be -- each entry
-# is written once, by the plan that owns that transport, and never touched again. Bounded FIFO so a
-# long-lived process does not grow this without limit; a fact that ages out simply means an ancient
-# gate's timeout renders with the same generic "a check" label base already used for any transport
-# whose facts were never known (unchanged fallback, see `_command_for_sid`).
-_TRANSPORT_FACTS_MAX = 500
-@dataclass(frozen=True)
-class _TransportFacts:
-    workspace: str
-    sections: tuple[_SectionFact, ...]
-
-
-_transport_facts: "OrderedDict[str, _TransportFacts]" = OrderedDict()
-
-
-def _register_transport_facts(transport_id: str, candidates: list, workspace: str, *,
-                              scope_known: bool) -> None:
-    """Record THIS transport's original request scope and per-section facts, once.
-
-    Called from :func:`ingest_transport` (the
-    one place every transport -- live or historical replay -- is fed its bytes) so both `plan_gate`
-    callers and hand-built test plans (which assign `.candidates` directly, never calling
-    `plan_gate`) register identically. A no-op once a transport_id is already known: facts are a
-    property of the PLAN that composed the script, immutable for that transport's whole life, so a
-    later caller re-ingesting the same id (e.g. `clean_gate_results` replaying an older page) must
-    never overwrite the original with an empty/partial view."""
-    # Empty candidate sets still carry an original bootstrap scope. Cold history
-    # has neither authority to assert a scope nor permission to seed this owner.
-    if not transport_id or not scope_known or transport_id in _transport_facts:
-        return
-    _transport_facts[transport_id] = _TransportFacts(workspace, tuple(
-        _SectionFact(kind=c.kind, composed_by_cria=bool(getattr(c, "composed_by_cria", False)),
-                    command=tuple(getattr(c, "command", None) or ()))
-        for c in candidates
-    ))
-    _transport_facts.move_to_end(transport_id)
-    while len(_transport_facts) > _TRANSPORT_FACTS_MAX:
-        _transport_facts.popitem(last=False)
-
-
-def _facts_for_transport(transport_id: str) -> list:
-    """This transport's persisted per-section facts, or ``[]`` when none were ever registered (a
-    transport that predates this mechanism, or aged out of the bound)."""
-    facts = _transport_facts.get(transport_id)
-    return list(facts.sections) if facts is not None else []
-
-
-def _workspace_for_transport(transport_id: str) -> str | None:
-    """Original request scope, never inferred from a cleanup receipt or spool name."""
-    facts = _transport_facts.get(transport_id)
-    return facts.workspace if facts is not None else None
-
-
 def _command_for_sid(plan, sid: str) -> str:
     """The plain, model-facing command string for section ``sid`` (``probe-N`` -> candidate N,
     section order), or ``""`` when the plan/index/command is unavailable. Works identically whether
@@ -1588,28 +716,23 @@ def _is_hard_failure(plan, sid: str) -> bool:
         return False
     return kind in proberun._HARD_FAILURE_KINDS
 
-
-def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True,
+def clean_gate_output(plan: "GatePlan | None", *, annotate: bool = True,
                       changed_paths: "frozenset[str]" = frozenset(),
                       a_command_ran_since: bool = False,
                       checks_reran: bool = False) -> str | None:
-    """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
+    """A finished gate's result (``plan.result``: what each check printed and its measured exit status) → a compact, error-class-only summary
+    for the MODEL to read.
 
-    The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
-    ``___CTX_GATE_probe-N___`` section markers, ``EXIT:<n>`` sentinels, a git-hash section, and a
-    ``Chunk ID / Process exited / …`` wrapper. Shown verbatim (and PROTECTED from trimming) it buried
-    the one real error under plumbing AND leaked advisory lint (``imported but unused``) the model then
-    chased — even though the gate DIGEST already filters those. This strips all of it and, keying on the
-    RELIABLE per-section EXIT code (not fragile text sniffing), reports one honest state: error-class
+    Shown verbatim (and PROTECTED from trimming) the checkers' output buried the one real error under noise AND leaked advisory lint
+    (``imported but unused``) the model then chased — even though the gate DIGEST already filters those. This keys on the RELIABLE per-section
+    exit code (not fragile text sniffing) and reports one honest state: error-class
     findings; a check that FAILED with no parseable location; checks that could NOT run (launch failure
     / timeout — cria's own setup gap, a neutral non-signal, never a pass); or the checks that ran found
     nothing (their own output and measured exit status, never an authored success verdict).
-    Returns ``None`` when ``raw`` is
-    not a gate result (untouched)."""
-    if SECTION_PREFIX not in (raw or ""):
+    Returns ``None`` when there is no complete gate result
+    (UNKNOWN claims nothing)."""
+    if plan is None or not plan.complete:
         return None
-    if not declared_transport(plan):
-        return None       # no declared boundary: old / unframed / unproven bytes stay visible and claim nothing
     # This mutable field belongs to THIS interpreted gate event, not to the last clean event that
     # happened to populate the same plan object.  Every non-gate caller leaves it alone; every real
     # gate first makes silence the current fact and only the clean offline branch below may set it.
@@ -1644,15 +767,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
                 observations="\n".join(dict.fromkeys(discovery_observations)))
         return message + cleanup_note
 
-    # The survey and cleanup report are the producer's own segments of the stream, declared by byte extent; nothing is
-    # searched for in checker output (interpret_gate reads the same split).
-    _sections, _survey = gate_sections(raw, plan)
-    cleanup_note = cleanup_fact(_sections, plan)
-    for sid, body in _sections.items():
-        # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
-        # history still carries that section, and it must never read as a probe's output.
-        if sid in ("git", LITTER_SECTION, LITTER_REMOVED_SECTION):  # not checker output
-            continue
+    # Each check's output and measured status are what the harness wrote for it (one file per check, read back and hash-checked by cria);
+    # nothing is searched for in checker output, and the cleanup report is cria's own listing of the private scratch.
+    _sections = sections_of(plan)
+    cleanup_note = cleanup_fact(plan)
+    for sid, (text, code) in _sections.items():
         # The offline re-run is an INSTRUMENT READING, not a check. It is the same suite with the
         # network taken away, so on a genuinely live suite it is SUPPOSED to fail — and this loop
         # would have scraped that failure into the findings and told the coder to go fix passing
@@ -1662,7 +781,6 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         if sid == "offline":
             continue
         saw_probe = True
-        text, code = proberun.scrape_exit(body)
         # The EXIT sentinel is the reliable signal (the composed probe always prints it). A launch
         # failure (125/126/127) or timeout (124) means the check did NOT complete — never a code error
         # to "fix", never a pass. Sniffing text for "no such file" would misread a real error that just
@@ -1742,7 +860,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         prev_kept = ""   # consecutive-repeat collapse only — see the note at the append below
         for ln in text.splitlines():
             s = ln.strip()
-            if not s or s.startswith(proberun.PROBE_EXIT_SENTINEL):   # blank / EXIT:<n> sentinel
+            if not s:   # blank
                 continue
             had_content = True
             # advisory either as a whole line (phrase/prefix forms) or once the location prefix is
@@ -1970,7 +1088,6 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         clean += " " + note
     return finish(clean, include_completed=False)
 
-
 def _advisory_note(count: int) -> list[str]:
     """cria's own count of what it filtered — one line, or nothing at all.
 
@@ -2024,7 +1141,6 @@ def gate_passing_by_command(report: ProbeReport) -> dict:
             out[r.command] = out.get(r.command, 0) + int(m.group(2))
     return out
 
-
 def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     """One sentence when the test suite passes with the network taken away — else "".
 
@@ -2065,8 +1181,8 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     online = sections.get(f"probe-{idx}")
     if not online:
         return ""
-    online_text, online_code = proberun.scrape_exit(online)
-    offline_text, offline_code = proberun.scrape_exit(off)
+    online_text, online_code = online
+    offline_text, offline_code = off
     if online_code != 0 or offline_code != 0:
         return ""
     on_tally, off_tally = runner_tally(online_text), runner_tally(offline_text)
@@ -2096,7 +1212,6 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
         return ""
     return prompts.render("tests_pass_offline_uncounted")
 
-
 def _zero_tests_marker(text: str) -> bool:
     """The runner said it collected nothing — consulted only to decide whether the stranded-test disk
     scan is worth asking for; the scan result, not the marker, is the finding. ONE owner, shared with
@@ -2122,342 +1237,138 @@ def _is_no_signal_check(text: str) -> bool:
     """Only our complete placeholder is non-signal; checker quotations remain evidence."""
     return text == CHECKS_MARKER + " " + prompts.load("checks_no_usable_result")
 
+
 # WHAT THE MODEL MAY SEE OF A GATE, CARRIED AS DATA — not re-derived by matching cria's own text.
-#
-# There used to be nine regexes here and in `wsview`, and their whole job was to answer a question
-# cria could answer for free: "is this my own text?". At compose time `plan_gate` knows exactly which
-# argv are real probes and which bytes are its own scaffolding; it threw that away into a shell
-# script and every reader downstream tried to recover it by pattern.
-#
-# It does not work, and the failure has a signature: the same matcher was patched THREE TIMES in one
-# day — for a wrapper that spans lines, then for cria's own inline programs, then for the litter
-# heredoc — each time because cria had grown a new kind of self-authored text the patterns had never
-# heard of. Each patch was correct and none of them was the fix (#4: fix upstream, not at the point
-# of damage; #12: take the fact from the authoritative event, never from an English match).
-#
-# So the plan states it. `writeproxy._sentinel` has done exactly this for every lowered tool call
-# since it was written, statelessly, and needs no strip patterns at all — this is that pattern,
-# applied to the one caller that lacked it.
 #
 # A COMMAND THE CODER COULD RETYPE IS WORTH SHOWING; A PROGRAM CRIA WROTE IS NOT. `cargo test`,
 # `go vet ./...`, `bundle exec rubocop` come off the project's own tooling and seeing one run is real
 # provenance for the finding it produced. The parse floor does not: it is cria's own construction,
 # and it is the half that hurt — the TOML check handed a Rust project the Python package `tomli`
 # (0/4), and a coder emitted cria's `compileall` line back as its own work. Discovery states which
-# is which (`ProbeCandidate.composed_by_cria`); the plan carries only the coder's half.
+# is which (`ProbeCandidate.composed_by_cria`); the plan carries only the coder's half (`GatePlan.shown`).
+#
+# WHICH CALLS ARE CRIA'S OWN GATE is cria's own record, not a property of any text: the projection of a finished gate operation
+# (`ops.Ops._project`, from the ledger) marks the assistant message of its call and the tool result that stands for it with
+# `AnnotationSource.AUTOMATIC_CHECK`, in process, and puts the typed result on the tool result (`bodykeys.GATE_RESULT`). A command a coder
+# types that looks like one is nothing of the kind: a JSON string cannot acquire either.
 
 
-def _gate_sentinel(probes: list[str]) -> str:
-    """The leading comment line naming the probe commands the model may see. Same shape and the same
-    stateless contract as `writeproxy._sentinel`: it rides IN the command, so it survives a restart,
-    a compaction and any re-render of the history."""
-    payload = base64.b64encode(json.dumps(probes, ensure_ascii=False).encode("utf-8")).decode("ascii")
-    return f"# {GATE_SENTINEL}{payload}"
+def is_automatic(m) -> bool:
+    """Is this message (an assistant call or its result) cria's own gate, by the in-process mark its projection carries?"""
+    return isinstance(m, dict) and m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK
+
+
+def _automatic(m) -> bool:
+    return isinstance(m, dict) and m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK
 
 
 def gate_call_ids(messages: list) -> set:
-    """Tool-call IDs whose command carries a valid gate provenance sentinel.
-
-    The command author records this fact at composition time. Readers must use that fact rather
-    than infer ownership from marker-like text a user or an ordinary tool may legitimately emit.
-    """
+    """Tool-call IDs of cria's own gate calls: those of the assistant messages the projection of a finished gate marked."""
     return {call["id"] for message in messages
-            if isinstance(message, dict) and message.get("role") == "assistant"
-            for call in message.get("tool_calls") or [] if call.get("id") and gate_call(call)}
+            if isinstance(message, dict) and message.get("role") == "assistant" and _automatic(message)
+            for call in message.get("tool_calls") or [] if call.get("id")}
 
 
-def mark_current_gate(messages: list, issued_id: str | None) -> list:
-    """Carry the session's last issued gate identity through the model-view cleaner.
-
-    A gate-looking command alone is not authority. Only an unambiguous call/result
-    pair matching the session's own issued ID receives this in-process annotation.
-    """
-    if not issued_id:
-        return messages
-    calls = [(i, call) for i, message in enumerate(messages) if isinstance(message, dict)
-             and message.get("role") == "assistant" for call in message.get("tool_calls") or []
-             if call.get("id") == issued_id]
-    results = [i for i, message in enumerate(messages) if isinstance(message, dict)
-               and (message.get("role") == "tool" or message.get("type") == "function_call_output")
-               and (message.get("tool_call_id") or message.get("call_id")) == issued_id]
-    if (len(calls) != 1 or len(results) != 1 or calls[0][0] >= results[0]
-            or not gate_call(calls[0][1])):
-        return messages
-    call_index = calls[0][0]
-    marked = {results[0]}
-    if len(messages[call_index].get("tool_calls") or []) == 1:
-        marked.add(call_index)
-    return [{**m, bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
-            if i in marked else m for i, m in enumerate(messages)]
+def gate_result_of(message) -> "GateResult | None":
+    """The typed result of a finished gate a tool result stands for (only cria's projection puts one there)."""
+    found = message.get(bodykeys.GATE_RESULT) if isinstance(message, dict) else None
+    return found if isinstance(found, GateResult) else None
 
 
-def _strip_gate_plumbing(cmd: str) -> str:
-    """A composed gate command, reduced to the probe commands the model may see.
-
-    Reads the stamp `plan_gate` put there. No patterns, no un-composing, and nothing to teach when
-    cria grows a new kind of internal leg — a survey, a litter removal, an offline re-run — because
-    none of them is in the list and none of them ever has to be excluded.
-
-    THE HARMS THIS PREVENTS ARE MEASURED. Across the thirteen walked nemotron runs the unstripped
-    scaffolding was 3.8% of every byte cria sent one coder (50 copies of a pom checker, 100 of the
-    `unshare` offline leg, 850 occurrences of `__ctx_`); three separate models copied it back as
-    their own command; and the token `cria` reached the model 63 times in a single prompt (#17).
-
-    Not a gate → "". A cria-authored call the model never made has nothing in it for the model.
-    """
-    probes = gate_probes_of(cmd)
-    return "\n".join(p for p in (probes or []) if p.strip())
+def historical_plan(result: GateResult) -> GatePlan:
+    """The plan of a gate that is no longer the newest: what rendering a section needs of it (its checks' kind and command, its workspace), from the result."""
+    return GatePlan(workspace=result.workspace, op=result.op, result=result, candidates=list(result.facts))
 
 
 def cria_authored_call_ids(m: dict) -> set:
-    """The ids of this turn's tool calls that, once the gate plumbing is stripped, hold NOTHING.
+    """The ids of this turn's tool calls that hold NOTHING: a gate none of whose checks the coder could retype.
 
-    `_strip_gate_plumbing` returns "" when no probe in the script is retypable — "a cria-authored
-    call the model never made has nothing in it for the model", in its own words. The command was
-    emptied and the CALL was left standing, so the model's history read:
-
-        <function=exec_command><parameter=cmd>
-        </parameter>
-        …
-        <tool_response>⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.
-
-    — an empty command attributed to the model, and cria answering it. Measured at 188 prompts, all
-    on 2026-08-22, on the node cell, where every probe is a `node --check` cria composed and so
-    nothing is retypable."""
+    The command was empty and the CALL was left standing, so the model's history read an empty command attributed to the model, answered by cria.
+    Measured at 188 prompts, all on 2026-08-22, on the node cell, where every probe is a `node --check` cria composed and so nothing is retypable."""
+    if not (_automatic(m) and m.get("role") == "assistant"):
+        return set()
+    from .toolwire import _command_of
     ids = set()
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}
-        raw = fn.get("arguments")
-        if not isinstance(raw, str):
-            continue
-        try:
-            a = jsontext.loads(raw)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(a, dict):
-            continue
-        for field in ("cmd", "command"):
-            v = a.get(field)
-            text = _command_text(v)
-            if gate_probes_of(text) is not None and not _strip_gate_plumbing(text).strip():
-                if tc.get("id"):
-                    ids.add(tc["id"])
+        if tc.get("id") and not _command_of(fn.get("arguments")).strip():
+            ids.add(tc["id"])
     return ids
-
-
-def _strip_command_plumbing(m: dict) -> dict:
-    """If an assistant tool call carries a gate-scaffolded command, rewrite the command in place to drop
-    the plumbing (markers/git-sha/cd-guard). Shape-preserving: str ``cmd`` or list ``command``."""
-    tcs = m.get("tool_calls")
-    if not tcs:
-        return m
-    changed = False
-    new_tcs = []
-    for tc in tcs:
-        fn = tc.get("function") or {}
-        raw = fn.get("arguments")
-        if isinstance(raw, str):
-            try:
-                a = jsontext.loads(raw)
-            except (ValueError, TypeError):
-                a = None
-            if isinstance(a, dict):
-                call_changed = False
-                for field in ("cmd", "command"):
-                    v = a.get(field)
-                    if isinstance(v, str) and gate_probes_of(v) is not None:
-                        a[field] = _strip_gate_plumbing(v)
-                        call_changed = True
-                    elif isinstance(v, list):
-                        script = _command_text(v)
-                        if gate_probes_of(script) is not None:
-                            a[field] = [_strip_gate_plumbing(script)]
-                            call_changed = True
-                if call_changed:
-                    tc = {**tc, "function": {**fn, "arguments": json.dumps(a)}}
-                    changed = True
-        new_tcs.append(tc)
-    return {**m, "tool_calls": new_tcs} if changed else m
 
 
 def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                        drop_private_results: bool = False, linked_only: bool = False) -> list:
-    """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
-    a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
+    """Rewrite the gate results of a history (in the model's view) to the cleaned summary. Idempotent; a re-run over already-clean messages
+    leaves them untouched. Non-gate messages pass through.
 
-    Also STRIPS the gate's command-side plumbing (the ``echo ___CTX_GATE_…``/``git status|sha1sum``/
-    ``cd||exit 97`` scaffolding the coder never authored), DROPS non-signal ⟦ctx:checks⟧ turns entirely
-    (with their command call, so nothing orphans — a "no usable result this turn" is pure noise), and
+    DROPS non-signal ⟦ctx:checks⟧ turns entirely (with their command call, so nothing orphans — a "no usable result this turn" is pure noise),
+    and for provenance-linked gate calls only, COLLAPSES repeats: when the same cleaned ⟦ctx:checks⟧ payload appears more than once, keep only the
+    most recent full copy and shorten the earlier identical ones to a one-line back-reference.
 
-    For provenance-linked gate calls only, COLLAPSES repeats: when the same cleaned ⟦ctx:checks⟧ payload
-    appears more than once, keep only the most recent full copy and shorten the earlier identical ones to
-    a one-line back-reference. Unstamped model-visible results remain verbatim."""
+    A gate is rendered from the typed result its tool result carries: the newest through the live ``plan`` (every fact the plan holds),
+    an older one through the plan its own result rebuilds (its checks and workspace). Older gates stay as readable as they were: the conversation
+    holds everything needed even after the session's current plan has moved on. A gate that is UNKNOWN says so, and a newer complete gate in the same
+    history makes an older unknown one silence (it contradicted nothing the newer one verified). ``linked_only`` restricts the pass to calls
+    cria marked as its own gate."""
     out = []
     gate_ids = gate_call_ids(messages) if linked_only else set()
     drop_ids: set = set()          # tool_call ids whose result we dropped → drop the calling turn too
-    # THE CALL WAS CRIA'S AND THE MODEL NEVER MADE IT. When the whole gate script is
-    # composed-by-cria, `_strip_gate_plumbing` empties the command and the empty call used to stay
-    # in the model's own history with cria's answer under it. Its RESULT is real ground truth and
-    # is kept — as a plain message, which is what it always was.
+    # THE CALL WAS CRIA'S AND THE MODEL NEVER MADE IT. When the whole gate is checks cria composed, nothing in its command was the model's,
+    # and the empty call used to stay in the model's own history with cria's answer under it. Its RESULT is real ground truth and is kept — as a
+    # plain message, which is what it always was.
     own_ids: set = set()
-    # A paged gate occupies several harness turns, but it is one piece of evidence. Retain the first
-    # result in each transport as the wire-valid seat for its final rendering and drop the remaining
-    # page calls/results. Reassemble and verify OLDER transports from their page envelopes: the
-    # conversation still holds every byte/count/hash even after the session's current plan advances.
-    # Treating a formerly-complete check as UNKNOWN merely because a newer plan exists would destroy
-    # evidence the model had already read. An actually incomplete/invalid history remains UNKNOWN.
-    transport_re = re.compile(re.escape(TRANSPORT_PREFIX) + r"([0-9a-f]{24})" +
-                              re.escape(TRANSPORT_SUFFIX))
-    transport_first: dict[str, int] = {}
-    transport_ids: dict[int, str] = {}
-    transport_pages: dict[str, list[str]] = {}
-    for i, message in enumerate(messages):
-        if not isinstance(message, dict):
-            continue
-        is_tool = message.get("role") == "tool" or message.get("type") == "function_call_output"
-        payload = message.get("content") or message.get("output")
-        call_id = message.get("tool_call_id") or message.get("call_id")
-        match = (transport_re.search(payload) if is_tool and isinstance(payload, str)
-                 and (not linked_only or call_id in gate_ids) else None)
-        if match:
-            transport_id = match.group(1)
-            transport_ids[i] = transport_id
-            transport_first.setdefault(transport_id, i)
-            transport_pages.setdefault(transport_id, []).append(payload)
-    transport_states: dict[str, GatePlan] = {}
-    for transport_id, pages in transport_pages.items():
-        if plan is not None and plan.transport_id == transport_id:
-            # The live bridge already consumed these pages. Re-ingesting them would correctly look
-            # like an offset regression, so use its verified session state directly.
-            transport_states[transport_id] = plan
-            continue
-        scope = _workspace_for_transport(transport_id)
-        historical = GatePlan(workspace=scope if scope is not None else '', transport_required=True,
-                              transport_id=transport_id, transport_scope_known=scope is not None)
-        # C39b: hand this rebuilt plan its OWN transport's persisted facts (kind, composed_by_cria,
-        # command — see `_register_transport_facts`), so a section that timed out on THIS now-older
-        # transport still names its command exactly as it did while this was the newest gate. A
-        # transport this mechanism never saw (predates it, or aged out of the bound) renders with
-        # `historical.candidates` empty, same as base — the fallback in `_command_for_sid` is
-        # unaffected either way.
-        historical.candidates = _facts_for_transport(transport_id)
-        for page in pages:
-            if historical.transport_complete:
-                fail_transport(historical, "transport history continued after its final page")
-                break
-            if ingest_transport(historical, page) == "unknown":
-                break
-        transport_states[transport_id] = historical
-    retained_transport = set(transport_first.values())
-    raw_gate_indices = [i for i, m in enumerate(messages)
-                        if isinstance(m, dict)
-                        and (m.get("role") == "tool" or m.get("type") == "function_call_output")
-                        and isinstance(m.get("content") or m.get("output"), str)
-                        and SECTION_PREFIX in (m.get("content") or m.get("output"))
-                        and (not linked_only
-                             or (m.get("tool_call_id") or m.get("call_id")) in gate_ids)]
-    last_gate = max([*raw_gate_indices, *retained_transport], default=-1)
+    records = {i: gate_result_of(m) for i, m in enumerate(messages)
+               if gate_result_of(m) is not None and (not linked_only or (m.get("tool_call_id") or m.get("call_id")) in gate_ids)}
+    states: dict = {}
+    for i, found in records.items():
+        if plan is not None and plan.op == found.op:
+            if plan.result is None:
+                adopt(plan, found)
+            states[i] = plan
+        else:
+            states[i] = historical_plan(found)
+    last_gate = max(records, default=-1)
     for i, m in enumerate(messages):
         if isinstance(m, dict):
             is_tool = m.get("role") == "tool" or m.get("type") == "function_call_output"
             key = "content" if m.get("content") is not None else "output"
             c = m.get(key)
-            if is_tool and i in transport_ids:
+            if is_tool and i in records:
                 tid = m.get("tool_call_id") or m.get("call_id")
-                if i not in retained_transport:
-                    if tid:
-                        drop_ids.add(tid)
-                    continue
-                transport_id = transport_ids[i]
-                current = plan is not None and plan.transport_id == transport_id
-                transport_state = transport_states[transport_id]
-                if transport_state.transport_complete:
-                    # C39b: a HISTORICAL transport_state is no longer plan-free — it is `historical`,
-                    # built above with this transport's own persisted facts attached
-                    # (`historical.candidates = _facts_for_transport(...)`), so its timed-out sections
-                    # still name their command once this gate is no longer the newest. `current` still
-                    # decides annotate/changed_paths/etc below (those stay newest-gate-only), but the
-                    # PLAN object handed to clean_gate_output is always the one that actually knows
-                    # this transport's facts.
+                state = states[i]
+                plain = {k: v for k, v in m.items() if k != bodykeys.GATE_RESULT}
+                if state.complete:
                     c = clean_gate_output(
-                        transported_result(transport_state), transport_state,
-                        annotate=(i == last_gate),
+                        state, annotate=(i == last_gate),
                         changed_paths=_paths_written_after(messages, i) if i == last_gate else frozenset(),
-                        a_command_ran_since=(i == last_gate
-                                             and _a_command_could_have_changed_things_after(messages, i)),
-                        checks_reran=(i == last_gate
-                                      and _probe_reran_after_last_change(messages, i, plan)))
-                elif any(j > i and transport_states[transport_ids[j]].transport_complete
-                         for j in retained_transport):
-                    # An OLDER gate whose pages were lost cannot be verified — but a NEWER gate in
-                    # this very history did verify, and says what the repo's checks say now. "UNKNOWN"
-                    # about the superseded run, set beside the complete failing result of the next one,
-                    # read as a contradiction (phi4 A2 calls 0031/0037/0043). Only the NEWEST gate's
-                    # unknown-ness is a fact about the present, so this one is silence — not "clean":
-                    # it contributes no result at all, and the newest gate below is untouched.
+                        a_command_ran_since=(i == last_gate and _a_command_could_have_changed_things_after(messages, i)),
+                        checks_reran=(i == last_gate and _probe_reran_after_last_change(messages, i, plan)))
+                elif any(j > i and states[j].complete for j in records):
+                    # An OLDER gate whose evidence never arrived whole cannot be verified — but a NEWER gate in this very history did verify, and says
+                    # what the repo's checks say now. "UNKNOWN" about the superseded run, set beside the complete failing result of the next one, read
+                    # as a contradiction (phi4 A2 calls 0031/0037/0043). Only the NEWEST gate's unknown-ness is a fact about the present, so this
+                    # one is silence — not "clean": it contributes no result at all, and the newest gate below is untouched.
                     c = None
                 else:
-                    c = transport_unknown_text(transport_state.transport_reported)
+                    c = transport_unknown_text(state.reported)
                 if c is None or _is_no_signal_check(c):
                     if tid:
                         drop_ids.add(tid)
                     continue
                 if tid in own_ids:
                     out.append({"role": "user", "content": c, **(
-                        {bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
-                        if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK else {})})
+                        {bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK} if _automatic(m) else {})})
                 else:
-                    out.append({**m, key: c})
+                    out.append({**plain, key: c})
                 continue
-            # A private survey bootstrap may be refused before it emits a gate marker.  Its raw
-            # tool result cannot reach the planner, because its matching assistant call is private.
-            tid = (m.get("tool_call_id") or m.get("call_id")) if is_tool else None
-            if drop_private_results and tid in own_ids:
-                drop_ids.add(tid)
+            if drop_private_results and is_tool and (m.get("tool_call_id") or m.get("call_id")) in own_ids:
+                drop_ids.add(m.get("tool_call_id") or m.get("call_id"))
                 continue
-            if (is_tool and isinstance(c, str) and SECTION_PREFIX in c
-                    and (not linked_only or tid in gate_ids)):
-                # ANNOTATE ONLY THE NEWEST GATE RESULT. This function re-renders every gate result
-                # in the history on EVERY prompt build, and the disk quote is read at render time —
-                # so a finding produced five calls ago gets stamped with whatever that line says
-                # NOW. Walked three times independently on maple-preview 1785994846: the same
-                # `test_resolve_adam.py:54` was annotated `mock_get.assert_called_once_with(` at
-                # call 0027, `self.assertEqual(result["address"], "tz1KqTp…")` at 0031, and
-                # `f"{API_BASE_URL}/handles/go.handle",` at 0032 — with byte-identical MagicMock ids
-                # proving the checks never re-ran in between. The coder read a stale failure carrying
-                # a freshly-wrong quote, concluded its landed fix had not landed, un-fixed a correct
-                # assertion and re-applied an import it already had. Three calls, on a 15-minute wall.
-                # The guard was added the same morning (bdd68bc) to stop the model GUESSING at an
-                # unquoted line; on a file that has moved it manufactures the guess instead.
-                cleaned = clean_gate_output(
-                    c, plan, annotate=(i == last_gate),
-                    changed_paths=_paths_written_after(messages, i) if i == last_gate else frozenset(),
-                    a_command_ran_since=(i == last_gate
-                                         and _a_command_could_have_changed_things_after(messages, i)),
-                    checks_reran=(i == last_gate
-                                  and _probe_reran_after_last_change(messages, i, plan)))
-                if cleaned is not None:
-                    if _is_no_signal_check(cleaned):   # no signal → drop result AND its command turn
-                        tid = m.get("tool_call_id") or m.get("call_id")
-                        if tid:
-                            drop_ids.add(tid)
-                        continue
-                    if (m.get("tool_call_id") or m.get("call_id")) in own_ids:
-                        # Its call is gone (cria composed the whole script, so nothing in it was the
-                        # model's), and a result with no call is not a result. Kept whole as a plain
-                        # message — the checks block is the ground truth the gate exists to deliver.
-                        out.append({"role": "user", "content": cleaned, **(
-                            {bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
-                            if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK else {})})
-                    else:
-                        out.append({**m, key: cleaned})
-                    continue
             if m.get("role") == "assistant" and m.get("tool_calls"):
                 empties = cria_authored_call_ids(m)
                 if empties and len(m["tool_calls"]) == len(empties):
                     own_ids |= empties
                     continue
-                m = _strip_command_plumbing(m)
         out.append(m)
     if drop_ids:  # remove the assistant call(s) whose only result was a dropped no-signal gate probe
         out = [m for m in out if not (isinstance(m, dict) and m.get("role") == "assistant"
@@ -2468,7 +1379,7 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
     # Keyed on dedup.volatile_key, NOT the raw payload. Two renderings of the same stamped gate
     # finding differ by per-run noise the finding does not depend on, and keying on bytes meant the
     # collapse never fired for them. mellum2 1786051505 carried
-    # `resolve_handle_and_test.py:92: undefined name 'pytest'` THREE times in one coder prompt — on
+    # `resolve_handle.py:92: undefined name 'pytest'` THREE times in one coder prompt — on
     # a file the coder had since cut to 7 lines, so it was hunting a line that no longer existed — and
     # the three copies differed only by a `<urllib.request.Request object at 0x…>` address and
     # `in 0.36s` vs `in 0.28s`.
@@ -2496,7 +1407,7 @@ def check_evidence_messages(messages: list, plan: "GatePlan | None" = None) -> l
     The ordinary coder view retains retypable probe commands. A reasoner judging
     progress must also retain who requested them: a green automatic gate after a
     refused action is not a successful action chosen by the coder. Capture ownership
-    before cleaning removes the gate stamp; an unstamped identical command stays a
+    before cleaning removes the marks; an unmarked identical command stays a
     coder action. Results retain the existing cleaner's exact rendering. The internal
     observation role is consumed by selfcompact.serialize, never sent as a wire role.
     """
@@ -2531,55 +1442,11 @@ def check_evidence_messages(messages: list, plan: "GatePlan | None" = None) -> l
     return out
 
 
-# A harness that REFUSES to run the gate at all (sandbox policy, no shell, a rejected verb) returns no
-# section markers, which interpret_gate correctly reads as "nothing ran" — correct, and completely
-# silent. cria then loses its single largest assist on every turn with nothing in the log to say so.
-# These are the phrases a refusal carries; matching one turns the silence into one operator-facing warn.
-_REFUSAL_PHRASES = (
-    "not permitted",
-    "rejected:",
-    "is not allowed",
-    "permission denied",
-    "operation not permitted",
-    "sandbox",
-)
-
-
-def refusal_reason(result_text: str) -> str:
-    """The harness's own words for why it would not run the gate — '' if it doesn't look like a refusal.
-
-    Only consulted when NO section came back: a gate that ran and merely failed is not a refusal."""
-    text = (result_text or "").strip()
-    if not text:
-        return ""
-    low = text.lower()
-    if not any(p in low for p in _REFUSAL_PHRASES):
-        return ""
-    # The useful part is the harness's reason, not the multi-kilobyte echo of the script it refused.
-    for phrase in _REFUSAL_PHRASES:
-        i = low.find(phrase)
-        if i >= 0:
-            return " ".join(text[max(0, i - 80):i + 160].split())
-    return ""
-
-
-def _cleanup_record(sections: dict, plan: GatePlan | None = None) -> tuple[list[str], list[dict]] | None:
-    """Authenticate against the originating request, not a receipt's scope claim."""
-    if plan is not None and plan.transport_required and not plan.transport_scope_known:
-        return None
-    if plan is not None and plan.transport_complete and not declared_transport(plan):
-        return None            # a completed transport whose private segments were never declared: unknown, never found
-    return gatecleanup.report(sections.get(LITTER_REMOVED_SECTION),
-                              plan.workspace if plan and plan.transport_required else None)
-
-
-def cleanup_fact(sections: dict, plan: GatePlan | None = None) -> str:
+def cleanup_fact(plan: "GatePlan | None") -> str:
     """Keep the gate's own mutation facts separate from native checker lines."""
-    if LITTER_REMOVED_SECTION not in sections:
-        return ""
-    record = _cleanup_record(sections, plan)
+    record = cleanup_of(plan)
     if record is None:
-        return "\n" + prompts.load("checks_cleanup_unknown")
+        return ""                  # a result with no report says nothing about one (a gate cria ran always has it)
     removed, failed = record
     notes = [prompts.load('checks_original_scope')]
     # THE REPORT'S RELATIVE PATHS ARE RELATIVE TO THE PRIVATE SCRATCH DIRECTORY, and every line says so.
@@ -2600,58 +1467,18 @@ def cleanup_fact(sections: dict, plan: GatePlan | None = None) -> str:
     return "\n" + "\n".join(notes) if notes else ""
 
 
-# Spool (+``.done``) paths cria has FULLY ingested (hash-verified) and no longer needs, waiting for
-# the NEXT gate composed for this workspace to remove them. These are cria's OWN transport files,
-# not workspace paths: workspace cleanup is completed inside its gate before evidence returns. Reviewer 6510f2dd follow-up: the
-# reader no longer self-deletes on the final read (a lost-and-repolled final page must be able to
-# re-read the SAME bytes), so something else has to reclaim a spool once cria is truly done with it.
-# Paths here are ONLY ones `ingest_transport` itself validated and stored as `plan.transport_path`
-# (never a glob, never an unvalidated string), so removal never touches a file cria didn't name.
-_SPOOL_CLEANUP_QUEUE: dict[str, list[str]] = {}
-
-
-def _queue_spool_cleanup(workspace: str, spool_path: str) -> None:
-    if not workspace or not spool_path:
-        return
-    if len(_SPOOL_CLEANUP_QUEUE) > 256:
-        _SPOOL_CLEANUP_QUEUE.clear()
-    q = _SPOOL_CLEANUP_QUEUE.setdefault(workspace, [])
-    if spool_path not in q:
-        q.append(spool_path)
-    del q[:-64]
-
-
-def spool_cleanup_command(workspace: str) -> str:
-    """The shell leg that removes PRIOR gate spools (+ ``.done`` markers) cria has already fully
-    ingested, or "" when there is none. Same no-`rm` reasoning as harness-side workspace cleanup:
-    the Codex sandbox rejects the whole script when it sees one. Never a glob — only the exact
-    paths cria itself learned from a hash-verified page and is therefore certain are its own.
-    """
-    paths = _SPOOL_CLEANUP_QUEUE.pop(workspace, None)
-    if not paths:
-        return ""
-    commands = []
-    for path in paths:
-        name = os.path.basename(path)
-        token = name.removeprefix('.ctx-gate-').removesuffix('.spool')
-        commands.append(gatecleanup.dispose_command(helper_runner(), token, path))
-    return '{\n' + '\n'.join(commands) + '\n} >/dev/null 2>&1'
-
-
-def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
-    """Read completed harness removals; no server-side filesystem act or deferred mutation."""
-    record = _cleanup_record(sections or {}, plan)
+def sweep_litter(plan: GatePlan) -> list[str]:
+    """What the run reclaimed of its private scratch (paths relative to it), as the gate reported it; nothing is removed here."""
+    record = cleanup_of(plan)
     root = getattr(plan, "workspace", "") or ""
     if record is None or not root:
         return []
     removed: list[str] = []
     for rel in record[0]:
-        # This is only report validation. Actual resolution and deletion occurred on the harness.
+        # This is only report validation: the removal was the harness's, on the directory cria named.
         if not rel or os.path.isabs(rel) or dirguard.is_external(rel, root):
             continue
         removed.append(rel)
-    # The harness already removed these before the survey and transport cutoff.
-    # Historical litter listings are deliberately not treated as completed removals.
     return removed
 
 
@@ -2674,43 +1501,23 @@ def transport_unknown_text(reported: str = "") -> str:
     base = prompts.load("probe_transport_unknown")
     return f"{base}\n{prompts.render('probe_transport_reported', reported=reported)}" if reported else base
 
-
-def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
-    """Replay the harness's gate output through the ported interpreters."""
-    state = ingest_transport(plan, result_text)
-    if state in ("pending", "running"):
-        # C28: `running` is exactly as non-terminal as `pending` from here — the caller (normally
-        # `loop.guard_gate_transport`, which intercepts both before `interpret_gate` is ever reached
-        # this turn) re-issues the read-only wait/read instead of treating it as evidence.
+def interpret_gate(plan: GatePlan, result: "GateResult | None" = None, rlog=None) -> GateOutcome:
+    """Replay the gate's result through the ported interpreters. ``result`` is what the gate's operation learned (``None``: ask the plan what it
+    holds - nothing yet means the gate is still running)."""
+    state = adopt(plan, result) if result is not None else ("unknown" if plan.error else "complete" if plan.complete else adopt(plan, plan.result))
+    if state == "pending":
         return GateOutcome(ran=False, transport_pending=True)
     if state == "unknown":
         if rlog is not None:
-            rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
-                      received=len(plan.transport_data), total=plan.transport_total)
-        return GateOutcome(ran=False, transport_unknown=True, transport_reported=plan.transport_reported)
-    if state != "complete":
-        # "legacy": bytes that never arrived as a completed, verified transport (an old raw result, hand-made text). They
-        # declare no boundary, so they establish no section, no cleanup report and no survey: UNKNOWN, never a pass.
-        # (The HARNESS'S OWN WORDS for declining to run the gate claim nothing about a stream: they are still reported.)
-        refused = refusal_reason(result_text) if SECTION_PREFIX not in (result_text or "") else ""
-        if rlog is not None and not refused:
-            rlog.emit("gate.legacy_result_unknown", level="warn")
-        return GateOutcome(ran=False, transport_unknown=not refused, refused=refused)
-    if not declared_transport(plan):
-        # A completed, hash-verified transport whose worker declared no (or an invalid) extent / header-offset map: the bytes are
-        # attested but their MEANING is not. Nothing in them is a section, a cleanup report or a survey — UNKNOWN.
-        if rlog is not None:
-            rlog.emit("gate.undeclared_transport_unknown", level="warn", reason="extents or section offsets not declared")
-        return GateOutcome(ran=False, transport_unknown=True)
-    result_text = transported_result(plan)
+            rlog.emit("gate.transport_unknown", level="warn", reason=plan.error)
+        return GateOutcome(ran=False, transport_unknown=True, transport_reported=plan.reported, refused=plan.refused)
+    sections = sections_of(plan)
     unsettled = unsettled_writes(plan)
     if unsettled and rlog is not None:
         rlog.emit("gate.writes_unsettled", level="warn", count=len(unsettled),
                   states=sorted({state for _r, _p, state in unsettled}))
-    sections, _ = gate_sections(result_text, plan)
-    cleanup_record = _cleanup_record(sections, plan)
-    scope_unknown = bool((cleanup_record is not None and cleanup_record[1])
-                         or (plan.transport_required and cleanup_record is None))
+    cleanup_record = cleanup_of(plan)
+    scope_unknown = bool(cleanup_record is None or cleanup_record[1])
     if scope_unknown:
         wsview.current().note_unknown_mutation()
     # THE SURVEY IS CRIA'S OWN OPERATION (`cria.surveyops`), asked while the checks ran and again after them (`plan_gate` wants one):
@@ -2718,7 +1525,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     survey_applied = bool(wsview.current().surveyed)
     # THE PLAN WAS COMPOSED BLIND TO A MANIFEST THIS SURVEY JUST DELIVERED. After any command that could have
     # changed the tree, no held body is current, so discovery found no `rake test` / `npm test` and the gate ran only
-    # syntax checks; the survey riding home with it carries the very bodies discovery asked for. Selection is
+    # syntax checks; the survey carries the very bodies discovery asked for. Selection is
     # deterministic, so ask it again now: if the checks differ, this gate verified less than it should have.
     survey_changes_plan = bool(
         survey_applied and plan.unanswered_reads and plan.workspace
@@ -2726,11 +1533,9 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     replan_after_survey = bool(survey_applied and (not plan.surveyed_before or survey_changes_plan))
     participation_events = []
     # Read the harness's completed cleanup record, including when checks failed.
-    # No cleanup is deferred to another gate or a coder tool.
-    swept = sweep_litter(plan, sections)
-    # ran is TRUE only if an actual check section came back — NOT just the always-present git snapshot.
-    # An empty / no-code repo yields zero candidates, so plan_gate composes a git-ONLY script; treating
-    # that as "ran" made guard_ground_truth emit a clean "no error-class problems" verdict when NO check
+    swept = sweep_litter(plan)
+    # ran is TRUE only if an actual check section came back. An empty / no-code repo yields zero candidates;
+    # treating that as "ran" made guard_ground_truth emit a clean "no error-class problems" verdict when NO check
     # actually ran. No probe-* section → ran=False → silence, not a false pass.
     if not any(k.startswith("probe-") for k in sections):
         participation_events = [participation.observe(c, "", None, event_missing=True)
@@ -2738,7 +1543,6 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         plan.participation = participation.report(participation_events)
         return GateOutcome(
             ran=False,
-            refused=refusal_reason(result_text),
             replan_after_survey=replan_after_survey,
             participation=plan.participation,
             scope_unknown=scope_unknown,
@@ -2749,16 +1553,16 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
 
     results = []
     for i, c in enumerate(plan.candidates):
-        body = sections.get(f"probe-{i}")
-        if body is None:
-            # Never ran — the script was cut short (harness truncation) or the section never came back.
+        found = sections.get(f"probe-{i}")
+        if found is None:
+            # Never ran — the run was cut short or the check's output never came back.
             # Absence must not BLOCK, but it must not read as CLEAN either: `results` silently became a
-            # subset of `selected`, and nothing downstream said a check was missing, so a truncated gate
+            # subset of `selected`, and nothing downstream said a check was missing, so a cut gate
             # looked like a passing one. Record the gap so the digest can report it.
             out.unran.append(proberun.display_command(c.command))
             participation_events.append(participation.observe(c, "", None, event_missing=True))
             continue
-        raw, code = proberun.scrape_exit(body)
+        raw, code = found
         if code == proberun.NOT_FOUND_EXIT_CODE and c.composed_by_cria:
             # THE GATE'S OWN 127 IS GROUND TRUTH ABOUT THE CODER'S SHELL, for a tool cria composed to launch directly (an
             # eslint/pyflakes/node floor probe): remember it so the next gate does not compose the same absent tool.
@@ -2773,6 +1577,6 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     plan.participation = out.participation
 
     if any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
-        out.offline_ran = bool(sections.get("offline", "").strip())
+        out.offline_ran = "offline" in sections
 
     return out

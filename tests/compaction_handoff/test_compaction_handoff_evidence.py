@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from cria import contextfloor, denial, indicators, loop, memoryhandoff as memory, probegate, prompts, resultnotes, selfcompact as sc, server
 from cria.memoryeffects import Effect
 from cria.config import Role
+from gate_fixtures import gate_turn
 from compaction_handoff_helpers import call, chat_reply, lens_answer, result, shell, write
 
 LONG = "x" * 5000
@@ -38,7 +39,7 @@ def test_the_transcript_cria_composes_is_never_clipped_and_keeps_both_ends_newli
 
 def test_compaction_evidence_drops_cria_plumbing_and_blank_turns_but_an_empty_tool_result_is_still_evidence():
     """phi4 / Java call 0006: six `assistant: ` blank turns and cria's own gate launch (result excluded as an anchor) read as a coder action nobody saw the result of - the writer said 'results not provided', the scope lens said NARROWS, and the harness remembered nothing."""
-    gate = [call("g1", "exec_command", cmd=probegate._gate_sentinel(["mvn -q compile"]) + "\ntrue"), {"role": "assistant", "content": ""}]
+    gate = [gate_turn("g1", "", probes=("mvn -q compile",))[0], {"role": "assistant", "content": ""}]       # cria's own gate call (its result is an anchor the writer never sees)
     msgs = [{"role": "user", "content": "task"}, call("c1", "exec_command", cmd="touch a.txt"), result("c1", ""), *gate, {"role": "assistant", "content": ""}, *shell("c2", "ls")]
     out = sc.compaction_evidence_messages(msgs)
     assert [m["role"] for m in out].count("assistant") == 2 and not any("gate" in json.dumps(m).lower() for m in out)
@@ -271,4 +272,4 @@ def test_the_work_ledger_keeps_event_order_one_path_per_file_and_one_line_per_ev
     assert events[:3] == ["write_file pom.xml: confirmed written", "write_file pom.xml: refused, not written", "write_file pom.xml: no confirmation recorded"]
     assert len(events) == 5 and "&& true (x3)" in events[3] and events[4] == "refused, did not run: rm -rf /"                                     # a line break inside a command never splits the event or loses its tail
     assert sc.work_ledger([], carried=ledger) == ledger                                           # parse -> render round-trips
-    assert sc.work_ledger([call("g", "exec_command", cmd=probegate._gate_sentinel(["mvn -q compile"]) + "\ntrue"), result("g")]) == ""   # cria's own gate is not the coder's act
+    assert sc.work_ledger(gate_turn("g", "", probes=("mvn -q compile",))) == ""   # cria's own gate is not the coder's act

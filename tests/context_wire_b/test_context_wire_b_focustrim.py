@@ -61,11 +61,11 @@ def test_stale_duplicates_and_changed_results_stay_silent_and_untouched():
         out, rep = focustrim._collapse_duplicates(msgs)
         assert out == msgs and not rep.applied
 
-@rows([("48.58\nEXIT:0", None, False), ("boom\nEXIT:2", None, True), ("run.log:14:EXIT:1\nEXIT:0", None, False), ("run.log:14:EXIT:0\nEXIT:1", None, True),
+@rows([("48.58\nEXIT:0", None, False), ("boom\nEXIT:2", None, False), ("run.log:14:EXIT:1\nEXIT:0", None, False), ("run.log:14:EXIT:0\nEXIT:1", None, False),      # a line a program printed is never a shell exit code
        (denial.mark("outside the workspace"), denial.REFUSED, True),
        ("", None, False)])                                   # an empty body is an answer (orders-api-py x nemotron: 12 turns obeyed 'it failed the same way' about a true 0-byte __init__.py)
 def test_the_repeat_note_tells_the_truth_about_whether_the_call_worked(result, outcome, failed):
-    """'It told you everything it can, read it above' is false for a failed call and 'do not read it as the answer' is false for a real one; only a proven failure (refusal or last EXIT != 0) changes the sentence."""
+    """'It told you everything it can, read it above' is false for a failed call and 'do not read it as the answer' is false for a real one; only a proven failure (cria's own refusal) changes the sentence: a program that prints `EXIT:1` has not said how the shell ended."""
     out, _ = focustrim._collapse_duplicates(GO + turn("a", result, outcome=outcome) + turn("b", result, outcome=outcome))
     note = out[-1]["content"]
     assert ("failed the same way" in note) is failed and ("told you everything it can" in note) is not failed

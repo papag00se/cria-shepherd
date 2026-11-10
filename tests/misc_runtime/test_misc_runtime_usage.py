@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 from cria import modelview, probegate, responses, server
+from gate_fixtures import gate_turn, sec
 
 LOG = SimpleNamespace(emit=lambda *a, **k: None)
 
@@ -15,10 +16,12 @@ def call(cid, cmd):
 def test_gate_plumbing_cria_strips_from_the_models_view_does_not_count_but_real_reads_do():
     """phi4 / feed-pipeline-java: usage counted the WHOLE inbound request incl. gate plumbing the model never sees, so 37
     needless Codex compactions in one run (model never read >10.5K). A genuinely big read still counts."""
-    plumbing = [call("g1", probegate._gate_sentinel(["pytest -q"]) + "\n" + "echo ___PLUMBING___ " * 400),
+    plumbing = [call("g1", "python3 -I -S -c '" + "echo ___PLUMBING___ " * 400 + "'"),                  # what the harness was handed and returned for cria's own calls
                 {"role": "tool", "tool_call_id": "g1", "content": "raw gate output " * 800}]
-    body = [{"role": "user", "content": "Implement the task."}, *plumbing]
-    whole, visible = server._incoming_ctx_tokens({"messages": body}), modelview.visible_tokens(body, None)
+    asked = [{"role": "user", "content": "Implement the task."}]
+    incoming = asked + plumbing
+    body = asked + gate_turn("g2", sec(0, "ok"), probes=("pytest -q",))                              # what the model is shown of the same gate once the projection has run
+    whole, visible = server._incoming_ctx_tokens({"messages": incoming}), modelview.visible_tokens(body, None)
     assert whole - visible > 1500 and visible < whole * 0.7
     read = [call("r1", "cat src/Feed.java"), {"role": "tool", "tool_call_id": "r1", "content": "int total;\n" * 6000}]
     assert modelview.visible_tokens(body + read, None) - visible >= len("int total;\n" * 6000) // 4 - 50

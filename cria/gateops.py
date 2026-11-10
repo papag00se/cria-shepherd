@@ -20,7 +20,6 @@ A result is accepted only as a frame for a call cria issued (``cria.ops``): the 
 import hashlib
 import json
 import os
-import re
 import time
 from dataclasses import dataclass, field
 
@@ -90,8 +89,8 @@ class GateResult:
     reported: str = ''                           # the harness's own last line about why, verbatim
     refusal: str = ''                            # the harness refused to run it: its own words
     sections: dict = field(default_factory=dict)  # section id -> (text, exit status or None when the check never reported one)
-    removed: list = field(default_factory=list)  # the private scratch the run reclaimed, relative to it
-    failed: list = field(default_factory=list)   # [{path, error}]: what could not be settled (scratch, or the original workspace's identity)
+    removed: "list | None" = None                # the private scratch the run reclaimed, relative to it (None: the result carries no report; never so for a gate cria ran)
+    failed: "list | None" = None                 # [{path, error}]: what could not be settled (scratch, or the original workspace's identity)
     facts: tuple = ()                            # SectionFact of each candidate, in section order
     scope_known: bool = True
 
@@ -99,8 +98,12 @@ class GateResult:
     def complete(self) -> bool:
         return self.status == 'complete'
 
-    def cleanup(self) -> tuple:
-        return list(self.removed), list(self.failed)
+    def __deepcopy__(self, memo):
+        """A result is read, never changed: a copy of a request body (which can carry megabytes of check output) shares it."""
+        return self
+
+    def cleanup(self) -> "tuple | None":
+        return None if self.removed is None or self.failed is None else (list(self.removed), list(self.failed))
 
 
 # ------------------------------------------------------------------------------ the commands

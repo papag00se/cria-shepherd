@@ -60,9 +60,9 @@ def _first_line(command: str) -> str:
 
 
 def _composed_by_cria(command: str) -> bool:
-    """By position, as everywhere else: the declaration (tool, gate) is the FIRST line."""
+    """By position, as everywhere else: the declaration is the FIRST line."""
     head = _first_line(command)
-    return head.startswith("# " + toolwire._SENTINEL) or head.startswith("# " + toolwire.GATE_SENTINEL)
+    return head.startswith("# " + toolwire._SENTINEL)
 
 
 def _text_parts(message: dict):

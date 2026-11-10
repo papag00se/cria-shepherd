@@ -227,6 +227,8 @@ def test_responses_environment_reaches_coder_formatted_through_http(tmp_path):
             calls = [item for item in output if item.get('type') == 'function_call']
             if not calls or not str(calls[0].get('call_id')).startswith('ctx_'):
                 break
+            if any(isinstance(m.get('content'), str) and m['content'].startswith('# Environment context') for _, chat in w.fake.chats for m in chat.get('messages', [])):
+                break                          # the coder has been asked: cria's own operations (inventory, writes, gates) answer without it
             call = calls[0]
             result = subprocess.run(['bash', '-c', json.loads(call['arguments'])['cmd']], cwd=root,
                                     capture_output=True, text=True, check=True)

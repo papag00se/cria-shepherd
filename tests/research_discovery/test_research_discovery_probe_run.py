@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-from cria import probediscovery as pd, probegate, probeparse, proberun, toolpath
+from cria import gatescript, probediscovery as pd, probegate, probeparse, proberun, toolpath
 from research_discovery_helpers import disk_view
 
 pytestmark = pytest.mark.usefixtures("disk_view")
@@ -22,10 +22,13 @@ def report(command, code, out, kind=pd.ProbeKind.Test):
     return proberun.ProbeReport(project_type=["x"], selected=[cand(command, kind)], results=[res])
 
 def through_shell(argv, timeout=10.0):
-    """Run the composed probe line in a real bash (the harness shell) and interpret what comes back."""
-    c = cand(argv, pd.ProbeKind.BuildCheck)
-    proc = subprocess.run(["bash", "-c", proberun.compose_probe_command(c, timeout)], capture_output=True, text=True, timeout=30)
-    return proc.stdout, proberun.interpret_probe_output(c, " ".join(c.command), proc.stdout, None, timeout)
+    """Run the probe through cria's own gate (the real stubs, a real shell where the files are) and interpret what comes back."""
+    import tempfile
+    from survey_fixtures import gate_of_disk
+    c = cand(argv, pd.ProbeKind.BuildCheck, cwd="/tmp")
+    result = gate_of_disk(tempfile.mkdtemp(prefix="probe-run-"), [c], probe_timeout=timeout)
+    text, code = result.sections["probe-0"]
+    return text, proberun.interpret_probe_output(c, " ".join(c.command), text, code, timeout)
 
 def test_composed_probe_roundtrips_through_a_real_shell():
     """exit code, localized findings, timeout and missing tool survive compose->shell->interpret."""
@@ -38,7 +41,7 @@ def test_composed_probe_roundtrips_through_a_real_shell():
     # a launch failure by code, but a green run that merely PRINTS "command not found" stays green
     c = cand(["x"])
     assert proberun.interpret_probe_output(c, "x", "", 126, 5).exit_code is None
-    assert proberun.interpret_probe_output(c, "x", "command not found\nEXIT:0", None, 5).exit_code == 0
+    assert proberun.interpret_probe_output(c, "x", "command not found", 0, 5).exit_code == 0
 
 def test_a_huge_tail_never_elides_or_splices_an_early_failure():
     """Probe composition elides nothing: an early failure, the middle and the tail arrive whole, in order."""
@@ -102,15 +105,15 @@ def test_offline_sentence_claims_only_what_the_two_runs_establish():
     """'nothing reaches the internet' needs two green runs with the same count and no new skips (mellum2 1786047222: a live test that SKIPS)."""
     plan = probegate.GatePlan(workspace="", candidates=[cand(["python3", "-m", "pytest", "-q"])])
     for online, offline, expect in [
-        ("2 passed in 0.1s\nEXIT:0", "2 passed in 0.1s\nEXIT:0", "(0f/2p)"),
-        ("1 failed, 1 passed\nEXIT:1", "1 failed, 1 passed\nEXIT:1", ""),     # failing on a box with no network proves nothing
-        ("2 passed\nEXIT:0", "1 failed, 1 passed\nEXIT:1", ""),               # really needs the network
-        ("6 passed in 0.1s\nEXIT:0", "5 passed, 1 skipped in 0.02s\nEXIT:0", ""),
-        ("test result: ok. 4 passed; 0 failed; 0 ignored\nEXIT:0", "test result: ok. 3 passed; 0 failed; 1 ignored\nEXIT:0", ""),
-        ("ok  \tpkg\t0.01s\nEXIT:0", "ok  \tpkg\t0.01s\nEXIT:0", "still succeeds with the network switched off")]:
+        (("2 passed in 0.1s", 0), ("2 passed in 0.1s", 0), "(0f/2p)"),
+        (("1 failed, 1 passed", 1), ("1 failed, 1 passed", 1), ""),     # failing on a box with no network proves nothing
+        (("2 passed", 0), ("1 failed, 1 passed", 1), ""),               # really needs the network
+        (("6 passed in 0.1s", 0), ("5 passed, 1 skipped in 0.02s", 0), ""),
+        (("test result: ok. 4 passed; 0 failed; 0 ignored", 0), ("test result: ok. 3 passed; 0 failed; 1 ignored", 0), ""),
+        (("ok  \tpkg\t0.01s", 0), ("ok  \tpkg\t0.01s", 0), "still succeeds with the network switched off")]:
         fact = probegate._offline_fact({"probe-0": online, "offline": offline}, plan)
         assert (expect in fact) if expect else fact == "", (online, offline)
-    assert proberun.offline_probe_command(cand(["pyflakes", "x.py"], pd.ProbeKind.Lint), 60) == ""
+    assert "offline" not in gatescript.compose([cand(["pyflakes", "x.py"], pd.ProbeKind.Lint)], "", 60)[1]       # only a test check is re-run offline
 
 def test_a_probe_naming_a_certainly_absent_program_is_dropped(tmp_path):
     """UNSURE MEANS KEEP: only a certain absence (read off the coder's PATH) removes a probe; a project-local wrapper is checked as a file."""

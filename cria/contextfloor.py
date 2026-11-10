@@ -97,10 +97,10 @@ _WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 # turns OUTSIDE the last-user active span, so without this they read as the oldest droppable turns and
 # the floor deletes the very things selfcompact ran to preserve (re-digesting the rollup into a
 # summary-of-a-summary — the task-inversion selfcompact exists to prevent). Plus the ⟦ctx:continuation⟧
-# reframe lead. Literals mirror loop.BRIEFING_OPEN / probegate.SECTION_PREFIX / selfcompact.SUMMARY_MARKER
+# reframe lead. Literals mirror loop.BRIEFING_OPEN / selfcompact.SUMMARY_MARKER
 # / selfcompact.TASK_MARKER / loop.CONTINUATION_MARKER — contextfloor is low-level and imports none (avoids
 # a cycle); a test asserts they stay in sync.
-_PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CTX_GATE_", _COMPACTED_MARK,
+_PROTECT_MARKERS = ("⟦ctx:briefing⟧", _COMPACTED_MARK,
                     "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:facts⟧", "⟦ctx:continuation⟧",
                     "⟦ctx:extracted⟧")
 
@@ -140,8 +140,8 @@ def _has_protect_marker(m: dict) -> bool:
     """Is this message one of cria's own anchors, by PROVENANCE — role and position — never by the bytes a tool returned?
 
     The marker is cria's voice only where cria speaks: it OPENS a line of a user/system message (every anchor cria injects is
-    one), the briefing envelope opens a line of an assistant reply, and a gate command carries its stamp on its first line
-    (`toolwire.gate_call`; its result is protected through the pair rule). The same string INSIDE a tool result, a tool call's
+    one), the briefing envelope opens a line of an assistant reply, and the call of cria's own gate is marked in process by the projection of
+    its operation (its result is protected through the pair rule). The same string INSIDE a tool result, a tool call's
     arguments or mid-line prose is somebody's file or page: matching it anywhere made a read of cria's own source (or any
     file that quotes a marker) un-reducible and un-droppable, and the floor then reported over budget for a conversation
     that was only large."""
@@ -152,7 +152,7 @@ def _has_protect_marker(m: dict) -> bool:
         marks = _PROTECT_MARKERS
         lines = (_content_text(m) or "").splitlines()
     elif role == "assistant":
-        if any(toolwire.gate_call(tc) for tc in m.get("tool_calls") or []):
+        if m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK:
             return True
         marks = ("⟦ctx:briefing⟧",)
         lines = (_content_text(m) or "").splitlines()
@@ -165,7 +165,8 @@ def _marker_protected(messages: list[dict]) -> set[int]:
     """Indices of cria's anchors: each message `_has_protect_marker` names, plus the RESULT of a gate call (a result carries no
     stamp of its own; it is cria's because the call it answers is)."""
     gate_ids = {tc.get("id") for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
-                for tc in m.get("tool_calls") or [] if toolwire.gate_call(tc) and tc.get("id")}
+                and m.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.AUTOMATIC_CHECK
+                for tc in m.get("tool_calls") or [] if tc.get("id")}
     return {i for i, m in enumerate(messages)
             if isinstance(m, dict) and (_has_protect_marker(m) or (m.get("role") == "tool" and m.get("tool_call_id") in gate_ids))}
 

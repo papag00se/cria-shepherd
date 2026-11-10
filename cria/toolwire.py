@@ -10,11 +10,6 @@ from . import denial, jsontext, prompts
 from .shelltool import _CMD_FIELDS, shell_args, with_output_budget
 from .toolargs import parse_args as _parse
 
-# Existing gate wire facts, lowered here to avoid importing the gate executor.
-# The old producer must reexport these canonical values during integration.
-SECTION_PREFIX = "___CTX_GATE_"
-GATE_SENTINEL = "⟦ctx:gate⟧"
-
 
 REFUSED_EXIT_CODE = 1
 
@@ -60,7 +55,6 @@ _SENTINEL = "⟦ctx:tool⟧"
 # it (`_shell_call(..., f"{sentinel}\n{cmd}")`). A native command that merely CONTAINS a header — quoted in a variable, a
 # heredoc, a comment, a file it prints — declares nothing: the compiler's declaration must never come from source data.
 _SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
-_GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
 def _sentinel(name: str, arguments, receipt: str = "") -> str:
@@ -112,55 +106,7 @@ def is_crias_own(command: str) -> bool:
     text = command or ""
     if not text:
         return False
-    if _decode_sentinel(text) is not None:
-        return True
-    m = _GATE_LINE.match(text)             # the gate's own leading header, at the same position
-    if m is None:
-        return False
-    try:
-        return isinstance(json.loads(base64.b64decode(m.group(1)).decode("utf-8")), list)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return False
-
-
-def gate_probes_of(cmd: str) -> list[str] | None:
-    """The probe list a gate command declares, or None when this is not a cria-authored gate.
-
-    THE DECLARATION LIVES AT ONE POSITION — the very first line of the command, exactly as `toolwire` reads cria's own
-    lowering sentinel (``is_crias_own``). A model's OWN command that merely carries the stamp on a later line (a heredoc,
-    an echo, a file it writes) declares nothing: found on any line, it made the model's `rm -rf build && make` a "gate
-    call" whose text `_strip_command_plumbing` then REWROTE, in the history the model re-reads, to whatever probe list the
-    quoted stamp named, and whose result every `gate_call_ids` reader attributed to cria instead of the coder."""
-    m = _GATE_LINE.match(cmd or "")
-    if m is None:
-        return None
-    try:
-        got = json.loads(base64.b64decode(m.group(1).encode()).decode("utf-8"))
-    except Exception:                           # noqa: BLE001 — an unreadable stamp is not a gate
-        return None
-    return [str(x) for x in got] if isinstance(got, list) else None
-
-
-def gate_command_text(value) -> str:
-    """The command a shell tool's ``cmd``/``command`` field carries. A string is itself; for an argv array it is the ELEMENT that
-    opens with the declaration (cria's own is ``["bash", "-lc", script]``, `shelltool.shell_args`), else the last element: the
-    position rule is per command text, and joining the whole array would put a real declaration after `bash\\n-lc`."""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list) and value:
-        return next((str(x) for x in value if _GATE_LINE.match(str(x))), str(value[-1]))
-    return ""
-
-
-def gate_call(call) -> bool:
-    """Is this assistant tool call cria's own gate command, by the stamp at its command's first line?"""
-    function = call.get("function") if isinstance(call, dict) else None
-    raw = (function or {}).get("arguments")
-    try:
-        args = jsontext.loads(raw) if isinstance(raw, str) else None
-    except (ValueError, TypeError):
-        args = None
-    return isinstance(args, dict) and any(gate_probes_of(gate_command_text(args.get(f))) is not None for f in ("cmd", "command"))
+    return _decode_sentinel(text) is not None
 
 
 def original_call(command: str, call_id=None) -> dict | None:

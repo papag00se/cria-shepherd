@@ -55,12 +55,11 @@ from .filecommands import (
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
     _sentinel, _shell_call, _b64,
-    _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, _declaration,
-    GATE_SENTINEL)
+    _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, _declaration)
 
 from .resultnotes import (
     exec_envelope, _strip_exec_envelope, _noted, _digest, append_note, payload_of, _workspace_ecosystem,
-    probegate_marker_in)
+    is_gate_result)
 
 
 @dataclass

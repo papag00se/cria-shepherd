@@ -9,7 +9,7 @@ import json
 import pytest
 
 from cria import bodykeys, contextfloor, loop, probegate, selfcompact, steppreparation as sp
-from loop_guards_gatefixture import gate_page
+from gate_fixtures import gate_turn
 
 BANNER = "<environment_context><cwd>/workspace</cwd></environment_context>"
 TASK = "Repair <context>task</context> and keep its exact XML text."
@@ -77,12 +77,8 @@ def base(messages):
 def test_the_first_work_boundary_outlives_gate_cleanup_without_inventing_an_action(probes):
     """The gate's call/result pair is private plumbing and is removed; the assistant boundary it sat on is
     kept as an EMPTY projection so the root partition (initial packets vs. later follow-up) is unchanged."""
-    command = probegate._gate_sentinel(probes) + "\n:"
-    raw = "Chunk ID: 1\n" + probegate.SECTION_PREFIX + "git___\ndeadbeef\n"
-    messages = [user("Initial context may itself carry requirements.\r\n"), user("The actual task.\n"),
-                {"role": "assistant", "tool_calls": [{"id": "g1", "type": "function", "function": {
-                    "name": "exec_command", "arguments": json.dumps({"cmd": command})}}]},
-                {"role": "tool", "tool_call_id": "g1", "content": gate_page(probegate.GatePlan(""), raw)},
+    gate = gate_turn("g1", "___CTX_GATE_git___\ndeadbeef\n", probes=probes)         # nothing ran to a result: no signal, the pair is dropped
+    messages = [user("Initial context may itself carry requirements.\r\n"), user("The actual task.\n"), *gate,
                 user("A later followup, not root."), {"role": "assistant", "content": "working"}]
     before = copy.deepcopy(messages)
     framed = base(messages)

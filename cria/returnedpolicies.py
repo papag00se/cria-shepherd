@@ -4,7 +4,7 @@ import json
 import re
 
 from . import denial, dependencyexistence, depsurface, dirguard, packagequality, probeparse, proberun, prompts, selfcompact, windowcaps
-from .resultnotes import (append_note, probegate_marker_in, _strip_exec_envelope,
+from .resultnotes import (append_note, is_gate_result, _strip_exec_envelope,
                           _workspace_ecosystem, _noted, exec_envelope)
 from .toolargs import parse_args as _parse
 from .assistcontract import Policy, Reference
@@ -298,7 +298,7 @@ def _note_missing_dependency(source: ReturnedHistory) -> None:
         if m.get("role") != "tool":
             continue
         c = m.get("content")
-        if not isinstance(c, str) or probegate_marker_in(c):
+        if not isinstance(c, str) or is_gate_result(m):
             continue          # a gate result already carries the note from proberun
         if probeparse.dependency_missing(c):
             last = m
@@ -369,7 +369,7 @@ def _note_dependency_search(source: ReturnedHistory) -> None:
         if m.get("role") != "tool":
             continue
         c = m.get("content")
-        if not isinstance(c, str) or probegate_marker_in(c):
+        if not isinstance(c, str) or is_gate_result(m):
             continue
         tok = probeparse.searched_for_dependency_source(own_cmds.get(m.get("tool_call_id"), ""))
         if not tok:

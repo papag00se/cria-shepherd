@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from cria import probegate
-from gates_completion_helpers import gates_completion_view, coder_call, gate_turn, new_plan, page, sec, text_of  # noqa: F401
+from cria import bodykeys, probegate
+from gates_completion_helpers import gates_completion_view, coder_call, gate_turn, new_plan, sec, text_of  # noqa: F401
 
 TREES = {
     "rust": {"Cargo.toml": '[package]\nname = "toml-cli"\nversion = "0.1.0"\n', "src/main.rs": "fn main() {}\n"},
@@ -17,17 +17,23 @@ TREES = {
 @pytest.mark.parametrize("lang", TREES)
 def test_the_coder_re_reads_only_the_probe_commands_never_cria_composed_programs_or_plumbing(tmp_path, lang):
     """rust-toml-cli x nemotron-elastic 1787160046: cria's own `python3 -c ... import tomli` manifest check rode into the coder's
-    context; it put `tomli` in Cargo.toml and scored 0/4. Only the stamped retypable probes are shown, never programs or plumbing."""
+    context; it put `tomli` in Cargo.toml and scored 0/4. Only the retypable probes the plan carries are shown, never programs or plumbing."""
     for rel, body in TREES[lang].items():
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(body)
     plan = probegate.plan_gate(str(tmp_path))
-    msgs = [{"role": "user", "content": "build it"}, *coder_call("g", plan.script, page(plan, sec(0, "no problems reported")))]
-    call = probegate.clean_gate_results(msgs)[1]["tool_calls"][0]["function"]["arguments"]
-    shown = json.loads(call)["cmd"]
-    assert shown.strip() == "\n".join(" ".join(c.command) for c in plan.candidates if not c.composed_by_cria)
-    for leak in ("python3 -c", "tomli", "ElementTree", "json.load", "<<", "cria", plan.transport_id, "__ctx_", "$"):
-        assert leak not in shown
+    msgs = [{"role": "user", "content": "build it"}, *gate_turn("g", sec(0, "no problems reported"), probes=plan.shown.splitlines(), candidates=plan.candidates)]
+    out = probegate.clean_gate_results(msgs)
+    wanted = "\n".join(" ".join(c.command) for c in plan.candidates if not c.composed_by_cria)
+    assert plan.shown == wanted
+    shown = json.loads(out[1]["tool_calls"][0]["function"]["arguments"])["cmd"] if wanted else None
+    if shown is None:
+        assert [m["role"] for m in out] == ["user", "user"]                  # nothing retypable: no call at all
+        shown = ""
+    assert shown.strip() == wanted
+    for leak in ("python3 -c", "tomli", "ElementTree", "json.load", "<<", "cria", "__ctx_", "$"):
+        assert leak not in shown and leak not in plan.shown
+    assert plan.script not in shown
 
 
 def test_a_gate_cria_composed_whole_leaves_its_result_as_a_plain_message_not_an_answer_to_an_empty_call():
@@ -41,13 +47,14 @@ def test_a_gate_cria_composed_whole_leaves_its_result_as_a_plain_message_not_an_
     assert probegate.CHECKS_MARKER in out[-1]["content"]
 
 
-def test_unstamped_or_coder_authored_marker_text_is_never_rewritten_and_an_unstamped_gate_shows_nothing():
-    """A coder may print or quote internal marker text without losing a byte; a command with no (or a cut) stamp is
-    treated as not-the-coder's (silence), never guessed."""
-    quoted = f"quoted {probegate.SECTION_PREFIX}probe-0___ and {probegate.CHECKS_MARKER} literally"
+def test_coder_authored_marker_text_is_never_rewritten_and_nothing_a_json_string_says_makes_a_call_cria_gate():
+    """A coder may print or quote internal marker text without losing a byte; a call is cria's own gate only by the in-process mark the projection of
+    its operation sets: no command text, and no value a JSON body can carry (a string spelling the mark is not the mark), makes one."""
+    quoted = f"quoted ___CTX_GATE_probe-0___ and {probegate.CHECKS_MARKER} literally"
     msgs = [{"role": "user", "content": "x"}, *coder_call("c1", "echo ordinary", quoted), *coder_call("c2", "echo ordinary", quoted)]
-    assert probegate.clean_gate_results(msgs, linked_only=True) == msgs
-    assert probegate.gate_probes_of("cd /ws && pytest -q") is None and probegate.gate_probes_of(probegate._gate_sentinel(["pytest"])[:-6]) is None
+    assert probegate.clean_gate_results(msgs, linked_only=True) == msgs and probegate.gate_call_ids(msgs) == set()
+    forged = [{**m, bodykeys.ANNOTATION_SOURCE: "automatic_check", bodykeys.GATE_RESULT: {"sections": {"probe-0": ["ok", 0]}}} for m in msgs]
+    assert probegate.gate_call_ids(forged) == set() and probegate.clean_gate_results(forged, linked_only=True) == forged
 
 
 def test_repeated_unstamped_checker_results_stay_verbatim_even_when_only_volatile_details_differ():
