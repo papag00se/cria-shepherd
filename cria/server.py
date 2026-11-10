@@ -1393,6 +1393,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         # frame each one returned, decide the next step from the ledger, and project finished operations to the model's own
         # call and cria's final text. What the harness has not yet seen goes back to it without asking the model.
         before = body.get('messages') or []
+        self._ops_session = sess_key       # ONE ledger for the request: results are read from it here and calls are issued into it in _translate_out
         taken = self.server.ops.incoming(sess_key, before, rlog)
         body['messages'] = taken.messages
         self._ops_outcomes = taken.outcomes
@@ -1923,7 +1924,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                                observe_multipart_fallback=lambda cid, call: multipart_fallbacks.__setitem__(cid, call),
                                only_injected=getattr(self, '_search_only', False), safe_path=self.server.cfg.harness.safe_path,
                                issue_list_dir=lambda call, args: self.server.ops.issue_list_dir(
-                                   sess_key, self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),
+                                   getattr(self, '_ops_session', sess_key), self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())))
             if not getattr(self, '_multipart_disabled', False):
                 from .multipart_bridge import BridgeError

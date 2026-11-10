@@ -75,3 +75,21 @@ class ListBackend:
 
     def tool_results(self):
         return [m for m in self.bodies[-1]['messages'] if m.get('role') == 'tool']
+
+
+class TurnBackend:
+    """Scripted model: turn N issues the calls ``turns[N-1]`` (a list of ``(tool, arguments)``), then answers 'seen'."""
+    def __init__(self, *turns):
+        self.turns, self.bodies = turns, []
+
+    def loaded_model(self, rlog=None):
+        return 'test-model'
+
+    def chat(self, body, rlog=None):
+        self.bodies.append(body)
+        n = len(self.bodies) - 1
+        calls = [{'id': f'model_call_{n}_{i}', 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(args)}}
+                 for i, (name, args) in enumerate(self.turns[n])] if n < len(self.turns) else None
+        msg = {'role': 'assistant', 'content': None, 'tool_calls': calls} if calls else {'role': 'assistant', 'content': 'seen'}
+        return json.dumps({'id': 'f', 'object': 'chat.completion', 'created': 1, 'model': 'test-model',
+                           'choices': [{'index': 0, 'message': msg, 'finish_reason': 'tool_calls' if calls else 'stop'}]})
