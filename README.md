@@ -59,7 +59,7 @@ python -m cria --config ./cria.toml
 
 The example uses a model server at `http://127.0.0.1:18084` and serves cria on port `18085`. Point your harness at `http://127.0.0.1:18085/v1`. For Codex, follow the [setup and context-window instructions](docs/codex-context-window.md).
 
-Large files are read through successive shell calls the harness runs ("multipart reads"). That needs a harness that can execute successive shell calls and return their paired results; multipart state lives under `~/.cria/multipart`, and image state under `${XDG_STATE_HOME:-~/.local/state}/cria/images`. No harness sends a trustworthy session-close signal (measured against real Codex), so **cria deletes nothing by default**: removal is the operator's, through `python -m cria.retention list|prune [--older-than 14d] [--session ID] [--kind multipart|image|snapshot|all] [--apply]` (a dry run unless `--apply`) or the standing instruction `[retention] auto_prune_after = "14d"` (default unset = off). The full contract, including the atomic read snapshot, is in [docs/multipart-and-retention.md](docs/multipart-and-retention.md).
+Large files are read through a few shell calls the harness runs (cria's fixed `read` primitive, a page at a time). That needs a harness that can execute successive shell calls and return their paired results; the operations ledger lives under `~/.cria/ops`, and image state under `${XDG_STATE_HOME:-~/.local/state}/cria/images`. No harness sends a trustworthy session-close signal (measured against real Codex), so **cria deletes nothing by default**: removal is the operator's, through `python -m cria.retention list|prune [--older-than 14d] [--session ID] [--kind image|transient|all] [--apply]` (a dry run unless `--apply`) or the standing instruction `[retention] auto_prune_after = "14d"` (default unset = off). The full contract is in [docs/reads-and-retention.md](docs/reads-and-retention.md).
 
 ## Configuration
 
@@ -128,7 +128,7 @@ Start with the visual guides to [features](docs/features.md), [how cria works](d
 
 - [Testing](docs/testing.md): what the suite protects and the rules for changing it
 - [Configuration](cria.example.toml) and [model settings](docs/model-settings.md)
-- [Multipart reads and retained state](docs/multipart-and-retention.md); [image workflow](docs/image-workflow.md)
+- [Reads and retained state](docs/reads-and-retention.md); [image workflow](docs/image-workflow.md)
 - [Dory three-loop runtime, tuning results and qualification limits](docs/dory-runtime.md)
 - [Design principles](docs/principles.md) and [assist implementation](docs/heuristic-assists.md)
 - [Checks and completion review](docs/participation-evidence.md)

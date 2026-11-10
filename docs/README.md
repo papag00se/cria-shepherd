@@ -17,7 +17,7 @@
 ## Go deeper
 
 - **Configure:** [example configuration](../cria.example.toml) · [model settings](model-settings.md) · [Codex setup](codex-context-window.md).
-- **Operate:** [logs and troubleshooting](observability.md) · [stream indicators](indicators.md) · [retained state](multipart-and-retention.md) · [image handling](image-workflow.md).
+- **Operate:** [logs and troubleshooting](observability.md) · [stream indicators](indicators.md) · [reads and retained state](reads-and-retention.md) · [image handling](image-workflow.md).
 - **Understand the machinery:** [design principles](principles.md) · [assist catalog](heuristic-assists.md) · [architecture and lineage](shephard.md) · [what cria runs in the harness](harness-programs.md) · [harness primitives](harness-primitives.md) · [build and test evidence](participation-evidence.md).
 - **Research:** [battery results](battery-report.md) · [task battery details](task-battery.md) · [decision-model research](training/README.md) · [Dory runtime](dory-runtime.md).
 - **Contribute:** [testing](testing.md) · [suite operations](../suite/README.md) · [project instructions](../AGENTS.md).
