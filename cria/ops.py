@@ -51,6 +51,7 @@ class Incoming:
 @dataclass(frozen=True)
 class _Issue:
     steps: tuple
+    blobs: dict = field(default_factory=dict)       # text the steps refer to by hash, recorded once (a spill's whole text)
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,7 @@ class Ops:
         op = callauth.new_op()
         fn = call.get('function') or {}
         ctx = {'path': path, 'shell': shell_tool, 'safe': self.safe_path, 'ws': workspace_root or '.', 'wsroot': workspace_root,
-               'level': level, 'roots': list(roots)}
+               'level': level, 'roots': list(roots), 'trail': path.rstrip('/') != '' and path.endswith('/')}
         record = {'t': 'op', 'op': op, 'kind': LIST_DIR, 'ctx': ctx,
                   'call': {'id': call.get('id'), 'name': fn.get('name'), 'arguments': fn.get('arguments')}}
         try:
@@ -170,14 +171,14 @@ class Ops:
             raise OpsUnavailable(str(exc)) from exc
         return _shell_call(step[0]['id'], shell_tool, step[1])
 
-    def _step(self, op: str, ctx: dict, s: int, what: str, args: dict) -> tuple[dict, str]:
+    def _step(self, op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict | None = None) -> tuple[dict, str]:
         """``(ledger record, command)`` for step ``s``: both pure functions of the operation's recorded facts."""
-        command = self._command(op, ctx, s, what, args)
+        command = self._command(op, ctx, s, what, args, blobs or {})
         return {'t': 'step', 'op': op, 's': s, 'id': callauth.call_id(op, s, command),
                 'cmd': hashlib.sha256(command.encode()).hexdigest(), 'what': what, 'args': args}, command
 
     @staticmethod
-    def _command(op: str, ctx: dict, s: int, what: str, args: dict) -> str:
+    def _command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict | None = None) -> str:
         nonce = callauth.nonce(op, s)
         if what == 'ls':
             # AFTER travels as the hex of the name's bytes: a name that is not UTF-8 (a lone surrogate here) must not enter a command
@@ -189,10 +190,10 @@ class Ops:
         elif what == 'say':
             return _refusal_command(args['text'])
         elif what == 'put':
-            data = args['text'].encode('utf-8', 'surrogateescape')[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
+            data = blobs[args['blob']].encode('utf-8', 'surrogateescape')[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
             words, payload, comment = [args['root'], args['rel'], callauth.group(op), args['off'], 1], data, 'list_dir ' + ctx['path']
         else:
-            data = args['text'].encode('utf-8', 'surrogateescape')
+            data = blobs[args['blob']].encode('utf-8', 'surrogateescape')
             staged = args.get('staged', False)
             words = [args['root'], args['rel'], '*', '-', hashlib.sha256(data).hexdigest(), 1 if staged else 0, 1, callauth.group(op)]
             payload, comment, what = None if staged else data, 'list_dir ' + ctx['path'], 'write'
@@ -298,12 +299,14 @@ class Ops:
                 if log is not None:
                     log.emit('ops.final', operation=op.kind, outcome=action.outcome, steps=len(op.steps))
             elif isinstance(action, _Issue):
-                records = [self._step(op_id, op.ctx, s, what, args) for s, what, args in action.steps]
-                self.ledger.append(session, *(r[0] for r in records))
+                blobs = {**op.blobs, **action.blobs}
+                records = [self._step(op_id, op.ctx, s, what, args, blobs) for s, what, args in action.steps]
+                self.ledger.append(session, *({'t': 'blob', 'op': op_id, 'h': h, 'text': t} for h, t in action.blobs.items()),
+                                   *(r[0] for r in records))
                 calls += [_shell_call(r[0]['id'], op.ctx['shell'], r[1]) for r in records]
             else:                  # still waiting for a result; a step an earlier request issued and the harness never saw goes out again
                 wave = max(st.args['wave'] for st in op.steps.values())
-                calls += [_shell_call(st.id, op.ctx['shell'], self._command(op_id, op.ctx, st.s, st.what, st.args))
+                calls += [_shell_call(st.id, op.ctx['shell'], self._command(op_id, op.ctx, st.s, st.what, st.args, op.blobs))
                           for st in sorted(op.steps.values(), key=lambda x: x.s) if st.args['wave'] == wave and st.id not in present]
         return calls
 
@@ -327,8 +330,18 @@ class Ops:
         shown = op.ctx['path']
         if header.get('ok') == 1:
             records = [json.loads(line) for line in st.frame['text'].split('\n') if line]
-            pages = [st2 for st2 in steps if st2.what == 'ls' and st2.s < st.s and st2.frame['hdr'].get('ok') == 1]
+            pages = [st2 for st2 in steps if st2.what == 'ls' and st2.s < st.s and st2.frame['hdr'].get('ok') == 1
+                     and (st2.args['root'], st2.args['rel']) == (args['root'], args['rel'])]      # pages of THIS path, not of a link resolved from
             single = bool(records and args['rel'] and not pages and records[0][1] == args['rel'])
+            if single and records[0][0] == 'l' and op.ctx.get('trail'):
+                # `link/` names what the link points to (as `ls -la link/` did): cria resolves it itself and judges the target.
+                if args['hop'] >= MAX_HOPS:
+                    return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ELOOP)))
+                resolved = os.path.normpath(os.path.join(os.path.dirname(os.path.join(args['root'], args['rel'])), records[0][5]))
+                if (refusal := self._reguard(resolved, op.ctx)):
+                    return _Final(denial.REFUSED, denial.mark(refusal))
+                root, rel = split(resolved, op.ctx.get('wsroot'))
+                return _Issue(self._next(steps, 'ls', {**args, 'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1, 'after': ''}))
             done = header.get('done') == 1
             if not done and records and len(pages) + 1 < LS_MAX_PAGES:
                 # More entries follow this page: ask for those after the last name received, at the size that fitted.
@@ -394,16 +407,25 @@ class Ops:
         command carries CHUNK_BYTES of it; a larger listing is staged as parallel `put` calls and landed by one `write`."""
         from . import webfetch
         data = text.encode('utf-8', 'surrogateescape')
-        rel = webfetch.SPILL_DIR.removeprefix('./') + '/stdout-' + hashlib.sha256(data).hexdigest() + '.txt'
-        args = {'root': op.ctx['ws'], 'rel': rel, 'text': text, 'try': 0, 'done': done, 'count': count}
+        digest = hashlib.sha256(data).hexdigest()
+        rel = webfetch.SPILL_DIR.removeprefix('./') + '/stdout-' + digest + '.txt'
+        args = {'root': op.ctx['ws'], 'rel': rel, 'blob': digest, 'try': 0, 'done': done, 'count': count}
         if len(data) <= harnessprims.CHUNK_BYTES:
-            return _Issue(self._next(steps, 'write', args))
-        return _Issue(self._next(steps, 'put', *({**args, 'off': off} for off in range(0, len(data), harnessprims.CHUNK_BYTES))))
+            return _Issue(self._next(steps, 'write', args), {digest: text})
+        offsets = range(0, len(data), harnessprims.CHUNK_BYTES)
+        return _Issue(self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE])), {digest: text})
 
     def _after_put(self, op: Op, wave: list, steps: list):
         bad = next((st for st in wave if st.frame['hdr'].get('ok') != 1), None)
         if bad is None:
-            return _Issue(self._next(steps, 'write', {**wave[0].args, 'staged': True}))
+            # At most PUT_WAVE chunks go out in one reply (docs/harness-primitives.md section 7): the rest follow, then the landing write.
+            args = wave[0].args
+            size = len(op.blobs[args['blob']].encode('utf-8', 'surrogateescape'))
+            staged = {st.args['off'] for st in steps if st.what == 'put'}
+            more = [off for off in range(0, size, harnessprims.CHUNK_BYTES) if off not in staged][:harnessprims.PUT_WAVE]
+            if more:
+                return _Issue(self._next(steps, 'put', *({**args, 'off': off} for off in more)))
+            return _Issue(self._next(steps, 'write', {**args, 'staged': True}))
         if bad.frame['hdr'].get('ok') == -1:
             return _Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
         return _Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(bad.frame['hdr']))

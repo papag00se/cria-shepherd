@@ -1,6 +1,6 @@
 """Authentication of cria's own harness calls without text markers (docs/harness-primitives.md section 6).
 
-One 32-byte key lives in ``~/.cria/harness-call.key`` (0600, created exclusively on first use) and never leaves this
+One 32-byte key lives in ``~/.cria/harness-call.key`` (0600, created whole by link on first use) and never leaves this
 process: not in a command, a body, a log or a capture. For an operation ``op`` (12 random hex digits cria chooses) and its
 step number ``s``:
 
@@ -37,15 +37,24 @@ def _key(create: bool = True) -> bytes:
     try:
         if create:
             directory = privatepaths.mkdir_private(path.parent)
+            # Written whole to a private temporary name and linked into place: the key file never exists half written (a crash, or a
+            # concurrent reader, between create and write), and the first link wins.
+            temp = directory / f'.{path.name}.{secrets.token_hex(8)}'
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             try:
-                fd = os.open(directory / path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            except FileExistsError:
-                pass
-            else:
                 with os.fdopen(fd, 'wb') as f:
                     f.write(secrets.token_bytes(32))
                     f.flush()
                     os.fsync(f.fileno())
+                try:
+                    os.link(temp, directory / path.name)
+                except FileExistsError:
+                    pass
+            finally:
+                try:
+                    os.unlink(temp)
+                except FileNotFoundError:
+                    pass
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         with os.fdopen(fd, 'rb') as f:
             info = os.fstat(f.fileno())

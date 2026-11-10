@@ -84,3 +84,54 @@ def test_a_ledger_directory_that_is_a_symlink_or_not_private_is_refused(tmp_path
     with pytest.raises(LedgerError):
         Ledger(loose).append('s', {'t': 'op', 'op': 'a', 'kind': 'k', 'call': {}, 'ctx': {}})
     assert Ledger(loose).ops('s') == {}
+
+
+def test_the_key_file_never_exists_half_written_and_concurrent_first_use_agrees_on_one_key(monkeypatch):
+    """Review (low): create-then-write left an empty key after a crash, and a reader could see it empty."""
+    import threading
+    path = privatepaths.CRIA_HOME / 'harness-call.key'
+    real_fsync = os.fsync
+    def crash(fd):
+        raise OSError('killed between create and write')
+    monkeypatch.setattr(os, 'fsync', crash)
+    callauth._cache.clear()
+    with pytest.raises(callauth.KeyUnavailable):
+        callauth._key()
+    monkeypatch.setattr(os, 'fsync', real_fsync)
+    assert not path.exists() and not list(path.parent.glob('.harness-call.key.*'))        # nothing half-made is left behind
+    callauth._cache.clear()
+    seen, errors = [], []
+    def first_use():
+        try:
+            seen.append(callauth._key())
+        except Exception as exc:         # noqa: BLE001
+            errors.append(exc)
+    threads = [threading.Thread(target=first_use) for _ in range(16)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors and len({bytes(k) for k in seen}) == 1 and path.read_bytes() == seen[0] and len(seen[0]) == 32
+
+
+def test_a_ledger_under_a_symlinked_home_works_but_a_symlinked_ledger_directory_is_refused(tmp_path):
+    """Review (low): the walk from / with no-follow made a symlinked /home (an immutable distribution) disable every operation."""
+    real = tmp_path / 'real'
+    real.mkdir()
+    (tmp_path / 'linkhome').symlink_to(real)
+    ledger = Ledger(tmp_path / 'linkhome' / 'cria' / 'ops')
+    ledger.append('s', {'t': 'op', 'op': 'a', 'kind': 'list_dir', 'call': {'id': 'x'}, 'ctx': {}})
+    assert list(ledger.ops('s')) == ['a'] and (real / 'cria' / 'ops').is_dir()
+    other = tmp_path / 'evil'
+    other.mkdir()
+    (real / 'cria' / 'ops2').symlink_to(other)
+    with pytest.raises(LedgerError):
+        Ledger(tmp_path / 'linkhome' / 'cria' / 'ops2').append('s', {'t': 'op', 'op': 'a', 'kind': 'k', 'call': {}, 'ctx': {}})
+    assert not list(other.iterdir())
+
+
+def test_a_short_write_is_written_on_not_dropped(tmp_path, monkeypatch):
+    ledger = Ledger(tmp_path / 'ops')
+    real = os.write
+    monkeypatch.setattr(os, 'write', lambda fd, data: real(fd, bytes(data)[:7]))          # the kernel took 7 bytes at a time
+    ledger.append('s', {'t': 'op', 'op': 'a', 'kind': 'k', 'call': {'id': 'x' * 100}, 'ctx': {}})
+    monkeypatch.setattr(os, 'write', real)
+    assert ledger.ops('s')['a'].call == {'id': 'x' * 100}

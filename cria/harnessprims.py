@@ -26,6 +26,8 @@ FRAME_LIMIT = 1 << 20
 PAGE_BYTES = 10_000
 # Largest raw payload one call carries: 60,000 base64 bytes + a 2.6 KB stub stay under COMMAND_ARG_BUDGET (64 KiB).
 CHUNK_BYTES = 45_000
+# `put` calls in one reply (parallel, disjoint offsets): a payload past PUT_WAVE chunks is staged in further waves.
+PUT_WAVE = 16
 
 _PRELUDE = r'''import sys,os,json,base64,hashlib,zlib
 N=sys.argv[1]
@@ -242,7 +244,8 @@ def compose(stub: str, nonce: str, args=(), payload: bytes | None = None, *, com
     is a pure function of its inputs, so a retried request composes the identical command."""
     if stub not in STUBS or not _NONCE.match(nonce):
         raise ValueError('unknown primitive or malformed nonce')
-    if safe_path != safe_path.strip() or not safe_path or any(not p.startswith('/') for p in safe_path.split(':')):
+    if (safe_path != safe_path.strip() or not safe_path or not safe_path.isprintable()
+            or any(not p.startswith('/') for p in safe_path.split(':'))):
         raise ValueError('safe_path must be absolute system directories')
     head = shlex.quote(safe_path)
     # `run` hands the user's own environment to the project's commands, but not to the supervisor's interpreter: it starts under `env -i`

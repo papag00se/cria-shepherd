@@ -2,11 +2,12 @@
 
 One append-only JSON-lines file per session under ``~/.cria/ops/`` (a private directory opened without following links, files
 0600, ``flock`` around every append, ``fsync`` before an append returns). Nothing else holds operation state: a restarted
-cria reads the file and is where it was. Four record types, folded in order:
+cria reads the file and is where it was. Five record types, folded in order:
 
 * ``op``    the model's own call (id, name, arguments), the kind of operation and the guard facts it was issued under;
 * ``step``  one primitive call cria issued: its step number, tool-call id, the sha-256 of its command, what it was and the
             arguments that re-derive it (so a retried request composes the identical command);
+* ``blob``  a text steps refer to by its hash (a spill's whole text), recorded once and not in every step;
 * ``frame`` the authenticated result of a step (header and decoded payload), recorded once, the first one wins;
 * ``final`` the typed outcome and the exact text the model was told.
 
@@ -45,6 +46,7 @@ class Op:
     call: dict
     ctx: dict
     steps: dict = field(default_factory=dict)
+    blobs: dict = field(default_factory=dict)
     final: dict | None = None
 
 
@@ -58,17 +60,23 @@ class Ledger:
         return self._directory if self._directory is not None else privatepaths.CRIA_HOME / 'ops'
 
     def _open_dir(self) -> int:
-        parts = os.path.abspath(self._path()).split(os.sep)[1:]
-        fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+        """The ledger directory, private and opened without following a link *at* it. The path to cria's own home may run through a
+        symlink (``/home`` -> ``/var/home`` on an immutable distribution): it is resolved once, then the directory is opened by name."""
+        target = os.path.abspath(self._path())
         try:
-            for part in parts:
-                try:
-                    os.mkdir(part, 0o700, dir_fd=fd)
-                except FileExistsError:
-                    pass
-                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-                os.close(fd)
-                fd = nxt
+            privatepaths.mkdir_private(os.path.dirname(target))
+            fd = os.open(os.path.realpath(os.path.dirname(target)), os.O_RDONLY | os.O_DIRECTORY)
+        except OSError as exc:
+            raise LedgerError('operation ledger directory unavailable') from exc
+        try:
+            name = os.path.basename(target)
+            try:
+                os.mkdir(name, 0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nxt = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
             info = os.fstat(fd)
             if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
                 raise LedgerError('operation ledger directory is not private')
@@ -97,7 +105,9 @@ class Ledger:
                     fcntl.flock(fd, fcntl.LOCK_EX)
                     if info.st_size and os.pread(fd, 1, info.st_size - 1) != b'\n':
                         line = b'\n' + line          # a torn last line stays its own (skipped) line
-                    os.write(fd, line)
+                    view = memoryview(line)
+                    while view:                      # a short write is written on, never dropped
+                        view = view[os.write(fd, view):]
                     os.fsync(fd)
                 finally:
                     os.close(fd)
@@ -149,6 +159,8 @@ class Ledger:
                 ops.setdefault(op, Op(op, r['kind'], r['call'], r.get('ctx') or {}))
             elif kind == 'step' and op in ops:
                 ops[op].steps.setdefault(r['s'], Step(r['s'], r['id'], r['cmd'], r['what'], r.get('args') or {}))
+            elif kind == 'blob' and op in ops:
+                ops[op].blobs.setdefault(r['h'], r['text'])
             elif kind == 'frame' and op in ops and r['s'] in ops[op].steps:
                 ops[op].steps[r['s']].frame = ops[op].steps[r['s']].frame or {'hdr': r['hdr'], 'text': r['text']}
             elif kind == 'final' and op in ops:
