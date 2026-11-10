@@ -12,8 +12,8 @@ SHELL = {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'stri
 
 @pytest.mark.parametrize('path,workspace,expected', [
     ('.', '/w', ('/w', '')), ('src/a.py', '/w', ('/w', 'src/a.py')), ('/w/src', '/w', ('/w', 'src')), ('src/../lib/./b', '/w', ('/w', 'lib/b')),
-    ('/etc/hosts', '/w', ('/etc', 'hosts')), ('/', '/w', ('/', '')), ('/w/../x', '/w', ('/', 'x')),
-    ('.', None, ('.', '')), ('src/a', None, ('.', 'src/a')), ('../x', None, ('..', 'x')), ('../../a/b', None, ('../..', 'a/b')), ('/usr/lib', None, ('/usr', 'lib')),
+    ('/etc/hosts', '/w', ('/', 'etc/hosts')), ('/', '/w', ('/', '')), ('/w/../x', '/w', ('/', 'x')),
+    ('.', None, ('.', '')), ('src/a', None, ('.', 'src/a')), ('../x', None, ('..', 'x')), ('../../a/b', None, ('../..', 'a/b')), ('/usr/lib', None, ('/', 'usr/lib')),
     ('~/x', '/w', ('/w', '~/x'))])
 def test_a_path_becomes_a_root_cria_chose_and_a_relative_remainder_with_no_dot_or_dotdot(path, workspace, expected):
     assert ops.split(path, workspace) == expected

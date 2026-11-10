@@ -220,3 +220,26 @@ def test_a_hostile_workspace_and_a_planted_python3_do_not_change_the_answer_or_r
     with start_in(Wire(tmp_path, backend), ws) as w:
         w.drive(hostile)
         assert 'hashlib.py' in listing(backend)['content'] and list(outside.iterdir()) == []
+
+
+def test_a_link_below_a_path_outside_the_workspace_is_refused_and_judged_again_like_one_inside(tmp_path, monkeypatch):
+    """Review M2: ROOT used to be the outside path's directory, which the stub follows: `ext/z -> ~/.cria` listed cria's own home."""
+    ws, ext = tmp_path / 'ws', tmp_path / 'ext'
+    ws.mkdir()
+    ext.mkdir()
+    from cria import filecommands
+    monkeypatch.setattr(filecommands, 'CRIA_HOME', privatepaths.CRIA_HOME)      # the guard holds its own binding of the home
+    privatepaths.CRIA_HOME.mkdir(parents=True, exist_ok=True)
+    (privatepaths.CRIA_HOME / 'harness-call.key.bak').write_text('SECRET-IN-CRIA-HOME')
+    (ext / 'z').symlink_to(privatepaths.CRIA_HOME)
+    (ext / 'plain').mkdir()
+    (ext / 'plain' / 'f.txt').write_text('ok')
+    backend = ListBackend(ext / 'z' / 'harness-call.key.bak', ext / 'z', ext / 'plain')
+    harness = Harness(ws)
+    with start_in(Wire(tmp_path, backend, level='read'), ws) as w:
+        w.drive(harness)
+        below, link, plain = (m['content'] for m in backend.tool_results())
+        assert 'SECRET-IN-CRIA-HOME' not in below and denial.refused(backend.tool_results()[0])
+        assert link.startswith('lrwx') and link.endswith(f'z -> {privatepaths.CRIA_HOME}')          # the link itself is only listed
+        assert 'f.txt' in plain
+        assert not any(str(privatepaths.CRIA_HOME) in command_of(c) for c in harness.ran)      # no call ever named the private home

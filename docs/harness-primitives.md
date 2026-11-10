@@ -49,7 +49,7 @@ CTX_EOF]
 
 Every filesystem primitive takes `ROOT` and `REL`.
 
-* `ROOT` is an absolute directory **cria** chose from facts it holds: the workspace root the harness announced, a declared root (`dirguard` roots, dependency caches), or, at external-permission levels `read`/`write`, the directory part of an absolute path the model named *after* `dirguard` has approved it. The model never supplies `ROOT` directly; it supplies text that cria turns into a `ROOT` and a `REL`.
+* `ROOT` is an absolute directory **cria** chose from facts it holds: the workspace root the harness announced, or `/` for any other absolute path (a declared root, a dependency cache, or at external-permission levels `read`/`write` a path the model named *after* `dirguard` has approved it). It is never the directory part of such a path: the stub follows a symlink in `ROOT` itself, so a link anywhere in an outside path must sit *below* ROOT, where every component is opened without following (phase 3 review M2: `ext/z -> ~/.cria` listed cria's home when ROOT was `ext/z`). The model never supplies `ROOT` directly; it supplies text that cria turns into a `ROOT` and a `REL`.
 * `REL` is the remainder, `/`-separated, with no empty, `.` or `..` component (the stub rejects them with EINVAL).
 * The stub opens `ROOT` as given (a symlink in the `ROOT` string itself is followed; cria chose it), then opens each component of `REL` with `O_DIRECTORY|O_NOFOLLOW` relative to the previous descriptor, and the final name with `O_NOFOLLOW`. A symlink anywhere below `ROOT` therefore fails (`ELOOP` or `ENOTDIR`), and a link swapped in after cria looked cannot redirect the operation, because every step is relative to a descriptor already held.
 

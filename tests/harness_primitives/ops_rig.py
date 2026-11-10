@@ -23,7 +23,14 @@ def isolated_home(tmp_path, monkeypatch):
 
 
 class Wire(_Wire):
-    """The read tests' rig, with a server error shown as what it said."""
+    """The read tests' rig, with a server error shown as what it said; ``level`` is [safety] external_dir_permission."""
+    def __init__(self, *args, level=None, **kw):
+        super().__init__(*args, **kw)
+        if level:
+            import dataclasses
+            from cria.config import SafetyConfig
+            self.srv.cfg = dataclasses.replace(self.srv.cfg, safety=SafetyConfig(level))
+
     def post(self):
         try:
             return super().post()
