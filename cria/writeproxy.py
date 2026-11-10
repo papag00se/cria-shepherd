@@ -2081,10 +2081,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                                  if isinstance(p.get(k), str)), None)
                                 if body_arg is not None:
                                     written[tc.get("id")] = body_arg
-                            if tc.get("id") in failed_ids:
+                            held = tc.get('id') in unread_hold_ids and tc.get('id') in paired
+                            if tc.get("id") in failed_ids or held:
                                 draft = toolstages.current().preserve_draft(
                                     tc, _tool_path(p) or "", rlog if _first_sight_of_rejection(sess_key, tc) else None,
-                                    unread_hold=(tc.get('id') in unread_hold_ids and outcomes.get(tc.get('id')) == denial.REFUSED))
+                                    unread_hold=held)
                                 if draft.note:
                                     rejected_notes_by_id[tc.get("id")] = draft.note
                                 tc = draft.call
@@ -2135,12 +2136,13 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             observation_options = {} if interval_current else {"current": False}
             if tid in mutation_ids:
                 view.note_possible_effect()
+            # This marks the paired dispatch decision, not proof that the read or refusal ran.
+            if tid in unread_hold_ids and tid in paired:
+                m[bodykeys.UNREAD_HOLD] = True
             proof = proofs.get(tid)
             if proof is not None:
                 m["content"] = proof.content       # exactly cria's own records removed; the payload keeps its bytes
                 m[bodykeys.RESULT_OUTCOME] = proof.kind
-                if tid in unread_hold_ids and proof.kind == denial.REFUSED:
-                    m[bodykeys.UNREAD_HOLD] = True
                 if proof.rep:
                     m[bodykeys.RESULT_REPORT] = proof.rep
                 survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation

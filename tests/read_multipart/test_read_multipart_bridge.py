@@ -12,6 +12,65 @@ from read_multipart_helpers import HEX, isolated_home, page_through, run_call, s
 
 FAIL7 = 'Wall time: 1 seconds\nProcess exited with code 7\nOutput:\nexact error \x1b[31mred\x1b[0m\n'
 
+
+def test_responses_split_batch_recognizes_earlier_held_call():
+    from cria import bodykeys, loop
+    fixture = Path(__file__).resolve().parents[1] / 'fixtures/unread_write/ruby-batched-20261109.json'
+    calls = json.loads(fixture.read_text())['choices'][0]['message']['tool_calls'][:-1]
+    held = calls[2]['id']  # captured README hold; later calls include native commands
+    history = [{'role': 'assistant', 'tool_calls': [c]} for c in calls]
+    history += [{'role': 'tool', 'tool_call_id': c['id'], 'content': '',
+                 **({bodykeys.UNREAD_HOLD: True} if c['id'] == held else {})} for c in calls]
+    assert loop._recent_unread_hold(history)
+    assert not loop._recent_unread_hold(history + [{'role': 'assistant', 'content': 'next turn'}])
+
+def test_captured_ruby_batched_edit_holds_survive_bridge_restart(tmp_path, monkeypatch):
+    from cria import editsequence
+    from read_multipart_helpers import SHELL
+    fixture = Path(__file__).resolve().parents[1] / 'fixtures/unread_write/ruby-batched-20261109.json'
+    workspace = tmp_path / 'workspace'
+    repo = Path(__file__).resolve().parents[2]
+    shutil.copytree(repo / 'suite/tasks/shipping-rates-rb/seed', workspace)
+    calls = json.loads(fixture.read_text())['choices'][0]['message']['tool_calls']
+    calls = [copy.deepcopy(c) for c in calls if c['function']['name'] == 'edit_file'
+             and json.loads(c['function']['arguments'])['path'] != 'Gemfile']
+    for call in calls:
+        args = json.loads(call['function']['arguments'])
+        args['path'] = str(workspace / args['path'])
+        call['function']['arguments'] = json.dumps(args)
+    bridge = Bridge(str(tmp_path / 'state'))
+    completion = {'choices': [{'message': {'tool_calls': calls}}]}
+    writeproxy.translate_outbound(completion, SHELL, injected={'edit_file'}, workspace_root=str(workspace),
+        unread_target=lambda p: 'unread',
+        multipart_command=lambda tc, effect, receipt: bridge.register('s', tc, effect, SHELL, receipt))
+    bridge.bind('s', completion)
+    lowered = completion['choices'][0]['message']['tool_calls']
+    # Reproduce the old validator, which had no release-prelude support.
+    with monkeypatch.context() as old:
+        old.setattr(editsequence, 'matches_release', lambda _: False)
+        assert Bridge(str(tmp_path / 'state')).continuation_state('s').pending == ()
+    assert len(Bridge(str(tmp_path / 'state')).continuation_state('s').pending) == len(calls)
+    messages = [{'role': 'assistant', 'tool_calls': lowered}]
+    messages += [{'role': 'tool', 'tool_call_id': c['id'], 'content': run_call(c)} for c in lowered]
+    shutil.copytree(tmp_path / 'state', tmp_path / 'invalid')
+    with monkeypatch.context() as old:
+        old.setattr(editsequence, 'matches_release', lambda _: False)
+        failed, facts = page_through(Bridge(str(tmp_path / 'invalid')), messages)
+    failed = writeproxy.represent_inbound(failed, workspace_root=str(workspace))
+    from cria import loop
+    assert not facts and loop._recent_unread_hold(failed)
+    assert all(set(json.loads(c['function']['arguments'])) == {'path'} for c in failed[0]['tool_calls'])
+    assert all('⟦ctx:read-unverified⟧' in result['content'] and not denial.refused(result) for result in failed[1:])
+    projected, facts = page_through(Bridge(str(tmp_path / 'state')), messages)
+    shown = writeproxy.represent_inbound(projected, workspace_root=str(workspace))
+    assert len(facts) == len(calls)
+    for call, result in zip(calls, shown[1:]):
+        args = json.loads(call['function']['arguments'])
+        assert denial.refused(result) and denial.read_payload(result) == Path(args['path']).read_text()
+        assert '⟦ctx:read-unverified⟧' not in result['content']
+    assert all(set(json.loads(c['function']['arguments'])) == {'path'} for c in shown[0]['tool_calls'])
+
+
 @pytest.mark.parametrize('label,seed', [('node', 'handles-cli-node'), ('nemotron', 'handles-cli-node'),
                                         ('python-direct-replay', 'orders-api-py')])
 def test_incident_mutations_are_held_and_delivered_through_multipart(tmp_path, label, seed):

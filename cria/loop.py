@@ -171,14 +171,21 @@ def _is_write_tool(name) -> bool:
 
 
 def _recent_unread_hold(messages):
-    """A proven hold among the latest assistant's results, not an older turn."""
+    """A held dispatch in the latest assistant batch, not an older turn."""
+    ids = set()
     for message in reversed(messages or []):
-        if isinstance(message, dict) and message.get('role') == 'assistant':
-            ids = {tc.get('id') for tc in message.get('tool_calls') or [] if isinstance(tc, dict)}
-            return bool(ids and any(isinstance(m, dict) and m.get('role') == 'tool'
-                                    and m.get('tool_call_id') in ids and m.get(bodykeys.UNREAD_HOLD) is True
-                                    for m in messages))
-    return False
+        if not isinstance(message, dict):
+            continue
+        if message.get('role') == 'assistant':
+            calls = message.get('tool_calls') or []
+            if not calls:
+                break
+            ids.update(tc.get('id') for tc in calls if isinstance(tc, dict))
+        elif ids or message.get('role') != 'tool':
+            break
+    return bool(ids and any(isinstance(m, dict) and m.get('role') == 'tool'
+                            and m.get('tool_call_id') in ids and m.get(bodykeys.UNREAD_HOLD) is True
+                            for m in messages))
 
 
 class Phase(Enum):

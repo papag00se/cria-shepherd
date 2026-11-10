@@ -58,6 +58,29 @@ def _seq_done(context,index):
 '''
 
 
+def matches_release(text: str) -> bool:
+    """Accept only a release regenerated from its literal sequence arguments."""
+    import ast
+    head = f"python3 - <<'{_HD_PY}'\n"
+    tail = f"{_HD_PY}\n"
+    if not text.startswith(head) or not text.endswith(tail):
+        return False
+    try:
+        tree = ast.parse(text[len(head):-len(tail)])
+        block = tree.body[-1]
+        opened, done = block.body
+        open_call, done_call = opened.value, done.value
+        turn = ast.literal_eval(open_call.args[0])
+        prefix = ast.literal_eval(open_call.args[1])
+        participants = ast.literal_eval(open_call.args[2])
+        idx = ast.literal_eval(done_call.args[1])
+        if not isinstance(turn, str) or prefix != EDIT_SEQ_DIR or type(idx) is not int or not isinstance(participants, (list, tuple)):
+            return False
+        return text == _seq_release((turn, idx, (), participants))
+    except (SyntaxError, ValueError, TypeError, AttributeError, IndexError):
+        return False
+
+
 def _seq_release(sequence: "tuple") -> str:
     """A refused call completes only its authenticated marker, never a name-shaped file."""
     turn, idx, _preds, participants = sequence

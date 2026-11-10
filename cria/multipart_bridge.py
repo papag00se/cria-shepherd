@@ -325,6 +325,15 @@ class Bridge:
                                           unread_hold=spec.read_instead) + '\n' + command
             if entry.calls[pending] == writeproxy._shell_call(pending, entry.shell, legacy, 0):
                 return  # an in-flight read registered by an older version
+            # Batched edits release their authenticated edit-sequence slot before
+            # the page program. Validate that generated prelude, not just the page.
+            from . import editsequence
+            sentinel, page = command.split('\n', 1)
+            actual = writeproxy._command_of(entry.calls[pending].get('function', {}).get('arguments') or '')
+            if actual.startswith(sentinel + '\n') and actual.endswith(page):
+                release = actual[len(sentinel) + 1:len(actual) - len(page)]
+                if editsequence.matches_release(release) and entry.calls[pending] == writeproxy._shell_call(pending, entry.shell, sentinel + '\n' + release + page, 0):
+                    return
         if entry.calls[pending] != writeproxy._shell_call(pending, entry.shell, command, 0):
             entry.failure_id, entry.failure_kind, entry.failure_code = pending, 'invalid', None
 
