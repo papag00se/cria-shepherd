@@ -21,6 +21,18 @@ honestly — a usefulness percentage measures delivered code — but never let a
 verdict on the weights. See [principle 16](docs/principles.md#16-it-is-always-crias-fault-the-models-fault-is-not-a-finding),
 which carries the incident that made this a ban rather than a preference.
 
+## Standing order: cria's logic stays in cria (operator, 2026-11-10)
+
+cria's decisions, validation, bookkeeping and provenance live in the cria process, not in programs shipped to the harness. The operator did not know that cria lowered write/edit/read/survey/gate calls into large inlined Python programs (about 36 KB per call at the time) that run in the harness and sit in its transcript; an independent security review found real holes in that pattern (repo files executing during a read, symlink escapes, forgeable markers). **Move as much back into cria as possible, and add no new harness-side logic.**
+
+- **What may run in the harness:** only tiny, fixed, human-readable primitives: return a file's bytes, write these bytes to this path atomically, list a directory with sizes, run a command. A primitive makes no decisions: no syntax-check tables, no exact-match edit logic, no ordering queue, no marker or receipt authentication by text. cria reads through the primitive, decides in-process, and writes back through the primitive; extra round trips are accepted as the price.
+- **Anything that genuinely must run where the files are** (the completion gate that runs the project's own checks, the ctags indexer, output capture) must be the smallest auditable script, isolated (python -I; never importing from or resolving through the workspace), with a recorded reason it cannot live in cria and a size budget. Register each such program in the docs (what it does, why it cannot live in cria, its size) before it ships.
+- **No program grows, and none is added, without that entry.** Existing programs are migrated down to primitives; a change that makes a harness-side program larger is a regression.
+- **Results are authenticated by cria, not by text.** Output from a harness-side program is data. A marker, receipt or typed record that a file, command output or model can imitate is not authority.
+- **Containment is enforced in cria and at the primitive** (no following a symlink out of the workspace and declared roots; the harness sandbox is the primary boundary, never cria's check alone).
+
+This is an operator order. It overrides convenience: if a feature seems to need logic in the harness, stop and ask.
+
 ## No process gates
 
 Before adding any check that blocks, refuses, validates, hashes or preserves a process (not what the model reads, and not a completion judgment), it must enforce a rule in [`docs/walk-analysis.md`](docs/walk-analysis.md) or [`docs/principles.md`](docs/principles.md); otherwise record the fact in the result row and move on. Fail-closed applies only to completion judgments. A failed or interrupted run is simply rerun.
