@@ -6692,26 +6692,48 @@ def _coder_has_seen_current(view, rel: str, sess, messages: list[dict]) -> bool:
                    if _prints_whole_file(command, rel, view)}
     if not _coder_has_seen(view, rel, sess, messages) and not shell_reads:
         return False
-    positions = [idx for idx, _, path, start, end, text in _read_results_ordered(messages)
-                 if view.rel(path) == rel and isinstance(text, str) and _read_is_whole(start, end, text)]
-    positions += [idx for idx, message in enumerate(messages or [])
-                  if message.get('role') == 'tool' and message.get('tool_call_id') in shell_reads]
-    positions += [idx for idx, _, path, *_ in _write_events(messages) if view.rel(path) == rel]
-    if not positions:
+    observations = [(idx, tid) for idx, tid, path, start, end, text in _read_results_ordered(messages)
+                    if view.rel(path) == rel and isinstance(text, str) and _read_is_whole(start, end, text)]
+    observations += [(idx, message.get('tool_call_id')) for idx, message in enumerate(messages or [])
+                     if message.get('role') == 'tool' and message.get('tool_call_id') in shell_reads]
+    observations += [(idx, tid) for idx, tid, path, *_ in _write_events(messages) if view.rel(path) == rel]
+    if not observations:
         # Only the durable own-write record survives without a visible whole-read event.
         written = getattr(sess, 'written_files', None) or {}
         return not view.may_have_changed and any(view.rel(p) == rel for p in written)
     from . import denial
-    for target in _write_paths_after(messages, max(positions), view.root,
-                                     skip=denial.unlanded_call_ids(messages)):
+    position, observed_id = max(observations, key=lambda item: item[0])
+    unlanded = denial.unlanded_call_ids(messages)
+    for target in _write_paths_after(messages, position, view.root, skip=unlanded):
         if target is _ANY_PATH or view.rel(target) == rel:
             return False
     current = view.capture_edit_preimage(rel)
-    if current is not None:
-        reads = [(idx, text) for idx, _, path, start, end, text in _read_results_ordered(messages)
-                 if view.rel(path) == rel and not start and not end and isinstance(text, str)]
-        if reads and reads[-1][0] == max(positions) and reads[-1][1].encode('utf-8') != current[0]:
-            return False
+    reads = [(idx, text) for idx, _, path, start, end, text in _read_results_ordered(messages)
+             if view.rel(path) == rel and not start and not end and isinstance(text, str)]
+    if current is not None and reads and reads[-1][0] == position and reads[-1][1].encode('utf-8') != current[0]:
+        return False
+    # Tool results are ordered in the transcript, but peers in one assistant batch may run in parallel.
+    # The result's position cannot place its read after a peer mutation. Reuse the same target classifier
+    # as later mutations; only the read itself and proven unlanded peers are excluded.
+    batch = next((m for m in reversed(messages[:position]) if m.get('role') == 'assistant'
+                  and any(tc.get('id') == observed_id for tc in m.get('tool_calls') or [])), None)
+    if batch is not None:
+        for tc in batch.get('tool_calls') or []:
+            if tc.get('id') == observed_id or tc.get('id') in unlanded:
+                continue
+            targets = _mutation_targets(tc.get('function') or {}, view.root)
+            if targets is _ANY_PATH or any(view.rel(target) == rel for target in targets):
+                # A freshly validated current body matching the exact read can settle an otherwise
+                # unordered overlap. A shell envelope is used only when its exit and payload are known.
+                exact = next((text.encode('utf-8') for idx, text in reads if idx == position), None)
+                if exact is None and observed_id in shell_reads:
+                    from .resultnotes import exec_envelope
+                    result = messages[position].get('content')
+                    envelope = exec_envelope(result) if isinstance(result, str) else None
+                    if envelope is not None and envelope.exit_code == 0:
+                        exact = result[envelope.payload_start:].encode('utf-8')
+                if current is None or exact is None or exact != current[0]:
+                    return False
     return True
 
 

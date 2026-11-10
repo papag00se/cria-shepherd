@@ -159,6 +159,69 @@ def test_a_read_the_ledger_remembers_but_the_window_lost_is_not_the_text_while_t
     assert write_pom(ws, written={"pom.xml": (11, "1 lines")})[0] is True
 
 
+@pytest.mark.parametrize('peer,batch,held', [
+    ('same-shell', 'same', True), ('same-shell', 'later', True), ('same-edit', 'same', True),
+    ('other-write', 'same', False), ('other-shell', 'same', False), ('same-restored', 'same', False),
+    ('readonly', 'same', False),
+])
+def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch, held):
+    """The harness runs a real read before its peer; response order cannot prove parallel execution order."""
+    from cria import writeproxy
+    from write_edit_helpers import ENVELOPE, lower, run
+    target = tmp_path / 'x.txt'
+    target.write_text('old\n')
+    (tmp_path / 'other.txt').write_text('other\n')
+    read = call('exec_command', {'cmd': 'cat x.txt'}, 'r')
+    if peer == 'same-shell':
+        mutation = call('exec_command', {'cmd': "printf 'new\\n' > x.txt"}, 'm')
+    elif peer == 'same-edit':
+        mutation = lower([call('edit_file', {'path': 'x.txt', 'old_string': 'old', 'new_string': 'new'}, 'm')], root=str(tmp_path))[0]
+    elif peer == 'other-write':
+        mutation = lower([call('write_file', {'path': 'other.txt', 'content': 'updated\n'}, 'm')], root=str(tmp_path))[0]
+    elif peer == 'other-shell':
+        mutation = call('exec_command', {'cmd': "printf 'updated\\n' > other.txt"}, 'm')
+    elif peer == 'same-restored':
+        mutation = call('exec_command', {'cmd': "printf 'old\\n' > x.txt"}, 'm')
+    else:
+        mutation = call('exec_command', {'cmd': 'cat other.txt'}, 'm')
+    read_result = run(read, tmp_path)
+    assert read_result.returncode == 0 and read_result.stdout == 'old\n'
+    mutation_result = run(mutation, tmp_path)
+    assert mutation_result.returncode == 0
+    result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
+                               'content': ENVELOPE.format(rc=proc.returncode) + proc.stdout}
+    raw = ([{'role': 'assistant', 'tool_calls': [read, mutation]}, result(read, read_result), result(mutation, mutation_result)]
+           if batch == 'same' else [{'role': 'assistant', 'tool_calls': [read]}, result(read, read_result),
+                                    {'role': 'assistant', 'tool_calls': [mutation]}, result(mutation, mutation_result)])
+    view = wsview.View(str(tmp_path), 'sid:batch-unread')
+    token = wsview.bind(view)
+    try:
+        messages = writeproxy.represent_inbound(raw, workspace_root=str(tmp_path))
+        wsview.unbind(token)
+        view = wsview.View(str(tmp_path), 'sid:batch-unread-fresh')
+        token = wsview.bind(view)
+        survey = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                           capture_output=True, text=True, check=True).stdout)
+        assert view.apply_initial_inventory(survey, str(tmp_path))
+        # A later harness observation provides independently current bytes; it does not deliver them to the coder.
+        fresh = run(call('exec_command', {'cmd': 'cat x.txt'}, 'probe'), tmp_path)
+        assert fresh.returncode == 0
+        view.note_read('x.txt', fresh.stdout)
+        driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                           runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+        driver._put_session('sid:batch-unread', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+        check = driver.unread_target_check('sid:batch-unread', messages, str(tmp_path))
+        lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
+                        root=str(tmp_path), unread_target=check)[0]
+        completed = run(lowered, tmp_path)
+        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, completed)],
+                                             workspace_root=str(tmp_path))
+        assert denial.refused(shown[1]) is held
+        assert target.read_text() == ('new\n' if held else 'candidate\n')
+    finally:
+        wsview.unbind(token)
+
+
 # ── shrink protection ─────────────────────────────────────────────────────────────────────────────
 FILE = "".join(f"block {i}:\n    value {i}\n" for i in range(8))          # 16 non-blank lines
 FRAGMENT = "<dependencies/>\n"                                              # phi4 A4: a 190-char fragment replaced a whole pom
