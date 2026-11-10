@@ -95,3 +95,33 @@ def test_a_request_with_no_python_on_the_harness_has_no_frame(tmp_path):
 def test_the_composed_command_never_contains_the_product_name_or_a_single_quote_inside_the_stub():
     command = harnessprims.compose('ls', N, ['/w', '', 1, 10, 0, '[]', ''], comment='list_dir .')
     assert 'cria' not in command.lower()
+
+
+def test_a_payload_that_decodes_but_does_not_hash_to_the_header_is_unknown_whether_or_not_it_is_compressed():
+    """cria's own sha-256 check, independent of zlib's checksum (review: removing it was caught only by accident)."""
+    for compress in (False, True):
+        header = {'ok': 1, 'n': 3, 'h': hashlib.sha256(b'xyz').hexdigest(), **({'z': 1} if compress else {})}
+        data = zlib.compress(b'abc') if compress else b'abc'
+        text = f'CTX1 {N} {json.dumps(header)}\n{base64.b64encode(data).decode()}\nCTX1 {N} END\n'
+        with pytest.raises(FrameUnknown):
+            read_frame(text, N)
+
+
+def test_inflation_is_bounded_by_the_headers_length_before_it_happens(monkeypatch):
+    """`unbounded inflate` is the zlib bomb: the decompressor must be asked for at most n + 1 bytes, not all of them."""
+    asked = []
+    real = zlib.decompressobj
+    class Spy:
+        def __init__(self):
+            self._d = real()
+        def decompress(self, data, max_length=0):
+            asked.append(max_length)
+            return self._d.decompress(data, max_length)
+        def __getattr__(self, name):
+            return getattr(self._d, name)
+    monkeypatch.setattr(harnessprims.zlib, 'decompressobj', Spy)
+    bomb = zlib.compress(b'\0' * 5_000_000)
+    header = {'ok': 1, 'n': 10, 'h': hashlib.sha256(b'\0' * 10).hexdigest(), 'z': 1}
+    with pytest.raises(FrameUnknown):
+        read_frame(f'CTX1 {N} {json.dumps(header)}\n{base64.b64encode(bomb).decode()}\nCTX1 {N} END\n', N)
+    assert asked == [11]

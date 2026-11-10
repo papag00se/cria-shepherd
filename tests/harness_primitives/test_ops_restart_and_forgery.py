@@ -226,3 +226,13 @@ def test_a_duplicate_or_missing_result_is_unknown_and_the_operation_goes_on_with
     shown = [m for m in backend.bodies[-1]['messages'] if m.get('role') == 'tool']
     assert len(shown) == 1 and 'file-2.txt' in shown[0]['content']
     assert not [p for p in ('CTX1', 'ctx_', 'python3', '-I -S', 'env -i') if p in json.dumps(backend.bodies, default=str)]
+
+
+def test_an_id_that_names_two_calls_is_not_verified_even_though_each_would_match_its_command(engine):
+    """The 'id names exactly one call' rule (review: removing it was not caught): a reused id cannot say which call its result answers."""
+    ops, call, result, _ = engine
+    twice = [{'role': 'user', 'content': 'go'}, {'role': 'assistant', 'content': None, 'tool_calls': [call]},
+             {'role': 'assistant', 'content': None, 'tool_calls': [call]}, {'role': 'tool', 'tool_call_id': call['id'], 'content': result}]
+    taken = ops.incoming('s', twice)
+    assert taken.outcomes == {} and taken.calls == []
+    assert [m['tool_calls'][0]['id'] for m in taken.messages if m.get('tool_calls')] == [call['id']] * 2      # shown as they are, not projected

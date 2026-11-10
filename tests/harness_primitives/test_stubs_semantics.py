@@ -198,3 +198,29 @@ def test_search_gives_up_on_a_pathological_pattern(root):
     started = time.monotonic()
     done = run('search', [root, '(a+)+$', 0, 10, 1 << 20], text='["f.txt"]', cwd=root)
     assert done.header['ok'] == 0 and done.header['err'] == 'TimeoutError' and time.monotonic() - started < 30
+
+
+def test_a_non_cooperating_writer_that_replaces_the_target_inside_the_window_is_detected_by_the_post_write_restat(root):
+    """The compare-and-swap's last line (review: removing the re-stat was not caught, flock hid it): an interloper takes no lock, replaces
+    the file while the stub is flushing its temp file, and must not be overwritten."""
+    import subprocess
+    from cria import harnessprims
+    (root / 'f').write_bytes(b'base')
+    interloper = b'WRITTEN BY SOMEONE WHO TOOK NO LOCK'
+    program = '\n'.join([
+        'import os,sys',
+        'real=os.fsync',
+        'done=[]',
+        'def fs(fd):',
+        '    if not done:',
+        '        done.append(1)',
+        f'        open({str(root / "other")!r},"wb").write({interloper!r})',
+        f'        os.rename({str(root / "other")!r},{str(root / "f")!r})',
+        '    real(fd)',
+        'os.fsync=fs',
+        f'sys.argv=["stub",{"%032x" % 5!r},{str(root)!r},"f",{sha(b"base")!r},"-",{sha(b"new")!r},"0","1",{GROUP!r}]',
+        f'exec(compile({harnessprims.STUBS["write"]!r},"stub","exec"))'])
+    done = subprocess.run(['python3', '-I', '-S', '-c', program], input=__import__('base64').b64encode(b'new'), capture_output=True, timeout=30)
+    frame = harnessprims.read_frame(done.stdout.decode(), '%032x' % 5)
+    assert frame.header['err'] == 'stale' and (root / 'f').read_bytes() == interloper
+    assert sorted(p.name for p in root.iterdir()) == ['f']                                    # and no temp file left behind
