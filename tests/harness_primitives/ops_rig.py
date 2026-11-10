@@ -51,9 +51,9 @@ def run_call(call):
 
 class _BaseWire:
     """A live CriaServer. `drive()` plays coder+harness over chat or responses (optionally streamed), executing each call on a real PTY."""
-    def __init__(self, tmp_path, backend, api='chat', stream=False, header=True):
+    def __init__(self, tmp_path, backend, api='chat', stream=False, header=True, engagement=2):
         cfg = Config(server=ServerConfig(host='127.0.0.1', port=0), logging=LoggingConfig(dir=str(tmp_path / 'logs'), console=False),
-                     indicators=IndicatorsConfig(enabled=False), routing=RoutingConfig(engagement_level=2))
+                     indicators=IndicatorsConfig(enabled=False), routing=RoutingConfig(engagement_level=engagement))
         self.log = EventLog(dir=cfg.logging.dir, console=False); self.srv = CriaServer(cfg, self.log, backend)
         self.thread = threading.Thread(target=self.srv.serve_forever, daemon=True); self.thread.start(); self.api, self.stream, self.header = api, stream, header
         self.messages = [{'role': 'user', 'content': f'<environment_context><cwd>{tmp_path}</cwd></environment_context> read'}]

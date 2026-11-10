@@ -1,0 +1,3614 @@
+{
+ "e_bare_old_inherits_indent": {
+  "command_bytes": 36689,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 24,
+    "text": "    if a:\n        x = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_bare_old_inherits_indent_l5": {
+  "command_bytes": 39933,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 24,
+    "text": "    if a:\n        x = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 2 lines; your replacement is at lines 2-2.\nLines 1-2 as the file now reads:\n1:     if a:\n2:         x = 2"
+  ]
+ },
+ "e_batch_30_one_file": {
+  "command_bytes": 1160854,
+  "disk": {
+   "t.txt": {
+    "mode": "0o644",
+    "size": 530,
+    "text": "row 0 = 1000\nrow 1 = 1001\nrow 2 = 1002\nrow 3 = 1003\nrow 4 = 1004\nrow 5 = 1005\nrow 6 = 1006\nrow 7 = 1007\nrow 8 = 1008\nrow 9 = 1009\nrow 10 = 1010\nrow 11 = 1011\nrow 12 = 1012\nrow 13 = 1013\nrow 14 = 1014\nrow 15 = 1015\nrow 16 = 1016\nrow 17 = 1017\nrow 18 = 1018\nrow 19 = 1019\nrow 20 = 1020\nrow 21 = 1021\nrow 22 = 1022\nrow 23 = 1023\nrow 24 = 1024\nrow 25 = 1025\nrow 26 = 1026\nrow 27 = 1027\nrow 28 = 1028\nrow 29 = 1029\nrow 30 = 30\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 38\nrow 39 = 39\n"
+   }
+  },
+  "harness_calls": 30,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt"
+  ]
+ },
+ "e_batch_6_one_file": {
+  "command_bytes": 228068,
+  "disk": {
+   "t.txt": {
+    "mode": "0o644",
+    "size": 466,
+    "text": "row 0 = 0\nrow 1 = 1\nrow 2 = 20\nrow 3 = 3\nrow 4 = 4\nrow 5 = 5\nrow 6 = 6\nrow 7 = 70\nrow 8 = 8\nrow 9 = 9\nrow 10 = 10\nrow 11 = 11\nrow 12 = 120\nrow 13 = 13\nrow 14 = 14\nrow 15 = 15\nrow 16 = 16\nrow 17 = 17\nrow 18 = 18\nrow 19 = 19\nrow 20 = 200\nrow 21 = 21\nrow 22 = 22\nrow 23 = 23\nrow 24 = 24\nrow 25 = 25\nrow 26 = 26\nrow 27 = 27\nrow 28 = 28\nrow 29 = 29\nrow 30 = 300\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 380\nrow 39 = 39\n"
+   }
+  },
+  "harness_calls": 6,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt",
+   "Wrote t.txt"
+  ]
+ },
+ "e_batch_6_one_file_l5": {
+  "command_bytes": 247538,
+  "disk": {
+   "t.txt": {
+    "mode": "0o644",
+    "size": 466,
+    "text": "row 0 = 0\nrow 1 = 1\nrow 2 = 20\nrow 3 = 3\nrow 4 = 4\nrow 5 = 5\nrow 6 = 6\nrow 7 = 70\nrow 8 = 8\nrow 9 = 9\nrow 10 = 10\nrow 11 = 11\nrow 12 = 120\nrow 13 = 13\nrow 14 = 14\nrow 15 = 15\nrow 16 = 16\nrow 17 = 17\nrow 18 = 18\nrow 19 = 19\nrow 20 = 200\nrow 21 = 21\nrow 22 = 22\nrow 23 = 23\nrow 24 = 24\nrow 25 = 25\nrow 26 = 26\nrow 27 = 27\nrow 28 = 28\nrow 29 = 29\nrow 30 = 300\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 380\nrow 39 = 39\n"
+   }
+  },
+  "harness_calls": 6,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote t.txt\nt.txt now has 40 lines; your replacement is at lines 3-3.\nLines 1-6 as the file now reads:\n1: row 0 = 0\n2: row 1 = 1\n3: row 2 = 20\n4: row 3 = 3\n5: row 4 = 4\n6: row 5 = 5",
+   "Wrote t.txt\nt.txt now has 40 lines; your replacement is at lines 8-8.\nLines 5-11 as the file now reads:\n5: row 4 = 4\n6: row 5 = 5\n7: row 6 = 6\n8: row 7 = 70\n9: row 8 = 8\n10: row 9 = 9\n11: row 10 = 10",
+   "Wrote t.txt\nt.txt now has 40 lines; your replacement is at lines 13-13.\nLines 10-16 as the file now reads:\n10: row 9 = 9\n11: row 10 = 10\n12: row 11 = 11\n13: row 12 = 120\n14: row 13 = 13\n15: row 14 = 14\n16: row 15 = 15",
+   "Wrote t.txt\nt.txt now has 40 lines; your replacement is at lines 21-21.\nLines 18-24 as the file now reads:\n18: row 17 = 17\n19: row 18 = 18\n20: row 19 = 19\n21: row 20 = 200\n22: row 21 = 21\n23: row 22 = 22\n24: row 23 = 23",
+   "Wrote t.txt\nt.txt now has 40 lines; your replacement is at lines 31-31.\nLines 28-34 as the file now reads:\n28: row 27 = 27\n29: row 28 = 28\n30: row 29 = 29\n31: row 30 = 300\n32: row 31 = 31\n33: row 32 = 32\n34: row 33 = 33",
+   "Wrote t.txt\nt.txt now has 40 lines; your replacement is at lines 39-39.\nLines 36-40 as the file now reads:\n36: row 35 = 35\n37: row 36 = 36\n38: row 37 = 37\n39: row 38 = 380\n40: row 39 = 39"
+  ]
+ },
+ "e_batch_dependent": {
+  "command_bytes": 75954,
+  "disk": {
+   "t.txt": {
+    "mode": "0o644",
+    "size": 457,
+    "text": "row 0 = 0\nrow 1 = 1\nsecond\nrow 3 = 3\nrow 4 = 4\nrow 5 = 5\nrow 6 = 6\nrow 7 = 7\nrow 8 = 8\nrow 9 = 9\nrow 10 = 10\nrow 11 = 11\nrow 12 = 12\nrow 13 = 13\nrow 14 = 14\nrow 15 = 15\nrow 16 = 16\nrow 17 = 17\nrow 18 = 18\nrow 19 = 19\nrow 20 = 20\nrow 21 = 21\nrow 22 = 22\nrow 23 = 23\nrow 24 = 24\nrow 25 = 25\nrow 26 = 26\nrow 27 = 27\nrow 28 = 28\nrow 29 = 29\nrow 30 = 30\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 38\nrow 39 = 39\n"
+   }
+  },
+  "harness_calls": 2,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote t.txt",
+   "Wrote t.txt"
+  ]
+ },
+ "e_batch_mixed": {
+  "command_bytes": 151778,
+  "disk": {
+   "t.txt": {
+    "mode": "0o644",
+    "size": 458,
+    "text": "row 0 = 0\nrow 1 = 1\nrow 2 = 20\nrow 3 = 3\nagain0\nrow 5 = 5\nrow 6 = 6\nrow 7 = 7\nrow 8 = 8\nrow 9 = 9\nrow 10 = 10\nrow 11 = 11\nrow 12 = 12\nrow 13 = 13\nrow 14 = 14\nrow 15 = 15\nrow 16 = 16\nrow 17 = 17\nrow 18 = 18\nrow 19 = 19\nrow 20 = 20\nrow 21 = 21\nrow 22 = 22\nrow 23 = 23\nrow 24 = 24\nrow 25 = 25\nrow 26 = 26\nrow 27 = 27\nrow 28 = 28\nrow 29 = 29\nrow 30 = 30\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 38\nrow 39 = 39\n"
+   }
+  },
+  "harness_calls": 4,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote t.txt",
+   "⟦ctx:edit⟧ t.txt — your old_string is not an exact match. Here is the file's real text where it should be:\n---\nrow 9 = 9\n---\nUse THESE lines verbatim in old_string. A line you remember that is not shown here is not in the file.",
+   "Wrote t.txt",
+   "Wrote t.txt"
+  ]
+ },
+ "e_batch_two_files": {
+  "command_bytes": 112580,
+  "disk": {
+   "t.txt": {
+    "mode": "0o644",
+    "size": 462,
+    "text": "row 0 = 0\nrow 1 = 1\nrow 2 = 20\nrow 3 = 3\nrow 4 = 4\nrow 5 = 50\nrow 6 = 6\nrow 7 = 7\nrow 8 = 8\nrow 9 = 9\nrow 10 = 10\nrow 11 = 11\nrow 12 = 12\nrow 13 = 13\nrow 14 = 14\nrow 15 = 15\nrow 16 = 16\nrow 17 = 17\nrow 18 = 18\nrow 19 = 19\nrow 20 = 20\nrow 21 = 21\nrow 22 = 22\nrow 23 = 23\nrow 24 = 24\nrow 25 = 25\nrow 26 = 26\nrow 27 = 27\nrow 28 = 28\nrow 29 = 29\nrow 30 = 30\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 38\nrow 39 = 39\n"
+   },
+   "u.txt": {
+    "mode": "0o644",
+    "size": 461,
+    "text": "row 0 = 0\nrow 1 = 1\nrow 2 = 2\nrow 3 = 30\nrow 4 = 4\nrow 5 = 5\nrow 6 = 6\nrow 7 = 7\nrow 8 = 8\nrow 9 = 9\nrow 10 = 10\nrow 11 = 11\nrow 12 = 12\nrow 13 = 13\nrow 14 = 14\nrow 15 = 15\nrow 16 = 16\nrow 17 = 17\nrow 18 = 18\nrow 19 = 19\nrow 20 = 20\nrow 21 = 21\nrow 22 = 22\nrow 23 = 23\nrow 24 = 24\nrow 25 = 25\nrow 26 = 26\nrow 27 = 27\nrow 28 = 28\nrow 29 = 29\nrow 30 = 30\nrow 31 = 31\nrow 32 = 32\nrow 33 = 33\nrow 34 = 34\nrow 35 = 35\nrow 36 = 36\nrow 37 = 37\nrow 38 = 38\nrow 39 = 39\n"
+   }
+  },
+  "harness_calls": 3,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote t.txt",
+   "Wrote u.txt",
+   "Wrote t.txt"
+  ]
+ },
+ "e_big_file_one_line": {
+  "command_bytes": 36752,
+  "disk": {
+   "big.txt": {
+    "b64": "bGluZSAwIG9mIHRoZSBiaWcgZmlsZSwgd2l0aCBzb21lIHdvcmRzIHNvIGl0IGNvbXByZXNzZXMgbGlrZSBzb3VyY2UKbGluZSAxIG9mIHRoZSBiaWcgZmlsZSwgd2l0aCBzb21lIHdvcmRzIHNvIGl0IGNvbXByZXNzZXMgbGlrZSBzb3VyY2UKbGluZSAyIG9mIHRo",
+    "mode": "0o644",
+    "sha": "20133f9b76458ed8a2b0b8e014c22353a090e7f2f54774c86830ecb7a7af0e3e",
+    "size": 430890
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote big.txt"
+  ]
+ },
+ "e_big_file_one_line_l5": {
+  "command_bytes": 39996,
+  "disk": {
+   "big.txt": {
+    "b64": "bGluZSAwIG9mIHRoZSBiaWcgZmlsZSwgd2l0aCBzb21lIHdvcmRzIHNvIGl0IGNvbXByZXNzZXMgbGlrZSBzb3VyY2UKbGluZSAxIG9mIHRoZSBiaWcgZmlsZSwgd2l0aCBzb21lIHdvcmRzIHNvIGl0IGNvbXByZXNzZXMgbGlrZSBzb3VyY2UKbGluZSAyIG9mIHRo",
+    "mode": "0o644",
+    "sha": "20133f9b76458ed8a2b0b8e014c22353a090e7f2f54774c86830ecb7a7af0e3e",
+    "size": 430890
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote big.txt\nbig.txt now has 6000 lines; your replacement is at lines 3001-3001.\nLines 2998-3004 as the file now reads:\n2998: line 2997 of the big file, with some words so it compresses like source\n2999: line 2998 of the big file, with some words so it compresses like source\n3000: line 2999 of the big file, with some words so it compresses like source\n3001: LINE 3000 of the BIG file, with some words so it compresses like source\n3002: line 3001 of the big file, with some words so it compresses like source\n3003: line 3002 of the big file, with some words so it compresses like source\n3004: line 3003 of the big file, with some words so it compresses like source"
+  ]
+ },
+ "e_blank_line_drift": {
+  "command_bytes": 36727,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "a = 1\n\nc = 3\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_blank_line_drift_l5": {
+  "command_bytes": 39961,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "a = 1\n\nc = 3\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 3 lines; your replacement is at lines 1-3.\nYour old_string matched only after whitespace differences were ignored; the file spelled that text with different spacing.\nLines 1-3 as the file now reads:\n1: a = 1\n2: \n3: c = 3"
+  ]
+ },
+ "e_blind_touch_escalates_l5": {
+  "command_bytes": 39949,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 33,
+    "text": "def r(h):\n    y = 2\n    return y\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n    return y\n\n---"
+  ]
+ },
+ "e_break_go": {
+  "command_bytes": 36700,
+  "disk": {
+   "g.go": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "package p\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ g.go — your edit would break g.go — g.go:2:8: expected '(', found 'EOF'\ng.go:2:8: expected ')', found 'EOF'\ng.go:2:8: expected ')', found 'EOF'\ng.go:2:8: expected ';', found 'EOF'\ng.go:2:8: expected 'IDENT', found 'EOF'. Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_js": {
+  "command_bytes": 36696,
+  "disk": {
+   "j.js": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "const a = 1;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ j.js — your edit would break j.js — j.js:1\nconst a = ;\n          ^\n\nSyntaxError: Unexpected token ';'\n    at wrapSafe (node:internal/modules/cjs/loader:1464:18)\n    at checkSyntax (node:internal/main/check_syntax:78:3)\n\nNode.js v20.19.5. Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_json": {
+  "command_bytes": 36700,
+  "disk": {
+   "d.json": {
+    "mode": "0o644",
+    "size": 8,
+    "text": "{\"a\": 1}"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ d.json — your edit would break d.json — Expecting value: line 1 column 7 (char 6). Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_mjs": {
+  "command_bytes": 36778,
+  "disk": {
+   "m.mjs": {
+    "mode": "0o644",
+    "size": 39,
+    "text": "import x from \"y\";\nexport const a = 1;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ m.mjs — your edit would break m.mjs — m.mjs:2\nexport const a = ;\n                 ^\n\nSyntaxError: Unexpected token ';'\n    at checkSyntax (node:internal/main/check_syntax:74:5)\n\nNode.js v20.19.5. Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_php": {
+  "command_bytes": 36702,
+  "disk": {
+   "p.php": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "<?php\nfoo();\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ p.php — your edit would break p.php — PHP Parse error:  syntax error, unexpected token \";\" in p.php on line 2\nErrors parsing p.php. Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_py": {
+  "command_bytes": 36692,
+  "disk": {
+   "a.py": {
+    "mode": "0o644",
+    "size": 22,
+    "text": "def f():\n    return 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ a.py — your edit would break a.py — expected an indented block after function definition on line 1 (a.py, line 2). Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_rb": {
+  "command_bytes": 36692,
+  "disk": {
+   "r.rb": {
+    "mode": "0o644",
+    "size": 14,
+    "text": "def a\n  1\nend\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ r.rb — your edit would break r.rb — ruby: r.rb:4: syntax errors found (SyntaxError)\n  2 |   1\n  3 | def a(\n> 4 |   1\n    |   ^ unexpected integer; expected a `)` to close the parameters\n> 5 | end\n    |    ^ unexpected end-of-input, assuming it is closing the parent top level context\n> 6 | \n    | ^ expected an `end` to close the `def` statement. Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_toml": {
+  "command_bytes": 36704,
+  "disk": {
+   "c.toml": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "[a]\nx = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ c.toml — your edit would break c.toml — Invalid value (at line 2, column 5). Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_break_xml": {
+  "command_bytes": 36698,
+  "disk": {
+   "e.xml": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "<a><b/></a>"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ e.xml — your edit would break e.xml — mismatched tag: line 1, column 8. Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_close": {
+  "command_bytes": 36709,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "    timeout = 30\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n    timeout = 30\n\n---"
+  ]
+ },
+ "e_close_l5": {
+  "command_bytes": 39956,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "    timeout = 30\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n    timeout = 30\n\n---"
+  ]
+ },
+ "e_crlf_lf_text": {
+  "command_bytes": 36696,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 31,
+    "text": "a = 1\r\nb = 20\r\nb2 = 21\r\nc = 3\r\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_crlf_lf_text_l5": {
+  "command_bytes": 39943,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 31,
+    "text": "a = 1\r\nb = 20\r\nb2 = 21\r\nc = 3\r\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 4 lines; your replacement is at lines 2-3.\nLines 1-4 as the file now reads:\n1: a = 1\r\n2: b = 20\r\n3: b2 = 21\r\n4: c = 3\r"
+  ]
+ },
+ "e_crlf_multiline_old": {
+  "command_bytes": 36697,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 14,
+    "text": "a = 9\r\nc = 3\r\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_crlf_multiline_old_l5": {
+  "command_bytes": 39941,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 14,
+    "text": "a = 9\r\nc = 3\r\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 2 lines; your replacement is at lines 1-1.\nLines 1-2 as the file now reads:\n1: a = 9\r\n2: c = 3\r"
+  ]
+ },
+ "e_delete": {
+  "command_bytes": 36674,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "bar\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_delete_l5": {
+  "command_bytes": 39921,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "bar\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 1 lines; the text you removed was at line 1.\nLines 1-1 as the file now reads:\n1: bar"
+  ]
+ },
+ "e_dir_target": {
+  "command_bytes": 36667,
+  "disk": {
+   "d/": {
+    "mode": "0o755"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Traceback (most recent call last):\r\n  File \"<stdin>\", line 279, in <module>\r\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 777, in read_bytes\r\n    with self.open(mode='rb', buffering=0) as f:\r\n         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 771, in open\r\n    return io.open(self, mode, buffering, encoding, errors, newline)\r\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\nIsADirectoryError: [Errno 21] Is a directory: '$WS/d'\r\n"
+  ]
+ },
+ "e_edit_after_landed_write": {
+  "command_bytes": 60201,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "a = 2\n"
+   }
+  },
+  "harness_calls": 2,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 3,
+  "results": [
+   "Wrote f.py",
+   "Wrote f.py"
+  ]
+ },
+ "e_empty_old_string": {
+  "command_bytes": 9412,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 2,
+    "text": "a\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ Your edit_file call has an EMPTY `old_string`, so it names no text in the file — an empty string is not a place in the file, and it would match every position equally. Nothing was changed and the file on disk is untouched. edit_file replaces one exact piece of text that is already in the file: send `old_string` as that text, copied from the file, with `new_string` as what should stand in its place. To replace the whole file, send `write_file` with the complete content instead.\r\n"
+  ]
+ },
+ "e_escalation_sequence": {
+  "command_bytes": 129612,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 33,
+    "text": "def r(h):\n    y = 2\n    return y\n"
+   }
+  },
+  "harness_calls": 4,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 5,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n    return y\n\n---",
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 2 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n    return y\n\n---",
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 3 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n    return y\n\n---",
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 4 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n    return y\n\n---"
+  ]
+ },
+ "e_exact": {
+  "command_bytes": 36673,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 8,
+    "text": "FOO\nbar\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_exact_l5": {
+  "command_bytes": 39920,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 8,
+    "text": "FOO\nbar\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 2 lines; your replacement is at lines 1-1.\nLines 1-2 as the file now reads:\n1: FOO\n2: bar"
+  ]
+ },
+ "e_fix_broken": {
+  "command_bytes": 36690,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 18,
+    "text": "def h():\n    pass\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_fix_broken_l5": {
+  "command_bytes": 39937,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 18,
+    "text": "def h():\n    pass\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 2 lines; your replacement is at lines 1-1.\nLines 1-2 as the file now reads:\n1: def h():\n2:     pass"
+  ]
+ },
+ "e_identical": {
+  "command_bytes": 36693,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "    x = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — old_string and new_string are identical, so this edit asks to replace text with itself and changes nothing. old_string matched the file — it is new_string that has to differ. Send it again with the correction actually applied to new_string."
+  ]
+ },
+ "e_identical_l5": {
+  "command_bytes": 39940,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "    x = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — old_string and new_string are identical, so this edit asks to replace text with itself and changes nothing. old_string matched the file — it is new_string that has to differ. Send it again with the correction actually applied to new_string."
+  ]
+ },
+ "e_indent_drift": {
+  "command_bytes": 36684,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "    x = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_indent_drift_l5": {
+  "command_bytes": 39931,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "    x = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 1 lines; your replacement is at lines 1-1.\nLines 1-1 as the file now reads:\n1:     x = 2"
+  ]
+ },
+ "e_indented_old_never_doubles": {
+  "command_bytes": 36761,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 46,
+    "text": "if t:\n    with p() as m:\n        m.b = [1, 2]\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_indented_old_never_doubles_l5": {
+  "command_bytes": 40005,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 46,
+    "text": "if t:\n    with p() as m:\n        m.b = [1, 2]\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 3 lines; your replacement is at lines 3-3.\nYour old_string matched only after whitespace differences were ignored; the file spelled that text with different spacing.\nLines 1-3 as the file now reads:\n1: if t:\n2:     with p() as m:\n3:         m.b = [1, 2]"
+  ]
+ },
+ "e_large_replacement": {
+  "command_bytes": 110025,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 50007,
+    "text": "x = '00000000\\n9e3779b1\\n3c6ef362\\ndaa66d13\\n78dde6c4\\n17156075\\nb54cda26\\n538453d7\\nf1bbcd88\\n8ff34739\\n2e2ac0ea\\ncc623a9b\\n6a99b44c\\n08d12dfd\\na708a7ae\\n4540215f\\ne3779b10\\n81af14c1\\n1fe68e72\\nbe1e0823\\n5c5581d4\\nfa8cfb85\\n98c47536\\n36fbeee7\\nd5336898\\n736ae249\\n11a25bfa\\nafd9d5ab\\n4e114f5c\\nec48c90d\\n8a8042be\\n28b7bc6f\\nc6ef3620\\n6526afd1\\n035e2982\\na195a333\\n3fcd1ce4\\nde049695\\n7c3c1046\\n1a7389f7\\nb8ab03a8\\n56e27d59\\nf519f70a\\n935170bb\\n3188ea6c\\ncfc0641d\\n6df7ddce\\n0c2f577f\\naa66d130\\n489e4ae1\\ne6d5c492\\n850d3e43\\n2344b7f4\\nc17c31a5\\n5fb3ab56\\nfdeb2507\\n9c229eb8\\n3a5a1869\\nd891921a\\n76c90bcb\\n1500857c\\nb337ff2d\\n516f78de\\nefa6f28f\\n8dde6c40\\n2c15e5f1\\nca4d5fa2\\n6884d953\\n06bc5304\\na4f3ccb5\\n432b4666\\ne162c017\\n7f9a39c8\\n1dd1b379\\nbc092d2a\\n5a40a6db\\nf878208c\\n96af9a3d\\n34e713ee\\nd31e8d9f\\n71560750\\n0f8d8101\\nadc4fab2\\n4bfc7463\\nea33ee14\\n886b67c5\\n26a2e176\\nc4da5b27\\n6311d4d8\\n01494e89\\n9f80c83a\\n3db841eb\\ndbefbb9c\\n7a27354d\\n185eaefe\\nb69628af\\n54cda260\\nf3051c11\\n913c95c2\\n2f740f73\\ncdab8924\\n6be302d5\\n0a1a7c86\\na851f637\\n46896fe8\\ne4c0e999\\n82f8634a\\n212fdcfb\\nbf6756ac\\n5d9ed05d\\nfbd64a0e\\n9a0dc3bf\\n38453d70\\nd67cb721\\n74b430d2\\n12ebaa83\\nb1232434\\n4f5a9de5\\ned921796\\n8bc99147\\n2a010af8\\nc83884a9\\n666ffe5a\\n04a7780b\\na2def1bc\\n41166b6d\\ndf4de51e\\n7d855ecf\\n1bbcd880\\nb9f45231\\n582bcbe2\\nf6634593\\n949abf44\\n32d238f5\\nd109b2a6\\n6f412c57\\n0d78a608\\nabb01fb9\\n49e7996a\\ne81f131b\\n86568ccc\\n248e067d\\nc2c5802e\\n60fcf9df\\nff347390\\n9d6bed41\\n3ba366f2\\nd9dae0a3\\n78125a54\\n1649d405\\nb4814db6\\n52b8c767\\nf0f04118\\n8f27bac9\\n2d5f347a\\ncb96ae2b\\n69ce27dc\\n0805a18d\\na63d1b3e\\n447494ef\\ne2ac0ea0\\n80e38851\\n1f1b0202\\nbd527bb3\\n5b89f564\\nf9c16f15\\n97f8e8c6\\n36306277\\nd467dc28\\n729f55d9\\n10d6cf8a\\naf0e493b\\n4d45c2ec\\neb7d3c9d\\n89b4b64e\\n27ec2fff\\nc623a9b0\\n645b2361\\n02929d12\\na0ca16c3\\n3f019074\\ndd390a25\\n7b7083d6\\n19a7fd87\\nb7df7738\\n5616f0e9\\nf44e6a9a\\n9285e44b\\n30bd5dfc\\ncef4d7ad\\n6d2c515e\\n0b63cb0f\\na99b44c0\\n47d2be71\\ne60a3822\\n8441b1d3\\n22792b84\\nc0b0a535\\n5ee81ee6\\nfd1f9897\\n9b571248\\n398e8bf9\\nd7c605aa\\n75fd7f5b\\n1434f90c\\nb26c72bd\\n50a3ec6e\\needb661f\\n8d12dfd0\\n2b4a5981\\nc981d332\\n67b94ce3\\n05f0c694\\na4284045\\n425fb9f6\\ne09733a7\\n7ecead58\\n1d062709\\nbb3da0ba\\n59751a6b\\nf7ac941c\\n95e40dcd\\n341b877e\\nd253012f\\n708a7ae0\\n0ec1f491\\nacf96e42\\n4b30e7f3\\ne96861a4\\n879fdb55\\n25d75506\\nc40eceb7\\n62464868\\n007dc219\\n9eb53bca\\n3cecb57b\\ndb242f2c\\n795ba8dd\\n1793228e\\nb5ca9c3f\\n540215f0\\nf2398fa1\\n90710952\\n2ea88303\\nccdffcb4\\n6b177665\\n094ef016\\na78669c7\\n45bde378\\ne3f55d29\\n822cd6da\\n2064508b\\nbe9bca3c\\n5cd343ed\\nfb0abd9e\\n9942374f\\n3779b100\\nd5b12ab1\\n73e8a462\\n12201e13\\nb05797c4\\n4e8f1175\\necc68b26\\n8afe04d7\\n29357e88\\nc76cf839\\n65a471ea\\n03dbeb9b\\na213654c\\n404adefd\\nde8258ae\\n7cb9d25f\\n1af14c10\\nb928c5c1\\n57603f72\\nf597b923\\n93cf32d4\\n3206ac85\\nd03e2636\\n6e759fe7\\n0cad1998\\naae49349\\n491c0cfa\\ne75386ab\\n858b005c\\n23c27a0d\\nc1f9f3be\\n60316d6f\\nfe68e720\\n9ca060d1\\n3ad7da82\\nd90f5433\\n7746cde4\\n157e4795\\nb3b5c146\\n51ed3af7\\nf024b4a8\\n8e5c2e59\\n2c93a80a\\ncacb21bb\\n69029b6c\\n073a151d\\na5718ece\\n43a9087f\\ne1e08230\\n8017fbe1\\n1e4f7592\\nbc86ef43\\n5abe68f4\\nf8f5e2a5\\n972d5c56\\n3564d607\\nd39c4fb8\\n71d3c969\\n100b431a\\nae42bccb\\n4c7a367c\\neab1b02d\\n88e929de\\n2720a38f\\nc5581d40\\n638f96f1\\n01c710a2\\n9ffe8a53\\n3e360404\\ndc6d7db5\\n7aa4f766\\n18dc7117\\nb713eac8\\n554b6479\\nf382de2a\\n91ba57db\\n2ff1d18c\\nce294b3d\\n6c60c4ee\\n0a983e9f\\na8cfb850\\n47073201\\ne53eabb2\\n83762563\\n21ad9f14\\nbfe518c5\\n5e1c9276\\nfc540c27\\n9a8b85d8\\n38c2ff89\\nd6fa793a\\n7531f2eb\\n13696c9c\\nb1a0e64d\\n4fd85ffe\\nee0fd9af\\n8c475360\\n2a7ecd11\\nc8b646c2\\n66edc073\\n05253a24\\na35cb3d5\\n41942d86\\ndfcba737\\n7e0320e8\\n1c3a9a99\\nba72144a\\n58a98dfb\\nf6e107ac\\n9518815d\\n334ffb0e\\nd18774bf\\n6fbeee70\\n0df66821\\nac2de1d2\\n4a655b83\\ne89cd534\\n86d44ee5\\n250bc896\\nc3434247\\n617abbf8\\nffb235a9\\n9de9af5a\\n3c21290b\\nda58a2bc\\n78901c6d\\n16c7961e\\nb4ff0fcf\\n53368980\\nf16e0331\\n8fa57ce2\\n2ddcf693\\ncc147044\\n6a4be9f5\\n088363a6\\na6badd57\\n44f25708\\ne329d0b9\\n81614a6a\\n1f98c41b\\nbdd03dcc\\n5c07b77d\\nfa3f312e\\n9876aadf\\n36ae2490\\nd4e59e41\\n731d17f2\\n115491a3\\naf8c0b54\\n4dc38505\\nebfafeb6\\n8a327867\\n2869f218\\nc6a16bc9\\n64d8e57a\\n03105f2b\\na147d8dc\\n3f7f528d\\nddb6cc3e\\n7bee45ef\\n1a25bfa0\\nb85d3951\\n5694b302\\nf4cc2cb3\\n9303a664\\n313b2015\\ncf7299c6\\n6daa1377\\n0be18d28\\naa1906d9\\n4850808a\\ne687fa3b\\n84bf73ec\\n22f6ed9d\\nc12e674e\\n5f65e0ff\\nfd9d5ab0\\n9bd4d461\\n3a0c4e12\\nd843c7c3\\n767b4174\\n14b2bb25\\nb2ea34d6\\n5121ae87\\nef592838\\n8d90a1e9\\n2bc81b9a\\nc9ff954b\\n68370efc\\n066e88ad\\na4a6025e\\n42dd7c0f\\ne114f5c0\\n7f4c6f71\\n1d83e922\\nbbbb62d3\\n59f2dc84\\nf82a5635\\n9661cfe6\\n34994997\\nd2d0c348\\n71083cf9\\n0f3fb6aa\\nad77305b\\n4baeaa0c\\ne9e623bd\\n881d9d6e\\n2655171f\\nc48c90d0\\n62c40a81\\n00fb8432\\n9f32fde3\\n3d6a7794\\ndba1f145\\n79d96af6\\n1810e4a7\\nb6485e58\\n547fd809\\nf2b751ba\\n90eecb6b\\n2f26451c\\ncd5dbecd\\n6b95387e\\n09ccb22f\\na8042be0\\n463ba591\\ne4731f42\\n82aa98f3\\n20e212a4\\nbf198c55\\n5d510606\\nfb887fb7\\n99bff968\\n37f77319\\nd62eecca\\n7466667b\\n129de02c\\nb0d559dd\\n4f0cd38e\\ned444d3f\\n8b7bc6f0\\n29b340a1\\nc7eaba52\\n66223403\\n0459adb4\\na2912765\\n40c8a116\\ndf001ac7\\n7d379478\\n1b6f0e29\\nb9a687da\\n57de018b\\nf6157b3c\\n944cf4ed\\n32846e9e\\nd0bbe84f\\n6ef36200\\n0d2adbb1\\nab625562\\n4999cf13\\ne7d148c4\\n8608c275\\n24403c26\\nc277b5d7\\n60af2f88\\nfee6a939\\n9d1e22ea\\n3b559c9b\\nd98d164c\\n77c48ffd\\n15fc09ae\\nb433835f\\n526afd10\\nf0a276c1\\n8ed9f072\\n2d116a23\\ncb48e3d4\\n69805d85\\n07b7d736\\na5ef50e7\\n4426ca98\\ne25e4449\\n8095bdfa\\n1ecd37ab\\nbd04b15c\\n5b3c2b0d\\nf973a4be\\n97ab1e6f\\n35e29820\\nd41a11d1\\n72518b82\\n10890533\\naec07ee4\\n4cf7f895\\neb2f7246\\n8966ebf7\\n279e65a8\\nc5d5df59\\n640d590a\\n0244d2bb\\na07c4c6c\\n3eb3c61d\\ndceb3fce\\n7b22b97f\\n195a3330\\nb791ace1\\n55c92692\\nf400a043\\n923819f4\\n306f93a5\\ncea70d56\\n6cde8707\\n0b1600b8\\na94d7a69\\n4784f41a\\ne5bc6dcb\\n83f3e77c\\n222b612d\\nc062dade\\n5e9a548f\\nfcd1ce40\\n9b0947f1\\n3940c1a2\\nd7783b53\\n75afb504\\n13e72eb5\\nb21ea866\\n50562217\\nee8d9bc8\\n8cc51579\\n2afc8f2a\\nc93408db\\n676b828c\\n05a2fc3d\\na3da75ee\\n4211ef9f\\ne0496950\\n7e80e301\\n1cb85cb2\\nbaefd663\\n59275014\\nf75ec9c5\\n95964376\\n33cdbd27\\nd20536d8\\n703cb089\\n0e742a3a\\nacaba3eb\\n4ae31d9c\\ne91a974d\\n875210fe\\n25898aaf\\nc3c10460\\n61f87e11\\n002ff7c2\\n9e677173\\n3c9eeb24\\ndad664d5\\n790dde86\\n17455837\\nb57cd1e8\\n53b44b99\\nf1ebc54a\\n90233efb\\n2e5ab8ac\\ncc92325d\\n6ac9ac0e\\n090125bf\\na7389f70\\n45701921\\ne3a792d2\\n81df0c83\\n20168634\\nbe4dffe5\\n5c857996\\nfabcf347\\n98f46cf8\\n372be6a9\\nd563605a\\n739ada0b\\n11d253bc\\nb009cd6d\\n4e41471e\\nec78c0cf\\n8ab03a80\\n28e7b431\\nc71f2de2\\n6556a793\\n038e2144\\na1c59af5\\n3ffd14a6\\nde348e57\\n7c6c0808\\n1aa381b9\\nb8dafb6a\\n5712751b\\nf549eecc\\n9381687d\\n31b8e22e\\ncff05bdf\\n6e27d590\\n0c5f4f41\\naa96c8f2\\n48ce42a3\\ne705bc54\\n853d3605\\n2374afb6\\nc1ac2967\\n5fe3a318\\nfe1b1cc9\\n9c52967a\\n3a8a102b\\nd8c189dc\\n76f9038d\\n15307d3e\\nb367f6ef\\n519f70a0\\nefd6ea51\\n8e0e6402\\n2c45ddb3\\nca7d5764\\n68b4d115\\n06ec4ac6\\na523c477\\n435b3e28\\ne192b7d9\\n7fca318a\\n1e01ab3b\\nbc3924ec\\n5a709e9d\\nf8a8184e\\n96df91ff\\n35170bb0\\nd34e8561\\n7185ff12\\n0fbd78c3\\nadf4f274\\n4c2c6c25\\nea63e5d6\\n889b5f87\\n26d2d938\\nc50a52e9\\n6341cc9a\\n0179464b\\n9fb0bffc\\n3de839ad\\ndc1fb35e\\n7a572d0f\\n188ea6c0\\nb6c62071\\n54fd9a22\\nf33513d3\\n916c8d84\\n2fa40735\\ncddb80e6\\n6c12fa97\\n0a4a7448\\na881edf9\\n46b967aa\\ne4f0e15b\\n83285b0c\\n215fd4bd\\nbf974e6e\\n5dcec81f\\nfc0641d0\\n9a3dbb81\\n38753532\\nd6acaee3\\n74e42894\\n131ba245\\nb1531bf6\\n4f8a95a7\\nedc20f58\\n8bf98909\\n2a3102ba\\nc8687c6b\\n669ff61c\\n04d76fcd\\na30ee97e\\n4146632f\\ndf7ddce0\\n7db55691\\n1becd042\\nba2449f3\\n585bc3a4\\nf6933d55\\n94cab706\\n330230b7\\nd139aa68\\n6f712419\\n0da89dca\\nabe0177b\\n4a17912c\\ne84f0add\\n8686848e\\n24bdfe3f\\nc2f577f0\\n612cf1a1\\nff646b52\\n9d9be503\\n3bd35eb4\\nda0ad865\\n78425216\\n1679cbc7\\nb4b14578\\n52e8bf29\\nf12038da\\n8f57b28b\\n2d8f2c3c\\ncbc6a5ed\\n69fe1f9e\\n0835994f\\na66d1300\\n44a48cb1\\ne2dc0662\\n81138013\\n1f4af9c4\\nbd827375\\n5bb9ed26\\nf9f166d7\\n9828e088\\n36605a39\\nd497d3ea\\n72cf4d9b\\n1106c74c\\naf3e40fd\\n4d75baae\\nebad345f\\n89e4ae10\\n281c27c1\\nc653a172\\n648b1b23\\n02c294d4\\na0fa0e85\\n3f318836\\ndd6901e7\\n7ba07b98\\n19d7f549\\nb80f6efa\\n5646e8ab\\nf47e625c\\n92b5dc0d\\n30ed55be\\ncf24cf6f\\n6d5c4920\\n0b93c2d1\\na9cb3c82\\n4802b633\\ne63a2fe4\\n8471a995\\n22a92346\\nc0e09cf7\\n5f1816a8\\nfd4f9059\\n9b870a0a\\n39be83bb\\nd7f5fd6c\\n762d771d\\n1464f0ce\\nb29c6a7f\\n50d3e430\\nef0b5de1\\n8d42d792\\n2b7a5143\\nc9b1caf4\\n67e944a5\\n0620be56\\na4583807\\n428fb1b8\\ne0c72b69\\n7efea51a\\n1d361ecb\\nbb6d987c\\n59a5122d\\nf7dc8bde\\n9614058f\\n344b7f40\\nd282f8f1\\n70ba72a2\\n0ef1ec53\\nad296604\\n4b60dfb5\\ne9985966\\n87cfd317\\n26074cc8\\nc43ec679\\n6276402a\\n00adb9db\\n9ee5338c\\n3d1cad3d\\ndb5426ee\\n798ba09f\\n17c31a50\\nb5fa9401\\n54320db2\\nf2698763\\n90a10114\\n2ed87ac5\\ncd0ff476\\n6b476e27\\n097ee7d8\\na7b66189\\n45eddb3a\\ne42554eb\\n825cce9c\\n2094484d\\nbecbc1fe\\n5d033baf\\nfb3ab560\\n99722f11\\n37a9a8c2\\nd5e12273\\n74189c24\\n125015d5\\nb0878f86\\n4ebf0937\\necf682e8\\n8b2dfc99\\n2965764a\\nc79ceffb\\n65d469ac\\n040be35d\\na2435d0e\\n407ad6bf\\ndeb25070\\n7ce9ca21\\n1b2143d2\\nb958bd83\\n57903734\\nf5c7b0e5\\n93ff2a96\\n3236a447\\nd06e1df8\\n6ea597a9\\n0cdd115a\\nab148b0b\\n494c04bc\\ne7837e6d\\n85baf81e\\n23f271cf\\nc229eb80\\n60616531\\nfe98dee2\\n9cd05893\\n3b07d244\\nd93f4bf5\\n7776c5a6\\n15ae3f57\\nb3e5b908\\n521d32b9\\nf054ac6a\\n8e8c261b\\n2cc39fcc\\ncafb197d\\n6932932e\\n076a0cdf\\na5a18690\\n43d90041\\ne21079f2\\n8047f3a3\\n1e7f6d54\\nbcb6e705\\n5aee60b6\\nf925da67\\n975d5418\\n3594cdc9\\nd3cc477a\\n7203c12b\\n103b3adc\\nae72b48d\\n4caa2e3e\\neae1a7ef\\n891921a0\\n27509b51\\nc5881502\\n63bf8eb3\\n01f70864\\na02e8215\\n3e65fbc6\\ndc9d7577\\n7ad4ef28\\n190c68d9\\nb743e28a\\n557b5c3b\\nf3b2d5ec\\n91ea4f9d\\n3021c94e\\nce5942ff\\n6c90bcb0\\n0ac83661\\na8ffb012\\n473729c3\\ne56ea374\\n83a61d25\\n21dd96d6\\nc0151087\\n5e4c8a38\\nfc8403e9\\n9abb7d9a\\n38f2f74b\\nd72a70fc\\n7561eaad\\n1399645e\\nb1d0de0f\\n500857c0\\nee3fd171\\n8c774b22\\n2aaec4d3\\nc8e63e84\\n671db835\\n055531e6\\na38cab97\\n41c42548\\ndffb9ef9\\n7e3318aa\\n1c6a925b\\nbaa20c0c\\n58d985bd\\nf710ff6e\\n9548791f\\n337ff2d0\\nd1b76c81\\n6feee632\\n0e265fe3\\nac5dd994\\n4a955345\\ne8ccccf6\\n870446a7\\n253bc058\\nc3733a09\\n61aab3ba\\nffe22d6b\\n9e19a71c\\n3c5120cd\\nda889a7e\\n78c0142f\\n16f78de0\\nb52f0791\\n53668142\\nf19dfaf3\\n8fd574a4\\n2e0cee55\\ncc446806\\n6a7be1b7\\n08b35b68\\na6ead519\\n45224eca\\ne359c87b\\n8191422c\\n1fc8bbdd\\nbe00358e\\n5c37af3f\\nfa6f28f0\\n98a6a2a1\\n36de1c52\\nd5159603\\n734d0fb4\\n11848965\\nafbc0316\\n4df37cc7\\nec2af678\\n8a627029\\n2899e9da\\nc6d1638b\\n6508dd3c\\n034056ed\\na177d09e\\n3faf4a4f\\ndde6c400\\n7c1e3db1\\n1a55b762\\nb88d3113\\n56c4aac4\\nf4fc2475\\n93339e26\\n316b17d7\\ncfa29188\\n6dda0b39\\n0c1184ea\\naa48fe9b\\n4880784c\\ne6b7f1fd\\n84ef6bae\\n2326e55f\\nc15e5f10\\n5f95d8c1\\nfdcd5272\\n9c04cc23\\n3a3c45d4\\nd873bf85\\n76ab3936\\n14e2b2e7\\nb31a2c98\\n5151a649\\nef891ffa\\n8dc099ab\\n2bf8135c\\nca2f8d0d\\n686706be\\n069e806f\\na4d5fa20\\n430d73d1\\ne144ed82\\n7f7c6733\\n1db3e0e4\\nbbeb5a95\\n5a22d446\\nf85a4df7\\n9691c7a8\\n34c94159\\nd300bb0a\\n713834bb\\n0f6fae6c\\nada7281d\\n4bdea1ce\\nea161b7f\\n884d9530\\n26850ee1\\nc4bc8892\\n62f40243\\n012b7bf4\\n9f62f5a5\\n3d9a6f56\\ndbd1e907\\n7a0962b8\\n1840dc69\\nb678561a\\n54afcfcb\\nf2e7497c\\n911ec32d\\n2f563cde\\ncd8db68f\\n6bc53040\\n09fca9f1\\na83423a2\\n466b9d53\\ne4a31704\\n82da90b5\\n21120a66\\nbf498417\\n5d80fdc8\\nfbb87779\\n99eff12a\\n38276adb\\nd65ee48c\\n74965e3d\\n12cdd7ee\\nb105519f\\n4f3ccb50\\ned744501\\n8babbeb2\\n29e33863\\nc81ab214\\n66522bc5\\n0489a576\\na2c11f27\\n40f898d8\\ndf301289\\n7d678c3a\\n1b9f05eb\\nb9d67f9c\\n580df94d\\nf64572fe\\n947cecaf\\n32b46660\\nd0ebe011\\n6f2359c2\\n0d5ad373\\nab924d24\\n49c9c6d5\\ne8014086\\n8638ba37\\n247033e8\\nc2a7ad99\\n60df274a\\nff16a0fb\\n9d4e1aac\\n3b85945d\\nd9bd0e0e\\n77f487bf\\n162c0170\\nb4637b21\\n529af4d2\\nf0d26e83\\n8f09e834\\n2d4161e5\\ncb78db96\\n69b05547\\n07e7cef8\\na61f48a9\\n4456c25a\\ne28e3c0b\\n80c5b5bc\\n1efd2f6d\\nbd34a91e\\n5b6c22cf\\nf9a39c80\\n97db1631\\n36128fe2\\nd44a0993\\n72818344\\n10b8fcf5\\naef076a6\\n4d27f057\\neb5f6a08\\n8996e3b9\\n27ce5d6a\\nc605d71b\\n643d50cc\\n0274ca7d\\na0ac442e\\n3ee3bddf\\ndd1b3790\\n7b52b141\\n198a2af2\\nb7c1a4a3\\n55f91e54\\nf4309805\\n926811b6\\n309f8b67\\nced70518\\n6d0e7ec9\\n0b45f87a\\na97d722b\\n47b4ebdc\\ne5ec658d\\n8423df3e\\n225b58ef\\nc092d2a0\\n5eca4c51\\nfd01c602\\n9b393fb3\\n3970b964\\nd7a83315\\n75dfacc6\\n14172677\\nb24ea028\\n508619d9\\neebd938a\\n8cf50d3b\\n2b2c86ec\\nc964009d\\n679b7a4e\\n05d2f3ff\\na40a6db0\\n4241e761\\ne0796112\\n7eb0dac3\\n1ce85474\\nbb1fce25\\n595747d6\\nf78ec187\\n95c63b38\\n33fdb4e9\\nd2352e9a\\n706ca84b\\n0ea421fc\\nacdb9bad\\n4b13155e\\ne94a8f0f\\n878208c0\\n25b98271\\nc3f0fc22\\n622875d3\\n005fef84\\n9e976935\\n3ccee2e6\\ndb065c97\\n793dd648\\n17754ff9\\nb5acc9aa\\n53e4435b\\nf21bbd0c\\n905336bd\\n2e8ab06e\\nccc22a1f\\n6af9a3d0\\n09311d81\\na7689732\\n45a010e3\\ne3d78a94\\n820f0445\\n20467df6\\nbe7df7a7\\n5cb57158\\nfaeceb09\\n992464ba\\n375bde6b\\nd593581c\\n73cad1cd\\n12024b7e\\nb039c52f\\n4e713ee0\\neca8b891\\n8ae03242\\n2917abf3\\nc74f25a4\\n65869f55\\n03be1906\\na1f592b7\\n402d0c68\\nde648619\\n7c9bffca\\n1ad3797b\\nb90af32c\\n57426cdd\\nf579e68e\\n93b1603f\\n31e8d9f0\\nd02053a1\\n6e57cd52\\n0c8f4703\\naac6c0b4\\n48fe3a65\\ne735b416\\n856d2dc7\\n23a4a778\\nc1dc2129\\n60139ada\\nfe4b148b\\n9c828e3c\\n3aba07ed\\nd8f1819e\\n7728fb4f\\n15607500\\nb397eeb1\\n51cf6862\\nf006e213\\n8e3e5bc4\\n2c75d575\\ncaad4f26\\n68e4c8d7\\n071c4288\\na553bc39\\n438b35ea\\ne1c2af9b\\n7ffa294c\\n1e31a2fd\\nbc691cae\\n5aa0965f\\nf8d81010\\n970f89c1\\n35470372\\nd37e7d23\\n71b5f6d4\\n0fed7085\\nae24ea36\\n4c5c63e7\\nea93dd98\\n88cb5749\\n2702d0fa\\nc53a4aab\\n6371c45c\\n01a93e0d\\n9fe0b7be\\n3e18316f\\ndc4fab20\\n7a8724d1\\n18be9e82\\nb6f61833\\n552d91e4\\nf3650b95\\n919c8546\\n2fd3fef7\\nce0b78a8\\n6c42f259\\n0a7a6c0a\\na8b1e5bb\\n46e95f6c\\ne520d91d\\n835852ce\\n218fcc7f\\nbfc74630\\n5dfebfe1\\nfc363992\\n9a6db343\\n38a52cf4\\nd6dca6a5\\n75142056\\n134b9a07\\nb18313b8\\n4fba8d69\\nedf2071a\\n8c2980cb\\n2a60fa7c\\nc898742d\\n66cfedde\\n0507678f\\na33ee140\\n41765af1\\ndfadd4a2\\n7de54e53\\n1c1cc804\\nba5441b5\\n588bbb66\\nf6c33517\\n94faaec8\\n33322879\\nd169a22a\\n6fa11bdb\\n0dd8958c\\nac100f3d\\n4a4788ee\\ne87f029f\\n86b67c50\\n24edf601\\nc3256fb2\\n615ce963\\nff946314\\n9dcbdcc5\\n3c035676\\nda3ad027\\n787249d8\\n16a9c389\\nb4e13d3a\\n5318b6eb\\nf150309c\\n8f87aa4d\\n2dbf23fe\\ncbf69daf\\n6a2e1760\\n08659111\\na69d0ac2\\n44d48473\\ne30bfe24\\n814377d5\\n1f7af186\\nbdb26b37\\n5be9e4e8\\nfa215e99\\n9858d84a\\n369051fb\\nd4c7cbac\\n72ff455d\\n1136bf0e\\naf6e38bf\\n4da5b270\\nebdd2c21\\n8a14a5d2\\n284c1f83\\nc6839934\\n64bb12e5\\n02f28c96\\na12a0647\\n3f617ff8\\ndd98f9a9\\n7bd0735a\\n1a07ed0b\\nb83f66bc\\n5676e06d\\nf4ae5a1e\\n92e5d3cf\\n311d4d80\\ncf54c731\\n6d8c40e2\\n0bc3ba93\\na9fb3444\\n4832adf5\\ne66a27a6\\n84a1a157\\n22d91b08\\nc11094b9\\n5f480e6a\\nfd7f881b\\n9bb701cc\\n39ee7b7d\\nd825f52e\\n765d6edf\\n1494e890\\nb2cc6241\\n5103dbf2\\nef3b55a3\\n8d72cf54\\n2baa4905\\nc9e1c2b6\\n68193c67\\n0650b618\\na4882fc9\\n42bfa97a\\ne0f7232b\\n7f2e9cdc\\n1d66168d\\nbb9d903e\\n59d509ef\\nf80c83a0\\n9643fd51\\n347b7702\\nd2b2f0b3\\n70ea6a64\\n0f21e415\\nad595dc6\\n4b90d777\\ne9c85128\\n87ffcad9\\n2637448a\\nc46ebe3b\\n62a637ec\\n00ddb19d\\n9f152b4e\\n3d4ca4ff\\ndb841eb0\\n79bb9861\\n17f31212\\nb62a8bc3\\n54620574\\nf2997f25\\n90d0f8d6\\n2f087287\\ncd3fec38\\n6b7765e9\\n09aedf9a\\na7e6594b\\n461dd2fc\\ne4554cad\\n828cc65e\\n20c4400f\\nbefbb9c0\\n5d333371\\nfb6aad22\\n99a226d3\\n37d9a084\\nd6111a35\\n744893e6\\n12800d97\\nb0b78748\\n4eef00f9\\ned267aaa\\n8b5df45b\\n29956e0c\\nc7cce7bd\\n6604616e\\n043bdb1f\\na27354d0\\n40aace81\\ndee24832\\n7d19c1e3\\n1b513b94\\nb988b545\\n57c02ef6\\nf5f7a8a7\\n942f2258\\n32669c09\\nd09e15ba\\n6ed58f6b\\n0d0d091c\\nab4482cd\\n497bfc7e\\ne7b3762f\\n85eaefe0\\n24226991\\nc259e342\\n60915cf3\\nfec8d6a4\\n9d005055\\n3b37ca06\\nd96f43b7\\n77a6bd68\\n15de3719\\nb415b0ca\\n524d2a7b\\nf084a42c\\n8ebc1ddd\\n2cf3978e\\ncb2b113f\\n69628af0\\n079a04a1\\na5d17e52\\n4408f803\\ne24071b4\\n8077eb65\\n1eaf6516\\nbce6dec7\\n5b1e5878\\nf955d229\\n978d4bda\\n35c4c58b\\nd3fc3f3c\\n7233b8ed\\n106b329e\\naea2ac4f\\n4cda2600\\neb119fb1\\n89491962\\n27809313\\nc5b80cc4\\n63ef8675\\n02270026\\na05e79d7\\n3e95f388\\ndccd6d39\\n7b04e6ea\\n193c609b\\nb773da4c\\n55ab53fd\\nf3e2cdae\\n921a475f\\n3051c110\\nce893ac1\\n6cc0b472\\n0af82e23\\na92fa7d4\\n47672185\\ne59e9b36\\n83d614e7\\n220d8e98\\nc0450849\\n5e7c81fa\\nfcb3fbab\\n9aeb755c\\n3922ef0d\\nd75a68be\\n7591e26f\\n13c95c20\\nb200d5d1\\n50384f82\\nee6fc933\\n8ca742e4\\n2adebc95\\nc9163646\\n674daff7\\n058529a8\\na3bca359\\n41f41d0a\\ne02b96bb\\n7e63106c\\n1c9a8a1d\\nbad203ce\\n59097d7f\\nf740f730\\n957870e1\\n33afea92\\nd1e76443\\n701eddf4\\n0e5657a5\\nac8dd156\\n4ac54b07\\ne8fcc4b8\\n87343e69\\n256bb81a\\nc3a331cb\\n61daab7c\\n0012252d\\n9e499ede\\n3c81188f\\ndab89240\\n78f00bf1\\n172785a2\\nb55eff53\\n53967904\\nf1cdf2b5\\n90056c66\\n2e3ce617\\ncc745fc8\\n6aabd979\\n08e3532a\\na71accdb\\n4552468c\\ne389c03d\\n81c139ee\\n1ff8b39f\\nbe302d50\\n5c67a701\\nfa9f20b2\\n98d69a63\\n370e1414\\nd5458dc5\\n737d0776\\n11b48127\\nafebfad8\\n4e237489\\nec5aee3a\\n8a9267eb\\n28c9e19c\\nc7015b4d\\n6538d4fe\\n03704eaf\\na1a7c860\\n3fdf4211\\nde16bbc2\\n7c4e3573\\n1a85af24\\nb8bd28d5\\n56f4a286\\nf52c1c37\\n936395e8\\n319b0f99\\ncfd2894a\\n6e0a02fb\\n0c417cac\\naa78f65d\\n48b0700e\\ne6e7e9bf\\n851f6370\\n2356dd21\\nc18e56d2\\n5fc5d083\\nfdfd4a34\\n9c34c3e5\\n3a6c3d96\\nd8a3b747\\n76db30f8\\n1512aaa9\\nb34a245a\\n51819e0b\\nefb917bc\\n8df0916d\\n2c280b1e\\nca5f84cf\\n6896fe80\\n06ce7831\\na505f1e2\\n433d6b93\\ne174e544\\n7fac5ef5\\n1de3d8a6\\nbc1b5257\\n5a52cc08\\nf88a45b9\\n96c1bf6a\\n34f9391b\\nd330b2cc\\n71682c7d\\n0f9fa62e\\nadd71fdf\\n4c0e9990\\nea461341\\n887d8cf2\\n26b506a3\\nc4ec8054\\n6323fa05\\n015b73b6\\n9f92ed67\\n3dca6718\\ndc01e0c9\\n7a395a7a\\n1870d42b\\nb6a84ddc\\n54dfc78d\\nf317413e\\n914ebaef\\n2f8634a0\\ncdbdae51\\n6bf52802\\n0a2ca1b3\\na8641b64\\n469b9515\\ne4d30ec6\\n830a8877\\n21420228\\nbf797bd9\\n5db0f58a\\nfbe86f3b\\n9a1fe8ec\\n3857629d\\nd68edc4e\\n74c655ff\\n12fdcfb0\\nb1354961\\n4f6cc312\\neda43cc3\\n8bdbb674\\n2a133025\\nc84aa9d6\\n66822387\\n04b99d38\\na2f116e9\\n4128909a\\ndf600a4b\\n7d9783fc\\n1bcefdad\\nba06775e\\n583df10f\\nf6756ac0\\n94ace471\\n32e45e22\\nd11bd7d3\\n6f535184\\n0d8acb35\\nabc244e6\\n49f9be97\\ne8313848\\n8668b1f9\\n24a02baa\\nc2d7a55b\\n610f1f0c\\nff4698bd\\n9d7e126e\\n3bb58c1f\\nd9ed05d0\\n78247f81\\n165bf932\\nb49372e3\\n52caec94\\nf1026645\\n8f39dff6\\n2d7159a7\\ncba8d358\\n69e04d09\\n0817c6ba\\na64f406b\\n4486ba1c\\ne2be33cd\\n80f5ad7e\\n1f2d272f\\nbd64a0e0\\n5b9c1a91\\nf9d39442\\n980b0df3\\n364287a4\\nd47a0155\\n72b17b06\\n10e8f4b7\\naf206e68\\n4d57e819\\neb8f61ca\\n89c6db7b\\n27fe552c\\nc635cedd\\n646d488e\\n02a4c23f\\na0dc3bf0\\n3f13b5a1\\ndd4b2f52\\n7b82a903\\n19ba22b4\\nb7f19c65\\n56291616\\nf4608fc7\\n92980978\\n30cf8329\\ncf06fcda\\n6d3e768b\\n0b75f03c\\na9ad69ed\\n47e4e39e\\ne61c5d4f\\n8453d700\\n228b50b1\\nc0c2ca62\\n5efa4413\\nfd31bdc4\\n9b693775\\n39a0b126\\nd7d82ad7\\n760fa488\\n14471e39\\nb27e97ea\\n50b6119b\\neeed8b4c\\n8d2504fd\\n2b5c7eae\\nc993f85f\\n67cb7210\\n0602ebc1\\na43a6572\\n4271df23\\ne0a958d4\\n7ee0d285\\n1d184c36\\nbb4fc5e7\\n59873f98\\nf7beb949\\n95f632fa\\n342dacab\\nd265265c\\n709ca00d\\n0ed419be\\nad0b936f\\n4b430d20\\ne97a86d1\\n87b20082\\n25e97a33\\nc420f3e4\\n62586d95\\n008fe746\\n9ec760f7\\n3cfedaa8\\ndb365459\\n796dce0a\\n17a547bb\\nb5dcc16c\\n54143b1d\\nf24bb4ce\\n90832e7f\\n2ebaa830\\nccf221e1\\n6b299b92\\n09611543\\na7988ef4\\n45d008a5\\ne4078256\\n823efc07\\n207675b8\\nbeadef69\\n5ce5691a\\nfb1ce2cb\\n99545c7c\\n378bd62d\\nd5c34fde\\n73fac98f\\n12324340\\nb069bcf1\\n4ea136a2\\necd8b053\\n8b102a04\\n2947a3b5\\nc77f1d66\\n65b69717\\n03ee10c8\\na2258a79\\n405d042a\\nde947ddb\\n7ccbf78c\\n1b03713d\\nb93aeaee\\n5772649f\\nf5a9de50\\n93e15801\\n3218d1b2\\nd0504b63\\n6e87c514\\n0cbf3ec5\\naaf6b876\\n492e3227\\ne765abd8\\n859d2589\\n23d49f3a\\nc20c18eb\\n6043929c\\nfe7b0c4d\\n9cb285fe\\n3ae9ffaf\\nd9217960\\n7758f311\\n15906cc2\\nb3c7e673\\n51ff6024\\nf036d9d5\\n8e6e5386\\n2ca5cd37\\ncadd46e8\\n6914c099\\n074c3a4a\\na583b3fb\\n43bb2dac\\ne1f2a75d\\n802a210e\\n1e619abf\\nbc991470\\n5ad08e21\\nf90807d2\\n973f8183\\n3576fb34\\nd3ae74e5\\n71e5ee96\\n101d6847\\nae54e1f8\\n4c8c5ba9\\neac3d55a\\n88fb4f0b\\n2732c8bc\\nc56a426d\\n63a1bc1e\\n01d935cf\\na010af80\\n3e482931\\ndc7fa2e2\\n7ab71c93\\n18ee9644\\nb7260ff5\\n555d89a6\\nf3950357\\n91cc7d08\\n3003f6b9\\nce3b706a\\n6c72ea1b\\n0aaa63cc\\na8e1dd7d\\n4719572e\\ne550d0df\\n83884a90\\n21bfc441\\nbff73df2\\n5e2eb7a3\\nfc663154\\n9a9dab05\\n38d524b6\\nd70c9e67\\n75441818\\n137b91c9\\nb1b30b7a\\n4fea852b\\nee21fedc\\n8c59788d\\n2a90f23e\\nc8c86bef\\n66ffe5a0\\n05375f51\\na36ed902\\n41a652b3\\ndfddcc64\\n7e154615\\n1c4cbfc6\\nba843977\\n58bbb328\\nf6f32cd9\\n952aa68a\\n3362203b\\nd19999ec\\n6fd1139d\\n0e088d4e\\nac4006ff\\n4a7780b0\\ne8aefa61\\n86e67412\\n251dedc3\\nc3556774\\n618ce125\\nffc45ad6\\n9dfbd487\\n3c334e38\\nda6ac7e9\\n78a2419a\\n16d9bb4b\\nb51134fc\\n5348aead\\nf180285e\\n8fb7a20f\\n2def1bc0\\ncc269571\\n6a5e0f22\\n089588d3\\na6cd0284\\n45047c35\\ne33bf5e6\\n81736f97\\n1faae948\\nbde262f9\\n5c19dcaa\\nfa51565b\\n9888d00c\\n36c049bd\\nd4f7c36e\\n732f3d1f\\n1166b6d0\\naf9e3081\\n4dd5aa32\\nec0d23e3\\n8a449d94\\n287c1745\\nc6b390f6\\n64eb0aa7\\n03228458\\na159fe09\\n3f9177ba\\nddc8f16b\\n7c006b1c\\n1a37e4cd\\nb86f5e7e\\n56a6d82f\\nf4de51e0\\n9315cb91\\n314d4542\\ncf84bef3\\n6dbc38a4\\n0bf3b255\\naa2b2c06\\n4862a5b7\\ne69a1f68\\n84d19919\\n230912ca\\nc1408c7b\\n5f78062c\\nfdaf7fdd\\n9be6f98e\\n3a1e733f\\nd855ecf0\\n768d66a1\\n14c4e052\\nb2fc5a03\\n5133d3b4\\nef6b4d65\\n8da2c716\\n2bda40c7\\nca11ba78\\n68493429\\n0680adda\\na4b8278b\\n42efa13c\\ne1271aed\\n7f5e949e\\n1d960e4f\\nbbcd8800\\n5a0501b1\\nf83c7b62\\n9673f513\\n34ab6ec4\\nd2e2e875\\n711a6226\\n0f51dbd7\\nad895588\\n4bc0cf39\\ne9f848ea\\n882fc29b\\n26673c4c\\nc49eb5fd\\n62d62fae\\n010da95f\\n9f452310\\n3d7c9cc1\\ndbb41672\\n79eb9023\\n182309d4\\nb65a8385\\n5491fd36\\nf2c976e7\\n9100f098\\n2f386a49\\ncd6fe3fa\\n6ba75dab\\n09ded75c\\na816510d\\n464dcabe\\ne485446f\\n82bcbe20\\n20f437d1\\nbf2bb182\\n5d632b33\\nfb9aa4e4\\n99d21e95\\n38099846\\nd64111f7\\n74788ba8\\n12b00559\\nb0e77f0a\\n4f1ef8bb\\ned56726c\\n8b8dec1d\\n29c565ce\\nc7fcdf7f\\n66345930\\n046bd2e1\\na2a34c92\\n40dac643\\ndf123ff4\\n7d49b9a5\\n1b813356\\nb9b8ad07\\n57f026b8\\nf627a069\\n945f1a1a\\n329693cb\\nd0ce0d7c\\n6f05872d\\n0d3d00de\\nab747a8f\\n49abf440\\ne7e36df1\\n861ae7a2\\n24526153\\nc289db04\\n60c154b5\\nfef8ce66\\n9d304817\\n3b67c1c8\\nd99f3b79\\n77d6b52a\\n160e2edb\\nb445a88c\\n527d223d\\nf0b49bee\\n8eec159f\\n2d238f50\\ncb5b0901\\n699282b2\\n07c9fc63\\na6017614\\n4438efc5\\ne2706976\\n80a7e327\\n1edf5cd8\\nbd16d689\\n5b4e503a\\nf985c9eb\\n97bd439c\\n35f4bd4d\\nd42c36fe\\n7263b0af\\n109b2a60\\naed2a411\\n4d0a1dc2\\neb419773\\n89791124\\n27b08ad5\\nc5e80486\\n641f7e37\\n0256f7e8\\na08e7199\\n3ec5eb4a\\ndcfd64fb\\n7b34deac\\n196c585d\\nb7a3d20e\\n55db4bbf\\nf412c570\\n924a3f21\\n3081b8d2\\nceb93283\\n6cf0ac34\\n0b2825e5\\na95f9f96\\n47971947\\ne5ce92f8\\n84060ca9\\n223d865a\\nc075000b\\n5eac79bc\\nfce3f36d\\n9b1b6d1e\\n3952e6cf\\nd78a6080\\n75c1da31\\n13f953e2\\nb230cd93\\n50684744\\nee9fc0f5\\n8cd73aa6\\n2b0eb457\\nc9462e08\\n677da7b9\\n05b5216a\\na3ec9b1b\\n422414cc\\ne05b8e7d\\n7e93082e\\n1cca81df\\nbb01fb90\\n59397541\\nf770eef2\\n95a868a3\\n33dfe254\\nd2175c05\\n704ed5b6\\n0e864f67\\nacbdc918\\n4af542c9\\ne92cbc7a\\n8764362b\\n259bafdc\\nc3d3298d\\n620aa33e\\n00421cef\\n9e7996a0\\n3cb11051\\ndae88a02\\n792003b3\\n17577d64\\nb58ef715\\n53c670c6\\nf1fdea77\\n90356428\\n2e6cddd9\\ncca4578a\\n6adbd13b\\n09134aec\\na74ac49d\\n45823e4e\\ne3b9b7ff\\n81f131b0\\n2028ab61\\nbe602512\\n5c979ec3\\nfacf1874\\n99069225\\n373e0bd6\\nd5758587\\n73acff38\\n11e478e9\\nb01bf29a\\n4e536c4b\\nec8ae5fc\\n8ac25fad\\n28f9d95e\\nc731530f\\n6568ccc0\\n03a04671\\na1d7c022\\n400f39d3\\nde46b384\\n7c7e2d35\\n1ab5a6e6\\nb8ed2097\\n57249a48\\nf55c13f9\\n93938daa\\n31cb075b\\nd002810c\\n6e39fabd\\n0c71746e\\naaa8ee1f\\n48e067d0\\ne717e181\\n854f5b32\\n2386d4e3\\nc1be4e94\\n5ff5c845\\nfe2d41f6\\n9c64bba7\\n3a9c3558\\nd8d3af09\\n770b28ba\\n1542a26b\\nb37a1c1c\\n51b195cd\\nefe90f7e\\n8e20892f\\n2c5802e0\\nca8f7c91\\n68c6f642\\n06fe6ff3\\na535e9a4\\n436d6355\\ne1a4dd06\\n7fdc56b7\\n1e13d068\\nbc4b4a19\\n5a82c3ca\\nf8ba3d7b\\n96f1b72c\\n352930dd\\nd360aa8e\\n7198243f\\n0fcf9df0\\nae0717a1\\n4c3e9152\\nea760b03\\n88ad84b4\\n26e4fe65\\nc51c7816\\n6353f1c7\\n018b6b78\\n9fc2e529\\n3dfa5eda\\ndc31d88b\\n7a69523c\\n18a0cbed\\nb6d8459e\\n550fbf4f\\nf3473900\\n917eb2b1\\n2fb62c62\\ncdeda613\\n6c251fc4\\n0a5c9975\\na8941326\\n46cb8cd7\\ne5030688\\n833a8039\\n2171f9ea\\nbfa9739b\\n5de0ed4c\\nfc1866fd\\n9a4fe0ae\\n38875a5f\\nd6bed410\\n74f64dc1\\n132dc772\\nb1654123\\n4f9cbad4\\nedd43485\\n8c0bae36\\n2a4327e7\\nc87aa198\\n66b21b49\\n04e994fa\\na3210eab\\n4158885c\\ndf90020d\\n7dc77bbe\\n1bfef56f\\nba366f20\\n586de8d1\\nf6a56282\\n94dcdc33\\n331455e4\\nd14bcf95\\n6f834946\\n0dbac2f7\\nabf23ca8\\n4a29b659\\ne861300a\\n8698a9bb\\n24d0236c\\nc3079d1d\\n613f16ce\\nff76907f\\n9dae0a30\\n3be583e1\\nda1cfd92\\n78547743\\n168bf0f4\\nb4c36aa5\\n52fae456\\nf1325e07\\n8f69d7b8\\n2da15169\\ncbd8cb1a\\n6a1044cb\\n0847be7c\\na67f382d\\n44b6b1de\\ne2ee2b8f\\n8125a540\\n1f5d1ef1\\nbd9498a2\\n5bcc1253\\nfa038c04\\n983b05b5\\n36727f66\\nd4a9f917\\n72e172c8\\n1118ec79\\naf50662a\\n4d87dfdb\\nebbf598c\\n89f6d33d\\n282e4cee\\nc665c69f\\n649d4050\\n02d4ba01\\na10c33b2\\n3f43ad63\\ndd7b2714\\n7bb2a0c5\\n19ea1a76\\nb8219427\\n56590dd8\\nf4908789\\n92c8013a\\n30ff7aeb\\ncf36f49c\\n6d6e6e4d\\n0ba5e7fe\\na9dd61af\\n4814db60\\ne64c5511\\n8483cec2\\n22bb4873\\nc0f2c224\\n5f2a3bd5\\nfd61b586\\n9b992f37\\n39d0a8e8\\nd8082299\\n763f9c4a\\n147715fb\\nb2ae8fac\\n50e6095d\\nef1d830e\\n8d54fcbf\\n2b8c7670\\nc9c3f021\\n67fb69d2\\n0632e383\\na46a5d34\\n42a1d6e5\\ne0d95096\\n7f10ca47\\n1d4843f8\\nbb7fbda9\\n59b7375a\\nf7eeb10b\\n96262abc\\n345da46d\\nd2951e1e\\n70cc97cf\\n0f041180\\nad3b8b31\\n4b7304e2\\ne9aa7e93\\n87e1f844\\n261971f5\\nc450eba6\\n62886557\\n00bfdf08\\n9ef758b9\\n3d2ed26a\\ndb664c1b\\n799dc5cc\\n17d53f7d\\nb60cb92e\\n544432df\\nf27bac90\\n90b32641\\n2eea9ff2\\ncd2219a3\\n6b599354\\n09910d05\\na7c886b6\\n46000067\\ne4377a18\\n826ef3c9\\n20a66d7a\\nbedde72b\\n5d1560dc\\nfb4cda8d\\n9984543e\\n37bbcdef\\nd5f347a0\\n742ac151\\n12623b02\\nb099b4b3\\n4ed12e64\\ned08a815\\n8b4021c6\\n29779b77\\nc7af1528\\n65e68ed9\\n041e088a\\na255823b\\n408cfbec\\ndec4759d\\n7cfbef4e\\n1b3368ff\\nb96ae2b0\\n57a25c61\\nf5d9d612\\n94114fc3\\n3248c974\\nd0804325\\n6eb7bcd6\\n0cef3687\\nab26b038\\n495e29e9\\ne795a39a\\n85cd1d4b\\n240496fc\\nc23c10ad\\n60738a5e\\nfeab040f\\n9ce27dc0\\n3b19f771\\nd9517122\\n7788ead3\\n15c06484\\nb3f7de35\\n522f57e6\\nf066d197\\n8e9e4b48\\n2cd5c4f9\\ncb0d3eaa\\n6944b85b\\n077c320c\\na5b3abbd\\n43eb256e\\ne2229f1f\\n805a18d0\\n1e919281\\nbcc90c32\\n5b0085e3\\nf937ff94\\n976f7945\\n35a6f2f6\\nd3de6ca7\\n7215e658\\n104d6009\\nae84d9ba\\n4cbc536b\\neaf3cd1c\\n892b46cd\\n2762c07e\\nc59a3a2f\\n63d1b3e0\\n02092d91\\na040a742\\n3e7820f3\\ndcaf9aa4\\n7ae71455\\n191e8e06\\nb75607b7\\n558d8168\\nf3c4fb19\\n91fc74ca\\n3033ee7b\\nce6b682c\\n6ca2e1dd\\n0ada5b8e\\na911d53f\\n47494ef0\\ne580c8a1\\n83b84252\\n21efbc03\\nc02735b4\\n5e5eaf65\\nfc962916\\n9acda2c7\\n39051c78\\nd73c9629\\n75740fda\\n13ab898b\\nb1e3033c\\n501a7ced\\nee51f69e\\n8c89704f\\n2ac0ea00\\nc8f863b1\\n672fdd62\\n05675713\\na39ed0c4\\n41d64a75\\ne00dc426\\n7e453dd7\\n1c7cb788\\nbab43139\\n58ebaaea\\nf723249b\\n955a9e4c\\n339217fd\\nd1c991ae\\n70010b5f\\n0e388510\\nac6ffec1\\n4aa77872\\ne8def223\\n87166bd4\\n254de585\\nc3855f36\\n61bcd8e7\\nfff45298\\n9e2bcc49\\n3c6345fa\\nda9abfab\\n78d2395c\\n1709b30d\\nb5412cbe\\n5378a66f\\nf1b02020\\n8fe799d1\\n2e1f1382\\ncc568d33\\n6a8e06e4\\n08c58095\\na6fcfa46\\n453473f7\\ne36beda8\\n81a36759\\n1fdae10a\\nbe125abb\\n5c49d46c\\nfa814e1d\\n98b8c7ce\\n36f0417f\\nd527bb30\\n735f34e1\\n1196ae92\\nafce2843\\n4e05a1f4\\nec3d1ba5\\n8a749556\\n28ac0f07\\nc6e388b8\\n651b0269\\n03527c1a\\na189f5cb\\n3fc16f7c\\nddf8e92d\\n7c3062de\\n1a67dc8f\\nb89f5640\\n56d6cff1\\nf50e49a2\\n9345c353\\n317d3d04\\ncfb4b6b5\\n6dec3066\\n0c23aa17\\naa5b23c8\\n48929d79\\ne6ca172a\\n850190db\\n23390a8c\\nc170843d\\n5fa7fdee\\nfddf779f\\n9c16f150\\n3a4e6b01\\nd885e4b2\\n76bd5e63\\n14f4d814\\nb32c51c5\\n5163cb76\\nef9b4527\\n8dd2bed8\\n2c0a3889\\nca41b23a\\n68792beb\\n06b0a59c\\na4e81f4d\\n431f98fe\\ne15712af\\n7f8e8c60\\n1dc60611\\nbbfd7fc2\\n5a34f973\\nf86c7324\\n96a3ecd5\\n34db6686\\nd312e037\\n714a59e8\\n0f81d399\\nadb94d4a\\n4bf0c6fb\\nea2840ac\\n885fba5d\\n2697340e\\nc4ceadbf\\n63062770\\n013da121\\n9f751ad2\\n3dac9483\\ndbe40e34\\n7a1b87e5\\n18530196\\nb68a7b47\\n54c1f4f8\\nf2f96ea9\\n9130e85a\\n2f68620b\\ncd9fdbbc\\n6bd7556d\\n0a0ecf1e\\na84648cf\\n467dc280\\ne4b53c31\\n82ecb5e2\\n21242f93\\nbf5ba944\\n5d9322f5\\nfbca9ca6\\n9a021657\\n38399008\\nd67109b9\\n74a8836a\\n12dffd1b\\nb11776cc\\n4f4ef07d\\ned866a2e\\n8bbde3df\\n29f55d90\\nc82cd741\\n666450f2\\n049bcaa3\\na2d34454\\n410abe05\\ndf4237b6\\n7d79b167\\n1bb12b18\\nb9e8a4c9\\n58201e7a\\nf657982b\\n948f11dc\\n32c68b8d\\nd0fe053e\\n6f357eef\\n0d6cf8a0\\naba47251\\n49dbec02\\ne81365b3\\n864adf64\\n24825915\\nc2b9d2c6\\n60f14c77\\nff28c628\\n9d603fd9\\n3b97b98a\\nd9cf333b\\n7806acec\\n163e269d\\nb475a04e\\n52ad19ff\\nf0e493b0\\n8f1c0d61\\n2d538712\\ncb8b00c3\\n69c27a74\\n07f9f425\\na6316dd6\\n4468e787\\ne2a06138\\n80d7dae9\\n1f0f549a\\nbd46ce4b\\n5b7e47fc\\nf9b5c1ad\\n97ed3b5e\\n3624b50f\\nd45c2ec0\\n7293a871\\n10cb2222\\naf029bd3\\n4d3a1584\\neb718f35\\n89a908e6\\n27e08297\\nc617fc48\\n644f75f9\\n0286efaa\\na0be695b\\n3ef5e30c\\ndd2d5cbd\\n7b64d66e\\n199c501f\\nb7d3c9d0\\n560b4381\\nf442bd32\\n927a36e3\\n30b1b094\\ncee92a45\\n6d20a3f6\\n0b581da7\\na98f9758\\n47c71109\\ne5fe8aba\\n8436046b\\n226d7e1c\\nc0a4f7cd\\n5edc717e\\nfd13eb2f\\n9b4b64e0\\n3982de91\\nd7ba5842\\n75f1d1f3\\n14294ba4\\nb260c555\\n50983f06\\neecfb8b7\\n8d073268\\n2b3eac19\\nc97625ca\\n67ad9f7b\\n05e5192c\\na41c92dd\\n42540c8e\\ne08b863f\\n7ec2fff0\\n1cfa79a1\\nbb31f352\\n59696d03\\nf7a0e6b4\\n95d86065\\n340fda16\\nd24753c7\\n707ecd78\\n0eb64729\\nacedc0da\\n4b253a8b\\ne95cb43c\\n87942ded\\n25cba79e\\nc403214f\\n623a9b00\\n007214b1\\n9ea98e62\\n3ce10813\\ndb1881c4\\n794ffb75\\n17877526\\nb5beeed7\\n53f66888\\nf22de239\\n90655bea\\n2e9cd59b\\nccd44f4c\\n6b0bc8fd\\n094342ae\\na77abc5f\\n45b23610\\ne3e9afc1\\n82212972\\n2058a323\\nbe901cd4\\n5cc79685\\nfaff1036\\n993689e7\\n376e0398\\nd5a57d49\\n73dcf6fa\\n121470ab\\nb04bea5c\\n4e83640d\\necbaddbe\\n8af2576f\\n2929d120\\nc7614ad1\\n6598c482\\n03d03e33\\na207b7e4\\n403f3195\\nde76ab46\\n7cae24f7\\n1ae59ea8\\nb91d1859\\n5754920a\\nf58c0bbb\\n93c3856c\\n31faff1d\\nd03278ce\\n6e69f27f\\n0ca16c30\\naad8e5e1\\n49105f92\\ne747d943\\n857f52f4\\n23b6cca5\\nc1ee4656\\n6025c007\\nfe5d39b8\\n9c94b369\\n3acc2d1a\\nd903a6cb\\n773b207c\\n15729a2d\\nb3aa13de\\n51e18d8f\\nf0190740\\n8e5080f1\\n2c87faa2\\ncabf7453\\n68f6ee04\\n072e67b5\\na565e166\\n439d5b17\\ne1d4d4c8\\n800c4e79\\n1e43c82a\\nbc7b41db\\n5ab2bb8c\\nf8ea353d\\n9721aeee\\n3559289f\\nd390a250\\n71c81c01\\n0fff95b2\\nae370f63\\n4c6e8914\\neaa602c5\\n88dd7c76\\n2714f627\\nc54c6fd8\\n6383e989\\n01bb633a\\n9ff2dceb\\n3e2a569c\\ndc61d04d\\n7a9949fe\\n18d0c3af\\nb7083d60\\n553fb711\\nf37730c2\\n91aeaa73\\n2fe62424\\nce1d9dd5\\n6c551786\\n0a8c9137\\na8c40ae8\\n46fb8499\\ne532fe4a\\n836a77fb\\n21a1f1ac\\nbfd96b5d\\n5e10e50e\\nfc485ebf\\n9a7fd870\\n38b75221\\nd6eecbd2\\n75264583\\n135dbf34\\nb19538e5\\n4fccb296\\nee042c47\\n8c3ba5f8\\n2a731fa9\\nc8aa995a\\n66e2130b\\n05198cbc\\na351066d\\n4188801e\\ndfbff9cf\\n7df77380\\n1c2eed31\\nba6666e2\\n589de093\\nf6d55a44\\n950cd3f5\\n33444da6\\nd17bc757\\n6fb34108\\n0deabab9\\nac22346a\\n4a59ae1b\\ne89127cc\\n86c8a17d\\n25001b2e\\nc33794df\\n616f0e90\\nffa68841\\n9dde01f2\\n3c157ba3\\nda4cf554\\n78846f05\\n16bbe8b6\\nb4f36267\\n532adc18\\nf16255c9\\n8f99cf7a\\n2dd1492b\\ncc08c2dc\\n6a403c8d\\n0877b63e\\na6af2fef\\n44e6a9a0\\ne31e2351\\n81559d02\\n1f8d16b3\\nbdc49064\\n5bfc0a15\\nfa3383c6\\n986afd77\\n36a27728\\nd4d9f0d9\\n73116a8a\\n1148e43b\\naf805dec\\n4db7d79d\\nebef514e\\n8a26caff\\n285e44b0\\nc695be61\\n64cd3812\\n0304b1c3\\na13c2b74\\n3f73a525\\nddab1ed6\\n7be29887\\n1a1a1238\\nb8518be9\\n5689059a\\nf4c07f4b\\n92f7f8fc\\n312f72ad\\ncf66ec5e\\n6d9e660f\\n0bd5dfc0\\naa0d5971\\n4844d322\\ne67c4cd3\\n84b3c684\\n22eb4035\\nc122b9e6\\n5f5a3397\\nfd91ad48\\n9bc926f9\\n3a00a0aa\\nd8381a5b\\n766f940c\\n14a70dbd\\nb2de876e\\n5116011f\\nef4d7ad0\\n8d84f481\\n2bbc6e32\\nc9f3e7e3\\n682b6194\\n0662db45\\na49a54f6\\n42d1cea7\\ne1094858\\n7f40c209\\n1d783bba\\nbbafb56b\\n59e72f1c\\nf81ea8cd\\n9656227e\\n348d9c2f\\nd2c515e0\\n70fc8f91\\n0f340942\\nad6b82f3\\n4ba2fca4\\ne9da7655\\n8811f006\\n264969b7\\nc480e368\\n62b85d19\\n00efd6ca\\n9f27507b\\n3d5eca2c\\ndb9643dd\\n79cdbd8e\\n1805373f\\nb63cb0f0\\n54742aa1\\nf2aba452\\n90e31e03\\n2f1a97b4\\ncd521165\\n6b898b16\\n09c104c7\\na7f87e78\\n462ff829\\ne46771da\\n829eeb8b\\n20d6653c\\nbf0ddeed\\n5d45589e\\nfb7cd24f\\n99b44c00\\n37ebc5b1\\nd6233f62\\n745ab913\\n129232c4\\nb0c9ac75\\n4f012626\\ned389fd7\\n8b701988\\n29a79339\\nc7df0cea\\n6616869b\\n044e004c\\na28579fd\\n40bcf3ae\\ndef46d5f\\n7d2be710\\n1b6360c1\\nb99ada72\\n57d25423\\nf609cdd4\\n94414785\\n3278c136\\nd0b03ae7\\n6ee7b498\\n0d1f2e49\\nab56a7fa\\n498e21ab\\ne7c59b5c\\n85fd150d\\n24348ebe\\nc26c086f\\n60a38220\\nfedafbd1\\n9d127582\\n3b49ef33\\nd98168e4\\n77b8e295\\n15f05c46\\nb427d5f7\\n525f4fa8\\nf096c959\\n8ece430a\\n2d05bcbb\\ncb3d366c\\n6974b01d\\n07ac29ce\\na5e3a37f\\n441b1d30\\ne25296e1\\n808a1092\\n1ec18a43\\nbcf903f4\\n5b307da5\\nf967f756\\n979f7107\\n35d6eab8\\nd40e6469\\n7245de1a\\n107d57cb\\naeb4d17c\\n4cec4b2d\\neb23c4de\\n895b3e8f\\n2792b840\\nc5ca31f1\\n6401aba2\\n02392553\\na0709f04\\n3ea818b5\\ndcdf9266\\n7b170c17\\n194e85c8\\nb785ff79\\n55bd792a\\nf3f4f2db\\n922c6c8c\\n3063e63d\\nce9b5fee\\n6cd2d99f\\n0b0a5350\\na941cd01\\n477946b2\\ne5b0c063\\n83e83a14\\n221fb3c5\\nc0572d76\\n5e8ea727\\nfcc620d8\\n9afd9a89\\n3935143a\\nd76c8deb\\n75a4079c\\n13db814d\\nb212fafe\\n504a74af\\nee81ee60\\n8cb96811\\n2af0e1c2\\nc9285b73\\n675fd524\\n05974ed5\\na3cec886\\n42064237\\ne03dbbe8\\n7e753599\\n1cacaf4a\\nbae428fb\\n591ba2ac\\nf7531c5d\\n958a960e\\n33c20fbf\\nd1f98970\\n70310321\\n0e687cd2\\nac9ff683\\n4ad77034\\ne90ee9e5\\n87466396\\n257ddd47\\nc3b556f8\\n61ecd0a9\\n00244a5a\\n9e5bc40b\\n3c933dbc\\ndacab76d\\n7902311e\\n1739aacf\\nb5712480\\n53a89e31\\nf1e017e2\\n90179193\\n2e4f0b44\\ncc8684f5\\n6abdfea6\\n08f57857\\na72cf208\\n45646bb9\\ne39be56a\\n81d35f1b\\n200ad8cc\\nbe42527d\\n5c79cc2e\\nfab145df\\n98e8bf90\\n37203941\\nd557b2f2\\n738f2ca3\\n11c6a654\\naffe2005\\n4e3599b6\\nec6d1367\\n8aa48d18\\n28dc06c9\\nc713807a\\n654afa2b\\n038273dc\\na1b9ed8d\\n3ff1673e\\nde28e0ef\\n7c605aa0\\n1a97d451\\nb8cf4e02\\n5706c7b3\\nf53e4164\\n9375bb15\\n31ad34c6\\ncfe4ae77\\n6e1c2828\\n0c53a1d9\\naa8b1b8a\\n48c2953b\\ne6fa0eec\\n8531889d\\n2369024e\\nc1a07bff\\n5fd7f5b0\\nfe0f6f61\\n9c46e912\\n3a7e62c3\\nd8b5dc74\\n76ed5625\\n1524cfd6\\nb35c4987\\n5193c338\\nefcb3ce9\\n8e02b69a\\n2c3a304b\\nca71a9fc\\n68a923ad\\n06e09d5e\\na518170f\\n434f90c0\\ne1870a71\\n7fbe8422\\n1df5fdd3\\nbc2d7784\\n5a64f135\\nf89c6ae6\\n96d3e497\\n350b5e48\\nd342d7f9\\n717a51aa\\n0fb1cb5b\\nade9450c\\n4c20bebd\\nea58386e\\n888fb21f\\n26c72bd0\\nc4fea581\\n63361f32\\n016d98e3\\n9fa51294\\n3ddc8c45\\ndc1405f6\\n7a4b7fa7\\n1882f958\\nb6ba7309\\n54f1ecba\\nf329666b\\n9160e01c\\n2f9859cd\\ncdcfd37e\\n6c074d2f\\n0a3ec6e0\\na8764091\\n46adba42\\ne4e533f3\\n831cada4\\n21542755\\nbf8ba106\\n5dc31ab7\\nfbfa9468\\n9a320e19\\n386987ca\\nd6a1017b\\n74d87b2c\\n130ff4dd\\nb1476e8e\\n4f7ee83f\\nedb661f0\\n8beddba1\\n2a255552\\nc85ccf03\\n669448b4\\n04cbc265\\na3033c16\\n413ab5c7\\ndf722f78\\n7da9a929\\n1be122da\\nba189c8b\\n5850163c\\nf6878fed\\n94bf099e\\n32f6834f\\nd12dfd00\\n6f6576b1\\n0d9cf062\\nabd46a13\\n4a0be3c4\\ne8435d75\\n867ad726\\n24b250d7\\nc2e9ca88\\n61214439\\nff58bdea\\n9d90379b\\n3bc7b14c\\nd9ff2afd\\n7836a4ae\\n166e1e5f\\nb4a59810\\n52dd11c1\\nf1148b72\\n8f4c0523\\n2d837ed4\\ncbbaf885\\n69f27236\\n0829ebe7\\na6616598\\n4498df49\\ne2d058fa\\n8107d2ab\\n1f3f4c5c\\nbd76c60d\\n5bae3fbe\\nf9e5b96f\\n981d3320\\n3654acd1\\nd48c2682\\n72c3a033\\n10fb19e4\\naf329395\\n4d6a0d46\\neba186f7\\n89d900a8\\n28107a59\\nc647f40a\\n647f6dbb\\n02b6e76c\\na0ee611d\\n3f25dace\\ndd5d547f\\n7b94ce30\\n19cc47e1\\nb803c192\\n563b3b43\\nf472b4f4\\n92aa2ea5\\n30e1a856\\ncf192207\\n6d509bb8\\n0b881569\\na9bf8f1a\\n47f708cb\\ne62e827c\\n8465fc2d\\n229d75de\\nc0d4ef8f\\n5f0c6940\\nfd43e2f1\\n9b7b5ca2\\n39b2d653\\nd7ea5004\\n7621c9b5\\n14594366\\nb290bd17\\n50c836c8\\neeffb079\\n8d372a2a\\n2b6ea3db\\nc9a61d8c\\n67dd973d\\n061510ee\\na44c8a9f\\n42840450\\ne0bb7e01\\n7ef2f7b2\\n1d2a7163\\nbb61eb14\\n599964c5\\nf7d0de76\\n96085827\\n343fd1d8\\nd2774b89\\n70aec53a\\n0ee63eeb\\nad1db89c\\n4b55324d\\ne98cabfe\\n87c425af\\n25fb9f60\\nc4331911\\n626a92c2\\n00a20c73\\n9ed98624\\n3d10ffd5\\ndb487986\\n797ff337\\n17b76ce8\\nb5eee699\\n5426604a\\nf25dd9fb\\n909553ac\\n2ecccd5d\\ncd04470e\\n6b3bc0bf\\n09733a70\\na7aab421\\n45e22dd2\\ne419a783\\n82512134\\n20889ae5\\nbec01496\\n5cf78e47\\nfb2f07f8\\n996681a9\\n379dfb5a\\nd5d5750b\\n740ceebc\\n1244686d\\nb07be21e\\n4eb35bcf\\necead580\\n8b224f31\\n2959c8e2\\nc7914293\\n65c8bc44\\n040035f5\\na237afa6\\n406f2957\\ndea6a308\\n7cde1cb9\\n1b15966a\\nb94d101b\\n578489cc\\nf5bc037d\\n93f37d2e\\n322af6df\\nd0627090\\n6e99ea41\\n0cd163f2\\nab08dda3\\n49405754\\ne777d105\\n85af4ab6\\n23e6c467\\nc21e3e18\\n6055b7c9\\nfe8d317a\\n9cc4ab2b\\n3afc24dc\\nd9339e8d\\n776b183e\\n15a291ef\\nb3da0ba0\\n52118551\\nf048ff02\\n8e8078b3\\n2cb7f264\\ncaef6c15\\n6926e5c6\\n075e5f77\\na595d928\\n43cd52d9\\ne204cc8a\\n803c463b\\n1e73bfec\\nbcab399d\\n5ae2b34e\\nf91a2cff\\n9751a6b0\\n35892061\\nd3c09a12\\n71f813c3\\n102f8d74\\nae670725\\n4c9e80d6\\nead5fa87\\n890d7438\\n2744ede9\\nc57c679a\\n63b3e14b\\n01eb5afc\\na022d4ad\\n3e5a4e5e\\ndc91c80f\\n7ac941c0\\n1900bb71\\nb7383522\\n556faed3\\nf3a72884\\n91dea235\\n30161be6\\nce4d9597\\n6c850f48\\n0abc88f9\\na8f402aa\\n472b7c5b\\ne562f60c\\n839a6fbd\\n21d1e96e\\nc009631f\\n5e40dcd0\\nfc785681\\n9aafd032\\n38e749e3\\nd71ec394\\n75563d45\\n138db6f6\\nb1c530a7\\n4ffcaa58\\nee342409\\n8c6b9dba\\n2aa3176b\\nc8da911c\\n67120acd\\n0549847e\\na380fe2f\\n41b877e0\\ndfeff191\\n7e276b42\\n1c5ee4f3\\nba965ea4\\n58cdd855\\nf7055206\\n953ccbb7\\n33744568\\nd1abbf19\\n6fe338ca\\n0e1ab27b\\nac522c2c\\n4a89a5dd\\ne8c11f8e\\n86f8993f\\n253012f0\\nc3678ca1\\n619f0652\\nffd68003\\n9e0df9b4\\n3c457365\\nda7ced16\\n78b466c7\\n16ebe078\\nb5235a29\\n535ad3da\\nf1924d8b\\n8fc9c73c\\n2e0140ed\\ncc38ba9e\\n6a70344f\\n08a7ae00\\na6df27b1\\n4516a162\\ne34e1b13\\n818594c4\\n1fbd0e75\\nbdf48826\\n5c2c01d7\\nfa637b88\\n989af539\\n36d26eea\\nd509e89b\\n7341624c\\n1178dbfd\\nafb055ae\\n4de7cf5f\\nec1f4910\\n8a56c2c1\\n288e3c72\\nc6c5b623\\n64fd2fd4\\n0334a985\\na16c2336\\n3fa39ce7\\ndddb1698\\n7c129049\\n1a4a09fa\\nb88183ab\\n56b8fd5c\\nf4f0770d\\n9327f0be\\n315f6a6f\\ncf96e420\\n6dce5dd1\\n0c05d782\\naa3d5133\\n4874cae4\\ne6ac4495\\n84e3be46\\n231b37f7\\nc152b1a8\\n5f8a2b59\\nfdc1a50a\\n9bf91ebb\\n3a30986c\\nd868121d\\n769f8bce\\n14d7057f\\nb30e7f30\\n5145f8e1\\nef7d7292\\n8db4ec43\\n2bec65f4\\nca23dfa5\\n685b5956\\n0692d307\\na4ca4cb8\\n4301c669\\ne139401a\\n7f70b9cb\\n1da8337c\\nbbdfad2d\\n5a1726de\\nf84ea08f\\n96861a40\\n34bd93f1\\nd2f50da2\\n712c8753\\n0f640104\\nad9b7ab5\\n4bd2f466\\nea0a6e17\\n8841e7c8\\n26796179\\nc4b0db2a\\n62e854db\\n011fce8c\\n9f57483d\\n3d8ec1ee\\ndbc63b9f\\n79fdb550\\n18352f01\\nb66ca8b2\\n54a42263\\nf2db9c14\\n911315c5\\n2f4a8f76\\ncd820927\\n6bb982d8\\n09f0fc89\\na828763a\\n465fefeb\\ne497699c\\n82cee34d\\n21065cfe\\nbf3dd6af\\n5d755060\\nfbacca11\\n99e443c2\\n381bbd73\\nd6533724\\n748ab0d5\\n12c22a86\\nb0f9a437\\n4f311de8\\ned689799\\n8ba0114a\\n29d78afb\\nc80f04ac\\n66467e5d\\n047df80e\\na2b571bf\\n40eceb70\\ndf246521\\n7d5bded2\\n1b935883\\nb9cad234\\n58024be5\\nf639c596\\n94713f47\\n32a8b8f8\\nd0e032a9\\n6f17ac5a\\n0d4f260b\\nab869fbc\\n49be196d\\ne7f5931e\\n862d0ccf\\n24648680\\nc29c0031\\n60d379e2\\nff0af393\\n9d426d44\\n3b79e6f5\\nd9b160a6\\n77e8da57\\n16205408\\nb457cdb9\\n528f476a\\nf0c6c11b\\n8efe3acc\\n2d35b47d\\ncb6d2e2e\\n69a4a7df\\n07dc2190\\na6139b41\\n444b14f2\\ne2828ea3\\n80ba0854\\n1ef18205\\nbd28fbb6\\n5b607567\\nf997ef18\\n97cf68c9\\n3606e27a\\nd43e5c2b\\n7275d5dc\\n10ad4f8d\\naee4c93e\\n4d1c42ef\\neb53bca0\\n898b3651\\n27c2b002\\nc5fa29b3\\n6431a364\\n02691d15\\na0a096c6\\n3ed81077\\ndd0f8a28\\n7b4703d9\\n197e7d8a\\nb7b5f73b\\n55ed70ec\\nf424ea9d\\n925c644e\\n3093ddff\\ncecb57b0\\n6d02d161\\n0b3a4b12\\na971c4c3\\n47a93e74\\ne5e0b825\\n841831d6\\n224fab87\\nc0872538\\n5ebe9ee9\\nfcf6189a\\n9b2d924b\\n39650bfc\\nd79c85ad\\n75d3ff5e\\n140b790f\\nb242f2c0\\n507a6c71\\neeb1e622\\n8ce95fd3\\n2b20d984\\nc9585335\\n678fcce6\\n05c74697\\na3fec048\\n423639f9\\ne06db3aa\\n7ea52d5b\\n1cdca70c\\nbb1420bd\\n594b9a6e\\nf783141f\\n95ba8dd0\\n33f20781\\nd2298132\\n7060fae3\\n0e987494\\naccfee45\\n4b0767f6\\ne93ee1a7\\n87765b58\\n25add509\\nc3e54eba\\n621cc86b\\n0054421c\\n9e8bbbcd\\n3cc3357e\\ndafaaf2f\\n793228e0\\n1769a291\\nb5a11c42\\n53d895f3\\nf2100fa4\\n90478955\\n2e7f0306\\nccb67cb7\\n6aedf668\\n09257019\\na75ce9ca\\n4594637b\\ne3cbdd2c\\n820356dd\\n203ad08e\\nbe724a3f\\n5ca9c3f0\\nfae13da1\\n9918b752\\n37503103\\nd587aab4\\n73bf2465\\n11f69e16\\nb02e17c7\\n4e659178\\nec9d0b29\\n8ad484da\\n290bfe8b\\nc743783c\\n657af1ed\\n03b26b9e\\na1e9e54f\\n40215f00\\nde58d8b1\\n7c905262\\n1ac7cc13\\nb8ff45c4\\n5736bf75\\nf56e3926\\n93a5b2d7\\n31dd2c88\\nd014a639\\n6e4c1fea\\n0c83999b\\naabb134c\\n48f28cfd\\ne72a06ae\\n8561805f\\n2398fa10\\nc1d073c1\\n6007ed72\\nfe3f6723\\n9c76e0d4\\n3aae5a85\\nd8e5d436\\n771d4de7\\n1554c798\\nb38c4149\\n51c3bafa\\neffb34ab\\n8e32ae5c\\n2c6a280d\\ncaa1a1be\\n68d91b6f\\n07109520\\na5480ed1\\n437f8882\\ne1b70233\\n7fee7be4\\n1e25f595\\nbc5d6f46\\n5a94e8f7\\nf8cc62a8\\n9703dc59\\n353b560a\\nd372cfbb\\n71aa496c\\n0fe1c31d\\nae193cce\\n4c50b67f\\nea883030\\n88bfa9e1\\n26f72392\\nc52e9d43\\n636616f4\\n019d90a5\\n9fd50a56\\n3e0c8407\\ndc43fdb8\\n7a7b7769\\n18b2f11a\\nb6ea6acb\\n5521e47c\\nf3595e2d\\n9190d7de\\n2fc8518f\\ncdffcb40\\n6c3744f1\\n0a6ebea2\\na8a63853\\n46ddb204\\ne5152bb5\\n834ca566\\n21841f17\\nbfbb98c8\\n5df31279\\nfc2a8c2a\\n9a6205db\\n38997f8c\\nd6d0f93d\\n750872ee\\n133fec9f\\nb1776650\\n4faee001\\nede659b2\\n8c1dd363\\n2a554d14\\nc88cc6c5\\n66c44076\\n04fbba27\\na33333d8\\n416aad89\\ndfa2273a\\n7dd9a0eb\\n1c111a9c\\nba48944d\\n58800dfe\\nf6b787af\\n94ef0160\\n33267b11\\nd15df4c2\\n6f956e73\\n0dcce824\\nac0461d5\\n4a3bdb86\\ne8735537\\n86aacee8\\n24e24899\\nc319c24a\\n61513bfb\\nff88b5ac\\n9dc02f5d\\n3bf7a90e\\nda2f22bf\\n78669c70\\n169e1621\\nb4d58fd2\\n530d0983\\nf1448334\\n8f7bfce5\\n2db37696\\ncbeaf047\\n6a2269f8\\n0859e3a9\\na6915d5a\\n44c8d70b\\ne30050bc\\n8137ca6d\\n1f6f441e\\nbda6bdcf\\n5bde3780\\nfa15b131\\n984d2ae2\\n3684a493\\nd4bc1e44\\n72f397f5\\n112b11a6\\naf628b57\\n4d9a0508\\nebd17eb9\\n8a08f86a\\n2840721b\\nc677ebcc\\n64af657d\\n02e6df2e\\na11e58df\\n3f55d290\\ndd8d4c41\\n7bc4c5f2\\n19fc3fa3\\nb833b954\\n566b3305\\nf4a2acb6\\n92da2667\\n3111a018\\ncf4919c9\\n6d80937a\\n0bb80d2b\\na9ef86dc\\n4827008d\\ne65e7a3e\\n8495f3ef\\n22cd6da0\\nc104e751\\n5f3c6102\\nfd73dab3\\n9bab5464\\n39e2ce15\\nd81a47c6\\n7651c177\\n14893b28\\nb2c0b4d9\\n50f82e8a\\nef2fa83b\\n8d6721ec\\n2b9e9b9d\\nc9d6154e\\n680d8eff\\n064508b0\\na47c8261\\n42b3fc12\\ne0eb75c3\\n7f22ef74\\n1d5a6925\\nbb91e2d6\\n59c95c87\\nf800d638\\n96384fe9\\n346fc99a\\nd2a7434b\\n70debcfc\\n0f1636ad\\nad4db05e\\n4b852a0f\\ne9bca3c0\\n87f41d71\\n262b9722\\nc46310d3\\n629a8a84\\n00d20435\\n9f097de6\\n3d40f797\\ndb787148\\n79afeaf9\\n17e764aa\\nb61ede5b\\n5456580c\\nf28dd1bd\\n90c54b6e\\n2efcc51f\\ncd343ed0\\n6b6bb881\\n09a33232\\na7daabe3\\n46122594\\ne4499f45\\n828118f6\\n20b892a7\\nbef00c58\\n5d278609\\nfb5effba\\n9996796b\\n37cdf31c\\nd6056ccd\\n743ce67e\\n1274602f\\nb0abd9e0\\n4ee35391\\ned1acd42\\n8b5246f3\\n2989c0a4\\nc7c13a55\\n65f8b406\\n04302db7\\na267a768\\n409f2119\\nded69aca\\n7d0e147b\\n1b458e2c\\nb97d07dd\\n57b4818e\\nf5ebfb3f\\n942374f0\\n325aeea1\\nd0926852\\n6ec9e203\\n0d015bb4\\nab38d565\\n49704f16\\ne7a7c8c7\\n85df4278\\n2416bc29\\nc24e35da\\n6085af8b\\nfebd293c\\n9cf4a2ed\\n3b2c1c9e\\nd963964f\\n779b1000\\n15d289b1\\nb40a0362\\n52417d13\\nf078f6c4\\n8eb07075\\n2ce7ea26\\ncb1f63d7\\n6956dd88\\n078e5739\\na5c5d0ea\\n43fd4a9b\\ne234c44c\\n806c3dfd\\n1ea3b7ae\\nbcdb315f\\n5b12ab10\\nf94a24c1\\n97819e72\\n35b91823\\nd3f091d4\\n72280b85\\n105f8536\\nae96fee7\\n4cce7898\\neb05f249\\n893d6bfa\\n2774e5ab\\nc5ac5f5c\\n63e3d90d\\n021b52be\\na052cc6f\\n3e8a4620\\ndcc1bfd1\\n7af93982\\n1930b333\\nb7682ce4\\n559fa695\\nf3d72046\\n920e99f7\\n304613a8\\nce7d8d59\\n6cb5070a\\n0aec80bb\\na923fa6c\\n475b741d\\ne592edce\\n83ca677f\\n2201e130\\nc0395ae1\\n5e70d492\\nfca84e43\\n9adfc7f4\\n391741a5\\nd74ebb56\\n75863507\\n13bdaeb8\\nb1f52869\\n502ca21a\\nee641bcb\\n8c9b957c\\n2ad30f2d\\nc90a88de\\n6742028f\\n05797c40\\na3b0f5f1\\n41e86fa2\\ne01fe953\\n7e576304\\n1c8edcb5\\nbac65666\\n58fdd017\\nf73549c8\\n956cc379\\n33a43d2a\\nd1dbb6db\\n7013308c\\n0e4aaa3d\\nac8223ee\\n4ab99d9f\\ne8f11750\\n87289101\\n25600ab2\\nc3978463\\n61cefe14\\n000677c5\\n9e3df176\\n3c756b27\\ndaace4d8\\n78e45e89\\n171bd83a\\nb55351eb\\n538acb9c\\nf1c2454d\\n8ff9befe\\n2e3138af\\ncc68b260\\n6aa02c11\\n08d7a5c2\\na70f1f73\\n45469924\\ne37e12d5\\n81b58c86\\n1fed0637\\nbe247fe8\\n5c5bf999\\nfa93734a\\n98caecfb\\n370266ac\\nd539e05d\\n73715a0e\\n11a8d3bf\\nafe04d70\\n4e17c721\\nec4f40d2\\n8a86ba83\\n28be3434\\nc6f5ade5\\n652d2796\\n0364a147\\na19c1af8\\n3fd394a9\\nde0b0e5a\\n7c42880b\\n1a7a01bc\\nb8b17b6d\\n56e8f51e\\nf5206ecf\\n9357e880\\n318f6231\\ncfc6dbe2\\n6dfe5593\\n0c35cf44\\naa6d48f5\\n48a4c2a6\\ne6dc3c57\\n8513b608\\n234b2fb9\\nc182a96a\\n5fba231b\\nfdf19ccc\\n9c29167d\\n3a60902e\\nd89809df\\n76cf8390\\n1506fd41\\nb33e76f2\\n5175f0a3\\nefad6a54\\n8de4e405\\n2c1c5db6\\nca53d767\\n688b5118\\n06c2cac9\\na4fa447a\\n4331be2b\\ne16937dc\\n7fa0b18d\\n1dd82b3e\\nbc0fa4ef\\n5a471ea0\\nf87e9851\\n96b61202\\n34ed8bb3\\nd3250564\\n715c7f15\\n0f93f8c6\\nadcb7277\\n4c02ec28\\nea3a65d9\\n8871df8a\\n26a9593b\\nc4e0d2ec\\n63184c9d\\n014fc64e\\n9f873fff\\n3dbeb9b0\\ndbf63361\\n7a2dad12\\n186526c3\\nb69ca074\\n54d41a25\\nf30b93d6\\n91430d87\\n2f7a8738\\ncdb200e9\\n6be97a9a\\n0a20f44b\\na8586dfc\\n468fe7ad\\ne4c7615e\\n82fedb0f\\n213654c0\\nbf6dce71\\n5da54822\\nfbdcc1d3\\n9a143b84\\n384bb535\\nd6832ee6\\n74baa897\\n12f22248\\nb1299bf9\\n4f6115aa\\ned988f5b\\n8bd0090c\\n2a0782bd\\nc83efc6e\\n6676761f\\n04adefd0\\na2e56981\\n411ce332\\ndf545ce3\\n7d8bd694\\n1bc35045\\nb9fac9f6\\n583243a7\\nf669bd58\\n94a13709\\n32d8b0ba\\nd1102a6b\\n6f47a41c\\n0d7f1dcd\\nabb6977e\\n49ee112f\\ne8258ae0\\n865d0491\\n24947e42\\nc2cbf7f3\\n610371a4\\nff3aeb55\\n9d726506\\n3ba9deb7\\nd9e15868\\n7818d219\\n16504bca\\nb487c57b\\n52bf3f2c\\nf0f6b8dd\\n8f2e328e\\n2d65ac3f\\ncb9d25f0\\n69d49fa1\\n080c1952\\na6439303\\n447b0cb4\\ne2b28665\\n80ea0016\\n1f2179c7\\nbd58f378\\n5b906d29\\nf9c7e6da\\n97ff608b\\n3636da3c\\nd46e53ed\\n72a5cd9e\\n10dd474f\\naf14c100\\n4d4c3ab1\\neb83b462\\n89bb2e13\\n27f2a7c4\\nc62a2175\\n64619b26\\n029914d7\\na0d08e88\\n3f080839\\ndd3f81ea\\n7b76fb9b\\n19ae754c\\nb7e5eefd\\n561d68ae\\nf454e25f\\n928c5c10\\n30c3d5c1\\ncefb4f72\\n6d32c923\\n0b6a42d4\\na9a1bc85\\n47d93636\\ne610afe7\\n84482998\\n227fa349\\nc0b71cfa\\n5eee96ab\\nfd26105c\\n9b5d8a0d\\n399503be\\nd7cc7d6f\\n7603f720\\n143b70d1\\nb272ea82\\n50aa6433\\neee1dde4\\n8d195795\\n2b50d146\\nc9884af7\\n67bfc4a8\\n05f73e59\\na42eb80a\\n426631bb\\ne09dab6c\\n7ed5251d\\n1d0c9ece\\nbb44187f\\n597b9230\\nf7b30be1\\n95ea8592\\n3421ff43\\nd25978f4\\n7090f2a5\\n0ec86c56\\nacffe607\\n4b375fb8\\ne96ed969\\n87a6531a\\n25ddcccb\\nc415467c\\n624cc02d\\n008439de\\n9ebbb38f\\n3cf32d40\\ndb2aa6f1\\n796220a2\\n17999a53\\nb5d11404\\n54088db5\\nf2400766\\n90778117\\n2eaefac8\\ncce67479\\n6b1dee2a\\n095567db\\na78ce18c\\n45c45b3d\\ne3fbd4ee\\n82334e9f\\n206ac850\\nbea24201\\n5cd9bbb2\\nfb113563\\n9948af14\\n378028c5\\nd5b7a276\\n73ef1c27\\n122695d8\\nb05e0f89\\n4e95893a\\neccd02eb\\n8b047c9c\\n293bf64d\\nc7736ffe\\n65aae9af\\n03e26360\\na219dd11\\n405156c2\\nde88d073\\n7cc04a24\\n1af7c3d5\\nb92f3d86\\n5766b737\\nf59e30e8\\n93d5aa99\\n320d244a\\nd0449dfb\\n6e7c17ac\\n0cb3915d\\naaeb0b0e\\n492284bf\\ne759fe70\\n85917821\\n23c8f1d2\\nc2006b83\\n6037e534\\nfe6f5ee5\\n9ca6d896\\n3ade5247\\nd915cbf8\\n774d45a9\\n1584bf5a\\nb3bc390b\\n51f3b2bc\\nf02b2c6d\\n8e62a61e\\n2c9a1fcf\\ncad19980\\n69091331\\n07408ce2\\na5780693\\n43af8044\\ne1e6f9f5\\n801e73a6\\n1e55ed57\\nbc8d6708\\n5ac4e0b9\\nf8fc5a6a\\n9733d41b\\n356b4dcc\\nd3a2c77d\\n71da412e\\n1011badf\\nae493490\\n4c80ae41\\neab827f2\\n88efa1a3\\n27271b54\\nc55e9505\\n63960eb6\\n01cd8867\\na0050218\\n3e3c7bc9\\ndc73f57a\\n7aab6f2b\\n18e2e8dc\\nb71a628d\\n5551dc3e\\nf38955ef\\n91c0cfa0\\n2ff84951\\nce2fc302\\n6c673cb3\\n0a9eb664\\na8d63015\\n470da9c6\\ne5452377\\n837c9d28\\n21b416d9\\nbfeb908a\\n5e230a3b\\nfc5a83ec\\n9a91fd9d\\n38c9774e\\nd700f0ff\\n75386ab0\\n136fe461\\nb1a75e12\\n4fded7c3\\nee165174\\n8c4dcb25\\n2a8544d6\\nc8bcbe87\\n66f43838\\n052bb1e9\\na3632b9a\\n419aa54b\\ndfd21efc\\n7e0998ad\\n1c41125e\\nba788c0f\\n58b005c0\\nf6e77f71\\n951ef922\\n335672d3\\nd18dec84\\n6fc56635\\n0dfcdfe6\\nac345997\\n4a6bd348\\ne8a34cf9\\n86dac6aa\\n2512405b\\nc349ba0c\\n618133bd\\nffb8ad6e\\n9df0271f\\n3c27a0d0\\nda5f1a81\\n78969432\\n16ce0de3\\nb5058794\\n533d0145\\nf1747af6\\n8fabf4a7\\n2de36e58\\ncc1ae809\\n6a5261ba\\n0889db6b\\na6c1551c\\n44f8cecd\\ne330487e\\n8167c22f\\n1f9f3be0\\nbdd6b591\\n5c0e2f42\\nfa45a8f3\\n987d22a4\\n36b49c55\\nd4ec1606\\n73238fb7\\n115b0968\\naf928319\\n4dc9fcca\\nec01767b\\n8a38f02c\\n287069dd\\nc6a7e38e\\n64df5d3f\\n0316d6f0\\na14e50a1\\n3f85ca52\\nddbd4403\\n7bf4bdb4\\n1a2c3765\\nb863b116\\n569b2ac7\\nf4d2a478\\n930a1e29\\n314197da\\ncf79118b\\n6db08b3c\\n0be804ed\\naa1f7e9e\\n4856f84f\\ne68e7200\\n84c5ebb1\\n22fd6562\\nc134df13\\n5f6c58c4\\nfda3d275\\n9bdb4c26\\n3a12c5d7\\nd84a3f88\\n7681b939\\n14b932ea\\nb2f0ac9b\\n5128264c\\nef5f9ffd\\n8d9719ae\\n2bce935f\\nca060d10\\n683d86c1\\n06750072\\na4ac7a23\\n42e3f3d4\\ne11b6d85\\n7f52e736\\n1d8a60e7\\nbbc1da98\\n59f95449\\nf830cdfa\\n966847ab\\n349fc15c\\nd2d73b0d\\n710eb4be\\n0f462e6f\\nad7da820\\n4bb521d1\\ne9ec9b82\\n88241533\\n265b8ee4\\nc4930895\\n62ca8246\\n0101fbf7\\n9f3975a8\\n3d70ef59\\ndba8690a\\n79dfe2bb\\n18175c6c\\nb64ed61d\\n54864fce\\nf2bdc97f\\n90f54330\\n2f2cbce1\\ncd643692\\n6b9bb043\\n09d329f4\\na80aa3a5\\n46421d56\\ne4799707\\n82b110b8\\n20e88a69\\nbf20041a\\n5d577dcb\\nfb8ef77c\\n99c6712d\\n37fdeade\\nd635648f\\n746cde40\\n12a457f1\\nb0dbd1a2\\n4f134b53\\ned4ac504\\n8b823eb5\\n29b9b866\\nc7f13217\\n6628abc8\\n04602579\\na2979f2a\\n40cf18db\\ndf06928c\\n7d3e0c3d\\n1b7585ee\\nb9acff9f\\n57e47950\\nf61bf301\\n94536cb2\\n328ae663\\nd0c26014\\n6ef9d9c5\\n0d315376\\nab68cd27\\n49a046d8\\ne7d7c089\\n860f3a3a\\n2446b3eb\\nc27e2d9c\\n60b5a74d\\nfeed20fe\\n9d249aaf\\n3b5c1460\\nd9938e11\\n77cb07c2\\n16028173\\nb439fb24\\n527174d5\\nf0a8ee86\\n8ee06837\\n2d17e1e8\\ncb4f5b99\\n6986d54a\\n07be4efb\\na5f5c8ac\\n442d425d\\ne264bc0e\\n809c35bf\\n1ed3af70\\nbd0b2921\\n5b42a2d2\\nf97a1c83\\n97b19634\\n35e90fe5\\nd4208996\\n72580347\\n108f7cf8\\naec6f6a9\\n4cfe705a\\neb35ea0b\\n896d63bc\\n27a4dd6d\\nc5dc571e\\n6413d0cf\\n024b4a80\\na082c431\\n3eba3de2\\ndcf1b793\\n7b293144\\n1960aaf5\\nb79824a6\\n55cf9e57\\nf4071808\\n923e91b9\\n30760b6a\\ncead851b\\n6ce4fecc\\n0b1c787d\\na953f22e\\n478b6bdf\\ne5c2e590\\n83fa5f41\\n2231d8f2\\nc06952a3\\n5ea0cc54\\nfcd84605\\n9b0fbfb6\\n39473967\\nd77eb318\\n75b62cc9\\n13eda67a\\nb225202b\\n505c99dc\\nee94138d\\n8ccb8d3e\\n2b0306ef\\nc93a80a0\\n6771fa51\\n05a97402\\na3e0edb3\\n42186764\\ne04fe115\\n7e875ac6\\n1cbed477\\nbaf64e28\\n592dc7d9\\nf765418a\\n959cbb3b\\n33d434ec\\nd20bae9d\\n7043284e\\n0e7aa1ff\\nacb21bb0\\n4ae99561\\ne9210f12\\n875888c3\\n25900274\\nc3c77c25\\n61fef5d6\\n00366f87\\n9e6de938\\n3ca562e9\\ndadcdc9a\\n7914564b\\n174bcffc\\nb58349ad\\n53bac35e\\nf1f23d0f\\n9029b6c0\\n2e613071\\ncc98aa22\\n6ad023d3\\n09079d84\\na73f1735\\n457690e6\\ne3ae0a97\\n81e58448\\n201cfdf9\\nbe5477aa\\n5c8bf15b\\nfac36b0c\\n98fae4bd\\n37325e6e\\nd569d81f\\n73a151d0\\n11d8cb81\\nb0104532\\n4e47bee3\\nec7f3894\\n8ab6b245\\n28ee2bf6\\nc725a5a7\\n655d1f58\\n03949909\\na1cc12ba\\n40038c6b\\nde3b061c\\n7c727fcd\\n1aa9f97e\\nb8e1732f\\n5718ece0\\nf5506691\\n9387e042\\n31bf59f3\\ncff6d3a4\\n6e2e4d55\\n0c65c706\\naa9d40b7\\n48d4ba68\\ne70c3419\\n8543adca\\n237b277b\\nc1b2a12c\\n5fea1add\\nfe21948e\\n9c590e3f\\n3a9087f0\\nd8c801a1\\n76ff7b52\\n1536f503\\nb36e6eb4\\n51a5e865\\nefdd6216\\n8e14dbc7\\n2c4c5578\\nca83cf29\\n68bb48da\\n06f2c28b\\na52a3c3c\\n4361b5ed\\ne1992f9e\\n7fd0a94f\\n1e082300\\nbc3f9cb1\\n5a771662\\nf8ae9013\\n96e609c4\\n351d8375\\nd354fd26\\n718c76d7\\n0fc3f088\\nadfb6a39\\n4c32e3ea\\nea6a5d9b\\n88a1d74c\\n26d950fd\\nc510caae\\n6348445f\\n017fbe10\\n9fb737c1\\n3deeb172\\ndc262b23\\n7a5da4d4\\n18951e85\\nb6cc9836\\n550411e7\\nf33b8b98\\n91730549\\n2faa7efa\\ncde1f8ab\\n6c19725c\\n0a50ec0d\\na88865be\\n46bfdf6f\\ne4f75920\\n832ed2d1\\n21664c82\\nbf9dc633\\n5dd53fe4\\nfc0cb995\\n9a443346\\n387bacf7\\nd6b326a8\\n74eaa059\\n13221a0a\\nb15993bb\\n4f910d6c\\nedc8871d\\n8c0000ce\\n2a377a7f\\nc86ef430\\n66a66de1\\n04dde792\\na3156143\\n414cdaf4\\ndf8454a5\\n7dbbce56\\n1bf34807\\nba2ac1b8\\n58623b69\\nf699b51a\\n94d12ecb\\n3308a87c\\nd140222d\\n6f779bde\\n0daf158f\\nabe68f40\\n4a1e08f1\\ne85582a2\\n868cfc53\\n24c47604\\nc2fbefb5\\n61336966\\nff6ae317\\n9da25cc8\\n3bd9d679\\nda11502a\\n7848c9db\\n1680438c\\nb4b7bd3d\\n52ef36ee\\nf126b09f\\n8f5e2a50\\n2d95a401\\ncbcd1db2\\n6a049763\\n083c1114\\na6738ac5\\n44ab0476\\ne2e27e27\\n8119f7d8\\n1f517189\\nbd88eb3a\\n5bc064eb\\nf9f7de9c\\n982f584d\\n3666d1fe\\nd49e4baf\\n72d5c560\\n110d3f11\\naf44b8c2\\n4d7c3273\\nebb3ac24\\n89eb25d5\\n28229f86\\nc65a1937\\n649192e8\\n02c90c99\\na100864a\\n3f37fffb\\ndd6f79ac\\n7ba6f35d\\n19de6d0e\\nb815e6bf\\n564d6070\\nf484da21\\n92bc53d2\\n30f3cd83\\ncf2b4734\\n6d62c0e5\\n0b9a3a96\\na9d1b447\\n48092df8\\ne640a7a9\\n8478215a\\n22af9b0b\\nc0e714bc\\n5f1e8e6d\\nfd56081e\\n9b8d81cf\\n39c4fb80\\nd7fc7531\\n7633eee2\\n146b6893\\nb2a2e244\\n50da5bf5\\nef11d5a6\\n8d494f57\\n'\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_lone_cr": {
+  "command_bytes": 36679,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 18,
+    "text": "a = 1\rb = 7\rc = 3\r"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_lone_cr_l5": {
+  "command_bytes": 39926,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 18,
+    "text": "a = 1\rb = 7\rc = 3\r"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 1 lines; your replacement is at lines 1-1.\nLines 1-1 as the file now reads:\n1: a = 1\rb = 7\rc = 3\r"
+  ]
+ },
+ "e_midline_flexible": {
+  "command_bytes": 36700,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "v = gamma\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_midline_flexible_l5": {
+  "command_bytes": 39945,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "v = gamma\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 1 lines; your replacement is at lines 1-1.\nYour old_string matched only after whitespace differences were ignored; the file spelled that text with different spacing.\nLines 1-1 as the file now reads:\n1: v = gamma"
+  ]
+ },
+ "e_miss_anchor": {
+  "command_bytes": 36699,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 20,
+    "text": "def r(h):\n    y = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n\n---"
+  ]
+ },
+ "e_miss_anchor_l5": {
+  "command_bytes": 39946,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 20,
+    "text": "def r(h):\n    y = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n\n---"
+  ]
+ },
+ "e_missing_file": {
+  "command_bytes": 36683,
+  "disk": {},
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Traceback (most recent call last):\r\n  File \"<stdin>\", line 279, in <module>\r\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 777, in read_bytes\r\n    with self.open(mode='rb', buffering=0) as f:\r\n         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 771, in open\r\n    return io.open(self, mode, buffering, encoding, errors, newline)\r\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\nFileNotFoundError: [Errno 2] No such file or directory: '$WS/nope.py'\r\n"
+  ]
+ },
+ "e_missing_old_string": {
+  "command_bytes": 9222,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 2,
+    "text": "a\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ Your edit_file call has no usable `path` argument — the arguments arrived malformed (often the path and old_string text end up fused into another field). Nothing was changed and no file on disk was touched. Re-send the edit as one complete call with `path`, `old_string` and `new_string` as three separate JSON fields.\r\n"
+  ]
+ },
+ "e_mixed_endings": {
+  "command_bytes": 36685,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 20,
+    "text": "a = 1\r\nb = 7\nc = 3\r\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_mixed_endings_l5": {
+  "command_bytes": 39932,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 20,
+    "text": "a = 1\r\nb = 7\nc = 3\r\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 3 lines; your replacement is at lines 2-2.\nLines 1-3 as the file now reads:\n1: a = 1\r\n2: b = 7\n3: c = 3\r"
+  ]
+ },
+ "e_mode_kept": {
+  "command_bytes": 36687,
+  "disk": {
+   "run.sh": {
+    "mode": "0o755",
+    "size": 19,
+    "text": "#!/bin/sh\necho new\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote run.sh"
+  ]
+ },
+ "e_multi": {
+  "command_bytes": 36675,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "x\nx\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — old_string matches 2 places in f.py — add surrounding lines so it is unique, then edit again."
+  ]
+ },
+ "e_multi_flex": {
+  "command_bytes": 36682,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 26,
+    "text": "x = 1  +  2\nx = 1   +   2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — old_string matches 2 places in f.py — add surrounding lines so it is unique, then edit again."
+  ]
+ },
+ "e_multi_flex_l5": {
+  "command_bytes": 39929,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 26,
+    "text": "x = 1  +  2\nx = 1   +   2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — old_string matches 2 places in f.py — add surrounding lines so it is unique, then edit again."
+  ]
+ },
+ "e_multi_l5": {
+  "command_bytes": 39912,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "x\nx\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — old_string matches 2 places in f.py — add surrounding lines so it is unique, then edit again."
+  ]
+ },
+ "e_new_string_trailing_newline": {
+  "command_bytes": 36701,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 15,
+    "text": "a = 1\nb = 2\n\nz\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_new_string_trailing_newline_l5": {
+  "command_bytes": 39945,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 15,
+    "text": "a = 1\nb = 2\n\nz\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 4 lines; your replacement is at lines 1-2.\nLines 1-4 as the file now reads:\n1: a = 1\n2: b = 2\n3: \n4: z"
+  ]
+ },
+ "e_no_anchor": {
+  "command_bytes": 36701,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 21,
+    "text": "[project]\nname = \"x\"\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n[project]\nname = \"x\"\n\n---"
+  ]
+ },
+ "e_no_anchor_l5": {
+  "command_bytes": 39948,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 21,
+    "text": "[project]\nname = \"x\"\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\n[project]\nname = \"x\"\n\n---"
+  ]
+ },
+ "e_nonutf8_byte": {
+  "command_bytes": 36684,
+  "disk": {
+   "f.py": {
+    "b64": "eCA9IDIgICMgY2Fm6Qp5ID0gMgo=",
+    "mode": "0o644",
+    "sha": "3c7b2c86a3b0fbb33612c4591c880ea295f02d81d7f3f0c32663a9a4d6fb09db",
+    "size": 20
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_phantom": {
+  "command_bytes": 36747,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 29,
+    "text": "    x = get(f\"{base_url}/h\")\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — that line already reads:\n---\nx = get(f\"{base_url}/h\")\n---\nwhich is ALREADY what your new_string makes it. This change is DONE — do not edit that line again; your old_string just misremembers the current text. Move on: run the failing check and read the actual error."
+  ]
+ },
+ "e_phantom_l5": {
+  "command_bytes": 39994,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 29,
+    "text": "    x = get(f\"{base_url}/h\")\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — that line already reads:\n---\nx = get(f\"{base_url}/h\")\n---\nwhich is ALREADY what your new_string makes it. This change is DONE — do not edit that line again; your old_string just misremembers the current text. Move on: run the failing check and read the actual error."
+  ]
+ },
+ "e_prefix_not_done": {
+  "command_bytes": 36715,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 21,
+    "text": "require d/x \"v1.5.0\"\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\nrequire d/x \"v1.5.0\"\n\n---"
+  ]
+ },
+ "e_prefix_not_done_l5": {
+  "command_bytes": 39961,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 21,
+    "text": "require d/x \"v1.5.0\"\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\nrequire d/x \"v1.5.0\"\n\n---"
+  ]
+ },
+ "e_ro_dir": {
+  "command_bytes": 36689,
+  "disk": {
+   "ro/": {
+    "mode": "0o555"
+   },
+   "ro/a.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ [YOUR LAST EDIT DID NOT RUN] `a.py` could not be written: Permission denied. Nothing was changed.\r\n"
+  ]
+ },
+ "e_symlink_inside": {
+  "command_bytes": 36692,
+  "disk": {
+   "lnk.py": {
+    "link": "real.py"
+   },
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 3\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote lnk.py"
+  ]
+ },
+ "e_symlink_outside": {
+  "command_bytes": 36693,
+  "disk": {
+   "lnk.py": {
+    "link": "$WS.outside/real.py"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 3\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote lnk.py"
+  ]
+ },
+ "e_two_misses_one_batch": {
+  "command_bytes": 75818,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 33,
+    "text": "def r(h):\n    y = 2\n    return y\n"
+   }
+  },
+  "harness_calls": 2,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — you have failed to edit this file 1 times — you cannot pin its exact current text. STOP editing it. Here is its EXACT current content on disk; produce the corrected FULL file in a single write_file call:\n---\ndef r(h):\n    y = 2\n    return y\n\n---",
+   "⟦ctx:edit⟧ f.py — this edit to f.py did not apply either, and nothing from it reached the file. It was sent in the same set of calls as the edit above, which already says what to do about f.py."
+  ]
+ },
+ "e_unicode": {
+  "command_bytes": 36695,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 29,
+    "text": "name = \"café ☃ 界\"\nz = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py"
+  ]
+ },
+ "e_unicode_l5": {
+  "command_bytes": 39942,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 29,
+    "text": "name = \"café ☃ 界\"\nz = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote f.py\nf.py now has 2 lines; your replacement is at lines 1-1.\nLines 1-2 as the file now reads:\n1: name = \"café ☃ 界\"\n2: z = 1"
+  ]
+ },
+ "e_unsafe_cleanup": {
+  "command_bytes": 36798,
+  "disk": {
+   "test_http.py": {
+    "mode": "0o644",
+    "size": 140,
+    "text": "import os, shutil, tempfile\n\n\ndef test_it():\n    fd, path = tempfile.mkstemp()\n    shutil.rmtree(os.path.dirname(path), ignore_errors=True)\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote test_http.py"
+  ]
+ },
+ "e_would_break": {
+  "command_bytes": 36699,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 12,
+    "text": "x = 1\ny = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — your edit would break f.py — '(' was never closed (f.py, line 2). Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "e_would_break_l5": {
+  "command_bytes": 39930,
+  "disk": {
+   "f.py": {
+    "mode": "0o644",
+    "size": 12,
+    "text": "x = 1\ny = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:edit⟧ f.py — your edit would break f.py — '(' was never closed (f.py, line 2). Fix new_string so the file stays valid, then edit again."
+  ]
+ },
+ "w_100k": {
+  "command_bytes": 167324,
+  "disk": {},
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "exec error: Argument list too long (os error 7)"
+  ]
+ },
+ "w_400k": {
+  "command_bytes": 614640,
+  "disk": {},
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "exec error: Argument list too long (os error 7)"
+  ]
+ },
+ "w_45k": {
+  "command_bytes": 98783,
+  "disk": {
+   "big.txt": {
+    "mode": "0o644",
+    "size": 45000,
+    "text": "00000000\n9e3779b1\n3c6ef362\ndaa66d13\n78dde6c4\n17156075\nb54cda26\n538453d7\nf1bbcd88\n8ff34739\n2e2ac0ea\ncc623a9b\n6a99b44c\n08d12dfd\na708a7ae\n4540215f\ne3779b10\n81af14c1\n1fe68e72\nbe1e0823\n5c5581d4\nfa8cfb85\n98c47536\n36fbeee7\nd5336898\n736ae249\n11a25bfa\nafd9d5ab\n4e114f5c\nec48c90d\n8a8042be\n28b7bc6f\nc6ef3620\n6526afd1\n035e2982\na195a333\n3fcd1ce4\nde049695\n7c3c1046\n1a7389f7\nb8ab03a8\n56e27d59\nf519f70a\n935170bb\n3188ea6c\ncfc0641d\n6df7ddce\n0c2f577f\naa66d130\n489e4ae1\ne6d5c492\n850d3e43\n2344b7f4\nc17c31a5\n5fb3ab56\nfdeb2507\n9c229eb8\n3a5a1869\nd891921a\n76c90bcb\n1500857c\nb337ff2d\n516f78de\nefa6f28f\n8dde6c40\n2c15e5f1\nca4d5fa2\n6884d953\n06bc5304\na4f3ccb5\n432b4666\ne162c017\n7f9a39c8\n1dd1b379\nbc092d2a\n5a40a6db\nf878208c\n96af9a3d\n34e713ee\nd31e8d9f\n71560750\n0f8d8101\nadc4fab2\n4bfc7463\nea33ee14\n886b67c5\n26a2e176\nc4da5b27\n6311d4d8\n01494e89\n9f80c83a\n3db841eb\ndbefbb9c\n7a27354d\n185eaefe\nb69628af\n54cda260\nf3051c11\n913c95c2\n2f740f73\ncdab8924\n6be302d5\n0a1a7c86\na851f637\n46896fe8\ne4c0e999\n82f8634a\n212fdcfb\nbf6756ac\n5d9ed05d\nfbd64a0e\n9a0dc3bf\n38453d70\nd67cb721\n74b430d2\n12ebaa83\nb1232434\n4f5a9de5\ned921796\n8bc99147\n2a010af8\nc83884a9\n666ffe5a\n04a7780b\na2def1bc\n41166b6d\ndf4de51e\n7d855ecf\n1bbcd880\nb9f45231\n582bcbe2\nf6634593\n949abf44\n32d238f5\nd109b2a6\n6f412c57\n0d78a608\nabb01fb9\n49e7996a\ne81f131b\n86568ccc\n248e067d\nc2c5802e\n60fcf9df\nff347390\n9d6bed41\n3ba366f2\nd9dae0a3\n78125a54\n1649d405\nb4814db6\n52b8c767\nf0f04118\n8f27bac9\n2d5f347a\ncb96ae2b\n69ce27dc\n0805a18d\na63d1b3e\n447494ef\ne2ac0ea0\n80e38851\n1f1b0202\nbd527bb3\n5b89f564\nf9c16f15\n97f8e8c6\n36306277\nd467dc28\n729f55d9\n10d6cf8a\naf0e493b\n4d45c2ec\neb7d3c9d\n89b4b64e\n27ec2fff\nc623a9b0\n645b2361\n02929d12\na0ca16c3\n3f019074\ndd390a25\n7b7083d6\n19a7fd87\nb7df7738\n5616f0e9\nf44e6a9a\n9285e44b\n30bd5dfc\ncef4d7ad\n6d2c515e\n0b63cb0f\na99b44c0\n47d2be71\ne60a3822\n8441b1d3\n22792b84\nc0b0a535\n5ee81ee6\nfd1f9897\n9b571248\n398e8bf9\nd7c605aa\n75fd7f5b\n1434f90c\nb26c72bd\n50a3ec6e\needb661f\n8d12dfd0\n2b4a5981\nc981d332\n67b94ce3\n05f0c694\na4284045\n425fb9f6\ne09733a7\n7ecead58\n1d062709\nbb3da0ba\n59751a6b\nf7ac941c\n95e40dcd\n341b877e\nd253012f\n708a7ae0\n0ec1f491\nacf96e42\n4b30e7f3\ne96861a4\n879fdb55\n25d75506\nc40eceb7\n62464868\n007dc219\n9eb53bca\n3cecb57b\ndb242f2c\n795ba8dd\n1793228e\nb5ca9c3f\n540215f0\nf2398fa1\n90710952\n2ea88303\nccdffcb4\n6b177665\n094ef016\na78669c7\n45bde378\ne3f55d29\n822cd6da\n2064508b\nbe9bca3c\n5cd343ed\nfb0abd9e\n9942374f\n3779b100\nd5b12ab1\n73e8a462\n12201e13\nb05797c4\n4e8f1175\necc68b26\n8afe04d7\n29357e88\nc76cf839\n65a471ea\n03dbeb9b\na213654c\n404adefd\nde8258ae\n7cb9d25f\n1af14c10\nb928c5c1\n57603f72\nf597b923\n93cf32d4\n3206ac85\nd03e2636\n6e759fe7\n0cad1998\naae49349\n491c0cfa\ne75386ab\n858b005c\n23c27a0d\nc1f9f3be\n60316d6f\nfe68e720\n9ca060d1\n3ad7da82\nd90f5433\n7746cde4\n157e4795\nb3b5c146\n51ed3af7\nf024b4a8\n8e5c2e59\n2c93a80a\ncacb21bb\n69029b6c\n073a151d\na5718ece\n43a9087f\ne1e08230\n8017fbe1\n1e4f7592\nbc86ef43\n5abe68f4\nf8f5e2a5\n972d5c56\n3564d607\nd39c4fb8\n71d3c969\n100b431a\nae42bccb\n4c7a367c\neab1b02d\n88e929de\n2720a38f\nc5581d40\n638f96f1\n01c710a2\n9ffe8a53\n3e360404\ndc6d7db5\n7aa4f766\n18dc7117\nb713eac8\n554b6479\nf382de2a\n91ba57db\n2ff1d18c\nce294b3d\n6c60c4ee\n0a983e9f\na8cfb850\n47073201\ne53eabb2\n83762563\n21ad9f14\nbfe518c5\n5e1c9276\nfc540c27\n9a8b85d8\n38c2ff89\nd6fa793a\n7531f2eb\n13696c9c\nb1a0e64d\n4fd85ffe\nee0fd9af\n8c475360\n2a7ecd11\nc8b646c2\n66edc073\n05253a24\na35cb3d5\n41942d86\ndfcba737\n7e0320e8\n1c3a9a99\nba72144a\n58a98dfb\nf6e107ac\n9518815d\n334ffb0e\nd18774bf\n6fbeee70\n0df66821\nac2de1d2\n4a655b83\ne89cd534\n86d44ee5\n250bc896\nc3434247\n617abbf8\nffb235a9\n9de9af5a\n3c21290b\nda58a2bc\n78901c6d\n16c7961e\nb4ff0fcf\n53368980\nf16e0331\n8fa57ce2\n2ddcf693\ncc147044\n6a4be9f5\n088363a6\na6badd57\n44f25708\ne329d0b9\n81614a6a\n1f98c41b\nbdd03dcc\n5c07b77d\nfa3f312e\n9876aadf\n36ae2490\nd4e59e41\n731d17f2\n115491a3\naf8c0b54\n4dc38505\nebfafeb6\n8a327867\n2869f218\nc6a16bc9\n64d8e57a\n03105f2b\na147d8dc\n3f7f528d\nddb6cc3e\n7bee45ef\n1a25bfa0\nb85d3951\n5694b302\nf4cc2cb3\n9303a664\n313b2015\ncf7299c6\n6daa1377\n0be18d28\naa1906d9\n4850808a\ne687fa3b\n84bf73ec\n22f6ed9d\nc12e674e\n5f65e0ff\nfd9d5ab0\n9bd4d461\n3a0c4e12\nd843c7c3\n767b4174\n14b2bb25\nb2ea34d6\n5121ae87\nef592838\n8d90a1e9\n2bc81b9a\nc9ff954b\n68370efc\n066e88ad\na4a6025e\n42dd7c0f\ne114f5c0\n7f4c6f71\n1d83e922\nbbbb62d3\n59f2dc84\nf82a5635\n9661cfe6\n34994997\nd2d0c348\n71083cf9\n0f3fb6aa\nad77305b\n4baeaa0c\ne9e623bd\n881d9d6e\n2655171f\nc48c90d0\n62c40a81\n00fb8432\n9f32fde3\n3d6a7794\ndba1f145\n79d96af6\n1810e4a7\nb6485e58\n547fd809\nf2b751ba\n90eecb6b\n2f26451c\ncd5dbecd\n6b95387e\n09ccb22f\na8042be0\n463ba591\ne4731f42\n82aa98f3\n20e212a4\nbf198c55\n5d510606\nfb887fb7\n99bff968\n37f77319\nd62eecca\n7466667b\n129de02c\nb0d559dd\n4f0cd38e\ned444d3f\n8b7bc6f0\n29b340a1\nc7eaba52\n66223403\n0459adb4\na2912765\n40c8a116\ndf001ac7\n7d379478\n1b6f0e29\nb9a687da\n57de018b\nf6157b3c\n944cf4ed\n32846e9e\nd0bbe84f\n6ef36200\n0d2adbb1\nab625562\n4999cf13\ne7d148c4\n8608c275\n24403c26\nc277b5d7\n60af2f88\nfee6a939\n9d1e22ea\n3b559c9b\nd98d164c\n77c48ffd\n15fc09ae\nb433835f\n526afd10\nf0a276c1\n8ed9f072\n2d116a23\ncb48e3d4\n69805d85\n07b7d736\na5ef50e7\n4426ca98\ne25e4449\n8095bdfa\n1ecd37ab\nbd04b15c\n5b3c2b0d\nf973a4be\n97ab1e6f\n35e29820\nd41a11d1\n72518b82\n10890533\naec07ee4\n4cf7f895\neb2f7246\n8966ebf7\n279e65a8\nc5d5df59\n640d590a\n0244d2bb\na07c4c6c\n3eb3c61d\ndceb3fce\n7b22b97f\n195a3330\nb791ace1\n55c92692\nf400a043\n923819f4\n306f93a5\ncea70d56\n6cde8707\n0b1600b8\na94d7a69\n4784f41a\ne5bc6dcb\n83f3e77c\n222b612d\nc062dade\n5e9a548f\nfcd1ce40\n9b0947f1\n3940c1a2\nd7783b53\n75afb504\n13e72eb5\nb21ea866\n50562217\nee8d9bc8\n8cc51579\n2afc8f2a\nc93408db\n676b828c\n05a2fc3d\na3da75ee\n4211ef9f\ne0496950\n7e80e301\n1cb85cb2\nbaefd663\n59275014\nf75ec9c5\n95964376\n33cdbd27\nd20536d8\n703cb089\n0e742a3a\nacaba3eb\n4ae31d9c\ne91a974d\n875210fe\n25898aaf\nc3c10460\n61f87e11\n002ff7c2\n9e677173\n3c9eeb24\ndad664d5\n790dde86\n17455837\nb57cd1e8\n53b44b99\nf1ebc54a\n90233efb\n2e5ab8ac\ncc92325d\n6ac9ac0e\n090125bf\na7389f70\n45701921\ne3a792d2\n81df0c83\n20168634\nbe4dffe5\n5c857996\nfabcf347\n98f46cf8\n372be6a9\nd563605a\n739ada0b\n11d253bc\nb009cd6d\n4e41471e\nec78c0cf\n8ab03a80\n28e7b431\nc71f2de2\n6556a793\n038e2144\na1c59af5\n3ffd14a6\nde348e57\n7c6c0808\n1aa381b9\nb8dafb6a\n5712751b\nf549eecc\n9381687d\n31b8e22e\ncff05bdf\n6e27d590\n0c5f4f41\naa96c8f2\n48ce42a3\ne705bc54\n853d3605\n2374afb6\nc1ac2967\n5fe3a318\nfe1b1cc9\n9c52967a\n3a8a102b\nd8c189dc\n76f9038d\n15307d3e\nb367f6ef\n519f70a0\nefd6ea51\n8e0e6402\n2c45ddb3\nca7d5764\n68b4d115\n06ec4ac6\na523c477\n435b3e28\ne192b7d9\n7fca318a\n1e01ab3b\nbc3924ec\n5a709e9d\nf8a8184e\n96df91ff\n35170bb0\nd34e8561\n7185ff12\n0fbd78c3\nadf4f274\n4c2c6c25\nea63e5d6\n889b5f87\n26d2d938\nc50a52e9\n6341cc9a\n0179464b\n9fb0bffc\n3de839ad\ndc1fb35e\n7a572d0f\n188ea6c0\nb6c62071\n54fd9a22\nf33513d3\n916c8d84\n2fa40735\ncddb80e6\n6c12fa97\n0a4a7448\na881edf9\n46b967aa\ne4f0e15b\n83285b0c\n215fd4bd\nbf974e6e\n5dcec81f\nfc0641d0\n9a3dbb81\n38753532\nd6acaee3\n74e42894\n131ba245\nb1531bf6\n4f8a95a7\nedc20f58\n8bf98909\n2a3102ba\nc8687c6b\n669ff61c\n04d76fcd\na30ee97e\n4146632f\ndf7ddce0\n7db55691\n1becd042\nba2449f3\n585bc3a4\nf6933d55\n94cab706\n330230b7\nd139aa68\n6f712419\n0da89dca\nabe0177b\n4a17912c\ne84f0add\n8686848e\n24bdfe3f\nc2f577f0\n612cf1a1\nff646b52\n9d9be503\n3bd35eb4\nda0ad865\n78425216\n1679cbc7\nb4b14578\n52e8bf29\nf12038da\n8f57b28b\n2d8f2c3c\ncbc6a5ed\n69fe1f9e\n0835994f\na66d1300\n44a48cb1\ne2dc0662\n81138013\n1f4af9c4\nbd827375\n5bb9ed26\nf9f166d7\n9828e088\n36605a39\nd497d3ea\n72cf4d9b\n1106c74c\naf3e40fd\n4d75baae\nebad345f\n89e4ae10\n281c27c1\nc653a172\n648b1b23\n02c294d4\na0fa0e85\n3f318836\ndd6901e7\n7ba07b98\n19d7f549\nb80f6efa\n5646e8ab\nf47e625c\n92b5dc0d\n30ed55be\ncf24cf6f\n6d5c4920\n0b93c2d1\na9cb3c82\n4802b633\ne63a2fe4\n8471a995\n22a92346\nc0e09cf7\n5f1816a8\nfd4f9059\n9b870a0a\n39be83bb\nd7f5fd6c\n762d771d\n1464f0ce\nb29c6a7f\n50d3e430\nef0b5de1\n8d42d792\n2b7a5143\nc9b1caf4\n67e944a5\n0620be56\na4583807\n428fb1b8\ne0c72b69\n7efea51a\n1d361ecb\nbb6d987c\n59a5122d\nf7dc8bde\n9614058f\n344b7f40\nd282f8f1\n70ba72a2\n0ef1ec53\nad296604\n4b60dfb5\ne9985966\n87cfd317\n26074cc8\nc43ec679\n6276402a\n00adb9db\n9ee5338c\n3d1cad3d\ndb5426ee\n798ba09f\n17c31a50\nb5fa9401\n54320db2\nf2698763\n90a10114\n2ed87ac5\ncd0ff476\n6b476e27\n097ee7d8\na7b66189\n45eddb3a\ne42554eb\n825cce9c\n2094484d\nbecbc1fe\n5d033baf\nfb3ab560\n99722f11\n37a9a8c2\nd5e12273\n74189c24\n125015d5\nb0878f86\n4ebf0937\necf682e8\n8b2dfc99\n2965764a\nc79ceffb\n65d469ac\n040be35d\na2435d0e\n407ad6bf\ndeb25070\n7ce9ca21\n1b2143d2\nb958bd83\n57903734\nf5c7b0e5\n93ff2a96\n3236a447\nd06e1df8\n6ea597a9\n0cdd115a\nab148b0b\n494c04bc\ne7837e6d\n85baf81e\n23f271cf\nc229eb80\n60616531\nfe98dee2\n9cd05893\n3b07d244\nd93f4bf5\n7776c5a6\n15ae3f57\nb3e5b908\n521d32b9\nf054ac6a\n8e8c261b\n2cc39fcc\ncafb197d\n6932932e\n076a0cdf\na5a18690\n43d90041\ne21079f2\n8047f3a3\n1e7f6d54\nbcb6e705\n5aee60b6\nf925da67\n975d5418\n3594cdc9\nd3cc477a\n7203c12b\n103b3adc\nae72b48d\n4caa2e3e\neae1a7ef\n891921a0\n27509b51\nc5881502\n63bf8eb3\n01f70864\na02e8215\n3e65fbc6\ndc9d7577\n7ad4ef28\n190c68d9\nb743e28a\n557b5c3b\nf3b2d5ec\n91ea4f9d\n3021c94e\nce5942ff\n6c90bcb0\n0ac83661\na8ffb012\n473729c3\ne56ea374\n83a61d25\n21dd96d6\nc0151087\n5e4c8a38\nfc8403e9\n9abb7d9a\n38f2f74b\nd72a70fc\n7561eaad\n1399645e\nb1d0de0f\n500857c0\nee3fd171\n8c774b22\n2aaec4d3\nc8e63e84\n671db835\n055531e6\na38cab97\n41c42548\ndffb9ef9\n7e3318aa\n1c6a925b\nbaa20c0c\n58d985bd\nf710ff6e\n9548791f\n337ff2d0\nd1b76c81\n6feee632\n0e265fe3\nac5dd994\n4a955345\ne8ccccf6\n870446a7\n253bc058\nc3733a09\n61aab3ba\nffe22d6b\n9e19a71c\n3c5120cd\nda889a7e\n78c0142f\n16f78de0\nb52f0791\n53668142\nf19dfaf3\n8fd574a4\n2e0cee55\ncc446806\n6a7be1b7\n08b35b68\na6ead519\n45224eca\ne359c87b\n8191422c\n1fc8bbdd\nbe00358e\n5c37af3f\nfa6f28f0\n98a6a2a1\n36de1c52\nd5159603\n734d0fb4\n11848965\nafbc0316\n4df37cc7\nec2af678\n8a627029\n2899e9da\nc6d1638b\n6508dd3c\n034056ed\na177d09e\n3faf4a4f\ndde6c400\n7c1e3db1\n1a55b762\nb88d3113\n56c4aac4\nf4fc2475\n93339e26\n316b17d7\ncfa29188\n6dda0b39\n0c1184ea\naa48fe9b\n4880784c\ne6b7f1fd\n84ef6bae\n2326e55f\nc15e5f10\n5f95d8c1\nfdcd5272\n9c04cc23\n3a3c45d4\nd873bf85\n76ab3936\n14e2b2e7\nb31a2c98\n5151a649\nef891ffa\n8dc099ab\n2bf8135c\nca2f8d0d\n686706be\n069e806f\na4d5fa20\n430d73d1\ne144ed82\n7f7c6733\n1db3e0e4\nbbeb5a95\n5a22d446\nf85a4df7\n9691c7a8\n34c94159\nd300bb0a\n713834bb\n0f6fae6c\nada7281d\n4bdea1ce\nea161b7f\n884d9530\n26850ee1\nc4bc8892\n62f40243\n012b7bf4\n9f62f5a5\n3d9a6f56\ndbd1e907\n7a0962b8\n1840dc69\nb678561a\n54afcfcb\nf2e7497c\n911ec32d\n2f563cde\ncd8db68f\n6bc53040\n09fca9f1\na83423a2\n466b9d53\ne4a31704\n82da90b5\n21120a66\nbf498417\n5d80fdc8\nfbb87779\n99eff12a\n38276adb\nd65ee48c\n74965e3d\n12cdd7ee\nb105519f\n4f3ccb50\ned744501\n8babbeb2\n29e33863\nc81ab214\n66522bc5\n0489a576\na2c11f27\n40f898d8\ndf301289\n7d678c3a\n1b9f05eb\nb9d67f9c\n580df94d\nf64572fe\n947cecaf\n32b46660\nd0ebe011\n6f2359c2\n0d5ad373\nab924d24\n49c9c6d5\ne8014086\n8638ba37\n247033e8\nc2a7ad99\n60df274a\nff16a0fb\n9d4e1aac\n3b85945d\nd9bd0e0e\n77f487bf\n162c0170\nb4637b21\n529af4d2\nf0d26e83\n8f09e834\n2d4161e5\ncb78db96\n69b05547\n07e7cef8\na61f48a9\n4456c25a\ne28e3c0b\n80c5b5bc\n1efd2f6d\nbd34a91e\n5b6c22cf\nf9a39c80\n97db1631\n36128fe2\nd44a0993\n72818344\n10b8fcf5\naef076a6\n4d27f057\neb5f6a08\n8996e3b9\n27ce5d6a\nc605d71b\n643d50cc\n0274ca7d\na0ac442e\n3ee3bddf\ndd1b3790\n7b52b141\n198a2af2\nb7c1a4a3\n55f91e54\nf4309805\n926811b6\n309f8b67\nced70518\n6d0e7ec9\n0b45f87a\na97d722b\n47b4ebdc\ne5ec658d\n8423df3e\n225b58ef\nc092d2a0\n5eca4c51\nfd01c602\n9b393fb3\n3970b964\nd7a83315\n75dfacc6\n14172677\nb24ea028\n508619d9\neebd938a\n8cf50d3b\n2b2c86ec\nc964009d\n679b7a4e\n05d2f3ff\na40a6db0\n4241e761\ne0796112\n7eb0dac3\n1ce85474\nbb1fce25\n595747d6\nf78ec187\n95c63b38\n33fdb4e9\nd2352e9a\n706ca84b\n0ea421fc\nacdb9bad\n4b13155e\ne94a8f0f\n878208c0\n25b98271\nc3f0fc22\n622875d3\n005fef84\n9e976935\n3ccee2e6\ndb065c97\n793dd648\n17754ff9\nb5acc9aa\n53e4435b\nf21bbd0c\n905336bd\n2e8ab06e\nccc22a1f\n6af9a3d0\n09311d81\na7689732\n45a010e3\ne3d78a94\n820f0445\n20467df6\nbe7df7a7\n5cb57158\nfaeceb09\n992464ba\n375bde6b\nd593581c\n73cad1cd\n12024b7e\nb039c52f\n4e713ee0\neca8b891\n8ae03242\n2917abf3\nc74f25a4\n65869f55\n03be1906\na1f592b7\n402d0c68\nde648619\n7c9bffca\n1ad3797b\nb90af32c\n57426cdd\nf579e68e\n93b1603f\n31e8d9f0\nd02053a1\n6e57cd52\n0c8f4703\naac6c0b4\n48fe3a65\ne735b416\n856d2dc7\n23a4a778\nc1dc2129\n60139ada\nfe4b148b\n9c828e3c\n3aba07ed\nd8f1819e\n7728fb4f\n15607500\nb397eeb1\n51cf6862\nf006e213\n8e3e5bc4\n2c75d575\ncaad4f26\n68e4c8d7\n071c4288\na553bc39\n438b35ea\ne1c2af9b\n7ffa294c\n1e31a2fd\nbc691cae\n5aa0965f\nf8d81010\n970f89c1\n35470372\nd37e7d23\n71b5f6d4\n0fed7085\nae24ea36\n4c5c63e7\nea93dd98\n88cb5749\n2702d0fa\nc53a4aab\n6371c45c\n01a93e0d\n9fe0b7be\n3e18316f\ndc4fab20\n7a8724d1\n18be9e82\nb6f61833\n552d91e4\nf3650b95\n919c8546\n2fd3fef7\nce0b78a8\n6c42f259\n0a7a6c0a\na8b1e5bb\n46e95f6c\ne520d91d\n835852ce\n218fcc7f\nbfc74630\n5dfebfe1\nfc363992\n9a6db343\n38a52cf4\nd6dca6a5\n75142056\n134b9a07\nb18313b8\n4fba8d69\nedf2071a\n8c2980cb\n2a60fa7c\nc898742d\n66cfedde\n0507678f\na33ee140\n41765af1\ndfadd4a2\n7de54e53\n1c1cc804\nba5441b5\n588bbb66\nf6c33517\n94faaec8\n33322879\nd169a22a\n6fa11bdb\n0dd8958c\nac100f3d\n4a4788ee\ne87f029f\n86b67c50\n24edf601\nc3256fb2\n615ce963\nff946314\n9dcbdcc5\n3c035676\nda3ad027\n787249d8\n16a9c389\nb4e13d3a\n5318b6eb\nf150309c\n8f87aa4d\n2dbf23fe\ncbf69daf\n6a2e1760\n08659111\na69d0ac2\n44d48473\ne30bfe24\n814377d5\n1f7af186\nbdb26b37\n5be9e4e8\nfa215e99\n9858d84a\n369051fb\nd4c7cbac\n72ff455d\n1136bf0e\naf6e38bf\n4da5b270\nebdd2c21\n8a14a5d2\n284c1f83\nc6839934\n64bb12e5\n02f28c96\na12a0647\n3f617ff8\ndd98f9a9\n7bd0735a\n1a07ed0b\nb83f66bc\n5676e06d\nf4ae5a1e\n92e5d3cf\n311d4d80\ncf54c731\n6d8c40e2\n0bc3ba93\na9fb3444\n4832adf5\ne66a27a6\n84a1a157\n22d91b08\nc11094b9\n5f480e6a\nfd7f881b\n9bb701cc\n39ee7b7d\nd825f52e\n765d6edf\n1494e890\nb2cc6241\n5103dbf2\nef3b55a3\n8d72cf54\n2baa4905\nc9e1c2b6\n68193c67\n0650b618\na4882fc9\n42bfa97a\ne0f7232b\n7f2e9cdc\n1d66168d\nbb9d903e\n59d509ef\nf80c83a0\n9643fd51\n347b7702\nd2b2f0b3\n70ea6a64\n0f21e415\nad595dc6\n4b90d777\ne9c85128\n87ffcad9\n2637448a\nc46ebe3b\n62a637ec\n00ddb19d\n9f152b4e\n3d4ca4ff\ndb841eb0\n79bb9861\n17f31212\nb62a8bc3\n54620574\nf2997f25\n90d0f8d6\n2f087287\ncd3fec38\n6b7765e9\n09aedf9a\na7e6594b\n461dd2fc\ne4554cad\n828cc65e\n20c4400f\nbefbb9c0\n5d333371\nfb6aad22\n99a226d3\n37d9a084\nd6111a35\n744893e6\n12800d97\nb0b78748\n4eef00f9\ned267aaa\n8b5df45b\n29956e0c\nc7cce7bd\n6604616e\n043bdb1f\na27354d0\n40aace81\ndee24832\n7d19c1e3\n1b513b94\nb988b545\n57c02ef6\nf5f7a8a7\n942f2258\n32669c09\nd09e15ba\n6ed58f6b\n0d0d091c\nab4482cd\n497bfc7e\ne7b3762f\n85eaefe0\n24226991\nc259e342\n60915cf3\nfec8d6a4\n9d005055\n3b37ca06\nd96f43b7\n77a6bd68\n15de3719\nb415b0ca\n524d2a7b\nf084a42c\n8ebc1ddd\n2cf3978e\ncb2b113f\n69628af0\n079a04a1\na5d17e52\n4408f803\ne24071b4\n8077eb65\n1eaf6516\nbce6dec7\n5b1e5878\nf955d229\n978d4bda\n35c4c58b\nd3fc3f3c\n7233b8ed\n106b329e\naea2ac4f\n4cda2600\neb119fb1\n89491962\n27809313\nc5b80cc4\n63ef8675\n02270026\na05e79d7\n3e95f388\ndccd6d39\n7b04e6ea\n193c609b\nb773da4c\n55ab53fd\nf3e2cdae\n921a475f\n3051c110\nce893ac1\n6cc0b472\n0af82e23\na92fa7d4\n47672185\ne59e9b36\n83d614e7\n220d8e98\nc0450849\n5e7c81fa\nfcb3fbab\n9aeb755c\n3922ef0d\nd75a68be\n7591e26f\n13c95c20\nb200d5d1\n50384f82\nee6fc933\n8ca742e4\n2adebc95\nc9163646\n674daff7\n058529a8\na3bca359\n41f41d0a\ne02b96bb\n7e63106c\n1c9a8a1d\nbad203ce\n59097d7f\nf740f730\n957870e1\n33afea92\nd1e76443\n701eddf4\n0e5657a5\nac8dd156\n4ac54b07\ne8fcc4b8\n87343e69\n256bb81a\nc3a331cb\n61daab7c\n0012252d\n9e499ede\n3c81188f\ndab89240\n78f00bf1\n172785a2\nb55eff53\n53967904\nf1cdf2b5\n90056c66\n2e3ce617\ncc745fc8\n6aabd979\n08e3532a\na71accdb\n4552468c\ne389c03d\n81c139ee\n1ff8b39f\nbe302d50\n5c67a701\nfa9f20b2\n98d69a63\n370e1414\nd5458dc5\n737d0776\n11b48127\nafebfad8\n4e237489\nec5aee3a\n8a9267eb\n28c9e19c\nc7015b4d\n6538d4fe\n03704eaf\na1a7c860\n3fdf4211\nde16bbc2\n7c4e3573\n1a85af24\nb8bd28d5\n56f4a286\nf52c1c37\n936395e8\n319b0f99\ncfd2894a\n6e0a02fb\n0c417cac\naa78f65d\n48b0700e\ne6e7e9bf\n851f6370\n2356dd21\nc18e56d2\n5fc5d083\nfdfd4a34\n9c34c3e5\n3a6c3d96\nd8a3b747\n76db30f8\n1512aaa9\nb34a245a\n51819e0b\nefb917bc\n8df0916d\n2c280b1e\nca5f84cf\n6896fe80\n06ce7831\na505f1e2\n433d6b93\ne174e544\n7fac5ef5\n1de3d8a6\nbc1b5257\n5a52cc08\nf88a45b9\n96c1bf6a\n34f9391b\nd330b2cc\n71682c7d\n0f9fa62e\nadd71fdf\n4c0e9990\nea461341\n887d8cf2\n26b506a3\nc4ec8054\n6323fa05\n015b73b6\n9f92ed67\n3dca6718\ndc01e0c9\n7a395a7a\n1870d42b\nb6a84ddc\n54dfc78d\nf317413e\n914ebaef\n2f8634a0\ncdbdae51\n6bf52802\n0a2ca1b3\na8641b64\n469b9515\ne4d30ec6\n830a8877\n21420228\nbf797bd9\n5db0f58a\nfbe86f3b\n9a1fe8ec\n3857629d\nd68edc4e\n74c655ff\n12fdcfb0\nb1354961\n4f6cc312\neda43cc3\n8bdbb674\n2a133025\nc84aa9d6\n66822387\n04b99d38\na2f116e9\n4128909a\ndf600a4b\n7d9783fc\n1bcefdad\nba06775e\n583df10f\nf6756ac0\n94ace471\n32e45e22\nd11bd7d3\n6f535184\n0d8acb35\nabc244e6\n49f9be97\ne8313848\n8668b1f9\n24a02baa\nc2d7a55b\n610f1f0c\nff4698bd\n9d7e126e\n3bb58c1f\nd9ed05d0\n78247f81\n165bf932\nb49372e3\n52caec94\nf1026645\n8f39dff6\n2d7159a7\ncba8d358\n69e04d09\n0817c6ba\na64f406b\n4486ba1c\ne2be33cd\n80f5ad7e\n1f2d272f\nbd64a0e0\n5b9c1a91\nf9d39442\n980b0df3\n364287a4\nd47a0155\n72b17b06\n10e8f4b7\naf206e68\n4d57e819\neb8f61ca\n89c6db7b\n27fe552c\nc635cedd\n646d488e\n02a4c23f\na0dc3bf0\n3f13b5a1\ndd4b2f52\n7b82a903\n19ba22b4\nb7f19c65\n56291616\nf4608fc7\n92980978\n30cf8329\ncf06fcda\n6d3e768b\n0b75f03c\na9ad69ed\n47e4e39e\ne61c5d4f\n8453d700\n228b50b1\nc0c2ca62\n5efa4413\nfd31bdc4\n9b693775\n39a0b126\nd7d82ad7\n760fa488\n14471e39\nb27e97ea\n50b6119b\neeed8b4c\n8d2504fd\n2b5c7eae\nc993f85f\n67cb7210\n0602ebc1\na43a6572\n4271df23\ne0a958d4\n7ee0d285\n1d184c36\nbb4fc5e7\n59873f98\nf7beb949\n95f632fa\n342dacab\nd265265c\n709ca00d\n0ed419be\nad0b936f\n4b430d20\ne97a86d1\n87b20082\n25e97a33\nc420f3e4\n62586d95\n008fe746\n9ec760f7\n3cfedaa8\ndb365459\n796dce0a\n17a547bb\nb5dcc16c\n54143b1d\nf24bb4ce\n90832e7f\n2ebaa830\nccf221e1\n6b299b92\n09611543\na7988ef4\n45d008a5\ne4078256\n823efc07\n207675b8\nbeadef69\n5ce5691a\nfb1ce2cb\n99545c7c\n378bd62d\nd5c34fde\n73fac98f\n12324340\nb069bcf1\n4ea136a2\necd8b053\n8b102a04\n2947a3b5\nc77f1d66\n65b69717\n03ee10c8\na2258a79\n405d042a\nde947ddb\n7ccbf78c\n1b03713d\nb93aeaee\n5772649f\nf5a9de50\n93e15801\n3218d1b2\nd0504b63\n6e87c514\n0cbf3ec5\naaf6b876\n492e3227\ne765abd8\n859d2589\n23d49f3a\nc20c18eb\n6043929c\nfe7b0c4d\n9cb285fe\n3ae9ffaf\nd9217960\n7758f311\n15906cc2\nb3c7e673\n51ff6024\nf036d9d5\n8e6e5386\n2ca5cd37\ncadd46e8\n6914c099\n074c3a4a\na583b3fb\n43bb2dac\ne1f2a75d\n802a210e\n1e619abf\nbc991470\n5ad08e21\nf90807d2\n973f8183\n3576fb34\nd3ae74e5\n71e5ee96\n101d6847\nae54e1f8\n4c8c5ba9\neac3d55a\n88fb4f0b\n2732c8bc\nc56a426d\n63a1bc1e\n01d935cf\na010af80\n3e482931\ndc7fa2e2\n7ab71c93\n18ee9644\nb7260ff5\n555d89a6\nf3950357\n91cc7d08\n3003f6b9\nce3b706a\n6c72ea1b\n0aaa63cc\na8e1dd7d\n4719572e\ne550d0df\n83884a90\n21bfc441\nbff73df2\n5e2eb7a3\nfc663154\n9a9dab05\n38d524b6\nd70c9e67\n75441818\n137b91c9\nb1b30b7a\n4fea852b\nee21fedc\n8c59788d\n2a90f23e\nc8c86bef\n66ffe5a0\n05375f51\na36ed902\n41a652b3\ndfddcc64\n7e154615\n1c4cbfc6\nba843977\n58bbb328\nf6f32cd9\n952aa68a\n3362203b\nd19999ec\n6fd1139d\n0e088d4e\nac4006ff\n4a7780b0\ne8aefa61\n86e67412\n251dedc3\nc3556774\n618ce125\nffc45ad6\n9dfbd487\n3c334e38\nda6ac7e9\n78a2419a\n16d9bb4b\nb51134fc\n5348aead\nf180285e\n8fb7a20f\n2def1bc0\ncc269571\n6a5e0f22\n089588d3\na6cd0284\n45047c35\ne33bf5e6\n81736f97\n1faae948\nbde262f9\n5c19dcaa\nfa51565b\n9888d00c\n36c049bd\nd4f7c36e\n732f3d1f\n1166b6d0\naf9e3081\n4dd5aa32\nec0d23e3\n8a449d94\n287c1745\nc6b390f6\n64eb0aa7\n03228458\na159fe09\n3f9177ba\nddc8f16b\n7c006b1c\n1a37e4cd\nb86f5e7e\n56a6d82f\nf4de51e0\n9315cb91\n314d4542\ncf84bef3\n6dbc38a4\n0bf3b255\naa2b2c06\n4862a5b7\ne69a1f68\n84d19919\n230912ca\nc1408c7b\n5f78062c\nfdaf7fdd\n9be6f98e\n3a1e733f\nd855ecf0\n768d66a1\n14c4e052\nb2fc5a03\n5133d3b4\nef6b4d65\n8da2c716\n2bda40c7\nca11ba78\n68493429\n0680adda\na4b8278b\n42efa13c\ne1271aed\n7f5e949e\n1d960e4f\nbbcd8800\n5a0501b1\nf83c7b62\n9673f513\n34ab6ec4\nd2e2e875\n711a6226\n0f51dbd7\nad895588\n4bc0cf39\ne9f848ea\n882fc29b\n26673c4c\nc49eb5fd\n62d62fae\n010da95f\n9f452310\n3d7c9cc1\ndbb41672\n79eb9023\n182309d4\nb65a8385\n5491fd36\nf2c976e7\n9100f098\n2f386a49\ncd6fe3fa\n6ba75dab\n09ded75c\na816510d\n464dcabe\ne485446f\n82bcbe20\n20f437d1\nbf2bb182\n5d632b33\nfb9aa4e4\n99d21e95\n38099846\nd64111f7\n74788ba8\n12b00559\nb0e77f0a\n4f1ef8bb\ned56726c\n8b8dec1d\n29c565ce\nc7fcdf7f\n66345930\n046bd2e1\na2a34c92\n40dac643\ndf123ff4\n7d49b9a5\n1b813356\nb9b8ad07\n57f026b8\nf627a069\n945f1a1a\n329693cb\nd0ce0d7c\n6f05872d\n0d3d00de\nab747a8f\n49abf440\ne7e36df1\n861ae7a2\n24526153\nc289db04\n60c154b5\nfef8ce66\n9d304817\n3b67c1c8\nd99f3b79\n77d6b52a\n160e2edb\nb445a88c\n527d223d\nf0b49bee\n8eec159f\n2d238f50\ncb5b0901\n699282b2\n07c9fc63\na6017614\n4438efc5\ne2706976\n80a7e327\n1edf5cd8\nbd16d689\n5b4e503a\nf985c9eb\n97bd439c\n35f4bd4d\nd42c36fe\n7263b0af\n109b2a60\naed2a411\n4d0a1dc2\neb419773\n89791124\n27b08ad5\nc5e80486\n641f7e37\n0256f7e8\na08e7199\n3ec5eb4a\ndcfd64fb\n7b34deac\n196c585d\nb7a3d20e\n55db4bbf\nf412c570\n924a3f21\n3081b8d2\nceb93283\n6cf0ac34\n0b2825e5\na95f9f96\n47971947\ne5ce92f8\n84060ca9\n223d865a\nc075000b\n5eac79bc\nfce3f36d\n9b1b6d1e\n3952e6cf\nd78a6080\n75c1da31\n13f953e2\nb230cd93\n50684744\nee9fc0f5\n8cd73aa6\n2b0eb457\nc9462e08\n677da7b9\n05b5216a\na3ec9b1b\n422414cc\ne05b8e7d\n7e93082e\n1cca81df\nbb01fb90\n59397541\nf770eef2\n95a868a3\n33dfe254\nd2175c05\n704ed5b6\n0e864f67\nacbdc918\n4af542c9\ne92cbc7a\n8764362b\n259bafdc\nc3d3298d\n620aa33e\n00421cef\n9e7996a0\n3cb11051\ndae88a02\n792003b3\n17577d64\nb58ef715\n53c670c6\nf1fdea77\n90356428\n2e6cddd9\ncca4578a\n6adbd13b\n09134aec\na74ac49d\n45823e4e\ne3b9b7ff\n81f131b0\n2028ab61\nbe602512\n5c979ec3\nfacf1874\n99069225\n373e0bd6\nd5758587\n73acff38\n11e478e9\nb01bf29a\n4e536c4b\nec8ae5fc\n8ac25fad\n28f9d95e\nc731530f\n6568ccc0\n03a04671\na1d7c022\n400f39d3\nde46b384\n7c7e2d35\n1ab5a6e6\nb8ed2097\n57249a48\nf55c13f9\n93938daa\n31cb075b\nd002810c\n6e39fabd\n0c71746e\naaa8ee1f\n48e067d0\ne717e181\n854f5b32\n2386d4e3\nc1be4e94\n5ff5c845\nfe2d41f6\n9c64bba7\n3a9c3558\nd8d3af09\n770b28ba\n1542a26b\nb37a1c1c\n51b195cd\nefe90f7e\n8e20892f\n2c5802e0\nca8f7c91\n68c6f642\n06fe6ff3\na535e9a4\n436d6355\ne1a4dd06\n7fdc56b7\n1e13d068\nbc4b4a19\n5a82c3ca\nf8ba3d7b\n96f1b72c\n352930dd\nd360aa8e\n7198243f\n0fcf9df0\nae0717a1\n4c3e9152\nea760b03\n88ad84b4\n26e4fe65\nc51c7816\n6353f1c7\n018b6b78\n9fc2e529\n3dfa5eda\ndc31d88b\n7a69523c\n18a0cbed\nb6d8459e\n550fbf4f\nf3473900\n917eb2b1\n2fb62c62\ncdeda613\n6c251fc4\n0a5c9975\na8941326\n46cb8cd7\ne5030688\n833a8039\n2171f9ea\nbfa9739b\n5de0ed4c\nfc1866fd\n9a4fe0ae\n38875a5f\nd6bed410\n74f64dc1\n132dc772\nb1654123\n4f9cbad4\nedd43485\n8c0bae36\n2a4327e7\nc87aa198\n66b21b49\n04e994fa\na3210eab\n4158885c\ndf90020d\n7dc77bbe\n1bfef56f\nba366f20\n586de8d1\nf6a56282\n94dcdc33\n331455e4\nd14bcf95\n6f834946\n0dbac2f7\nabf23ca8\n4a29b659\ne861300a\n8698a9bb\n24d0236c\nc3079d1d\n613f16ce\nff76907f\n9dae0a30\n3be583e1\nda1cfd92\n78547743\n168bf0f4\nb4c36aa5\n52fae456\nf1325e07\n8f69d7b8\n2da15169\ncbd8cb1a\n6a1044cb\n0847be7c\na67f382d\n44b6b1de\ne2ee2b8f\n8125a540\n1f5d1ef1\nbd9498a2\n5bcc1253\nfa038c04\n983b05b5\n36727f66\nd4a9f917\n72e172c8\n1118ec79\naf50662a\n4d87dfdb\nebbf598c\n89f6d33d\n282e4cee\nc665c69f\n649d4050\n02d4ba01\na10c33b2\n3f43ad63\ndd7b2714\n7bb2a0c5\n19ea1a76\nb8219427\n56590dd8\nf4908789\n92c8013a\n30ff7aeb\ncf36f49c\n6d6e6e4d\n0ba5e7fe\na9dd61af\n4814db60\ne64c5511\n8483cec2\n22bb4873\nc0f2c224\n5f2a3bd5\nfd61b586\n9b992f37\n39d0a8e8\nd8082299\n763f9c4a\n147715fb\nb2ae8fac\n50e6095d\nef1d830e\n8d54fcbf\n2b8c7670\nc9c3f021\n67fb69d2\n0632e383\na46a5d34\n42a1d6e5\ne0d95096\n7f10ca47\n1d4843f8\nbb7fbda9\n59b7375a\nf7eeb10b\n96262abc\n345da46d\nd2951e1e\n70cc97cf\n0f041180\nad3b8b31\n4b7304e2\ne9aa7e93\n87e1f844\n261971f5\nc450eba6\n62886557\n00bfdf08\n9ef758b9\n3d2ed26a\ndb664c1b\n799dc5cc\n17d53f7d\nb60cb92e\n544432df\nf27bac90\n90b32641\n2eea9ff2\ncd2219a3\n6b599354\n09910d05\na7c886b6\n46000067\ne4377a18\n826ef3c9\n20a66d7a\nbedde72b\n5d1560dc\nfb4cda8d\n9984543e\n37bbcdef\nd5f347a0\n742ac151\n12623b02\nb099b4b3\n4ed12e64\ned08a815\n8b4021c6\n29779b77\nc7af1528\n65e68ed9\n041e088a\na255823b\n408cfbec\ndec4759d\n7cfbef4e\n1b3368ff\nb96ae2b0\n57a25c61\nf5d9d612\n94114fc3\n3248c974\nd0804325\n6eb7bcd6\n0cef3687\nab26b038\n495e29e9\ne795a39a\n85cd1d4b\n240496fc\nc23c10ad\n60738a5e\nfeab040f\n9ce27dc0\n3b19f771\nd9517122\n7788ead3\n15c06484\nb3f7de35\n522f57e6\nf066d197\n8e9e4b48\n2cd5c4f9\ncb0d3eaa\n6944b85b\n077c320c\na5b3abbd\n43eb256e\ne2229f1f\n805a18d0\n1e919281\nbcc90c32\n5b0085e3\nf937ff94\n976f7945\n35a6f2f6\nd3de6ca7\n7215e658\n104d6009\nae84d9ba\n4cbc536b\neaf3cd1c\n892b46cd\n2762c07e\nc59a3a2f\n63d1b3e0\n02092d91\na040a742\n3e7820f3\ndcaf9aa4\n7ae71455\n191e8e06\nb75607b7\n558d8168\nf3c4fb19\n91fc74ca\n3033ee7b\nce6b682c\n6ca2e1dd\n0ada5b8e\na911d53f\n47494ef0\ne580c8a1\n83b84252\n21efbc03\nc02735b4\n5e5eaf65\nfc962916\n9acda2c7\n39051c78\nd73c9629\n75740fda\n13ab898b\nb1e3033c\n501a7ced\nee51f69e\n8c89704f\n2ac0ea00\nc8f863b1\n672fdd62\n05675713\na39ed0c4\n41d64a75\ne00dc426\n7e453dd7\n1c7cb788\nbab43139\n58ebaaea\nf723249b\n955a9e4c\n339217fd\nd1c991ae\n70010b5f\n0e388510\nac6ffec1\n4aa77872\ne8def223\n87166bd4\n254de585\nc3855f36\n61bcd8e7\nfff45298\n9e2bcc49\n3c6345fa\nda9abfab\n78d2395c\n1709b30d\nb5412cbe\n5378a66f\nf1b02020\n8fe799d1\n2e1f1382\ncc568d33\n6a8e06e4\n08c58095\na6fcfa46\n453473f7\ne36beda8\n81a36759\n1fdae10a\nbe125abb\n5c49d46c\nfa814e1d\n98b8c7ce\n36f0417f\nd527bb30\n735f34e1\n1196ae92\nafce2843\n4e05a1f4\nec3d1ba5\n8a749556\n28ac0f07\nc6e388b8\n651b0269\n03527c1a\na189f5cb\n3fc16f7c\nddf8e92d\n7c3062de\n1a67dc8f\nb89f5640\n56d6cff1\nf50e49a2\n9345c353\n317d3d04\ncfb4b6b5\n6dec3066\n0c23aa17\naa5b23c8\n48929d79\ne6ca172a\n850190db\n23390a8c\nc170843d\n5fa7fdee\nfddf779f\n9c16f150\n3a4e6b01\nd885e4b2\n76bd5e63\n14f4d814\nb32c51c5\n5163cb76\nef9b4527\n8dd2bed8\n2c0a3889\nca41b23a\n68792beb\n06b0a59c\na4e81f4d\n431f98fe\ne15712af\n7f8e8c60\n1dc60611\nbbfd7fc2\n5a34f973\nf86c7324\n96a3ecd5\n34db6686\nd312e037\n714a59e8\n0f81d399\nadb94d4a\n4bf0c6fb\nea2840ac\n885fba5d\n2697340e\nc4ceadbf\n63062770\n013da121\n9f751ad2\n3dac9483\ndbe40e34\n7a1b87e5\n18530196\nb68a7b47\n54c1f4f8\nf2f96ea9\n9130e85a\n2f68620b\ncd9fdbbc\n6bd7556d\n0a0ecf1e\na84648cf\n467dc280\ne4b53c31\n82ecb5e2\n21242f93\nbf5ba944\n5d9322f5\nfbca9ca6\n9a021657\n38399008\nd67109b9\n74a8836a\n12dffd1b\nb11776cc\n4f4ef07d\ned866a2e\n8bbde3df\n29f55d90\nc82cd741\n666450f2\n049bcaa3\na2d34454\n410abe05\ndf4237b6\n7d79b167\n1bb12b18\nb9e8a4c9\n58201e7a\nf657982b\n948f11dc\n32c68b8d\nd0fe053e\n6f357eef\n0d6cf8a0\naba47251\n49dbec02\ne81365b3\n864adf64\n24825915\nc2b9d2c6\n60f14c77\nff28c628\n9d603fd9\n3b97b98a\nd9cf333b\n7806acec\n163e269d\nb475a04e\n52ad19ff\nf0e493b0\n8f1c0d61\n2d538712\ncb8b00c3\n69c27a74\n07f9f425\na6316dd6\n4468e787\ne2a06138\n80d7dae9\n1f0f549a\nbd46ce4b\n5b7e47fc\nf9b5c1ad\n97ed3b5e\n3624b50f\nd45c2ec0\n7293a871\n10cb2222\naf029bd3\n4d3a1584\neb718f35\n89a908e6\n27e08297\nc617fc48\n644f75f9\n0286efaa\na0be695b\n3ef5e30c\ndd2d5cbd\n7b64d66e\n199c501f\nb7d3c9d0\n560b4381\nf442bd32\n927a36e3\n30b1b094\ncee92a45\n6d20a3f6\n0b581da7\na98f9758\n47c71109\ne5fe8aba\n8436046b\n226d7e1c\nc0a4f7cd\n5edc717e\nfd13eb2f\n9b4b64e0\n3982de91\nd7ba5842\n75f1d1f3\n14294ba4\nb260c555\n50983f06\neecfb8b7\n8d073268\n2b3eac19\nc97625ca\n67ad9f7b\n05e5192c\na41c92dd\n42540c8e\ne08b863f\n7ec2fff0\n1cfa79a1\nbb31f352\n59696d03\nf7a0e6b4\n95d86065\n340fda16\nd24753c7\n707ecd78\n0eb64729\nacedc0da\n4b253a8b\ne95cb43c\n87942ded\n25cba79e\nc403214f\n623a9b00\n007214b1\n9ea98e62\n3ce10813\ndb1881c4\n794ffb75\n17877526\nb5beeed7\n53f66888\nf22de239\n90655bea\n2e9cd59b\nccd44f4c\n6b0bc8fd\n094342ae\na77abc5f\n45b23610\ne3e9afc1\n82212972\n2058a323\nbe901cd4\n5cc79685\nfaff1036\n993689e7\n376e0398\nd5a57d49\n73dcf6fa\n121470ab\nb04bea5c\n4e83640d\necbaddbe\n8af2576f\n2929d120\nc7614ad1\n6598c482\n03d03e33\na207b7e4\n403f3195\nde76ab46\n7cae24f7\n1ae59ea8\nb91d1859\n5754920a\nf58c0bbb\n93c3856c\n31faff1d\nd03278ce\n6e69f27f\n0ca16c30\naad8e5e1\n49105f92\ne747d943\n857f52f4\n23b6cca5\nc1ee4656\n6025c007\nfe5d39b8\n9c94b369\n3acc2d1a\nd903a6cb\n773b207c\n15729a2d\nb3aa13de\n51e18d8f\nf0190740\n8e5080f1\n2c87faa2\ncabf7453\n68f6ee04\n072e67b5\na565e166\n439d5b17\ne1d4d4c8\n800c4e79\n1e43c82a\nbc7b41db\n5ab2bb8c\nf8ea353d\n9721aeee\n3559289f\nd390a250\n71c81c01\n0fff95b2\nae370f63\n4c6e8914\neaa602c5\n88dd7c76\n2714f627\nc54c6fd8\n6383e989\n01bb633a\n9ff2dceb\n3e2a569c\ndc61d04d\n7a9949fe\n18d0c3af\nb7083d60\n553fb711\nf37730c2\n91aeaa73\n2fe62424\nce1d9dd5\n6c551786\n0a8c9137\na8c40ae8\n46fb8499\ne532fe4a\n836a77fb\n21a1f1ac\nbfd96b5d\n5e10e50e\nfc485ebf\n9a7fd870\n38b75221\nd6eecbd2\n75264583\n135dbf34\nb19538e5\n4fccb296\nee042c47\n8c3ba5f8\n2a731fa9\nc8aa995a\n66e2130b\n05198cbc\na351066d\n4188801e\ndfbff9cf\n7df77380\n1c2eed31\nba6666e2\n589de093\nf6d55a44\n950cd3f5\n33444da6\nd17bc757\n6fb34108\n0deabab9\nac22346a\n4a59ae1b\ne89127cc\n86c8a17d\n25001b2e\nc33794df\n616f0e90\nffa68841\n9dde01f2\n3c157ba3\nda4cf554\n78846f05\n16bbe8b6\nb4f36267\n532adc18\nf16255c9\n8f99cf7a\n2dd1492b\ncc08c2dc\n6a403c8d\n0877b63e\na6af2fef\n44e6a9a0\ne31e2351\n81559d02\n1f8d16b3\nbdc49064\n5bfc0a15\nfa3383c6\n986afd77\n36a27728\nd4d9f0d9\n73116a8a\n1148e43b\naf805dec\n4db7d79d\nebef514e\n8a26caff\n285e44b0\nc695be61\n64cd3812\n0304b1c3\na13c2b74\n3f73a525\nddab1ed6\n7be29887\n1a1a1238\nb8518be9\n5689059a\nf4c07f4b\n92f7f8fc\n312f72ad\ncf66ec5e\n6d9e660f\n0bd5dfc0\naa0d5971\n4844d322\ne67c4cd3\n84b3c684\n22eb4035\nc122b9e6\n5f5a3397\nfd91ad48\n9bc926f9\n3a00a0aa\nd8381a5b\n766f940c\n14a70dbd\nb2de876e\n5116011f\nef4d7ad0\n8d84f481\n2bbc6e32\nc9f3e7e3\n682b6194\n0662db45\na49a54f6\n42d1cea7\ne1094858\n7f40c209\n1d783bba\nbbafb56b\n59e72f1c\nf81ea8cd\n9656227e\n348d9c2f\nd2c515e0\n70fc8f91\n0f340942\nad6b82f3\n4ba2fca4\ne9da7655\n8811f006\n264969b7\nc480e368\n62b85d19\n00efd6ca\n9f27507b\n3d5eca2c\ndb9643dd\n79cdbd8e\n1805373f\nb63cb0f0\n54742aa1\nf2aba452\n90e31e03\n2f1a97b4\ncd521165\n6b898b16\n09c104c7\na7f87e78\n462ff829\ne46771da\n829eeb8b\n20d6653c\nbf0ddeed\n5d45589e\nfb7cd24f\n99b44c00\n37ebc5b1\nd6233f62\n745ab913\n129232c4\nb0c9ac75\n4f012626\ned389fd7\n8b701988\n29a79339\nc7df0cea\n6616869b\n044e004c\na28579fd\n40bcf3ae\ndef46d5f\n7d2be710\n1b6360c1\nb99ada72\n57d25423\nf609cdd4\n94414785\n3278c136\nd0b03ae7\n6ee7b498\n0d1f2e49\nab56a7fa\n498e21ab\ne7c59b5c\n85fd150d\n24348ebe\nc26c086f\n60a38220\nfedafbd1\n9d127582\n3b49ef33\nd98168e4\n77b8e295\n15f05c46\nb427d5f7\n525f4fa8\nf096c959\n8ece430a\n2d05bcbb\ncb3d366c\n6974b01d\n07ac29ce\na5e3a37f\n441b1d30\ne25296e1\n808a1092\n1ec18a43\nbcf903f4\n5b307da5\nf967f756\n979f7107\n35d6eab8\nd40e6469\n7245de1a\n107d57cb\naeb4d17c\n4cec4b2d\neb23c4de\n895b3e8f\n2792b840\nc5ca31f1\n6401aba2\n02392553\na0709f04\n3ea818b5\ndcdf9266\n7b170c17\n194e85c8\nb785ff79\n55bd792a\nf3f4f2db\n922c6c8c\n3063e63d\nce9b5fee\n6cd2d99f\n0b0a5350\na941cd01\n477946b2\ne5b0c063\n83e83a14\n221fb3c5\nc0572d76\n5e8ea727\nfcc620d8\n9afd9a89\n3935143a\nd76c8deb\n75a4079c\n13db814d\nb212fafe\n504a74af\nee81ee60\n8cb96811\n2af0e1c2\nc9285b73\n675fd524\n05974ed5\na3cec886\n42064237\ne03dbbe8\n7e753599\n1cacaf4a\nbae428fb\n591ba2ac\nf7531c5d\n958a960e\n33c20fbf\nd1f98970\n70310321\n0e687cd2\nac9ff683\n4ad77034\ne90ee9e5\n87466396\n257ddd47\nc3b556f8\n61ecd0a9\n00244a5a\n9e5bc40b\n3c933dbc\ndacab76d\n7902311e\n1739aacf\nb5712480\n53a89e31\nf1e017e2\n90179193\n2e4f0b44\ncc8684f5\n6abdfea6\n08f57857\na72cf208\n45646bb9\ne39be56a\n81d35f1b\n200ad8cc\nbe42527d\n5c79cc2e\nfab145df\n98e8bf90\n37203941\nd557b2f2\n738f2ca3\n11c6a654\naffe2005\n4e3599b6\nec6d1367\n8aa48d18\n28dc06c9\nc713807a\n654afa2b\n038273dc\na1b9ed8d\n3ff1673e\nde28e0ef\n7c605aa0\n1a97d451\nb8cf4e02\n5706c7b3\nf53e4164\n9375bb15\n31ad34c6\ncfe4ae77\n6e1c2828\n0c53a1d9\naa8b1b8a\n48c2953b\ne6fa0eec\n8531889d\n2369024e\nc1a07bff\n5fd7f5b0\nfe0f6f61\n9c46e912\n3a7e62c3\nd8b5dc74\n76ed5625\n1524cfd6\nb35c4987\n5193c338\nefcb3ce9\n8e02b69a\n2c3a304b\nca71a9fc\n68a923ad\n06e09d5e\na518170f\n434f90c0\ne1870a71\n7fbe8422\n1df5fdd3\nbc2d7784\n5a64f135\nf89c6ae6\n96d3e497\n350b5e48\nd342d7f9\n717a51aa\n0fb1cb5b\nade9450c\n4c20bebd\nea58386e\n888fb21f\n26c72bd0\nc4fea581\n63361f32\n016d98e3\n9fa51294\n3ddc8c45\ndc1405f6\n7a4b7fa7\n1882f958\nb6ba7309\n54f1ecba\nf329666b\n9160e01c\n2f9859cd\ncdcfd37e\n6c074d2f\n0a3ec6e0\na8764091\n46adba42\ne4e533f3\n831cada4\n21542755\nbf8ba106\n5dc31ab7\nfbfa9468\n9a320e19\n386987ca\nd6a1017b\n74d87b2c\n130ff4dd\nb1476e8e\n4f7ee83f\nedb661f0\n8beddba1\n2a255552\nc85ccf03\n669448b4\n04cbc265\na3033c16\n413ab5c7\ndf722f78\n7da9a929\n1be122da\nba189c8b\n5850163c\nf6878fed\n94bf099e\n32f6834f\nd12dfd00\n6f6576b1\n0d9cf062\nabd46a13\n4a0be3c4\ne8435d75\n867ad726\n24b250d7\nc2e9ca88\n61214439\nff58bdea\n9d90379b\n3bc7b14c\nd9ff2afd\n7836a4ae\n166e1e5f\nb4a59810\n52dd11c1\nf1148b72\n8f4c0523\n2d837ed4\ncbbaf885\n69f27236\n0829ebe7\na6616598\n4498df49\ne2d058fa\n8107d2ab\n1f3f4c5c\nbd76c60d\n5bae3fbe\nf9e5b96f\n981d3320\n3654acd1\nd48c2682\n72c3a033\n10fb19e4\naf329395\n4d6a0d46\neba186f7\n89d900a8\n28107a59\nc647f40a\n647f6dbb\n02b6e76c\na0ee611d\n3f25dace\ndd5d547f\n7b94ce30\n19cc47e1\nb803c192\n563b3b43\nf472b4f4\n92aa2ea5\n30e1a856\ncf192207\n6d509bb8\n0b881569\na9bf8f1a\n47f708cb\ne62e827c\n8465fc2d\n229d75de\nc0d4ef8f\n5f0c6940\nfd43e2f1\n9b7b5ca2\n39b2d653\nd7ea5004\n7621c9b5\n14594366\nb290bd17\n50c836c8\neeffb079\n8d372a2a\n2b6ea3db\nc9a61d8c\n67dd973d\n061510ee\na44c8a9f\n42840450\ne0bb7e01\n7ef2f7b2\n1d2a7163\nbb61eb14\n599964c5\nf7d0de76\n96085827\n343fd1d8\nd2774b89\n70aec53a\n0ee63eeb\nad1db89c\n4b55324d\ne98cabfe\n87c425af\n25fb9f60\nc4331911\n626a92c2\n00a20c73\n9ed98624\n3d10ffd5\ndb487986\n797ff337\n17b76ce8\nb5eee699\n5426604a\nf25dd9fb\n909553ac\n2ecccd5d\ncd04470e\n6b3bc0bf\n09733a70\na7aab421\n45e22dd2\ne419a783\n82512134\n20889ae5\nbec01496\n5cf78e47\nfb2f07f8\n996681a9\n379dfb5a\nd5d5750b\n740ceebc\n1244686d\nb07be21e\n4eb35bcf\necead580\n8b224f31\n2959c8e2\nc7914293\n65c8bc44\n040035f5\na237afa6\n406f2957\ndea6a308\n7cde1cb9\n1b15966a\nb94d101b\n578489cc\nf5bc037d\n93f37d2e\n322af6df\nd0627090\n6e99ea41\n0cd163f2\nab08dda3\n49405754\ne777d105\n85af4ab6\n23e6c467\nc21e3e18\n6055b7c9\nfe8d317a\n9cc4ab2b\n3afc24dc\nd9339e8d\n776b183e\n15a291ef\nb3da0ba0\n52118551\nf048ff02\n8e8078b3\n2cb7f264\ncaef6c15\n6926e5c6\n075e5f77\na595d928\n43cd52d9\ne204cc8a\n803c463b\n1e73bfec\nbcab399d\n5ae2b34e\nf91a2cff\n9751a6b0\n35892061\nd3c09a12\n71f813c3\n102f8d74\nae670725\n4c9e80d6\nead5fa87\n890d7438\n2744ede9\nc57c679a\n63b3e14b\n01eb5afc\na022d4ad\n3e5a4e5e\ndc91c80f\n7ac941c0\n1900bb71\nb7383522\n556faed3\nf3a72884\n91dea235\n30161be6\nce4d9597\n6c850f48\n0abc88f9\na8f402aa\n472b7c5b\ne562f60c\n839a6fbd\n21d1e96e\nc009631f\n5e40dcd0\nfc785681\n9aafd032\n38e749e3\nd71ec394\n75563d45\n138db6f6\nb1c530a7\n4ffcaa58\nee342409\n8c6b9dba\n2aa3176b\nc8da911c\n67120acd\n0549847e\na380fe2f\n41b877e0\ndfeff191\n7e276b42\n1c5ee4f3\nba965ea4\n58cdd855\nf7055206\n953ccbb7\n33744568\nd1abbf19\n6fe338ca\n0e1ab27b\nac522c2c\n4a89a5dd\ne8c11f8e\n86f8993f\n253012f0\nc3678ca1\n619f0652\nffd68003\n9e0df9b4\n3c457365\nda7ced16\n78b466c7\n16ebe078\nb5235a29\n535ad3da\nf1924d8b\n8fc9c73c\n2e0140ed\ncc38ba9e\n6a70344f\n08a7ae00\na6df27b1\n4516a162\ne34e1b13\n818594c4\n1fbd0e75\nbdf48826\n5c2c01d7\nfa637b88\n989af539\n36d26eea\nd509e89b\n7341624c\n1178dbfd\nafb055ae\n4de7cf5f\nec1f4910\n8a56c2c1\n288e3c72\nc6c5b623\n64fd2fd4\n0334a985\na16c2336\n3fa39ce7\ndddb1698\n7c129049\n1a4a09fa\nb88183ab\n56b8fd5c\nf4f0770d\n9327f0be\n315f6a6f\ncf96e420\n6dce5dd1\n0c05d782\naa3d5133\n4874cae4\ne6ac4495\n84e3be46\n231b37f7\nc152b1a8\n5f8a2b59\nfdc1a50a\n9bf91ebb\n3a30986c\nd868121d\n769f8bce\n14d7057f\nb30e7f30\n5145f8e1\nef7d7292\n8db4ec43\n2bec65f4\nca23dfa5\n685b5956\n0692d307\na4ca4cb8\n4301c669\ne139401a\n7f70b9cb\n1da8337c\nbbdfad2d\n5a1726de\nf84ea08f\n96861a40\n34bd93f1\nd2f50da2\n712c8753\n0f640104\nad9b7ab5\n4bd2f466\nea0a6e17\n8841e7c8\n26796179\nc4b0db2a\n62e854db\n011fce8c\n9f57483d\n3d8ec1ee\ndbc63b9f\n79fdb550\n18352f01\nb66ca8b2\n54a42263\nf2db9c14\n911315c5\n2f4a8f76\ncd820927\n6bb982d8\n09f0fc89\na828763a\n465fefeb\ne497699c\n82cee34d\n21065cfe\nbf3dd6af\n5d755060\nfbacca11\n99e443c2\n381bbd73\nd6533724\n748ab0d5\n12c22a86\nb0f9a437\n4f311de8\ned689799\n8ba0114a\n29d78afb\nc80f04ac\n66467e5d\n047df80e\na2b571bf\n40eceb70\ndf246521\n7d5bded2\n1b935883\nb9cad234\n58024be5\nf639c596\n94713f47\n32a8b8f8\nd0e032a9\n6f17ac5a\n0d4f260b\nab869fbc\n49be196d\ne7f5931e\n862d0ccf\n24648680\nc29c0031\n60d379e2\nff0af393\n9d426d44\n3b79e6f5\nd9b160a6\n77e8da57\n16205408\nb457cdb9\n528f476a\nf0c6c11b\n8efe3acc\n2d35b47d\ncb6d2e2e\n69a4a7df\n07dc2190\na6139b41\n444b14f2\ne2828ea3\n80ba0854\n1ef18205\nbd28fbb6\n5b607567\nf997ef18\n97cf68c9\n3606e27a\nd43e5c2b\n7275d5dc\n10ad4f8d\naee4c93e\n4d1c42ef\neb53bca0\n898b3651\n27c2b002\nc5fa29b3\n6431a364\n02691d15\na0a096c6\n3ed81077\ndd0f8a28\n7b4703d9\n197e7d8a\nb7b5f73b\n55ed70ec\nf424ea9d\n925c644e\n3093ddff\ncecb57b0\n6d02d161\n0b3a4b12\na971c4c3\n47a93e74\ne5e0b825\n841831d6\n224fab87\nc0872538\n5ebe9ee9\nfcf6189a\n9b2d924b\n39650bfc\nd79c85ad\n75d3ff5e\n140b790f\nb242f2c0\n507a6c71\neeb1e622\n8ce95fd3\n2b20d984\nc9585335\n678fcce6\n05c74697\na3fec048\n423639f9\ne06db3aa\n7ea52d5b\n1cdca70c\nbb1420bd\n594b9a6e\nf783141f\n95ba8dd0\n33f20781\nd2298132\n7060fae3\n0e987494\naccfee45\n4b0767f6\ne93ee1a7\n87765b58\n25add509\nc3e54eba\n621cc86b\n0054421c\n9e8bbbcd\n3cc3357e\ndafaaf2f\n793228e0\n1769a291\nb5a11c42\n53d895f3\nf2100fa4\n90478955\n2e7f0306\nccb67cb7\n6aedf668\n09257019\na75ce9ca\n4594637b\ne3cbdd2c\n820356dd\n203ad08e\nbe724a3f\n5ca9c3f0\nfae13da1\n9918b752\n37503103\nd587aab4\n73bf2465\n11f69e16\nb02e17c7\n4e659178\nec9d0b29\n8ad484da\n290bfe8b\nc743783c\n657af1ed\n03b26b9e\na1e9e54f\n40215f00\nde58d8b1\n7c905262\n1ac7cc13\nb8ff45c4\n5736bf75\nf56e3926\n93a5b2d7\n31dd2c88\nd014a639\n6e4c1fea\n0c83999b\naabb134c\n48f28cfd\ne72a06ae\n8561805f\n2398fa10\nc1d073c1\n6007ed72\nfe3f6723\n9c76e0d4\n3aae5a85\nd8e5d436\n771d4de7\n1554c798\nb38c4149\n51c3bafa\neffb34ab\n8e32ae5c\n2c6a280d\ncaa1a1be\n68d91b6f\n07109520\na5480ed1\n437f8882\ne1b70233\n7fee7be4\n1e25f595\nbc5d6f46\n5a94e8f7\nf8cc62a8\n9703dc59\n353b560a\nd372cfbb\n71aa496c\n0fe1c31d\nae193cce\n4c50b67f\nea883030\n88bfa9e1\n26f72392\nc52e9d43\n636616f4\n019d90a5\n9fd50a56\n3e0c8407\ndc43fdb8\n7a7b7769\n18b2f11a\nb6ea6acb\n5521e47c\nf3595e2d\n9190d7de\n2fc8518f\ncdffcb40\n6c3744f1\n0a6ebea2\na8a63853\n46ddb204\ne5152bb5\n834ca566\n21841f17\nbfbb98c8\n5df31279\nfc2a8c2a\n9a6205db\n38997f8c\nd6d0f93d\n750872ee\n133fec9f\nb1776650\n4faee001\nede659b2\n8c1dd363\n2a554d14\nc88cc6c5\n66c44076\n04fbba27\na33333d8\n416aad89\ndfa2273a\n7dd9a0eb\n1c111a9c\nba48944d\n58800dfe\nf6b787af\n94ef0160\n33267b11\nd15df4c2\n6f956e73\n0dcce824\nac0461d5\n4a3bdb86\ne8735537\n86aacee8\n24e24899\nc319c24a\n61513bfb\nff88b5ac\n9dc02f5d\n3bf7a90e\nda2f22bf\n78669c70\n169e1621\nb4d58fd2\n530d0983\nf1448334\n8f7bfce5\n2db37696\ncbeaf047\n6a2269f8\n0859e3a9\na6915d5a\n44c8d70b\ne30050bc\n8137ca6d\n1f6f441e\nbda6bdcf\n5bde3780\nfa15b131\n984d2ae2\n3684a493\nd4bc1e44\n72f397f5\n112b11a6\naf628b57\n4d9a0508\nebd17eb9\n8a08f86a\n2840721b\nc677ebcc\n64af657d\n02e6df2e\na11e58df\n3f55d290\ndd8d4c41\n7bc4c5f2\n19fc3fa3\nb833b954\n566b3305\nf4a2acb6\n92da2667\n3111a018\ncf4919c9\n6d80937a\n0bb80d2b\na9ef86dc\n4827008d\ne65e7a3e\n8495f3ef\n22cd6da0\nc104e751\n5f3c6102\nfd73dab3\n9bab5464\n39e2ce15\nd81a47c6\n7651c177\n14893b28\nb2c0b4d9\n50f82e8a\nef2fa83b\n8d6721ec\n2b9e9b9d\nc9d6154e\n680d8eff\n064508b0\na47c8261\n42b3fc12\ne0eb75c3\n7f22ef74\n1d5a6925\nbb91e2d6\n59c95c87\nf800d638\n96384fe9\n346fc99a\nd2a7434b\n70debcfc\n0f1636ad\nad4db05e\n4b852a0f\ne9bca3c0\n87f41d71\n262b9722\nc46310d3\n629a8a84\n00d20435\n9f097de6\n3d40f797\ndb787148\n79afeaf9\n17e764aa\nb61ede5b\n5456580c\nf28dd1bd\n90c54b6e\n2efcc51f\ncd343ed0\n6b6bb881\n09a33232\na7daabe3\n46122594\ne4499f45\n828118f6\n20b892a7\nbef00c58\n5d278609\nfb5effba\n9996796b\n37cdf31c\nd6056ccd\n743ce67e\n1274602f\nb0abd9e0\n4ee35391\ned1acd42\n8b5246f3\n2989c0a4\nc7c13a55\n65f8b406\n04302db7\na267a768\n409f2119\nded69aca\n7d0e147b\n1b458e2c\nb97d07dd\n57b4818e\nf5ebfb3f\n942374f0\n325aeea1\nd0926852\n6ec9e203\n0d015bb4\nab38d565\n49704f16\ne7a7c8c7\n85df4278\n2416bc29\nc24e35da\n6085af8b\nfebd293c\n9cf4a2ed\n3b2c1c9e\nd963964f\n779b1000\n15d289b1\nb40a0362\n52417d13\nf078f6c4\n8eb07075\n2ce7ea26\ncb1f63d7\n6956dd88\n078e5739\na5c5d0ea\n43fd4a9b\ne234c44c\n806c3dfd\n1ea3b7ae\nbcdb315f\n5b12ab10\nf94a24c1\n97819e72\n35b91823\nd3f091d4\n72280b85\n105f8536\nae96fee7\n4cce7898\neb05f249\n893d6bfa\n2774e5ab\nc5ac5f5c\n63e3d90d\n021b52be\na052cc6f\n3e8a4620\ndcc1bfd1\n7af93982\n1930b333\nb7682ce4\n559fa695\nf3d72046\n920e99f7\n304613a8\nce7d8d59\n6cb5070a\n0aec80bb\na923fa6c\n475b741d\ne592edce\n83ca677f\n2201e130\nc0395ae1\n5e70d492\nfca84e43\n9adfc7f4\n391741a5\nd74ebb56\n75863507\n13bdaeb8\nb1f52869\n502ca21a\nee641bcb\n8c9b957c\n2ad30f2d\nc90a88de\n6742028f\n05797c40\na3b0f5f1\n41e86fa2\ne01fe953\n7e576304\n1c8edcb5\nbac65666\n58fdd017\nf73549c8\n956cc379\n33a43d2a\nd1dbb6db\n7013308c\n0e4aaa3d\nac8223ee\n4ab99d9f\ne8f11750\n87289101\n25600ab2\nc3978463\n61cefe14\n000677c5\n9e3df176\n3c756b27\ndaace4d8\n78e45e89\n171bd83a\nb55351eb\n538acb9c\nf1c2454d\n8ff9befe\n2e3138af\ncc68b260\n6aa02c11\n08d7a5c2\na70f1f73\n45469924\ne37e12d5\n81b58c86\n1fed0637\nbe247fe8\n5c5bf999\nfa93734a\n98caecfb\n370266ac\nd539e05d\n73715a0e\n11a8d3bf\nafe04d70\n4e17c721\nec4f40d2\n8a86ba83\n28be3434\nc6f5ade5\n652d2796\n0364a147\na19c1af8\n3fd394a9\nde0b0e5a\n7c42880b\n1a7a01bc\nb8b17b6d\n56e8f51e\nf5206ecf\n9357e880\n318f6231\ncfc6dbe2\n6dfe5593\n0c35cf44\naa6d48f5\n48a4c2a6\ne6dc3c57\n8513b608\n234b2fb9\nc182a96a\n5fba231b\nfdf19ccc\n9c29167d\n3a60902e\nd89809df\n76cf8390\n1506fd41\nb33e76f2\n5175f0a3\nefad6a54\n8de4e405\n2c1c5db6\nca53d767\n688b5118\n06c2cac9\na4fa447a\n4331be2b\ne16937dc\n7fa0b18d\n1dd82b3e\nbc0fa4ef\n5a471ea0\nf87e9851\n96b61202\n34ed8bb3\nd3250564\n715c7f15\n0f93f8c6\nadcb7277\n4c02ec28\nea3a65d9\n8871df8a\n26a9593b\nc4e0d2ec\n63184c9d\n014fc64e\n9f873fff\n3dbeb9b0\ndbf63361\n7a2dad12\n186526c3\nb69ca074\n54d41a25\nf30b93d6\n91430d87\n2f7a8738\ncdb200e9\n6be97a9a\n0a20f44b\na8586dfc\n468fe7ad\ne4c7615e\n82fedb0f\n213654c0\nbf6dce71\n5da54822\nfbdcc1d3\n9a143b84\n384bb535\nd6832ee6\n74baa897\n12f22248\nb1299bf9\n4f6115aa\ned988f5b\n8bd0090c\n2a0782bd\nc83efc6e\n6676761f\n04adefd0\na2e56981\n411ce332\ndf545ce3\n7d8bd694\n1bc35045\nb9fac9f6\n583243a7\nf669bd58\n94a13709\n32d8b0ba\nd1102a6b\n6f47a41c\n0d7f1dcd\nabb6977e\n49ee112f\ne8258ae0\n865d0491\n24947e42\nc2cbf7f3\n610371a4\nff3aeb55\n9d726506\n3ba9deb7\nd9e15868\n7818d219\n16504bca\nb487c57b\n52bf3f2c\nf0f6b8dd\n8f2e328e\n2d65ac3f\ncb9d25f0\n69d49fa1\n080c1952\na6439303\n447b0cb4\ne2b28665\n80ea0016\n1f2179c7\nbd58f378\n5b906d29\nf9c7e6da\n97ff608b\n3636da3c\nd46e53ed\n72a5cd9e\n10dd474f\naf14c100\n4d4c3ab1\neb83b462\n89bb2e13\n27f2a7c4\nc62a2175\n64619b26\n029914d7\na0d08e88\n3f080839\ndd3f81ea\n7b76fb9b\n19ae754c\nb7e5eefd\n561d68ae\nf454e25f\n928c5c10\n30c3d5c1\ncefb4f72\n6d32c923\n0b6a42d4\na9a1bc85\n47d93636\ne610afe7\n84482998\n227fa349\nc0b71cfa\n5eee96ab\nfd26105c\n9b5d8a0d\n399503be\nd7cc7d6f\n7603f720\n143b70d1\nb272ea82\n50aa6433\neee1dde4\n8d195795\n2b50d146\nc9884af7\n67bfc4a8\n05f73e59\na42eb80a\n426631bb\ne09dab6c\n7ed5251d\n1d0c9ece\nbb44187f\n597b9230\nf7b30be1\n95ea8592\n3421ff43\nd25978f4\n7090f2a5\n0ec86c56\nacffe607\n4b375fb8\ne96ed969\n87a6531a\n25ddcccb\nc415467c\n624cc02d\n008439de\n9ebbb38f\n3cf32d40\ndb2aa6f1\n796220a2\n17999a53\nb5d11404\n54088db5\nf2400766\n90778117\n2eaefac8\ncce67479\n6b1dee2a\n095567db\na78ce18c\n45c45b3d\ne3fbd4ee\n82334e9f\n206ac850\nbea24201\n5cd9bbb2\nfb113563\n9948af14\n378028c5\nd5b7a276\n73ef1c27\n122695d8\nb05e0f89\n4e95893a\neccd02eb\n8b047c9c\n293bf64d\nc7736ffe\n65aae9af\n03e26360\na219dd11\n405156c2\nde88d073\n7cc04a24\n1af7c3d5\nb92f3d86\n5766b737\nf59e30e8\n93d5aa99\n320d244a\nd0449dfb\n6e7c17ac\n0cb3915d\naaeb0b0e\n492284bf\ne759fe70\n85917821\n23c8f1d2\nc2006b83\n6037e534\nfe6f5ee5\n9ca6d896\n3ade5247\nd915cbf8\n774d45a9\n1584bf5a\nb3bc390b\n51f3b2bc\nf02b2c6d\n8e62a61e\n2c9a1fcf\ncad19980\n69091331\n07408ce2\na5780693\n43af8044\ne1e6f9f5\n801e73a6\n1e55ed57\nbc8d6708\n5ac4e0b9\nf8fc5a6a\n9733d41b\n356b4dcc\nd3a2c77d\n71da412e\n1011badf\nae493490\n4c80ae41\neab827f2\n88efa1a3\n27271b54\nc55e9505\n63960eb6\n01cd8867\na0050218\n3e3c7bc9\ndc73f57a\n7aab6f2b\n18e2e8dc\nb71a628d\n5551dc3e\nf38955ef\n91c0cfa0\n2ff84951\nce2fc302\n6c673cb3\n0a9eb664\na8d63015\n470da9c6\ne5452377\n837c9d28\n21b416d9\nbfeb908a\n5e230a3b\nfc5a83ec\n9a91fd9d\n38c9774e\nd700f0ff\n75386ab0\n136fe461\nb1a75e12\n4fded7c3\nee165174\n8c4dcb25\n2a8544d6\nc8bcbe87\n66f43838\n052bb1e9\na3632b9a\n419aa54b\ndfd21efc\n7e0998ad\n1c41125e\nba788c0f\n58b005c0\nf6e77f71\n951ef922\n335672d3\nd18dec84\n6fc56635\n0dfcdfe6\nac345997\n4a6bd348\ne8a34cf9\n86dac6aa\n2512405b\nc349ba0c\n618133bd\nffb8ad6e\n9df0271f\n3c27a0d0\nda5f1a81\n78969432\n16ce0de3\nb5058794\n533d0145\nf1747af6\n8fabf4a7\n2de36e58\ncc1ae809\n6a5261ba\n0889db6b\na6c1551c\n44f8cecd\ne330487e\n8167c22f\n1f9f3be0\nbdd6b591\n5c0e2f42\nfa45a8f3\n987d22a4\n36b49c55\nd4ec1606\n73238fb7\n115b0968\naf928319\n4dc9fcca\nec01767b\n8a38f02c\n287069dd\nc6a7e38e\n64df5d3f\n0316d6f0\na14e50a1\n3f85ca52\nddbd4403\n7bf4bdb4\n1a2c3765\nb863b116\n569b2ac7\nf4d2a478\n930a1e29\n314197da\ncf79118b\n6db08b3c\n0be804ed\naa1f7e9e\n4856f84f\ne68e7200\n84c5ebb1\n22fd6562\nc134df13\n5f6c58c4\nfda3d275\n9bdb4c26\n3a12c5d7\nd84a3f88\n7681b939\n14b932ea\nb2f0ac9b\n5128264c\nef5f9ffd\n8d9719ae\n2bce935f\nca060d10\n683d86c1\n06750072\na4ac7a23\n42e3f3d4\ne11b6d85\n7f52e736\n1d8a60e7\nbbc1da98\n59f95449\nf830cdfa\n966847ab\n349fc15c\nd2d73b0d\n710eb4be\n0f462e6f\nad7da820\n4bb521d1\ne9ec9b82\n88241533\n265b8ee4\nc4930895\n62ca8246\n0101fbf7\n9f3975a8\n3d70ef59\ndba8690a\n79dfe2bb\n18175c6c\nb64ed61d\n54864fce\nf2bdc97f\n90f54330\n2f2cbce1\ncd643692\n6b9bb043\n09d329f4\na80aa3a5\n46421d56\ne4799707\n82b110b8\n20e88a69\nbf20041a\n5d577dcb\nfb8ef77c\n99c6712d\n37fdeade\nd635648f\n746cde40\n12a457f1\nb0dbd1a2\n4f134b53\ned4ac504\n8b823eb5\n29b9b866\nc7f13217\n6628abc8\n04602579\na2979f2a\n40cf18db\ndf06928c\n7d3e0c3d\n1b7585ee\nb9acff9f\n57e47950\nf61bf301\n94536cb2\n328ae663\nd0c26014\n6ef9d9c5\n0d315376\nab68cd27\n49a046d8\ne7d7c089\n860f3a3a\n2446b3eb\nc27e2d9c\n60b5a74d\nfeed20fe\n9d249aaf\n3b5c1460\nd9938e11\n77cb07c2\n16028173\nb439fb24\n527174d5\nf0a8ee86\n8ee06837\n2d17e1e8\ncb4f5b99\n6986d54a\n07be4efb\na5f5c8ac\n442d425d\ne264bc0e\n809c35bf\n1ed3af70\nbd0b2921\n5b42a2d2\nf97a1c83\n97b19634\n35e90fe5\nd4208996\n72580347\n108f7cf8\naec6f6a9\n4cfe705a\neb35ea0b\n896d63bc\n27a4dd6d\nc5dc571e\n6413d0cf\n024b4a80\na082c431\n3eba3de2\ndcf1b793\n7b293144\n1960aaf5\nb79824a6\n55cf9e57\nf4071808\n923e91b9\n30760b6a\ncead851b\n6ce4fecc\n0b1c787d\na953f22e\n478b6bdf\ne5c2e590\n83fa5f41\n2231d8f2\nc06952a3\n5ea0cc54\nfcd84605\n9b0fbfb6\n39473967\nd77eb318\n75b62cc9\n13eda67a\nb225202b\n505c99dc\nee94138d\n8ccb8d3e\n2b0306ef\nc93a80a0\n6771fa51\n05a97402\na3e0edb3\n42186764\ne04fe115\n7e875ac6\n1cbed477\nbaf64e28\n592dc7d9\nf765418a\n959cbb3b\n33d434ec\nd20bae9d\n7043284e\n0e7aa1ff\nacb21bb0\n4ae99561\ne9210f12\n875888c3\n25900274\nc3c77c25\n61fef5d6\n00366f87\n9e6de938\n3ca562e9\ndadcdc9a\n7914564b\n174bcffc\nb58349ad\n53bac35e\nf1f23d0f\n9029b6c0\n2e613071\ncc98aa22\n6ad023d3\n09079d84\na73f1735\n457690e6\ne3ae0a97\n81e58448\n201cfdf9\nbe5477aa\n5c8bf15b\nfac36b0c\n98fae4bd\n37325e6e\nd569d81f\n73a151d0\n11d8cb81\nb0104532\n4e47bee3\nec7f3894\n8ab6b245\n28ee2bf6\nc725a5a7\n655d1f58\n03949909\na1cc12ba\n40038c6b\nde3b061c\n7c727fcd\n1aa9f97e\nb8e1732f\n5718ece0\nf5506691\n9387e042\n31bf59f3\ncff6d3a4\n6e2e4d55\n0c65c706\naa9d40b7\n48d4ba68\ne70c3419\n8543adca\n237b277b\nc1b2a12c\n5fea1add\nfe21948e\n9c590e3f\n3a9087f0\nd8c801a1\n76ff7b52\n1536f503\nb36e6eb4\n51a5e865\nefdd6216\n8e14dbc7\n2c4c5578\nca83cf29\n68bb48da\n06f2c28b\na52a3c3c\n4361b5ed\ne1992f9e\n7fd0a94f\n1e082300\nbc3f9cb1\n5a771662\nf8ae9013\n96e609c4\n351d8375\nd354fd26\n718c76d7\n0fc3f088\nadfb6a39\n4c32e3ea\nea6a5d9b\n88a1d74c\n26d950fd\nc510caae\n6348445f\n017fbe10\n9fb737c1\n3deeb172\ndc262b23\n7a5da4d4\n18951e85\nb6cc9836\n550411e7\nf33b8b98\n91730549\n2faa7efa\ncde1f8ab\n6c19725c\n0a50ec0d\na88865be\n46bfdf6f\ne4f75920\n832ed2d1\n21664c82\nbf9dc633\n5dd53fe4\nfc0cb995\n9a443346\n387bacf7\nd6b326a8\n74eaa059\n13221a0a\nb15993bb\n4f910d6c\nedc8871d\n8c0000ce\n2a377a7f\nc86ef430\n66a66de1\n04dde792\na3156143\n414cdaf4\ndf8454a5\n7dbbce56\n1bf34807\nba2ac1b8\n58623b69\nf699b51a\n94d12ecb\n3308a87c\nd140222d\n6f779bde\n0daf158f\nabe68f40\n4a1e08f1\ne85582a2\n868cfc53\n24c47604\nc2fbefb5\n61336966\nff6ae317\n9da25cc8\n3bd9d679\nda11502a\n7848c9db\n1680438c\nb4b7bd3d\n52ef36ee\nf126b09f\n8f5e2a50\n2d95a401\ncbcd1db2\n6a049763\n083c1114\na6738ac5\n44ab0476\ne2e27e27\n8119f7d8\n1f517189\nbd88eb3a\n5bc064eb\nf9f7de9c\n982f584d\n3666d1fe\nd49e4baf\n72d5c560\n110d3f11\naf44b8c2\n4d7c3273\nebb3ac24\n89eb25d5\n28229f86\nc65a1937\n649192e8\n02c90c99\na100864a\n3f37fffb\ndd6f79ac\n7ba6f35d\n19de6d0e\nb815e6bf\n564d6070\nf484da21\n92bc53d2\n30f3cd83\ncf2b4734\n6d62c0e5\n0b9a3a96\na9d1b447\n48092df8\ne640a7a9\n8478215a\n22af9b0b\nc0e714bc\n5f1e8e6d\nfd56081e\n9b8d81cf\n39c4fb80\nd7fc7531\n7633eee2\n146b6893\nb2a2e244\n50da5bf5\nef11d5a6\n8d494f57\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote big.txt"
+  ]
+ },
+ "w_batch_same_file_last_wins": {
+  "command_bytes": 66656,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 2,
+    "text": "B\n"
+   }
+  },
+  "harness_calls": 2,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt",
+   "Wrote a.txt"
+  ]
+ },
+ "w_break_go": {
+  "command_bytes": 32140,
+  "disk": {
+   "g.go": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "package p\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid g.go with content that does not parse — g.go:2:8: expected '(', found 'EOF'\r\ng.go:2:8: expected ')', found 'EOF'\r\ng.go:2:8: expected ')', found 'EOF'\r\ng.go:2:8: expected ';', found 'EOF'\r\ng.go:2:8: expected 'IDENT', found 'EOF'. Fix the content so the file is valid, then write again. Line 2 of the content you sent is: func (\r\n"
+  ]
+ },
+ "w_break_js": {
+  "command_bytes": 32132,
+  "disk": {
+   "j.js": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "const a = 1;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid j.js with content that does not parse — j.js:1\r\nconst a = ;\r\n          ^\r\n\r\nSyntaxError: Unexpected token ';'\r\n    at wrapSafe (node:internal/modules/cjs/loader:1464:18)\r\n    at checkSyntax (node:internal/main/check_syntax:78:3)\r\n\r\nNode.js v20.19.5. Fix the content so the file is valid, then write again. Line 1 of the content you sent is: const a = ;\r\n"
+  ]
+ },
+ "w_break_json": {
+  "command_bytes": 32130,
+  "disk": {
+   "d.json": {
+    "mode": "0o644",
+    "size": 8,
+    "text": "{\"a\": 1}"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid d.json with content that does not parse — Expecting value: line 1 column 7 (char 6). Fix the content so the file is valid, then write again. Line 1 of the content you sent is: {\"a\": }\r\n"
+  ]
+ },
+ "w_break_mjs": {
+  "command_bytes": 32173,
+  "disk": {
+   "m.mjs": {
+    "mode": "0o644",
+    "size": 39,
+    "text": "import x from \"y\";\nexport const a = 1;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid m.mjs with content that does not parse — m.mjs:2\r\nexport const a = ;\r\n                 ^\r\n\r\nSyntaxError: Unexpected token ';'\r\n    at checkSyntax (node:internal/main/check_syntax:74:5)\r\n\r\nNode.js v20.19.5. Fix the content so the file is valid, then write again. Line 2 of the content you sent is: export const a = ;\r\n"
+  ]
+ },
+ "w_break_php": {
+  "command_bytes": 32137,
+  "disk": {
+   "p.php": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "<?php\nfoo();\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid p.php with content that does not parse — PHP Parse error:  syntax error, unexpected token \";\" in p.php on line 2\r\nErrors parsing p.php. Fix the content so the file is valid, then write again. Line 2 of the content you sent is: foo(;\r\n"
+  ]
+ },
+ "w_break_py": {
+  "command_bytes": 32128,
+  "disk": {
+   "a.py": {
+    "mode": "0o644",
+    "size": 22,
+    "text": "def f():\n    return 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid a.py with content that does not parse — invalid syntax (a.py, line 1). Fix the content so the file is valid, then write again. Line 1 of the content you sent is: def f(:\r\n"
+  ]
+ },
+ "w_break_rb": {
+  "command_bytes": 32140,
+  "disk": {
+   "r.rb": {
+    "mode": "0o644",
+    "size": 14,
+    "text": "def a\n  1\nend\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid r.rb with content that does not parse — ruby: r.rb:2: syntax error found (SyntaxError)\r\n  1 | def a(\r\n> 2 |   1\r\n    |   ^ unexpected integer; expected a `)` to close the parameters\r\n  3 | end. Fix the content so the file is valid, then write again. Line 2 of the content you sent is: 1\r\n"
+  ]
+ },
+ "w_break_toml": {
+  "command_bytes": 32138,
+  "disk": {
+   "c.toml": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "[a]\nx = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid c.toml with content that does not parse — Invalid value (at line 2, column 5). Fix the content so the file is valid, then write again. Line 2 of the content you sent is: x = = 1\r\n"
+  ]
+ },
+ "w_break_xml": {
+  "command_bytes": 32129,
+  "disk": {
+   "e.xml": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "<a><b/></a>"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid e.xml with content that does not parse — mismatched tag: line 1, column 8. Fix the content so the file is valid, then write again. Line 1 of the content you sent is: <a><b></a>\r\n"
+  ]
+ },
+ "w_broken_to_fixed_go": {
+  "command_bytes": 32137,
+  "disk": {
+   "g.go": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "package q\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote g.go"
+  ]
+ },
+ "w_broken_to_fixed_js": {
+  "command_bytes": 32141,
+  "disk": {
+   "j.js": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "const a = 2;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote j.js"
+  ]
+ },
+ "w_broken_to_fixed_json": {
+  "command_bytes": 32141,
+  "disk": {
+   "d.json": {
+    "mode": "0o644",
+    "size": 8,
+    "text": "{\"a\": 2}"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote d.json"
+  ]
+ },
+ "w_broken_to_fixed_mjs": {
+  "command_bytes": 32153,
+  "disk": {
+   "m.mjs": {
+    "mode": "0o644",
+    "size": 20,
+    "text": "export const a = 2;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote m.mjs"
+  ]
+ },
+ "w_broken_to_fixed_php": {
+  "command_bytes": 32145,
+  "disk": {
+   "p.php": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "<?php\nbar();\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote p.php"
+  ]
+ },
+ "w_broken_to_fixed_py": {
+  "command_bytes": 32157,
+  "disk": {
+   "a.py": {
+    "mode": "0o644",
+    "size": 22,
+    "text": "def f():\n    return 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.py"
+  ]
+ },
+ "w_broken_to_fixed_rb": {
+  "command_bytes": 32145,
+  "disk": {
+   "r.rb": {
+    "mode": "0o644",
+    "size": 14,
+    "text": "def a\n  2\nend\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote r.rb"
+  ]
+ },
+ "w_broken_to_fixed_toml": {
+  "command_bytes": 32141,
+  "disk": {
+   "c.toml": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "[a]\nx = 2\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote c.toml"
+  ]
+ },
+ "w_broken_to_fixed_xml": {
+  "command_bytes": 32141,
+  "disk": {
+   "e.xml": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "<a><c/></a>"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote e.xml"
+  ]
+ },
+ "w_crlf_unicode_nul": {
+  "command_bytes": 32156,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 12,
+    "text": "a\r\nb☃\u0000c\rd\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt"
+  ]
+ },
+ "w_deep_ruby_path_diagnostic": {
+  "command_bytes": 32465,
+  "disk": {
+   "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/": {
+    "mode": "0o755"
+   },
+   "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/lib/": {
+    "mode": "0o755"
+   },
+   "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/lib/rates.rb": {
+    "mode": "0o644",
+    "size": 13,
+    "text": "module S\nend\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ write_file REFUSED (not written): this would replace a currently-valid rates.rb with content that does not parse — ruby: rates.rb:3: syntax error found (SyntaxError)\r\n  1 | module S\r\n  2 |   def z(c)\r\n> 3 |     Country[](\"#{c}\")\r\n    |              ^ unexpected '(', expecting end-of-input\r\n  4 |   end\r\n  5 | end. Fix the content so the file is valid, then write again. Line 3 of the content you sent is: Country[](\"#{c}\")\r\n"
+  ]
+ },
+ "w_dir_target": {
+  "command_bytes": 32114,
+  "disk": {
+   "dir/": {
+    "mode": "0o755"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ [YOUR LAST WRITE WAS REFUSED] `dir` is a DIRECTORY, not a file — nothing was written. A path ending in `/` or `/.` names the folder itself. Re-send write_file with the full path INCLUDING the filename you want at the end.\r\n"
+  ]
+ },
+ "w_empty": {
+  "command_bytes": 32113,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 0,
+    "text": ""
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt"
+  ]
+ },
+ "w_falsy_zero": {
+  "command_bytes": 32118,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 1,
+    "text": "0"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt"
+  ]
+ },
+ "w_fused_debris": {
+  "command_bytes": 32128,
+  "disk": {
+   "x.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote x.py"
+  ]
+ },
+ "w_missing_content": {
+  "command_bytes": 9237,
+  "disk": {
+   "keep.py": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "before = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ Your write_file call has no `content` value — the key is absent or null, not empty. Nothing was written and the file on disk is untouched. This usually means the call was cut off before it finished. Send the write again as one complete call with both `path` and `content`; if you really meant to create an EMPTY file, pass `content` explicitly as an empty string.\r\n"
+  ]
+ },
+ "w_mode_kept": {
+  "command_bytes": 32145,
+  "disk": {
+   "run.sh": {
+    "mode": "0o644",
+    "size": 19,
+    "text": "#!/bin/sh\necho new\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote run.sh"
+  ]
+ },
+ "w_new_broken_go": {
+  "command_bytes": 32145,
+  "disk": {
+   "g.go": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "package p\nfunc (\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote g.go"
+  ]
+ },
+ "w_new_broken_js": {
+  "command_bytes": 32137,
+  "disk": {
+   "j.js": {
+    "mode": "0o644",
+    "size": 12,
+    "text": "const a = ;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote j.js"
+  ]
+ },
+ "w_new_broken_json": {
+  "command_bytes": 32135,
+  "disk": {
+   "d.json": {
+    "mode": "0o644",
+    "size": 7,
+    "text": "{\"a\": }"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote d.json"
+  ]
+ },
+ "w_new_broken_mjs": {
+  "command_bytes": 32178,
+  "disk": {
+   "m.mjs": {
+    "mode": "0o644",
+    "size": 38,
+    "text": "import x from \"y\";\nexport const a = ;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote m.mjs"
+  ]
+ },
+ "w_new_broken_php": {
+  "command_bytes": 32142,
+  "disk": {
+   "p.php": {
+    "mode": "0o644",
+    "size": 12,
+    "text": "<?php\nfoo(;\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote p.php"
+  ]
+ },
+ "w_new_broken_py": {
+  "command_bytes": 32133,
+  "disk": {
+   "a.py": {
+    "mode": "0o644",
+    "size": 8,
+    "text": "def f(:\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.py"
+  ]
+ },
+ "w_new_broken_rb": {
+  "command_bytes": 32145,
+  "disk": {
+   "r.rb": {
+    "mode": "0o644",
+    "size": 15,
+    "text": "def a(\n  1\nend\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote r.rb"
+  ]
+ },
+ "w_new_broken_toml": {
+  "command_bytes": 32143,
+  "disk": {
+   "c.toml": {
+    "mode": "0o644",
+    "size": 12,
+    "text": "[a]\nx = = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote c.toml"
+  ]
+ },
+ "w_new_broken_xml": {
+  "command_bytes": 32134,
+  "disk": {
+   "e.xml": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "<a><b></a>"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote e.xml"
+  ]
+ },
+ "w_new_in_new_dir": {
+  "command_bytes": 32162,
+  "disk": {
+   "src/": {
+    "mode": "0o755"
+   },
+   "src/deep/": {
+    "mode": "0o755"
+   },
+   "src/deep/new.txt": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "hello\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote src/deep/new.txt"
+  ]
+ },
+ "w_null_content": {
+  "command_bytes": 9262,
+  "disk": {
+   "keep.py": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "before = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ Your write_file call has no `content` value — the key is absent or null, not empty. Nothing was written and the file on disk is untouched. This usually means the call was cut off before it finished. Send the write again as one complete call with both `path` and `content`; if you really meant to create an EMPTY file, pass `content` explicitly as an empty string.\r\n"
+  ]
+ },
+ "w_over": {
+  "command_bytes": 32120,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "after\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt"
+  ]
+ },
+ "w_over_l5": {
+  "command_bytes": 32123,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "after\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt"
+  ]
+ },
+ "w_parent_is_file": {
+  "command_bytes": 32154,
+  "disk": {
+   "plain": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "i am a file"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ Cannot write plain/child.py: plain already exists as a FILE, not a directory, so the folder for this write cannot be created — nothing was written. That blocking file was most likely created by an earlier malformed write; read it to confirm, then move or delete it and re-send this write.\r\n"
+  ]
+ },
+ "w_ro_dir": {
+  "command_bytes": 32130,
+  "disk": {
+   "ro/": {
+    "mode": "0o555"
+   },
+   "ro/a.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ [YOUR LAST WRITE DID NOT RUN] `a.py` could not be written: Permission denied. Nothing was changed.\r\n"
+  ]
+ },
+ "w_ro_dir_new_sub": {
+  "command_bytes": 32146,
+  "disk": {
+   "ro/": {
+    "mode": "0o555"
+   },
+   "ro/a.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ [YOUR LAST WRITE DID NOT RUN] `a.py` could not be written: Permission denied. Nothing was changed.\r\n"
+  ]
+ },
+ "w_shrink_l5": {
+  "command_bytes": 32141,
+  "disk": {
+   "pom.xml": {
+    "mode": "0o644",
+    "size": 11,
+    "text": "<project/>\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote pom.xml"
+  ]
+ },
+ "w_symlink_dangling": {
+  "command_bytes": 32136,
+  "disk": {
+   "lnk.txt": {
+    "link": "other/new.txt"
+   },
+   "other/": {
+    "mode": "0o755"
+   },
+   "other/new.txt": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "new\n"
+   },
+   "other/x": {
+    "mode": "0o644",
+    "size": 1,
+    "text": "x"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote lnk.txt"
+  ]
+ },
+ "w_symlink_inside": {
+  "command_bytes": 32134,
+  "disk": {
+   "lnk.txt": {
+    "link": "real.txt"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "new\n"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote lnk.txt"
+  ]
+ },
+ "w_symlink_outside": {
+  "command_bytes": 32135,
+  "disk": {
+   "lnk.txt": {
+    "link": "$WS.outside/real.txt"
+   }
+  },
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 4,
+    "text": "new\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote lnk.txt"
+  ]
+ },
+ "w_then_edit_same_file": {
+  "command_bytes": 71225,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 10,
+    "text": "one\nthree\n"
+   }
+  },
+  "harness_calls": 2,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt",
+   "Wrote a.txt"
+  ]
+ },
+ "w_two_files": {
+  "command_bytes": 64290,
+  "disk": {
+   "a.txt": {
+    "mode": "0o644",
+    "size": 2,
+    "text": "A\n"
+   },
+   "b/": {
+    "mode": "0o755"
+   },
+   "b/c.txt": {
+    "mode": "0o644",
+    "size": 2,
+    "text": "C\n"
+   }
+  },
+  "harness_calls": 2,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "Wrote a.txt",
+   "Wrote b/c.txt"
+  ]
+ },
+ "w_unsafe_cleanup": {
+  "command_bytes": 9738,
+  "disk": {},
+  "harness_calls": 1,
+  "outside": {
+   "real.py": {
+    "mode": "0o644",
+    "size": 6,
+    "text": "x = 1\n"
+   },
+   "real.txt": {
+    "mode": "0o644",
+    "size": 17,
+    "text": "OUTSIDE ORIGINAL\n"
+   }
+  },
+  "requests": 2,
+  "results": [
+   "⟦ctx:denied⟧ This proposed change was withheld for revision. Static path/resource analysis found an unsafe filesystem mutation under the supported API semantics:\r\nshutil.rmtree(os.path.dirname(path), ignore_errors=True)\r\nSource finding (not an executed result): Recursive cleanup targets the shared parent of a temporary resource, not the resource created. Creating a temporary file or directory does not grant ownership of its parent.\r\nRevise the operation so it acts within the permitted boundary or only on the temporary resource created. Preserve unrelated work. No replacement code has been chosen for you.\r\n"
+  ]
+ }
+}
