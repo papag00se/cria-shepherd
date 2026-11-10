@@ -320,13 +320,14 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         ),
     ),
     AssistFamily(
-        'F26', 'Carry workspace surveys through harness tools',
+        'F26', 'Ask for workspace surveys through the harness primitives',
         'Verification and guidance',
-        'One workspace observation lifecycle: carrier, survey ingestion, body reconciliation and deferred harness questions. L2+ producer and L4/L5 consumers retain their gates.',
+        'One workspace observation lifecycle: cria\'s own survey operation, survey ingestion, body reconciliation and deferred harness questions. L2+ producer and L4/L5 consumers retain their gates.',
         ('A107', 'J59', 'J61-body', 'J61-demand', 'coverage-assist-18'),
         (
             SourceOwner('cria/wsview.py', 'View.program'),
-            SourceOwner('cria/wsview.py', 'strip_survey'),
+            SourceOwner('cria/wsview.py', 'apply_survey'),
+            SourceOwner('cria/surveyops.py', 'SurveyOps._survey_due'),
             SourceOwner('cria/wsview.py', 'View.note_written'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
         ),

@@ -32,7 +32,7 @@ from .surveyops import INVENTORY, LEVEL_MAXES, TREE_MAX, WAVE, _Tree, _clean
 WHATS = ('ils', 'iread', 'irun', 'iout', 'irm')
 FACT_LEN = 512            # bytes of a file that decide whether it is text with something in it
 FACT_FULL = 1 << 20       # a file whose first bytes are only whitespace is read this far (whitespace compresses to nothing)
-FACT_FILES_MAX = 400      # files whose blank state and digest are gathered (path order); the rest are unknown, never guessed
+FACT_FILES_MAX = 100      # files whose blank state and digest are gathered (path order); the rest are unknown, never guessed. Each costs a 2 KB call in the harness transcript, which the harness counts toward its own compaction
 FACT_FLOOR = 64           # a read the harness cut is asked again at half the length, down to this
 MAX_ENTRIES = 20_000      # entries the walk takes before it says it stopped
 CTAGS_NAMES = 20_000      # bytes of file names one ctags run is given

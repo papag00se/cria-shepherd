@@ -318,3 +318,23 @@ def test_coder_listing_labels_selection_and_unknown_symbols():
     assert 'No reasoner-selected paths' in text and 'one.py' not in text
     text = initial_inventory.render(data)
     assert 'Complete filtered list' in text and 'one.py' in text and 'two.rs' in text
+
+
+def test_an_inventory_answered_by_a_restarted_cria_is_the_same_inventory_and_a_cut_frame_is_asked_smaller(tmp_path, no_ctags):
+    for i in range(60):
+        (tmp_path / f'f{i:02}.txt').write_text(f'text {i}\n')
+    (tmp_path / 'sub').mkdir()
+    (tmp_path / 'sub' / 'deep.txt').write_text(' ')
+    steady = inventory_of_disk(tmp_path)
+    restarted = inventory_of_disk(tmp_path, restart=True)
+    steady_view = {i['path']: (i['size'], i['blank'], i.get('digest')) for i in steady['files']}
+    assert steady_view == {i['path']: (i['size'], i['blank'], i.get('digest')) for i in restarted['files']} and len(steady_view) == 61
+    cut = {'n': 0}
+
+    def alter(command, text):
+        if 'workspace inventory f07.txt' in command and cut['n'] < 2:
+            cut['n'] += 1
+            return text[:len(text) // 2]
+        return text
+    again = inventory_of_disk(tmp_path, alter=alter)
+    assert cut['n'] == 2 and {i['path']: (i['size'], i['blank'], i.get('digest')) for i in again['files']} == steady_view
