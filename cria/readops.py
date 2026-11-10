@@ -140,6 +140,18 @@ def merge(frames: list) -> tuple[bytes, list]:
     return bytes(prefix), ranges
 
 
+def uncovered(ranges: list, size: int) -> list:
+    """The ``[(start, end)]`` gaps of ``[0, size)`` that ``ranges`` (as :func:`merge` gives them) leave."""
+    gaps, pos = [], 0
+    for a, b in ranges:
+        if a > pos:
+            gaps.append((pos, a))
+        pos = max(pos, b)
+    if pos < size:
+        gaps.append((pos, size))
+    return gaps
+
+
 class ReadOps:
     """The read half of the engine; ``Ops`` inherits it (``_step``, ``_next``, ``_reguard``, the cache and the ledger live there)."""
 

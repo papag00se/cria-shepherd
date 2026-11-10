@@ -2,10 +2,11 @@
 carried, a restart between steps, two writers of one file (compare-and-swap: no update lost), links in the path, and a harness checker."""
 import os
 import shutil
+import subprocess
 
 import pytest
 
-from cria import denial
+from cria import denial, syntaxcheck
 from cria.ops import Ops
 from write_edit_helpers import _ENGINE, call, command_of, do, lower, run, settle, write_edit_workspace_view  # noqa: F401
 
@@ -119,6 +120,73 @@ def test_a_ruby_candidate_is_checked_by_the_harness_with_the_checkers_own_words_
     scratch = tmp_path.parent / (tmp_path.name + '.scratch')
     assert not [n for n in os.listdir(scratch) if n.startswith('.ctx-run-')]
     assert denial.landed(do('write_file', {'path': 'r.rb', 'content': 'def a\n  2\nend\n'}, tmp_path, cid='ok')[2][1])
+
+
+@pytest.mark.parametrize('name,source,broken,good', [
+    ('ruby', 'r.rb', ''.join(f'def m{i}(\n  x = = 1\nend\n' for i in range(200)), 'def a\n  1\nend\n'),
+    ('gofmt', 'g.go', 'package p\n' + ''.join(f'func f{i}( {{ x = = 1 }}\n' for i in range(200)), 'package p\n\nfunc a() {}\n')], ids=['ruby', 'go'])
+def test_a_checker_that_says_more_than_the_run_stub_answers_inline_is_read_to_the_end_and_its_directory_is_removed(tmp_path, name, source, broken, good):
+    """`ruby -c` says ~43 KB about 200 broken methods and `gofmt -e` ~49 KB about 200 broken functions (it does not stop at ten errors); the
+    run stub answers the first 6,000 bytes and keeps its directory. The refusal carried the first 6,000 bytes, cut mid-line and unlabelled, and
+    the directory (which holds the whole candidate) stayed in the harness's temporary directory for good. cria now pages the rest of the
+    output with `read` and removes the directory with `rm`: the whole of what the checker said reaches the refusal."""
+    if not shutil.which(name):
+        pytest.skip(f'no {name}')
+    (tmp_path / source).write_text(good)
+    scratch = tmp_path.parent / (tmp_path.name + '.scratch')
+    ran = []
+    tc = lower([call('write_file', {'path': source, 'content': broken}, 'w')], root=str(tmp_path))[0]
+    first = run(tc, tmp_path)
+    msgs = [{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first.stdout}]
+    shown = settle(msgs, tmp_path, ran=ran)
+    wholly = subprocess.run(['sh', '-c', syntaxcheck.script(source, broken.encode()).replace('$(dirname "$0")', str(scratch))], capture_output=True, text=True,
+                            cwd=scratch if scratch.exists() else tmp_path)            # the checker's own words, all of them, as an oracle
+    said = syntaxcheck.interpret(source, 1, 0, (wholly.stdout + wholly.stderr).encode(), str(scratch))
+    text = shown[1]['content']
+    assert len(said) > 40_000 and denial.refused(shown[1]) and said in text and (tmp_path / source).read_text() == good
+    assert len(stubs(ran, 'read')) >= 3 and len(stubs(ran, 'rm')) == 1                        # the pages, then the one removal
+    assert not [n for n in os.listdir(scratch) if n.startswith('.ctx-run-')]
+
+
+# A checker that fails only on a candidate that says BAD, with 20,000 bytes of words (more than the run stub's 6,000 inline), then lingers if asked to.
+def _wordy_checker(monkeypatch, linger=False):
+    monkeypatch.setitem(syntaxcheck.HARNESS, '.rb', "sh -c 'if grep -q BAD \"$1\"; then head -c 20000 /dev/zero | tr \"\\0\" x; echo; "
+                                                      + ("sleep 30; " if linger else "") + "exit 1; fi' sh")
+
+
+def _written_through_a_wordy_checker(tmp_path, fault=None, cut_first=False):
+    (tmp_path / 'r.rb').write_text('def a\n  1\nend\n')
+    tc = lower([call('write_file', {'path': 'r.rb', 'content': 'BAD\n'}, 'w')], root=str(tmp_path))[0]
+    first = run(tc, tmp_path).stdout
+    ran = []
+    shown = settle([{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first[:len(first) // 2] if cut_first else first}],
+                   tmp_path, fault=fault, ran=ran)
+    return shown, ran, tmp_path.parent / (tmp_path.name + '.scratch')
+
+
+def test_a_checkers_whole_output_is_paged_in_even_when_the_harness_cuts_a_page_and_nothing_is_left_behind(tmp_path, monkeypatch):
+    _wordy_checker(monkeypatch)
+    cut = {'n': 0}
+
+    def fault(tc):                       # the harness cuts the reply of the first page that is read
+        if "/out'" in command_of(tc) or '/out ' in command_of(tc):
+            cut['n'] += 1
+            return (lambda text: text[:len(text) // 2]) if cut['n'] == 1 else None
+    shown, ran, scratch = _written_through_a_wordy_checker(tmp_path, fault)
+    text = shown[1]['content']
+    assert denial.refused(shown[1]) and 'x' * 20_000 in text and 'REFUSED' in text and cut['n'] >= 2
+    assert (tmp_path / 'r.rb').read_text() == 'def a\n  1\nend\n'
+    assert not [n for n in os.listdir(scratch) if n.startswith('.ctx-run-')]
+
+
+@pytest.mark.parametrize('what', ['the first reply is cut', 'the checker is killed at its deadline after 20,000 bytes of words'])
+def test_a_run_directory_is_removed_when_the_checker_never_gave_a_verdict(tmp_path, monkeypatch, what):
+    """No verdict is UNKNOWN, which never refuses (the write lands); the harness's directory with the candidate in it goes either way."""
+    _wordy_checker(monkeypatch, linger=what.startswith('the checker'))
+    monkeypatch.setattr(syntaxcheck, 'TIMEOUT', 1)
+    shown, ran, scratch = _written_through_a_wordy_checker(tmp_path, cut_first=what.startswith('the first'))
+    assert denial.landed(shown[1]) and (tmp_path / 'r.rb').read_text() == 'BAD\n'
+    assert not [n for n in os.listdir(scratch) if n.startswith('.ctx-run-')] and len(stubs(ran, 'rm')) >= 1
 
 
 @pytest.mark.parametrize('name,args', [('write_file', {'path': 'n.txt', 'content': 'hi\n'}), ('edit_file', {'path': 'm.txt', 'old_string': 'a', 'new_string': 'b'})],

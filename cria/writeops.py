@@ -38,12 +38,13 @@ from .opsteps import Final, Issue
 from .toolargs import parse_args as _parse
 
 MUTATE = 'mutate'
-WHATS = ('mwrite', 'mput', 'check', 'noop', 'mrm')
+WHATS = ('mwrite', 'mput', 'check', 'cread', 'mclean', 'noop', 'mrm')
 REPLAN_MAX = 3          # times the file changed under one group (stale) before the group says so
 LOST_MAX = 2            # times one write is sent again after its reply was lost, before its fate is declared unconfirmed
 CHECK_WAIT = 8          # seconds the harness waits for a checker before it answers "running" (under the harness's own yield)
 CHECK_WAITS = 3         # waits for a checker that is still running, before its verdict is UNKNOWN
 CHECK_RESERVE = 6_000   # room one command keeps for everything but a candidate's base64
+CHECK_OUT_MAX = 1 << 20    # a checker's words past this many bytes are not fetched: its verdict is UNKNOWN (never refuses)
 HOLD = 3_000            # the bytes of a command that are not payload (the stub and its arguments)
 
 
@@ -114,6 +115,12 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
         return harnessprims.compose('put', nonce, words, data, comment=ctx['label'], safe_path=ctx['safe'])
     if what == 'mrm':
         return harnessprims.compose('rm', nonce, [args['root'], args['rel'], 'f', '*'], comment=ctx['label'], safe_path=ctx['safe'])
+    if what == 'cread':       # the rest of a checker's output, a page of `<run dir>/out`: the run directory is named by the token cria derived
+        return harnessprims.compose('read', nonce, [harnessprims.TMPDIR, f".ctx-run-{args['tok']}/out", args['off'], args['len'], 0],
+                                    comment='check output ' + mutplan.name_of(args['path']), safe_path=ctx['safe'])
+    if what == 'mclean':      # the run directory of a checker: removed whole, whatever became of the reply that would have said it was
+        return harnessprims.compose('rm', nonce, [harnessprims.TMPDIR, f".ctx-run-{args['tok']}", 't', '*'],
+                                    comment='check cleanup ' + mutplan.name_of(args['path']), safe_path=ctx['safe'])
     wait = args['mode'] == 'wait'
     text = None if wait else syntaxcheck.script(args['path'], _bytes(blobs, args['blob']))
     return harnessprims.compose('run', nonce, [args['mode'], harnessprims.TMPDIR, args['tok'], syntaxcheck.TIMEOUT, CHECK_WAIT, '', 0],
@@ -312,6 +319,33 @@ class WriteOps:
 
     # ---------------------------------------------------------------- the decisions, after each wave
     def _m_after(self, op, wave: list, steps: list):
+        """The decision after a wave, then the checkers' run directories swept: none is ever left behind, whichever way the group ends."""
+        if {st.what for st in wave} == {'mclean'}:           # the sweep that was all this wave held: the group's answer was decided before it
+            done = wave[0].args['final']
+            return Final(done['outcome'], done['text'], done['extra'])
+        return self._m_swept(op, self._m_decided(op, [st for st in wave if st.what != 'mclean'], steps), steps)
+
+    def _m_swept(self, op, decision, steps: list):
+        """``decision`` with the removal of every checker directory it no longer needs: beside the steps it issues, or (when it is the
+        group's answer) before it is given. A directory is needed while a checker still runs or its output is still being read."""
+        if not isinstance(decision, (Issue, Final)):
+            return decision
+        swept = {st.args['key'] for st in steps if st.what == 'mclean'}
+        live = {a['key'] for _, what, a in decision.steps if what in ('check', 'cread')} if isinstance(decision, Issue) else set()
+        latest = {st.args['key']: st for st in steps if st.what == 'check' and st.frame is not None}
+        dirs = [{'key': key, 'path': st.args['path'], 'tok': st.args['tok']} for key, st in latest.items()
+                if key not in swept | live and not (st.frame['hdr'].get('ok') == 1 and st.frame['hdr'].get('removed') == 1)]
+        if not dirs:
+            return decision
+        base, wave = steps[-1].s + 1, steps[-1].args['wave'] + 1
+        if isinstance(decision, Final):
+            answer = {'outcome': decision.outcome, 'text': decision.text, 'extra': decision.extra}
+            return Issue(tuple((base + i, 'mclean', {**d, 'wave': wave, 'final': answer}) for i, d in enumerate(dirs)))
+        first = decision.steps[0][0] if decision.steps else base
+        wave = decision.steps[0][2]['wave'] if decision.steps else wave
+        return Issue((*decision.steps, *((first + len(decision.steps) + i, 'mclean', {**d, 'wave': wave}) for i, d in enumerate(dirs))), decision.blobs)
+
+    def _m_decided(self, op, wave: list, steps: list):
         kinds = {st.what for st in wave}
         if 'mwrite' in kinds:
             return self._m_wrote(op, next(st for st in wave if st.what == 'mwrite'), steps)
@@ -393,14 +427,8 @@ class WriteOps:
 
     def _m_more(self, op, steps, args, size, ranges):
         """The next wave of pages: the uncovered ranges of the file at the rung's size, at most ``WAVE`` calls."""
-        length, gaps, pos = self._length(args['rung']), [], 0
-        for a, b in ranges:
-            if a > pos:
-                gaps.append((pos, a))
-            pos = max(pos, b)
-        if pos < size:
-            gaps.append((pos, size))
-        pages = [off for a, b in gaps for off in range(a, b, length)][:readops.WAVE]
+        length = self._length(args['rung'])
+        pages = [off for a, b in readops.uncovered(ranges, size) for off in range(a, b, length)][:readops.WAVE]
         if not pages or pages[0] >= readops.TRANSPORT_MAX:
             return Final(*self._unresolved(op))
         return Issue(self._next(steps, readops.READ, *({**args, 'off': off, 'len': length} for off in pages)))
@@ -463,8 +491,9 @@ class WriteOps:
 
     # the checkers ----------------------------------------------------
     def _verdicts(self, op, steps: list):
-        """``{check key: message or None}`` from the checks that came back, or an Issue that waits for a checker still running."""
-        out, waiting = {}, []
+        """``{check key: message or None}`` from the checks that came back, or an Issue that waits for a checker still running or fetches the
+        rest of an output the run stub kept (it answers the first 6,000 bytes; the rest is paged from the run's file, never cut)."""
+        out, ask = {}, []
         latest: dict = {}
         for st in steps:
             if st.what == 'check' and st.frame is not None:
@@ -473,17 +502,49 @@ class WriteOps:
             header, args = st.frame['hdr'], st.args
             if header.get('ok') == 1 and header.get('state') == 'running':
                 if args['n'] <= CHECK_WAITS:
-                    waiting.append({**args, 'mode': 'wait', 'n': args['n'] + 1})
+                    ask.append(('check', {**args, 'mode': 'wait', 'n': args['n'] + 1}))
                 else:
                     out[key] = None
             elif header.get('ok') == 1:
-                data = st.frame['text'].encode('utf-8', 'surrogateescape')
-                out[key] = syntaxcheck.interpret(args['path'], header.get('exit'), header.get('timeout'), data, header.get('dir', ''))
+                whole = self._check_output(steps, key, st)
+                if isinstance(whole, list):
+                    ask += [('cread', {'key': key, 'path': args['path'], 'tok': args['tok'], **page}) for page in whole]
+                else:
+                    out[key] = None if whole is None else syntaxcheck.interpret(args['path'], header.get('exit'), header.get('timeout'), whole,
+                                                                                header.get('dir', ''))
             else:
                 out[key] = None                      # the checker did not answer: unknown stays safe
-        if waiting:
-            return Issue(self._next(steps, 'check', *waiting))
+        if ask:
+            base, wave = steps[-1].s + 1, steps[-1].args['wave'] + 1
+            return Issue(tuple((base + i, what, {**a, 'wave': wave}) for i, (what, a) in enumerate(ask)))
         return out
+
+    def _check_output(self, steps: list, key: str, st):
+        """A finished checker's whole output (bytes), the pages still to ask for (``[{off, len, rung}]``), or None (UNKNOWN: it cannot be
+        had, or would not be judged: a killed or absent checker, an output that is not worth a model's reading)."""
+        header, head = st.frame['hdr'], st.frame['text'].encode('utf-8', 'surrogateescape')
+        size = header.get('size')
+        if header.get('timeout') or header.get('exit') in (0, 126, 127, None) or not isinstance(size, int):
+            return head                              # the verdict will not read it
+        if size <= len(head):
+            return head
+        if size > CHECK_OUT_MAX:
+            return None
+        pages = [p for p in steps if p.what == 'cread' and p.args['key'] == key and p.frame is not None]
+        if any(p.frame['hdr'].get('ok') == 0 for p in pages):
+            return None
+        good = [(p.frame['hdr']['off'], p.frame['text'].encode('utf-8', 'surrogateescape')) for p in pages
+                if p.frame['hdr'].get('ok') == 1 and p.frame['hdr'].get('fsha') == header.get('osha')]
+        prefix, ranges = readops.merge([(0, head), *good])
+        if len(prefix) >= size:
+            return prefix[:size] if hashlib.sha256(prefix[:size]).hexdigest() == header.get('osha') else None
+        newest = max((p.args['wave'] for p in pages), default=-1)
+        rung = max((p.args['rung'] for p in pages), default=0) + (1 if any(p.args['wave'] == newest and p.frame['hdr'].get('ok') == -1 for p in pages) else 0)
+        length = self._length(rung)
+        if length <= readops.LEN_FLOOR and rung:
+            return None                              # a frame the harness keeps cutting
+        asks = [{'off': off, 'len': length, 'rung': rung} for a, b in readops.uncovered(ranges, size) for off in range(a, b, length)][:readops.WAVE]
+        return asks or None
 
     # the landing -----------------------------------------------------
     def _m_staged(self, op, wave: list, steps: list):
