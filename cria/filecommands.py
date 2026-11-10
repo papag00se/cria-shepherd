@@ -353,10 +353,6 @@ def _read_in_place_of_write(path: str, fact: str, tool: str = 'write_file') -> s
     """Return the unread file with a refused-write receipt and verified read payload."""
     q = _qbash(path)
     labels = prompts.load_map("write_unread_target")
-    # The call already contains the path; label omission of oversized authored
-    # context rather than letting the vanished/unreadable branch be cut.
-    if len(fact.encode('utf-8')) > 1024:
-        fact = prompts.load_map("read_transport_oversize")["fact_omitted"]
     # MARKED AS A CALL THAT DID NOT RUN, because the write did not: every reader that asks "did this
     # write land?" (`_extract_writes`, contextfloor, focustrim's supersede rule, the ledger) asks
     # `denial.unlanded_call_ids` — proven by the receipt this very text carries. The readers that want the
@@ -632,7 +628,7 @@ snapshot_release(snapshot['mode'] == 'snapshot' and offset + best >= len(stream)
 
 
 def read_instead_prose(fact: str, tool: str = 'write_file') -> tuple[str, str]:
-    """Render multipart read-instead wording without discarding its fact."""
+    """Render multipart read-instead wording for the held call."""
     labels = prompts.load_map('write_unread_target')
     with denial.unframed():
         return (denial.mark(prompts.fill(labels['read'], fact=fact, tool=tool)),

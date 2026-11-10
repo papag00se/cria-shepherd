@@ -32,7 +32,7 @@ def test_the_unread_fact_exists_only_with_assists_a_root_and_a_session_and_only_
         assert check(pom) == ""                                          # no session yet: the lowering ran before the drive made one
         loop._put_session("sid:u", synthetic())
         fact = check(pom)
-        assert "pom.xml" in fact and "33" in fact                        # the real size of the real file, said as a fact
+        assert "pom.xml" in fact and "Whole-file context was not established" in fact
         assert check(str(tmp_path / "new_file.txt")) == "" and check("") == ""   # absent/new and empty names carry no claim
         seen = loop.unread_target_check("sid:u", [{"role": "assistant", "tool_calls": [{"id": "r", "function": {
             "name": "read_file", "arguments": json.dumps({"path": pom})}}]},
@@ -65,7 +65,7 @@ def test_unread_hold_uses_current_inventory_blankness_and_logs_unknown(tmp_path)
                    {'role': 'tool', 'tool_call_id': 'change', 'content': 'done'}]
         view.note_written('source', 'def')  # fresh current bytes after the later command
         stale = driver.unread_target_check('sid:inventory', history, root, log)
-        assert 'earlier whole-file text is not established as current' in stale('source')
+        assert 'Whole-file context was not established' in stale('source')
         assert check('unknown') == ''
         assert any(kind == 'loop.unread_target_state' and fields['target'] == 'unknown'
                    and fields['state'] == 'state_unknown' and 'turn_index' in fields

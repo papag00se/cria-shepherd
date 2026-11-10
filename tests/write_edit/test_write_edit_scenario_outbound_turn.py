@@ -31,7 +31,7 @@ def test_a_turn_of_guarded_calls_each_answers_what_it_did_and_the_refusal_carrie
     assert "'/etc/hostname' is outside the project directory" in shown["x1"]["content"]
     assert '"k":"survey"' in done["x1"].stdout and '"k":"survey"' not in done["m1"].stdout       # the survey rode the external refusal only
     assert shown["r1"]["content"] == DOC and done["g1"].stdout == "beta\n"                                # root-absolute spill spellings were corrected
-    assert "notes.txt was never read" in shown["u1"]["content"] and "n\n" in shown["u1"]["content"] and (tmp_path / "notes.txt").read_text() == "n\n"
+    assert "This write_file call was not run" in shown["u1"]["content"] and "n\n" in shown["u1"]["content"] and (tmp_path / "notes.txt").read_text() == "n\n"
     kinds = {k for k, _ in events}
     assert {"writeproxy.blocked_malformed_call", "writeproxy.blocked_external", "writeproxy.spill_path_redirect", "writeproxy.spill_read_gated",
             "writeproxy.spill_command_redirect", "writeproxy.write_unread_target"} <= kinds

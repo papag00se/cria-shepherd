@@ -24,5 +24,5 @@ def test_a_fenced_call_that_was_not_run_is_said_with_its_reason_and_the_unread_f
     assert retry[-2] == {"role": "assistant", "content": fenced}                       # its own words are carried, not dropped
     said = retry[-1]["content"]
     assert retry[-1]["role"] == "user" and f"`edit_file` for `{pom}`" in said and "not one of this turn's tools" in said
-    assert "already exists on disk (990 bytes)" in said.split("\n\n", 1)[1] and "cria" not in said.lower()       # the measured fact rides after the reason
+    assert "Whole-file context was not established" in said.split("\n\n", 1)[1] and "cria" not in said.lower()
     assert [f["reason"] for k, f in rlog.events if k == "loop.fenced_call_refused_said"] == ["off_menu"]

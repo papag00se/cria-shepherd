@@ -80,6 +80,65 @@ def test_incident_mutations_are_held_and_delivered_through_multipart(tmp_path, l
             wsview.unbind(token)
 
 
+@pytest.mark.parametrize('name', ['write_file', 'create_file', 'edit_file', 'str_replace', 'apply_patch'])
+@pytest.mark.parametrize('changed', [False, True])
+def test_held_receipt_attributes_only_the_call_when_file_changes_before_read(tmp_path, name, changed):
+    from cria import initial_inventory, loop
+    from read_multipart_helpers import SHELL
+    import subprocess
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    path = workspace / 'x.txt'
+    path.write_text('old\n')
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(workspace))],
+                                     capture_output=True, text=True, check=True).stdout)
+    view = wsview.View(str(workspace), 'sid:receipt')
+    assert view.apply_initial_inventory(data, str(workspace))
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                       runs_dir='', workspace_root=str(workspace), assists=True), loop.LoopStore())
+    driver._put_session('sid:receipt', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+    args = ({'input': f'*** Begin Patch\n*** Update File: {path}\n@@\n-old\n+replacement\n*** End Patch\n'}
+            if name == 'apply_patch' else {'path': str(path), **(
+                {'content': 'replacement'} if name in ('write_file', 'create_file')
+                else {'old_string': 'old', 'new_string': 'replacement'})})
+    original = {'id': 'held', 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(args)}}
+    bridge = Bridge(str(tmp_path / 'state'))
+    completion = {'choices': [{'message': {'tool_calls': [original]}}]}
+    token = wsview.bind(view)
+    try:
+        writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+            injected={name}, workspace_root=str(workspace),
+            unread_target=driver.unread_target_check('sid:receipt', [], str(workspace)),
+            multipart_command=lambda tc, effect, receipt: bridge.register('s', tc, effect, SHELL, receipt))
+        bridge.bind('s', completion)
+        lowered = completion['choices'][0]['message']['tool_calls'][0]
+        expected = 'new external content\n' if changed else 'old\n'
+        if changed:
+            path.write_text(expected)
+        messages = [{'role': 'assistant', 'tool_calls': [lowered]},
+                    {'role': 'tool', 'tool_call_id': 'held', 'content': run_call(lowered)}]
+        projected, _ = page_through(bridge, messages, restart=lambda: Bridge(str(tmp_path / 'state')))
+        shown = writeproxy.represent_inbound(projected, workspace_root=str(workspace))
+        result = next(m for m in shown if m.get('tool_call_id') == 'held')
+        assert denial.refused(result) and denial.read_payload(result) == expected
+        receipt = result['content'].split('⟦ctx:read-instead⟧', 1)[0]
+        assert f'This {name} call was not run' in receipt
+        assert receipt == f'⟦ctx:denied⟧ This {name} call was not run. The content read follows.\n'
+        assert 'cria' not in receipt.lower()
+        assert path.read_text() == expected
+    finally:
+        wsview.unbind(token)
+
+
+def test_hold_path_templates_do_not_assert_file_state():
+    from cria import prompts
+    for filename in ('unread_target_fact', 'write_unread_target', 'read_transport_oversize'):
+        for text in prompts.load_map(filename).values():
+            lowered = text.lower()
+            assert 'unchanged' not in lowered and 'already exists' not in lowered
+            assert '{{size}}' not in lowered and ' bytes)' not in lowered
+
+
 @pytest.mark.parametrize('name', ['edit_file', 'str_replace', 'create_file'])
 def test_unread_mutation_keeps_identity_and_verified_bytes_over_multiple_pages(tmp_path, name):
     from cria import loop

@@ -53,7 +53,7 @@ def test_a_write_over_an_unread_existing_file_is_answered_with_the_file_and_coun
         _, done, msgs = do("write_file", {"path": "pom.xml", "content": content}, ws, unread_target=unread(ws))
         assert (ws / "pom.xml").read_text() == POM
         assert denial.refused(msgs[1]) and denial.read_payload(msgs[1]) == POM and msgs[1]["content"].endswith(POM)
-        assert "pom.xml already exists on disk" in msgs[1]["content"] and "This write_file call was not run" in msgs[1]["content"]
+        assert "This write_file call was not run" in msgs[1]["content"]
     assert "pom.xml" in loop._extract_reads(msgs) and loop._extract_writes(msgs) == {}
     assert denial.unlanded_call_ids(msgs) == {"c1"}
     landed, _, disk = write_pom(ws, messages=msgs)                         # the answer lifted the hold
