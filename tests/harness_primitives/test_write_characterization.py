@@ -8,6 +8,7 @@ now does not have."""
 import json
 import os
 import pathlib
+import shutil
 
 import pytest
 
@@ -47,8 +48,14 @@ INTENDED = {
 }
 
 
+TOOLS = {'rb': 'ruby', 'go': 'gofmt', 'js': 'node', 'mjs': 'node', 'php': 'php'}      # the harness's own checkers: a case needs the tool its language is checked with
+
+
 @pytest.mark.parametrize('name', sorted(char_rig.CASES))
 def test_case(tmp_path, name):
+    tool = TOOLS.get(name.rsplit('_', 1)[-1])
+    if tool and not shutil.which(tool):
+        pytest.skip(f'no {tool}: the harness cannot check this language here (UNKNOWN never refuses)')
     got = char_rig.run_case(name, tmp_path)
     target = os.environ.get('CRIA_CHARACTERIZE')
     if target:

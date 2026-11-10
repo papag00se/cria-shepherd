@@ -67,7 +67,9 @@ def test_write_and_edit_through_the_pinned_codex_and_a_real_cria_server(sandbox,
         [('edit_file', {'path': 't.txt', 'old_string': f'row {i} = {i}\n', 'new_string': f'row {i} = {i + 1000}\n'}) for i in range(30)],
         [('write_file', {'path': 'big45.txt', 'content': HEX}), ('write_file', {'path': 'big150.txt', 'content': big150}),
          ('write_file', {'path': 'big300.txt', 'content': big300})],
-        [('write_file', {'path': 'inside', 'content': 'through the link\n'}), ('write_file', {'path': 'out', 'content': 'ESCAPED\n'})])
+        [('write_file', {'path': 'inside', 'content': 'through the link\n'}), ('write_file', {'path': 'out', 'content': 'ESCAPED\n'})],
+        [('write_file', {'path': 'r.rb', 'content': 'def a\n  1\nend\n'})],
+        [('write_file', {'path': 'r.rb', 'content': 'def a(\n  1\nend\n'})])
     serve(sandbox, tmp_path, backend)
     assert (ws / 'src' / 'new.py').read_text() == 'x = 1\n' and (ws / 'a.txt').read_text() == 'after\n'
     assert (ws / 'a.py').read_text() == 'def f():\n    return 2\n'
@@ -82,6 +84,12 @@ def test_write_and_edit_through_the_pinned_codex_and_a_real_cria_server(sandbox,
     assert 'would break a.py' in results[3] and 'your old_string is not in the file' in results[4]
     assert results[5:35] == ['Wrote t.txt'] * 30 and results[35:38] == ['Wrote big45.txt', 'Wrote big150.txt', 'Wrote big300.txt']
     assert results[38] == 'Wrote inside' and results[39].startswith('⟦ctx:denied⟧') and 'outside the project directory' in results[39]
+    ruby = [first['model_call_4_0'], first['model_call_5_0']]                                   # the harness's own `ruby -c`, through `run`, in the sandbox
+    shutil_ruby = __import__('shutil').which('ruby')
+    if shutil_ruby:
+        assert ruby[0] == 'Wrote r.rb' and ruby[1].startswith('⟦ctx:denied⟧ write_file REFUSED') and 'r.rb:' in ruby[1] and 'cand.rb' not in ruby[1]
+        assert (ws / 'r.rb').read_text() == 'def a\n  1\nend\n'
+        assert not [n for n in os.listdir(sandbox.scratch) if n.startswith('.ctx-run-')]
     seen = json.dumps(backend.bodies, default=str)
     assert not [p for p in PRIVATE if p in seen], [p for p in PRIVATE if p in seen]
 
