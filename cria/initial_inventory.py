@@ -72,7 +72,7 @@ print(output)
 
 
 _INDEX_SETUP = r'''
-import codecs, selectors, shutil, subprocess, time
+import codecs, hashlib, selectors, shutil, subprocess, time
 CHUNK = 65536
 class Indexer:
     def __init__(self):
@@ -191,11 +191,13 @@ _SYMBOLS = r'''                item['blank'] = None
                         binary = False
                         blank = True
                         total = 0
+                        digest = hashlib.sha256()
                         while total < opened.st_size:
                             chunk = source.read(min(CHUNK, opened.st_size - total))
                             if not chunk:
                                 break
                             total += len(chunk)
+                            digest.update(chunk)
                             binary = binary or b'\0' in chunk
                             text = decoder.decode(chunk)
                             blank = blank and (not text or text.isspace())
@@ -214,6 +216,7 @@ _SYMBOLS = r'''                item['blank'] = None
                         if not unchanged():
                             raise OSError('file changed during survey')
                     item['blank'] = blank
+                    item['digest'] = digest.hexdigest()
                     item['symbols'] = symbols'''
 
 

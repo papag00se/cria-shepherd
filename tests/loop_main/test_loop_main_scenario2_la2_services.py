@@ -8,6 +8,7 @@ import pytest
 
 from cria import assistruntime, pastedfile, shrinkprotection, wsview
 from cria.config import Role
+from cria import loop
 from cria.loop import Loop, LoopContext, LoopStore
 from cria.plan import Plan, PlanItem
 
@@ -76,6 +77,49 @@ def test_unread_hold_uses_current_inventory_blankness_and_logs_unknown(tmp_path)
                    and fields['state'] == 'state_unknown' for kind, fields in log.events)
     finally:
         wsview.unbind(token)
+
+
+@pytest.mark.parametrize('command,invalidated', [
+    ('echo changed > source', {'source'}), ('tee source', {'source'}),
+    ('mv source moved', {'source'}), ('rm source', {'source'}), ('sed -i s/a/b/ source', {'source'}),
+    ('git checkout -- .', {'source', 'other'}), ('rm -rf dir', {'source', 'other'}),
+    ('cp -r dir dest', {'source', 'other'}), ('rsync -a src/ dest/', {'source', 'other'}),
+    ('tar xf archive.tar', {'source', 'other'}), ('unzip archive.zip', {'source', 'other'}),
+    ('cargo init', {'source', 'other'}), ('npm create vite', {'source', 'other'}),
+])
+def test_inventory_observations_expire_by_mutation(tmp_path, command, invalidated):
+    driver = make()
+    sess = synthetic()
+    sess.inventory_root = str(tmp_path)
+    sess.inventory_observations = {p: {'blank': False, 'size': 3, 'origin': 'initial_inventory',
+                                        'observed_at': 1.0} for p in ('source', 'other')}
+    history = [{'role': 'assistant', 'tool_calls': [{'id': 'cmd', 'type': 'function',
+                'function': {'name': 'exec_command', 'arguments': json.dumps({'cmd': command})}}]},
+               {'role': 'tool', 'tool_call_id': 'cmd', 'content': 'done'}]
+    view = wsview.View(str(tmp_path), 'sid:mutations')
+    loop._invalidate_inventory_observations(sess, history, view)
+    assert {p for p, f in sess.inventory_observations.items() if f['blank'] is None} == invalidated
+    # The same retained history is not a new mutation after a later fresh observation.
+    sess.inventory_observations['source']['blank'] = False
+    loop._invalidate_inventory_observations(sess, history, view)
+    assert sess.inventory_observations['source']['blank'] is False
+
+
+def test_inventory_observations_expire_on_native_delete_and_changed_bytes(tmp_path):
+    import hashlib
+    sess = synthetic()
+    sess.inventory_root = str(tmp_path)
+    sess.inventory_observations = {p: {'blank': False, 'size': 3, 'origin': 'initial_inventory',
+        'observed_at': 1.0, 'digest': hashlib.sha256(b'abc').hexdigest()} for p in ('source', 'other')}
+    view = wsview.View(str(tmp_path), 'sid:change')
+    view.note_written('source', 'xyz')
+    loop._invalidate_inventory_observations(sess, [], view)
+    assert sess.inventory_observations['source']['invalidated_by'] == 'content_changed'
+    assert sess.inventory_observations['other']['blank'] is False
+    history = [{'role': 'assistant', 'tool_calls': [{'id': 'del', 'type': 'function',
+        'function': {'name': 'delete_file', 'arguments': json.dumps({'path': 'other'})}}]}]
+    loop._invalidate_inventory_observations(sess, history, view)
+    assert sess.inventory_observations['other']['invalidated_by'] == 'del'
 
 
 def test_captured_reads_are_credited_before_unknown_blankness(tmp_path):

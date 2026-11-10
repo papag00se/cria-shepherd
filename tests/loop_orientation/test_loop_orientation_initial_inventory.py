@@ -156,6 +156,8 @@ def test_bootstrap_adopts_inventory_before_the_coder_turn(tmp_path, monkeypatch)
         facts = session.inventory_observations
         assert {p: f['blank'] for p, f in facts.items()} == {'seed': False, 'blank': True, 'binary': None}
         assert all(f['origin'] == 'initial_inventory' and f['observed_at'] > 0 for f in facts.values())
+        import hashlib
+        assert facts['seed']['digest'] == hashlib.sha256(b'nonblank').hexdigest()
         assert session.inventory_root == str(tmp_path)
         restored = loop._session_from_dict(loop._session_to_dict(session))
         assert restored.inventory_observations == facts and restored.inventory_root == str(tmp_path)

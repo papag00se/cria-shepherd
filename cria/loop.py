@@ -40,6 +40,7 @@ import fnmatch
 import re
 import threading
 import time
+import shlex
 import urllib.parse
 import uuid
 from collections import Counter
@@ -58,7 +59,7 @@ from .imageworkflow import (current as _image_current, review_view as _image_rev
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive, writerecord
 from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
-from . import admission, initial_inventory
+from . import admission, initial_inventory, shelltool
 from .config import CONTEXT_FIXES
 from .admission import has_actionable_tools as _has_actionable_tools
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
@@ -237,6 +238,7 @@ class GuardState:
     # Private initial-inventory observations; never proof of what the coder has read.
     inventory_root: str = ""
     inventory_observations: dict = field(default_factory=dict)
+    inventory_mutation_ids: set = field(default_factory=set)
     # Whole-task satisfaction re-checks on a plan-ON completion (all steps verified INDIVIDUALLY, but is
     # the user's task actually done end-to-end?). Bounds the re-open-and-fix loop so a task the coder
     # genuinely can't finish still completes instead of looping forever. Parity with the plan-off critic.
@@ -3067,7 +3069,8 @@ class Loop:
                             bootstrap.inventory_root = wsview.current().root
                             bootstrap.inventory_observations = {
                                 item['path']: {'blank': item.get('blank'), 'size': item['size'],
-                                               'origin': 'initial_inventory', 'observed_at': observed_at}
+                                               'digest': item.get('digest'), 'origin': 'initial_inventory',
+                                               'observed_at': observed_at}
                                 for item in data['files']}
                         ask = None
                         if self._ctx.reasoner_role is not None and self._ctx.reasoner_buffered_chat is not None:
@@ -3243,6 +3246,8 @@ class Loop:
         # the rehunt judge, the search-read judge, the "cria chose this URL, not you" note (0 of 253
         # sessions ever carried it), and the spilled-search lookup (#23).
         sess.web_session = session_key
+        if sess.inventory_root:
+            _invalidate_inventory_observations(sess, messages, wsview.current(sess.inventory_root))
 
         # PLAN-OFF HAND-BACK: the reading step was the ONLY plan machinery plan-off is entitled to.
         # The moment the current item IS the raw task (the reading step verified, or was never
@@ -3441,6 +3446,7 @@ class Loop:
                               turn_index=sess.coder_timed_turns)
                 return ""
             view = wsview.current(root)
+            _invalidate_inventory_observations(sess, messages, view)
             rel = view.rel(path)
             _track_content_fingerprints(sess, messages, view)
             seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
@@ -5725,6 +5731,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "content_fingerprints": sess.content_fingerprints or {},
         "inventory_root": sess.inventory_root,
         "inventory_observations": sess.inventory_observations,
+        "inventory_mutation_ids": sorted(sess.inventory_mutation_ids),
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
         "generation_errors": sess.generation_errors,
@@ -5782,6 +5789,7 @@ def _session_from_dict(d) -> PlanSession | None:
                         and type(fact.get('observed_at')) in (int, float)} if isinstance(observations, dict) else {}
         return PlanSession(plan=plan, summary=str(d.get("summary", "")), content_fingerprints=fingerprints,
                            inventory_root=str(d.get('inventory_root') or ''), inventory_observations=observations,
+                           inventory_mutation_ids={x for x in d.get('inventory_mutation_ids', []) if isinstance(x, str)},
                            generation_errors=list(d.get("generation_errors") or []),
                            unexecuted_nudges=int(d.get("generation_refusal_count", 0)),
                            prior_work=str(d.get("prior_work", "")),
@@ -11064,6 +11072,100 @@ def grounded_rumination_step(gs, messages: list[dict]) -> str:
 
 
 _ANY_PATH = object()   # a mutation whose targets cannot be fully determined: any file may have changed
+
+
+def _inventory_shell_targets(command, root):
+    """Named simple shell mutations, or ANY when their effects cannot be bounded.
+
+    Bulk operations and nonliteral/compound shell are deliberately unknown. This classifier only
+    expires private inventory facts; it does not change the stricter read-credit classifier.
+    """
+    if dirguard.command_only_reads(command, root, no_writes=True):
+        return []
+    if any(c in command for c in '\n\r$`*?[]{}~;|&()'):
+        return _ANY_PATH
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars='<>')
+        lex.whitespace_split = True
+        lex.commenters = ''
+        words = list(lex)
+    except ValueError:
+        return _ANY_PATH
+    if not words:
+        return _ANY_PATH
+    cmd, args = words[0], words[1:]
+    if cmd in ('echo', 'printf', 'cat') and any(w in ('>', '>>', '>|') for w in args):
+        targets = []
+        for i, word in enumerate(args):
+            if word in ('>', '>>', '>|'):
+                if i + 1 == len(args) or args[i + 1].startswith('>'):
+                    return _ANY_PATH
+                targets.append(args[i + 1])
+            elif word.startswith('<'):
+                return _ANY_PATH
+        return targets or _ANY_PATH
+    if any(w.startswith(('<', '>')) for w in args):
+        return _ANY_PATH
+    if cmd == 'tee':
+        return [x for x in args if not x.startswith('-')] or _ANY_PATH
+    if cmd in ('rm', 'mv'):
+        if cmd == 'rm' and any(x.startswith('-') and ('r' in x[1:].lower() or x == '--recursive') for x in args):
+            return _ANY_PATH
+        return [x for x in args if not x.startswith('-')] or _ANY_PATH
+    if cmd == 'sed' and any(x == '-i' or x.startswith('-i') or x.startswith('--in-place') for x in args):
+        operands = [x for x in args if not x.startswith('-')]
+        return operands[1:] if len(operands) > 1 else _ANY_PATH
+    # git tree operations, recursive copies, rsync, extractors, generators, and every other
+    # unproved command may change arbitrary paths. No command's exit text proves otherwise.
+    return _ANY_PATH
+
+
+def _invalidate_inventory_observations(sess, messages, view):
+    if not sess.inventory_observations or sess.inventory_root != view.root:
+        return
+    from . import denial
+    for path, fact in list(sess.inventory_observations.items()):
+        digest = fact.get('digest')
+        current = view.capture_edit_preimage(path)
+        if digest and current is not None and _content_digest(current[0]) != digest:
+            sess.inventory_observations[path] = {**fact, 'blank': None, 'invalidated_by': 'content_changed'}
+    unlanded = denial.unlanded_call_ids(messages)
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('role') != 'assistant':
+            continue
+        for tc in message.get('tool_calls') or []:
+            cid = tc.get('id')
+            if not cid or cid in sess.inventory_mutation_ids:
+                continue
+            sess.inventory_mutation_ids.add(cid)
+            if cid in unlanded:
+                continue
+            fn = tc.get('function') or {}
+            command = writeproxy._command_of(fn.get('arguments') or '')
+            original = writeproxy.original_call(command)
+            if original is not None:
+                fn = original
+            elif writeproxy.is_crias_own(command):
+                continue
+            if is_shell_tool_name(fn.get('name')):
+                text = _command_text(fn.get('arguments') or '')
+                targets = _inventory_shell_targets(text, view.root) if text is not None else _ANY_PATH
+            else:
+                targets = _mutation_targets(fn, view.root)
+                if not targets and shelltool.is_write_tool_name(fn.get('name')) and shelltool.is_file_tool_name(fn.get('name')):
+                    targets = writerecord._targets(fn.get('name'), fn.get('arguments')) or _ANY_PATH
+            if targets is _ANY_PATH:
+                paths = list(sess.inventory_observations)
+            else:
+                rels = [view.rel(p) for p in targets]
+                if any(not p or p == '.' for p in rels):
+                    paths = list(sess.inventory_observations)
+                else:
+                    paths = [p for p in sess.inventory_observations
+                             if any(p == r or p.startswith(r.rstrip('/') + '/') for r in rels)]
+            for path in paths:
+                fact = sess.inventory_observations[path]
+                sess.inventory_observations[path] = {**fact, 'blank': None, 'invalidated_by': cid}
 
 _PATCH_ALL_TARGETS_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$", re.M)
 
