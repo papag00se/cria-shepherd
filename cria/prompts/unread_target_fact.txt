@@ -4,3 +4,5 @@
 # whole write of it by the coder.
 sized = {{PATH}} already exists on disk ({{SIZE}} bytes); no whole read is in this conversation, and you have not written it whole.
 unsized = {{PATH}} already exists on disk; no whole read is in this conversation, and you have not written it whole.
+sized_stale = {{PATH}} already exists on disk ({{SIZE}} bytes); the earlier whole-file text is not established as current after later changes.
+unsized_stale = {{PATH}} already exists on disk; the earlier whole-file text is not established as current after later changes.

@@ -2976,6 +2976,7 @@ class Loop:
         # from the root, so its shapes/briefings are skipped entirely (see _stable_session — a
         # briefing under a task-text hash would leak into unrelated same-prompt conversations).
         bootstrap_finished = False
+        initial_surveyed = False
         initial_listing = getattr(bootstrap, 'initial_listing', '')
 
         # A fresh actionable L5 task gets one harness-executed, read-only inventory before
@@ -3037,6 +3038,7 @@ class Loop:
                         data = json.loads(base64.b64decode(parts[0], validate=False))
                         if not isinstance(data, dict) or not isinstance(data.get('files'), list):
                             raise ValueError('invalid inventory')
+                        initial_surveyed = wsview.current().apply_initial_inventory(data, bootstrap.workspace_root or '')
                         ask = None
                         if self._ctx.reasoner_role is not None and self._ctx.reasoner_buffered_chat is not None:
                             task = bootstrap.initial_task or latest_user_text(messages)
@@ -3069,7 +3071,7 @@ class Loop:
                 messages = probegate.clean_gate_results(messages, bootstrap.gate_plan, drop_private_results=True)
             body = {**body, "messages": messages}
             rlog.emit("loop.survey_bootstrap_finished",
-                      surveyed=bool(getattr(outcome, "replan_after_survey", False)),
+                      surveyed=initial_surveyed if bootstrap.initial_inventory else bool(getattr(outcome, "replan_after_survey", False)),
                       transport_unknown=bool(getattr(outcome, "transport_unknown", False)))
 
         if sess is None:
@@ -3385,7 +3387,7 @@ class Loop:
                                   body.get("messages", [])) if path else ""
         return denial.mark(text + (f"\n\n{fact}" if fact else ""))
 
-    def unread_target_check(self, sess_key: str, messages: list[dict], root):
+    def unread_target_check(self, sess_key: str, messages: list[dict], root, rlog=None):
         """``path -> fact`` for the write lowering, or None when this session does not keep the record
         (assists off: the read ledger is never filled, so "unread" would be a guess — #11b)."""
         if not self._ctx.assists or not root:
@@ -3394,9 +3396,22 @@ class Loop:
         # a first turn; the lowering runs after it, so the lookup happens when a write is actually named.
         def check(path: str) -> str:
             sess = self._store.get(sess_key)
-            if sess is None:
+            if sess is None or not path:
                 return ""
-            return unread_target_fact(sess, wsview.current(root), path, messages)
+            view = wsview.current(root)
+            blank = view.blank_state(path)
+            if blank is True:
+                return ""
+            if blank is None:
+                if view.observation_fingerprint is not None and view.isfile(path) is False:
+                    return ""
+                if rlog is not None:
+                    rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
+                              turn_index=sess.coder_timed_turns)
+                return ""
+            rel = view.rel(path)
+            seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
+            return unread_target_fact(sess, view, path, messages, seen=seen)
         return check
 
     def shrinking_write_services(self, sess_key: str, messages: list[dict], root, rlog):
@@ -6659,7 +6674,38 @@ def whole_file_ruling(answer: str) -> str:
     return head if head in ("WHOLE_FILE", "OTHER") else answer.strip().upper()[:40]
 
 
-def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
+def _coder_has_seen_current(view, rel: str, sess, messages: list[dict]) -> bool:
+    """Do not credit visible old reads or writes past a later possible mutation."""
+    if any(view.rel(p) == rel for p in (getattr(sess, 'restored_current', None) or {})):
+        return True
+    shell_reads = {tid for tid, command, _ in _shell_runs(messages)
+                   if _prints_whole_file(command, rel, view)}
+    if not _coder_has_seen(view, rel, sess, messages) and not shell_reads:
+        return False
+    positions = [idx for idx, _, path, start, end, text in _read_results_ordered(messages)
+                 if view.rel(path) == rel and isinstance(text, str) and _read_is_whole(start, end, text)]
+    positions += [idx for idx, message in enumerate(messages or [])
+                  if message.get('role') == 'tool' and message.get('tool_call_id') in shell_reads]
+    positions += [idx for idx, _, path, *_ in _write_events(messages) if view.rel(path) == rel]
+    if not positions:
+        # Only the durable own-write record survives without a visible whole-read event.
+        written = getattr(sess, 'written_files', None) or {}
+        return not view.may_have_changed and any(view.rel(p) == rel for p in written)
+    from . import denial
+    for target in _write_paths_after(messages, max(positions), view.root,
+                                     skip=denial.unlanded_call_ids(messages)):
+        if target is _ANY_PATH or view.rel(target) == rel:
+            return False
+    current = view.capture_edit_preimage(rel)
+    if current is not None:
+        reads = [(idx, text) for idx, _, path, start, end, text in _read_results_ordered(messages)
+                 if view.rel(path) == rel and not start and not end and isinstance(text, str)]
+        if reads and reads[-1][0] == max(positions) and reads[-1][1].encode('utf-8') != current[0]:
+            return False
+    return True
+
+
+def unread_target_fact(sess, view, path: str, messages: list[dict], *, seen=None) -> str:
     """What cria MEASURED about a file a write names, or "" — never an instruction.
 
     The workspace view must PROVE the file exists (three-valued: an unanswered survey is silence, not
@@ -6673,15 +6719,19 @@ def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
     rel = view.rel(path)
     if not rel or view.isfile(rel) is not True:
         return ""
-    if _coder_has_seen(view, rel, sess, messages):
+    if (_coder_has_seen(view, rel, sess, messages) if seen is None else seen):
         return ""
     # A SHELL COMMAND THAT NAMES THE FILE MAY HAVE READ IT (`cat pom.xml`): cria cannot tell a read
     # from any other use of a path, so it does not claim the coder never looked (#5b, #11b).
-    if _ran_a_command_naming(messages, rel, view):
+    if seen is None and _ran_a_command_naming(messages, rel, view):
         return ""
     labels = prompts.load_map("unread_target_fact")
     size = view.size(rel)
-    return prompts.fill(labels["sized" if size is not None else "unsized"], path=rel, size=size)
+    key = "sized" if size is not None else "unsized"
+    if seen is False and (_coder_has_seen(view, rel, sess, messages)
+                          or _ran_a_command_naming(messages, rel, view)):
+        key += "_stale"
+    return prompts.fill(labels[key], path=rel, size=size)
 
 
 def _note_survey_baseline(sess, root) -> None:

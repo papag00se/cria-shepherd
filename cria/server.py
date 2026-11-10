@@ -1737,12 +1737,24 @@ class CriaHandler(BaseHTTPRequestHandler):
         # `<<<LOCAL_COMPACT>>>` marker), so a compaction turn whose harness still sends a full tool
         # menu is not missed either.
         _c40_active = bool(body.get("tools")) and not _is_compaction_request(body.get("messages", []))
+        # The authenticated bootstrap runs a read-only inventory in the workspace;
+        # its private transport is not a coder mutation. Keep it for the loop to
+        # consume, but do not invalidate the new view while representing history.
+        private_readonly = set()
+        bootstrap = self.server.loop_store.get_bootstrap(sess_key)
+        if bootstrap is not None and bootstrap.initial_inventory:
+            from . import initial_inventory
+            before = body.get('messages') or []
+            after = initial_inventory.strip_calls(before, bootstrap.initial_calls)
+            ids = lambda items: {call.get('id') for message in items if message.get('role') == 'assistant'
+                                 for call in message.get('tool_calls') or () if isinstance(call, dict)}
+            private_readonly = ids(before) - ids(after)
         body["messages"] = redact_secrets(
             represent_inbound(body.get("messages", []), rlog,
                               workspace_root=getattr(self, "_workspace_root", None),
                               sess_key=sess_key, tools_present=_c40_active,
                               window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog),
-                              ask=self._reasoner_question(rlog)),
+                              ask=self._reasoner_question(rlog), private_readonly_calls=private_readonly),
             self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness
@@ -1776,7 +1788,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # refuse a whole-file replacement of an existing file it has never seen (None when cria is
             # not engaged enough to keep that record — a guess would be a false fact).
             self._unread_target = (self.server.loop.unread_target_check(
-                sess_key, body.get("messages", []), self._workspace_root)
+                sess_key, body.get("messages", []), self._workspace_root, rlog)
                 if self.server.loop is not None else None)
             self._shrink_services = (self.server.loop.shrinking_write_services(
                 sess_key, body.get("messages", []), self._workspace_root, rlog)

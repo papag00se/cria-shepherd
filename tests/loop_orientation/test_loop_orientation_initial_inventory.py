@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 
-from cria import initial_inventory, probegate
+from cria import initial_inventory, probegate, wsview
 
 
 def sandboxed_ctags_available():
@@ -78,11 +78,82 @@ def test_indexer_unavailable_is_uniform_and_browser_remains_usable(tmp_path, mon
     assert {item['path']: item['blank'] for item in data['files']} == {
         'file.py': False, 'file.go': True, 'empty': True, 'unicode': True,
         'binary': None, 'invalid': None}
-    assert '"blank"' not in initial_inventory.render(data)
+    without_blank = {**data, 'files': [{k: v for k, v in item.items() if k != 'blank'}
+                                      for item in data['files']]}
+    assert initial_inventory.render(data).encode() == initial_inventory.render(without_blank).encode()
+    from cria.upstream import Upstream
+    from loop_orientation_helpers import Log
+    upstream = Upstream('http://fixture', context_window=16384, capture_dir=None, capture_rendered=False)
+    body = lambda listing: {'model': 'fixture', 'messages': [{'role': 'user', 'content': listing}]}
+    before = upstream._prep(body(initial_inventory.render(without_blank)), False, Log())[0]
+    after = upstream._prep(body(initial_inventory.render(data)), False, Log())[0]
+    assert before == after
     assert all(item['symbols'] is None for item in data['files'])
     assert data['symbol_indexer_error'] == 'indexer not found'
     assert 'Symbol indexer unavailable' in initial_inventory.render(data)
     assert not data['errors']
+
+
+def test_inventory_workspace_facts_expire_on_writes_and_mutators(tmp_path, monkeypatch):
+    monkeypatch.setattr(initial_inventory, '_INDEX_SETUP', initial_inventory._INDEX_SETUP.replace(
+        "shutil.which('ctags', path=os.defpath + ':/usr/local/bin')", 'None'))
+    (tmp_path / 'source').write_text('source')
+    (tmp_path / 'blank').write_text(' \n')
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    view = wsview.View(str(tmp_path), 'inventory-fixture')
+    assert view.apply_initial_inventory(data, str(tmp_path))
+    assert view.present_now('source') and view.present_now('blank')
+    assert view.blank_state('source') is False and view.blank_state('blank') is True
+    assert view.isfile('unlisted') is None
+    view.note_written('source', ' \n')
+    assert view.blank_state('source') is True
+    view.note_a_mutator_ran()
+    assert view.blank_state('source') is None and view.blank_state('blank') is None
+    assert not view.present_now('blank')
+
+
+def test_bootstrap_adopts_inventory_before_the_coder_turn(tmp_path, monkeypatch):
+    from cria import loop, writeproxy
+    from cria.classify import Classification
+    from loop_orientation_helpers import Log
+
+    (tmp_path / 'seed').write_text('nonblank')
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    observed = []
+    def coder(body, log):
+        observed.append(wsview.current().blank_state('seed'))
+        return json.dumps({'choices': [{'finish_reason': 'tool_calls', 'message': {
+            'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'r', 'type': 'function',
+            'function': {'name': 'read_file', 'arguments': '{"path":"seed"}'}}]}}]}).encode()
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=coder, reasoner_chat=None,
+        runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+    bootstrap = loop.SurveyBootstrap(initial_inventory=True, workspace_root=str(tmp_path),
+                                      probe_call_id='probe', gate_plan=object())
+    driver._store.put_bootstrap('sid:inventory', bootstrap)
+    monkeypatch.setattr(loop, 'guard_gate_transport', lambda *args, **kwargs: None)
+    monkeypatch.setattr(probegate, 'transported_parts', lambda plan: [base64.b64encode(json.dumps(data).encode())])
+    private_call = {'id': 'probe', 'type': 'function', 'function': {'name': 'exec_command',
+                    'arguments': json.dumps({'cmd': 'python3 -c pass'})}}
+    bootstrap.initial_calls = {'probe': initial_inventory.call_identity(private_call)}
+    bootstrap.initial_call_ids = ('probe',)
+    body = {'messages': [{'role': 'user', 'content': 'Implement the feature'},
+                         {'role': 'assistant', 'tool_calls': [private_call]},
+                         {'role': 'tool', 'tool_call_id': 'probe', 'content': 'transport'}], 'tools': [
+        {'type': 'function', 'function': {'name': 'exec_command', 'parameters': {'type': 'object',
+         'properties': {'cmd': {'type': 'string'}}}}}]}
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:inventory'))
+    try:
+        log = Log()
+        body['messages'] = writeproxy.represent_inbound(body['messages'], log, workspace_root=str(tmp_path),
+                                                        private_readonly_calls={'probe'})
+        driver.drive(body, 'sid:inventory', Classification('task', 'coding', 'test'), log)
+        assert observed == [False]
+        assert any(kind == 'loop.survey_bootstrap_finished' and fields['surveyed']
+                   for kind, fields in log.events)
+    finally:
+        wsview.unbind(token)
 
 
 def test_indexer_sandbox_rejection_is_not_retried_unsandboxed(tmp_path, monkeypatch):

@@ -1,10 +1,13 @@
 """A write over an unread file is answered with the file; a fragment that would gut a file is held with measured facts; a removal lands with facts."""
 import json
+import shutil
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from cria import denial, loop, wsview
+from cria import denial, initial_inventory, loop, wsview
 from write_edit_helpers import (call, do, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
 
 POM = "".join(f"<l{i}>{i}</l{i}>\n" for i in range(29))
@@ -66,6 +69,61 @@ def test_the_hold_is_per_path_for_existing_surveyed_files_only(ws):
     token = wsview.bind(wsview.View(str(ws), "unsurveyed"))
     try:
         assert write_pom(ws)[0]
+    finally:
+        wsview.unbind(token)
+
+
+@pytest.mark.parametrize('label,seed', [('ruby', 'shipping-rates-rb'), ('go', 'cart-billing-go')])
+def test_first_campaign_writes_are_answered_with_the_seed_files(tmp_path, label, seed):
+    """Actual Phi4 campaign write calls, with only their workspace roots relocated."""
+    repo = Path(__file__).resolve().parents[2]
+    shutil.copytree(repo / 'suite' / 'tasks' / seed / 'seed', tmp_path, dirs_exist_ok=True)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    view = wsview.View(str(tmp_path), 'sid:incident')
+    assert view.apply_initial_inventory(data, str(tmp_path))
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                       runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+    session = loop._plan_off_session(loop._synthetic_plan('Implement the task'), '')
+    driver._put_session('sid:incident', session)
+    fixture = json.loads((repo / 'tests' / 'fixtures' / 'unread_write' / (label + '.json')).read_text())
+    token = wsview.bind(view)
+    try:
+        check = driver.unread_target_check('sid:incident', [], str(tmp_path))
+        assert fixture['calls']
+        for tc in fixture['calls']:
+            args = json.loads(tc['function']['arguments'])
+            source = (tmp_path / args['path']).read_text()
+            _, _, messages = do('write_file', args, tmp_path, cid=tc['id'],
+                                unread_target=check, root=str(tmp_path))
+            assert denial.refused(messages[1]) and denial.read_payload(messages[1]) == source
+            assert 'This write_file call was not run' in messages[1]['content']
+            assert (tmp_path / args['path']).read_text() == source
+    finally:
+        wsview.unbind(token)
+
+
+@pytest.mark.parametrize('original', ['', ' \n\t', 'x'])
+def test_listed_blank_files_are_written_and_nonblank_is_read_instead(tmp_path, original):
+    path = tmp_path / 'target.txt'
+    path.write_text(original)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    view = wsview.View(str(tmp_path), 'sid:blanks')
+    assert view.apply_initial_inventory(data, str(tmp_path))
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                       runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+    driver._put_session('sid:blanks', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+    token = wsview.bind(view)
+    try:
+        check = driver.unread_target_check('sid:blanks', [], str(tmp_path))
+        _, _, messages = do('write_file', {'path': 'target.txt', 'content': 'replacement'}, tmp_path,
+                            unread_target=check, root=str(tmp_path))
+        if original.strip():
+            assert denial.refused(messages[1]) and denial.read_payload(messages[1]) == original
+            assert path.read_text() == original
+        else:
+            assert denial.landed(messages[1]) and path.read_text() == 'replacement'
     finally:
         wsview.unbind(token)
 

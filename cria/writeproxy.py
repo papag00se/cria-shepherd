@@ -1953,7 +1953,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None) -> list[dict]:
+                      ask=None, private_readonly_calls=frozenset()) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -2018,6 +2018,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     pending_mutations = set()
     read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
     def may_mutate(tc):
+        if tc.get('id') in private_readonly_calls:
+            return False
         fn = tc.get("function") or {}
         original = (_read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
                     if is_shell_tool_name(fn.get("name")) else None)
@@ -2044,7 +2046,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         # cria-composed write/edit/list, so a run of the coder's own shell commands
                         # changes the workspace while the view stands still. Recording that here is
                         # what lets a caller tell "cria saw no vendor/" from "there is no vendor/".
-                        if _native_effect_unknown_or_mutating(fn, workspace_root):
+                        if tc.get('id') not in private_readonly_calls and _native_effect_unknown_or_mutating(fn, workspace_root):
                             mutation_ids.add(tc.get("id"))
                             view.note_possible_effect()
                     if orig is not None:

@@ -248,7 +248,7 @@ class View:
                  "_progs", "_progs_prior", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
                  "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed",
                  "_body_freshness", "_body_revisions", "_observed_bodies", "_cache_revision",
-                 "_freshness", "_snapshot_revision", "_body_read_trackers")
+                 "_freshness", "_snapshot_revision", "_body_read_trackers", "_inventory_blanks")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -257,6 +257,7 @@ class View:
         self._folded: set[str] = set()                   # rel dirs listed only as a count
         self._outputs: dict[str, str] = {}               # rel dir folded as a build output -> the manifest that proved it
         self._body_read_trackers: list[BodyReadTracker] = []
+        self._inventory_blanks: dict[str, tuple[bool, int]] = {}
         self._body_freshness = _BodyFreshness()
         self._body_revisions: dict[str, int] = {}
         self._observed_bodies: dict[str, bytes] = {}
@@ -462,6 +463,10 @@ class View:
         if rel is None or rel == "":
             return False
         if self.observation_fingerprint is not None:
+            return self.isfile(path) is True
+        if (rel in self._inventory_blanks and not self.may_have_changed
+                and not self._body_freshness.pending
+                and self._body_freshness.current(self.abs(rel), self._inventory_blanks[rel][1])):
             return self.isfile(path) is True
         return self.isfile(path) is True and self._body_current(rel)
 
@@ -849,7 +854,63 @@ class View:
 
     # -- ingestion ----------------------------------------------------------
 
+    def apply_initial_inventory(self, data: dict, root: str) -> bool:
+        """Adopt listed inventory facts only into a fresh view, never infer absence."""
+        if (not self.root or _posix(root).rstrip('/') != self.root or self.usable
+                or self._body_freshness.pending or self._body_freshness.effects):
+            return False
+        files = data.get('files') if isinstance(data, dict) else None
+        if not isinstance(files, list):
+            return False
+        entries = {}
+        for item in files:
+            if not isinstance(item, dict):
+                return False
+            path, size, blank = item.get('path'), item.get('size'), item.get('blank')
+            if not isinstance(path, str) or not path or type(size) is not int or size < 0:
+                return False
+            rel = self.rel(path)
+            if not rel or rel != path or rel in entries or (blank is not None and type(blank) is not bool):
+                return False
+            entries[rel] = (size, blank)
+        self._survey_generation += 1
+        self._files = {path: (size, 0.0) for path, (size, _) in entries.items()}
+        self._dirs = {parent for path in entries for parent in _parents(path)}
+        self._folded.clear()
+        self._outputs.clear()
+        self._complete = False  # filtered paths, symlinks and errors cannot prove absence
+        self._surveyed = True
+        self._snapshot_revision = self._freshness[0]
+        self._ran_a_mutator = False
+        self._inventory_blanks = {path: (blank, self.body_revision)
+                                  for path, (_, blank) in entries.items() if blank is not None}
+        self._drop_stale_bodies()
+        observation = self.begin_observation()
+        self._body_freshness.surveys[self.root] = observation.invocation
+        return True
+
+    def blank_state(self, path) -> bool | None:
+        """Blankness from current UTF-8 bytes or a still-current inventory observation."""
+        rel = self.rel(path)
+        if not rel:
+            return None
+        preimage = self.capture_edit_preimage(path)
+        if preimage is not None:
+            raw = preimage[0]
+            try:
+                text = raw.decode('utf-8')
+            except UnicodeError:
+                return None
+            return None if b'\0' in raw else not text or text.isspace()
+        fact = self._inventory_blanks.get(rel)
+        if (fact is None or not self.present_now(path) or self.may_have_changed
+                or self._body_freshness.pending
+                or not self._body_freshness.current(self.abs(rel), fact[1])):
+            return None
+        return fact[0]
+
     def _ingest_tree(self, body: str, complete: bool = True) -> None:
+        self._inventory_blanks.clear()
         self._files.clear()
         self._dirs.clear()
         self._folded.clear()
@@ -1366,6 +1427,17 @@ class DirectView(View):
 
     def read_observed_bytes(self, path) -> bytes | None:
         return self.read_bytes(path)
+
+    def blank_state(self, path) -> bool | None:
+        raw = self.read_bytes(path)
+        if raw is None or b'\0' in raw:
+            return None
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeError:
+            return None
+        return not text or text.isspace()
+
     def listdir(self, path=".") -> list[str] | None:
         try:
             return sorted(os.listdir(str(path)))
@@ -1488,6 +1560,7 @@ def _subview(v: View, sub: str) -> View:
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
     out._observed_bodies = {p[n:]: b for p, b in v._observed_bodies.items() if p.startswith(pre)}
     out._body_revisions = {p[n:]: r for p, r in v._body_revisions.items() if p.startswith(pre)}
+    out._inventory_blanks = {p[n:]: value for p, value in v._inventory_blanks.items() if p.startswith(pre)}
     out._body_read_trackers = v._body_read_trackers
     out._body_freshness = v._body_freshness
     out._cache_revision = v._cache_revision
