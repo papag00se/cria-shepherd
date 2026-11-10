@@ -92,7 +92,12 @@ def script(path: str, data: bytes, budget: int | None = None) -> str | None:
             f'/usr/bin/env {unset} {argv} "$f"{quiet}\n')
 
 
-def interpret(path: str, exit_code, timed_out, output: bytes, directory: str = "") -> str | None:
+# The run's private directory as a checker may print it: under the harness's temporary directory as given or as the checker resolved it
+# (a symlinked TMPDIR: node prints the real path), in front of the copy's name.
+_RUN_DIR = re.compile(r"[^\s'\"(:]*\.ctx-run-[0-9a-f]+/")
+
+
+def interpret(path: str, exit_code, timed_out, output: bytes) -> str | None:
     """The checker's verdict from its run: None when it parsed or could not be run (not installed: 126/127, killed at the timeout),
     else its own words with the copy's name replaced by the file's (the path is the one part of this that carries no information:
     the coder knows which file it tried to write; a message cut to a length budget used to be all path)."""
@@ -101,8 +106,7 @@ def interpret(path: str, exit_code, timed_out, output: bytes, directory: str = "
     base = path.replace("\\", "/").rsplit("/", 1)[-1]
     message = output.decode("utf-8", "replace").strip()
     ext = extension(path)
-    if directory:
-        message = message.replace(f"{directory.rstrip('/')}/{CAND}{ext}", f"{CAND}{ext}")       # node prints the copy's absolute path
+    message = _RUN_DIR.sub("", message)                    # node prints the copy's absolute path
     message = message.replace(f"./{CAND}{ext}:", base + ":").replace(f"{CAND}{ext}:", base + ":").replace(f"{CAND}{ext}", base)
     message = message.replace(base + ": " + base + ":", base + ":")
     return message if message else "does not parse"

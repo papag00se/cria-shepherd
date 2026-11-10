@@ -510,8 +510,7 @@ class WriteOps:
                 if isinstance(whole, list):
                     ask += [('cread', {'key': key, 'path': args['path'], 'tok': args['tok'], **page}) for page in whole]
                 else:
-                    out[key] = None if whole is None else syntaxcheck.interpret(args['path'], header.get('exit'), header.get('timeout'), whole,
-                                                                                header.get('dir', ''))
+                    out[key] = None if whole is None else syntaxcheck.interpret(args['path'], header.get('exit'), header.get('timeout'), whole)
             else:
                 out[key] = None                      # the checker did not answer: unknown stays safe
         if ask:

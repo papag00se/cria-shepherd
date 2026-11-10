@@ -194,7 +194,7 @@ def test_a_checker_that_says_more_than_the_run_stub_answers_inline_is_read_to_th
     shown = settle(msgs, tmp_path, ran=ran)
     wholly = subprocess.run(['sh', '-c', syntaxcheck.script(source, broken.encode()).replace('$(dirname "$0")', str(scratch))], capture_output=True, text=True,
                             cwd=scratch if scratch.exists() else tmp_path)            # the checker's own words, all of them, as an oracle
-    said = syntaxcheck.interpret(source, 1, 0, (wholly.stdout + wholly.stderr).encode(), str(scratch))
+    said = syntaxcheck.interpret(source, 1, 0, (wholly.stdout + wholly.stderr).encode())
     text = shown[1]['content']
     assert len(said) > 40_000 and denial.refused(shown[1]) and said in text and (tmp_path / source).read_text() == good
     assert len(stubs(ran, 'read')) >= 3 and len(stubs(ran, 'rm')) == 1                        # the pages, then the one removal
@@ -240,6 +240,19 @@ def test_a_run_directory_is_removed_when_the_checker_never_gave_a_verdict(tmp_pa
     shown, ran, scratch = _written_through_a_wordy_checker(tmp_path, cut_first=what.startswith('the first'))
     assert denial.landed(shown[1]) and (tmp_path / 'r.rb').read_text() == 'BAD\n'
     assert not [n for n in os.listdir(scratch) if n.startswith('.ctx-run-')] and len(stubs(ran, 'rm')) >= 1
+
+
+def test_a_symlinked_temporary_directory_does_not_show_the_checkers_private_directory_in_the_refusal(tmp_path, monkeypatch):
+    """node prints the copy's real path: with TMPDIR a link (the macOS default) that is `<real tmp>/.ctx-run-<token>/j.js`, not the path cria
+    was given for the directory."""
+    monkeypatch.setitem(syntaxcheck.HARNESS, '.js', "sh -c 'if grep -q BAD \"$1\"; then echo \"$(realpath \"$1\"):1: boom\"; exit 1; fi' sh")
+    real = tmp_path.parent / (tmp_path.name + '.realtmp')
+    real.mkdir()
+    os.symlink(real, tmp_path.parent / (tmp_path.name + '.scratch'))                   # the harness's TMPDIR is a link
+    (tmp_path / 'j.js').write_text('a = 1;\n')
+    _, _, shown = do('write_file', {'path': 'j.js', 'content': 'BAD\n'}, tmp_path)
+    text = shown[1]['content']
+    assert denial.refused(shown[1]) and 'j.js:1: boom' in text and '.ctx-run-' not in text and str(real) not in text and 'cand.js' not in text
 
 
 @pytest.mark.parametrize('name,args', [('write_file', {'path': 'n.txt', 'content': 'hi\n'}), ('edit_file', {'path': 'm.txt', 'old_string': 'a', 'new_string': 'b'})],
