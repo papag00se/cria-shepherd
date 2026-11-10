@@ -111,6 +111,77 @@ def test_unread_mutation_keeps_identity_and_verified_bytes_over_multiple_pages(t
     assert path.read_text() == HEX
 
 
+@pytest.mark.parametrize('operation,key', [('Update', 'input'), ('Delete', 'patch'), ('Update', 'diff')])
+def test_single_native_patch_is_held_and_whole_read_is_attributed(tmp_path, operation, key):
+    from cria import loop
+    from read_multipart_helpers import SHELL
+    path = tmp_path / 'a.txt'
+    path.write_text(HEX)
+    patch = f'*** Begin Patch\n*** {operation} File: {path}\n@@\n-{HEX[:8]}\n+changed\n*** End Patch\n'
+    original = {'id': 'patch', 'type': 'function', 'function': {'name': 'apply_patch',
+                'arguments': json.dumps({key: patch})}}
+    bridge = Bridge(str(tmp_path / 'state'))
+    completion = {'choices': [{'message': {'tool_calls': [original]}}]}
+    writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+        injected=set(), workspace_root=str(tmp_path), unread_target=lambda p: 'existing unread target',
+        multipart_command=lambda tc, effect, receipt: bridge.register('s', tc, effect, SHELL, receipt))
+    bridge.bind('s', completion)
+    lowered = completion['choices'][0]['message']['tool_calls'][0]
+    assert lowered['id'] == 'patch' and lowered['function']['name'] == 'exec_command'
+    messages = [{'role': 'assistant', 'tool_calls': [lowered]},
+                {'role': 'tool', 'tool_call_id': 'patch', 'content': run_call(lowered)}]
+    projected, facts = page_through(bridge, messages, restart=lambda: Bridge(str(tmp_path / 'state')))
+    assert len(facts) == 1 and facts[0].exact_body.decode() == HEX
+    rendered = writeproxy.represent_inbound(projected, workspace_root=str(tmp_path))
+    result = next(m for m in rendered if m.get('tool_call_id') == 'patch')
+    assert denial.refused(result) and denial.read_payload(result) == HEX
+    assert 'This apply_patch call was not run' in result['content']
+    assert str(path) in loop._extract_reads(rendered)
+    assert loop._recent_unread_hold(rendered)
+    assert path.read_text() == HEX
+
+
+@pytest.mark.parametrize('contents', ['', '  \n\t', None])
+def test_single_native_patch_blank_or_missing_target_passes_unchanged(tmp_path, contents):
+    from cria import initial_inventory, loop
+    from read_multipart_helpers import SHELL
+    import subprocess
+    path = tmp_path / 'a.txt'
+    if contents is not None:
+        path.write_text(contents)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                     capture_output=True, text=True, check=True).stdout)
+    view = wsview.View(str(tmp_path), 'sid:patch')
+    assert view.apply_initial_inventory(data, str(tmp_path))
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                       runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+    driver._put_session('sid:patch', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+    original = {'id': 'p', 'type': 'function', 'function': {'name': 'apply_patch', 'arguments':
+                json.dumps({'input': f'*** Begin Patch\n*** Update File: {path}\n@@\n-x\n+y\n*** End Patch'})}}
+    completion = {'choices': [{'message': {'tool_calls': [copy.deepcopy(original)]}}]}
+    token = wsview.bind(view)
+    try:
+        writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+            injected=set(), workspace_root=str(tmp_path),
+            unread_target=driver.unread_target_check('sid:patch', [], str(tmp_path)))
+    finally:
+        wsview.unbind(token)
+    assert completion['choices'][0]['message']['tool_calls'] == [original]
+
+
+@pytest.mark.parametrize('patch', [
+    '*** Begin Patch\n*** Update File: a\n@@\n-x\n+y\n*** Update File: b\n@@\n-a\n+b\n*** End Patch',
+    '*** Begin Patch\n*** Update File: a\n*** Move to: b\n@@\n-x\n+y\n*** End Patch',
+])
+def test_unimplemented_multitarget_and_move_patches_are_not_partially_held(tmp_path, patch):
+    from read_multipart_helpers import SHELL
+    original = {'id': 'p', 'type': 'function', 'function': {'name': 'apply_patch', 'arguments': json.dumps({'input': patch})}}
+    completion = {'choices': [{'message': {'tool_calls': [copy.deepcopy(original)]}}]}
+    writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+        injected=set(), workspace_root=str(tmp_path), unread_target=lambda p: 'existing unread target')
+    assert completion['choices'][0]['message']['tool_calls'] == [original]
+
+
 def test_paged_read_is_idempotent_survives_restart_and_ends_in_exact_verified_bytes(tmp_path):
     """A retried request gets the identical private continuation; a restarted bridge replays validated pages and ends with the exact file."""
     storage = str(tmp_path / 'state'); bridge, messages, _ = start(tmp_path, HEX, storage=storage)

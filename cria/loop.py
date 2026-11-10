@@ -79,7 +79,7 @@ from .searchloop import first_domain_in, normalize_search
 from . import checkmotion, probeclassify, windowcaps
 from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
                         tool_declares_time_budget, with_time_budget, writes_something)
-from .toolargs import PATH_KEYS, parse_args
+from .toolargs import PATH_KEYS, parse_args, patch_paths, WRITE_CLASS_TOOLS as _WRITE_TOOLS
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
 # NOTE: the "accept + advance after N failed verifications" cap was REMOVED at the user's
@@ -164,10 +164,6 @@ _RUNS_DIR_DEFAULT = "~/.cria/test-runs/calls"
 # intact when the HARNESS advertises them (edit_file/str_replace), plus apply_patch (what
 # massage lowers edits into otherwise). Round 5: create_file was missing — a varying-content
 # create_file rewrite spiral was invisible to BOTH tiers.
-_WRITE_TOOLS = tuple(dict.fromkeys(
-    tuple(sorted(writeproxy_names)) + ("edit_file", "str_replace", "apply_patch")))
-
-
 def _is_write_tool(name) -> bool:
     """The single write-class predicate — used by the repetition signature and the wheel-spin /
     truncation guards alike, so a named tool is a write to all of them or to none."""
@@ -9301,8 +9297,13 @@ def _read_results_ordered(messages: list[dict]):
                 p = _path_of_args(fn.get("arguments") or "")
                 if p:
                     calls[tc["id"]] = (p, args.get("start_line"), args.get("end_line"))
+            elif fn.get('name') == 'apply_patch' and tc.get('id'):
+                paths = patch_paths(tc)
+                if len(paths) == 1:
+                    calls.setdefault(tc['id'], (paths[0], None, None))
+                    answered_by_read.add(tc['id'])
             elif fn.get("name") in (writeproxy_names | writeproxy._EDIT_NAMES) and tc.get("id") \
-                    and (p := _path_of_args(fn.get("arguments") or "")):
+                    and (p := _path_of_args(fn.get("arguments") or "", patch_ok=False)):
                 calls.setdefault(tc["id"], (p, None, None))   # only a read-instead result counts (below)
                 answered_by_read.add(tc["id"])
         tid = m.get("tool_call_id") or m.get("call_id")

@@ -63,6 +63,8 @@ def tool_path(args) -> str | None:
 WHOLE_FILE_WRITES = ("write_file", "create_file", "text_editor")
 PARTIAL_WRITES = ("edit_file", "apply_patch", "str_replace_editor")
 WRITE_TOOL_NAMES = WHOLE_FILE_WRITES + PARTIAL_WRITES
+# The narrower coding-tool class used by the driver and the temporary wire menu.
+WRITE_CLASS_TOOLS = tuple(sorted(WHOLE_FILE_WRITES[:2])) + ('edit_file', 'str_replace', 'apply_patch')
 # The native tools that read ONE file's bytes; their path argument is the file read.
 READ_TOOL_NAMES = ("read_file", "cat_file", "view_file")
 

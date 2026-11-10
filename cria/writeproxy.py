@@ -1528,7 +1528,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             if only_injected and name not in injected:
                 rebuilt.append(tc)
                 continue
-            direct_synthetic_read = name in _READ_NAMES | _WRITE_NAMES | _EDIT_NAMES
+            direct_synthetic_read = name in _READ_NAMES | _WRITE_NAMES | _EDIT_NAMES | {'apply_patch'}
             call_request = request
             from .multipartcontext import take
             alias = take(tc)
@@ -2057,8 +2057,13 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         lowered_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1
-                        if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
+                        if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES | {'apply_patch'}):
                             p = _parse(orig["arguments"])
+                            if orig['name'] == 'apply_patch':
+                                from .toolargs import patch_paths
+                                paths = patch_paths({'function': orig})
+                                if len(paths) == 1:
+                                    p = {**p, 'path': paths[0]}
                             if orig["name"] in _EDIT_NAMES and tc.get("id") in paired:
                                 preimage = view.capture_edit_preimage(_tool_path(p))
                                 if preimage is not None:

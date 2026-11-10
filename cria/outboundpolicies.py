@@ -129,14 +129,25 @@ def unread_replacement(source: OutboundCall) -> ShellCommand | None:
     # Selection encloses the callback: a disabled policy cannot gather or mutate its ledger.
     if request.unread_target is None:
         return None
-    if source.name not in _WRITE_NAMES | _EDIT_NAMES:
+    if source.name == 'apply_patch':
+        from .toolargs import patch_paths
+        paths = patch_paths(source.call)
+        # A multi-target or move patch needs a multi-spec bridge, not a partial read.
+        if len(paths) != 1 or '*** Move to:' in str(source.function.get('arguments') or ''):
+            return None
+        path = paths[0]
+    elif source.name in _WRITE_NAMES | _EDIT_NAMES:
+        mutation = _prepare_file_mutation(source.name, source.arguments)
+        if mutation.error:
+            return None
+        path = str(mutation.path)
+    else:
         return None
-    mutation = _prepare_file_mutation(source.name, source.arguments)
-    if mutation.error or not (fact := request.unread_target(str(mutation.path))):
+    if not (fact := request.unread_target(path)):
         return None
     if source.log is not None:
-        source.log.emit('writeproxy.write_unread_target', tool=source.name, path=str(mutation.path))
-    return ShellCommand(_read_in_place_of_write(str(mutation.path), fact, source.name), read_in_place=True,
+        source.log.emit('writeproxy.write_unread_target', tool=source.name, path=path)
+    return ShellCommand(_read_in_place_of_write(path, fact, source.name), read_in_place=True,
                         multipart_kind='read-instead', multipart_fact=fact)
 
 

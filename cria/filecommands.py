@@ -644,10 +644,15 @@ def make_multipart_read_spec(call_id, name, arguments, token, *, pre='', not_rea
 
     The caller owns authorization and stores this object privately, paired to the call.
     """
-    if name not in ((_WRITE_NAMES | _EDIT_NAMES) if read_instead else _READ_NAMES):
+    if name not in ((_WRITE_NAMES | _EDIT_NAMES | {'apply_patch'}) if read_instead else _READ_NAMES):
         raise ValueError('unsupported original tool')
     args = _parse_tool_args(arguments)
-    path = _tool_path(args)
+    if name == 'apply_patch':
+        from .toolargs import patch_paths
+        paths = patch_paths({'function': {'name': name, 'arguments': arguments}})
+        path = paths[0] if len(paths) == 1 else None
+    else:
+        path = _tool_path(args)
     if not path:
         raise ValueError('missing path')
     start, end = args.get('start_line', 0), args.get('end_line', 0)

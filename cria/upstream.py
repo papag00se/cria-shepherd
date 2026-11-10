@@ -943,12 +943,12 @@ class Upstream:
         wire_folds = runtime.wire_folds if self._context_fixes and not body.get(bodykeys.PROTECTED_READS) else ()
         out = {**body, "stream": stream}
         if body.get(bodykeys.HOLD_WRITE_TOOLS) is True and isinstance(out.get('tools'), list):
-            from .loop import _is_write_tool
+            from .toolargs import WRITE_CLASS_TOOLS
             from .shelltool import is_shell_tool_name
             def hidden(tool):
                 fn = tool.get('function', tool) if isinstance(tool, dict) else {}
                 name = fn.get('name')
-                return _is_write_tool(name) or is_shell_tool_name(name)
+                return name in WRITE_CLASS_TOOLS or is_shell_tool_name(name)
             out['tools'] = [tool for tool in out['tools'] if not hidden(tool)]
             choice = out.get('tool_choice')
             if not out['tools']:
