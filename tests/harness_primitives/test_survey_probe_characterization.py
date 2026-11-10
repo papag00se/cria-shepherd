@@ -77,12 +77,23 @@ CASES = {
     'outside': (lambda b1, b2, ws: path_of(b1), [], ['{out}/dir', '{out}/file', '{out}/linkdir', '{out}/linkfile', '{out}/broken', '{out}/missing',
                                                      '{out}/with space', "{out}/it's here", '/', '/nonexistent/x', '{out}/file/under']),
     'tilde': (lambda b1, b2, ws: path_of(b1), [], ['~', '~/sub', '~/file', '~/with space', '~/linkdir', '~/nothing', '~nobody/x', '~x']),
+    'shell_builtins': (lambda b1, b2, ws: path_of(b1), ['cd', 'if', 'type', 'echo', 'tool'], []),
     'both': (lambda b1, b2, ws: path_of(b1, b2), ['tool', 'nothing-here'], ['{out}/dir', '~/sub', '{out}/missing']),
     'many': (lambda b1, b2, ws: path_of(b1, b2), [f'prog{i}' for i in range(20)] + ['tool', 'zruby'], [f'{{out}}/dir{i}' for i in range(20)] + ['{out}/dir']),
 }
 
 # name -> why the new route answers differently, and the check that the new answer is the intended one: (progs, outside) -> bool
-INTENDED = {}
+INTENDED = {
+    'shell_builtins': ('the shell resolves a builtin, a keyword or a function (`cd`, `if`, `type`) as it runs them; the old script looked for files on PATH only (the program names asked are tools, '
+                       'so no question changes: `echo` and `tool` are files and are answered as before)',
+                       lambda got, old: got['progs'] == {'cd': 'cd', 'if': 'if', 'type': 'type', 'echo': 'echo', 'tool': 'tool'} and old['progs'] == {'cd': '', 'if': '', 'type': '', 'echo': 'echo', 'tool': 'tool'}),
+    'empty_and_relative_entries': ('an empty entry of PATH is the working directory and the coder\'s shell does resolve a program there; the old script skipped empty entries',
+                                   lambda got, old: got['progs'] == {**old['progs'], 'localtool': 'localtool'} and got['outside'] == old['outside']),
+    'quoted_names': ('a name with a space or a quote is not a name a shell finds by searching PATH: it is answered as absent without asking (the old script looked for a file of that name)',
+                     lambda got, old: got['progs'] == {**old['progs'], 'weird name': '', "it's": ''} and got['outside'] == old['outside']),
+    'versioned_in_two_directories': ('the versioned fallback takes the first of the versions found, in sorted order, across PATH; the old script took the first PATH directory that had any',
+                                     lambda got, old: got == {'progs': {'zruby': 'zruby3.10'}, 'outside': {}}),
+}
 
 
 def answer(name, tmp, monkeypatch):

@@ -21,7 +21,6 @@ REGISTRY = {
     'gatescript.py': ('the gate supervisor: the shell text `run` executes for the project\'s own checks', 400),
     'inventoryops.py': ('the ctags shell text', 400),
     'syntaxcheck.py': ('the checker shell text', 150),
-    'surveyops.py': ('the survey\'s probe script (command lookup and path kind)', 450),
     'probediscovery.py': ('the three parse-floor one-liners (TOML, JSON, XML)', 800),
 }
 

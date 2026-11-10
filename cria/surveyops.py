@@ -10,8 +10,10 @@ stands behind it and the model never sees it. It is a few calls to the primitive
   entries and says it is not complete. A name that cannot be one line of UTF-8 is not listed and its directory is not complete.
 * the bodies a reader asked for are ``read`` calls (parallel pages, at most ``BLOB_FILES_MAX`` files and ``BLOB_BYTES_MAX`` bytes,
   none over ``BLOB_FILE_MAX``); what could not be handed back is said (the size, or absent, or unreadable), never skipped silently.
-* which programs the coder's shell resolves, and which paths outside the workspace exist, are one ``run`` of a short script of
-  shell text whose output cria reads (no decision is made in it).
+* which programs the coder's shell resolves, and which paths outside the workspace exist, are one ``run`` of straight-line shell text
+  (``probe_script``: one question per line, no loop, no branch, the shell's own command search and ``[ -f ]``/``[ -d ]``) whose output
+  cria reads and checks against what it asked: every decision (the name or a version of it, which version, an answer nobody asked for) is
+  ``_resolved``. Asking the ``ls`` stub instead means a walk of every ``PATH`` directory (docs/harness-programs.md, Phase 9b).
 
 What the survey learned is a :class:`cria.wsview.Survey`, computed from the frames the ledger holds (a pure function of the
 ledger: a restart between two steps loses nothing).
@@ -38,7 +40,7 @@ RUN_TIMEOUT = 30        # seconds the probe script may run
 RUN_WAIT = 8
 RUN_WAITS = 3
 HEAD = 6_000            # the output a `run` frame returns inline: a script answer larger than this is not taken
-_VERSION = re.compile(r'[0-9][0-9.]*\Z')
+_PROG_NAME = re.compile(r'[A-Za-z0-9_.+-]+')
 
 
 @dataclass(frozen=True)
@@ -54,24 +56,27 @@ def skip_names() -> list:
     return sorted(set(wsview.PRUNE_DIRS) | wsview.build_output_names())
 
 
+def _prog_ok(name: str) -> bool:
+    """A name the harness's command search can be asked about: letters, digits and ``_ . + -``. Anything else (a space, a quote, a path separator,
+    a glob character) is not a name a shell finds by searching ``PATH``; it is answered as absent without asking."""
+    return bool(name) and _PROG_NAME.fullmatch(name) is not None
+
+
 def probe_script(progs: list, outside: list) -> str:
-    """The shell text the ``run`` stub runs: for each asked program name which directory of ``$PATH`` holds it (a name followed by a
-    version is the fallback, as before), and for each asked path outside the workspace whether it is a directory or a file. It prints
-    one line per question, by number; the names are quoted data. Nothing is decided here."""
-    lines = ['LC_ALL=C; export LC_ALL', 'shopt -s extglob nullglob', 'IFS=:']
+    """The shell text the ``run`` stub runs: one straight-line question per line, no loop, no branch, nothing decided. For each asked program name,
+    the shell's own command search lists the names it finds that are the name itself or the name followed by a version
+    (``compgen -c`` with a filter: the commands, files on ``$PATH`` that are executable, that the coder's shell would run), under a header with
+    the name's number; for each asked path outside the workspace, whether it is a file or a directory (``[ -f ]``, ``[ -d ]``, which follow a link),
+    one line by number. The names are quoted data and what comes back is checked in cria against the names it asked for."""
+    lines = ['export LC_ALL=C; shopt -s extglob', "printf 'B\\t%s\\n' \"${BASH_VERSION:+1}\""]
     for i, name in enumerate(progs):
-        q = shlex.quote(name)
-        lines += [f'n={q}; r=-',
-                  'for d in $PATH; do [ -n "$d" ] && [ -f "$d/$n" ] && [ -x "$d/$n" ] && { r=D; break; }; done',
-                  'if [ "$r" = - ]; then for d in $PATH; do [ -n "$d" ] || continue; '
-                  'for e in "$d/$n"+([0-9])*([0-9.]); do [ -f "$e" ] && [ -x "$e" ] && { s=${e##*/}; r=V${s#"$n"}; break 2; }; done; done; fi',
-                  f"printf 'P\\t%s\\t%s\\n' {i} \"$r\""]
+        if _prog_ok(name):
+            keep = '!' + re.sub(r'([^A-Za-z0-9_])', r'\\\1', name) + '@(|[0-9]*([0-9.]))'
+            lines.append(f"printf 'P\\t{i}\\n'; compgen -c -X {shlex.quote(keep)} -- {shlex.quote(name)}")
     for i, path in enumerate(outside):
-        lines += [f'p={shlex.quote(path)}',
-                  'case "$p" in "~") t=$HOME;; "~/"*) t=$HOME/${p#??};; *) t=$p;; esac',
-                  'if [ -d "$t" ]; then k=d; elif [ -f "$t" ]; then k=f; else k=-; fi',
-                  f"printf 'O\\t%s\\t%s\\n' {i} \"$k\""]
-    return '\n'.join(lines) + '\n'
+        word = '~/' + shlex.quote(path[2:]) if path.startswith('~/') else path if path == '~' else shlex.quote(path)
+        lines.append(f"k=-; [ -f {word} ] && k=f; [ -d {word} ] && k=d; printf 'O\\t{i}\\t%s\\n' \"$k\"")
+    return '\n'.join([*lines, ':']) + '\n'            # the last question may find nothing: the run still ends well
 
 
 def _token(op: str) -> str:
@@ -305,6 +310,37 @@ class _Body:
 
 # ---------------------------------------------------------------- the programs and the outside paths, from the frame
 
+def _resolved(text: str, asked: list) -> dict:
+    """``{name: what the coder types to run it}`` from the lines the script printed under each name's header: the name itself, else the name
+    followed by a version (the first of them in sorted order, as ``ls`` would list them), else ``''``. Nothing is taken that is not exactly one of
+    those, so a file whose name looks like a header or like another answer teaches nothing. Without the marker a bash prints, the shell the harness
+    started could not answer (no name is answered: asking again is not a guess that the program is absent)."""
+    found: dict = {}
+    current = None
+    bash = False
+    for line in text.split('\n'):
+        if '\t' not in line:
+            if current is not None:
+                found[current].append(line)         # a name has no tab: only a header does
+            continue
+        kind, _, rest = line.partition('\t')
+        if kind == 'B':
+            bash = rest == '1'
+        elif kind == 'P' and rest.isdigit() and int(rest) < len(asked):
+            current = int(rest)
+            found.setdefault(current, [])
+        else:
+            current = None
+    if not bash:
+        return {}
+    out = {}
+    for i, name in enumerate(asked):
+        lines = found.get(i, []) if _prog_ok(name) else []
+        versions = sorted(x for x in lines if re.fullmatch(re.escape(name) + r'[0-9][0-9.]*', x))
+        out[name] = name if name in lines else versions[0] if versions else ''
+    return out
+
+
 def _answers(steps: list, ctx: dict):
     """``(progs, outside, waiting)`` from the probe script's frame: dicts of what it answered, or what is still to ask (a run still
     going, or its directory to remove)."""
@@ -319,23 +355,12 @@ def _answers(steps: list, ctx: dict):
         return None, None, 'running' if last.args['n'] <= RUN_WAITS else None
     if header.get('ok') != 1 or header.get('exit') != 0 or header.get('timeout') or header.get('size', 0) > header.get('head', 0):
         return {}, {}, ('rm' if header.get('dir') and not header.get('removed') else None)
-    progs, outside = {}, {}
+    progs, outside = _resolved(last.frame['text'], ctx['progs']), {}
     for line in last.frame['text'].split('\n'):
         kind, _, rest = line.partition('\t')
         i, _, value = rest.partition('\t')
-        if not i.isdigit():
-            continue
-        i = int(i)
-        if kind == 'P' and i < len(ctx['progs']):
-            name = ctx['progs'][i]
-            if value == 'D':
-                progs[name] = name
-            elif value == '-':
-                progs[name] = ''
-            elif value.startswith('V') and _VERSION.match(value[1:]):
-                progs[name] = name + value[1:]
-        elif kind == 'O' and i < len(ctx['outside']) and value in ('d', 'f', '-'):
-            outside[ctx['outside'][i]] = '' if value == '-' else value
+        if kind == 'O' and i.isdigit() and int(i) < len(ctx['outside']) and value in ('d', 'f', '-'):
+            outside[ctx['outside'][int(i)]] = '' if value == '-' else value
     return progs, outside, ('rm' if header.get('dir') and not header.get('removed') else None)
 
 

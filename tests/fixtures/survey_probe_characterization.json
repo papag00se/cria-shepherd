@@ -122,6 +122,16 @@
    "weird name": "weird name"
   }
  },
+ "shell_builtins": {
+  "outside": {},
+  "progs": {
+   "cd": "",
+   "echo": "echo",
+   "if": "",
+   "tool": "tool",
+   "type": ""
+  }
+ },
  "symlink": {
   "outside": {},
   "progs": {
