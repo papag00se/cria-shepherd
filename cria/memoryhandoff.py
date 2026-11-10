@@ -69,6 +69,8 @@ class EvidenceServices:
     # provider/window by the caller). None keeps the single-request evidence unchanged.
     distill: Callable[[list[str], int], list[str]] | None = None
     topic_judge: object = None
+    packet_window: int | None = None
+    packet_measure: Callable[[str], int | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -284,6 +286,10 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
             selected.append(text)
         packet = replace(packet, blocks=tuple(blocks), selected=tuple(selected))
     packet = replace(packet, action=action)
+    original = packet
+    packet = compactionpacket.fit_packet(packet, window=services.packet_window, measure=services.packet_measure)
+    if packet is not original:
+        rlog.emit("context.handoff_bounded", omitted=len(original.blocks) - len(packet.blocks) + 1)
     text = packet.render()
     choices = [dict(ch) for ch in completion.get("choices") or []]
     if not choices:

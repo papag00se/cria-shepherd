@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import bodykeys, prompts, resultnotes
 
@@ -64,6 +64,44 @@ class Packet:
         if self.action:
             pieces.append(prompts.fill(labels["action"], action=self.action))
         return "\n\n".join(pieces)
+
+
+def fit_packet(packet: Packet, *, window: int | None, measure) -> Packet:
+    """Bound producer-owned historical blocks, retaining the newest whole blocks.
+
+    The task and latest user instruction are never reduced. If those alone exceed
+    the allowance the result remains oversized; no measurement means no fit claim.
+    The omitted blocks are represented by the floor's existing disclosure.
+    """
+    if not isinstance(window, int) or window <= 0 or not callable(measure):
+        return packet
+    budget = window // 4
+    size = measure(packet.render())
+    if size is None or size <= budget or not packet.blocks:
+        return packet
+
+    def candidate(count):
+        note = prompts.render("compacted_history_omitted", count=count).strip()
+        kept = packet.blocks[count:]
+        return replace(packet, blocks=(note, *kept),
+                       selected=tuple(s for s in packet.selected if s in kept))
+
+    # Measuring the complete rendering includes all labels and the exact task.
+    # With whole blocks removed oldest-first the rendered size is monotonic apart
+    # from the omission counter; verify each selected candidate on the tokenizer.
+    lo, hi = 1, len(packet.blocks)
+    best = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        trial = candidate(mid)
+        measured = measure(trial.render())
+        if measured is None:
+            return packet
+        if measured <= budget:
+            best, hi = trial, mid - 1
+        else:
+            lo = mid + 1
+    return best if best is not None else candidate(len(packet.blocks))
 
 
 def movable_action(messages: list[dict]) -> bodykeys.ActionOrigin | None:

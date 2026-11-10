@@ -791,6 +791,13 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         settlement.append((reply, ledger, dropped))
     role = server.cfg.routing.roles.get("reasoner")
     services = _handoff_services(getattr(server, "system1", None))
+    coder = server._endpoint_for("coder") if hasattr(server, "_endpoint_for") else None
+    if coder is not None:
+        window = windowcaps.known_window(coder, rlog)
+        tokenize = getattr(coder, "_tokenize_prompt", None)
+        if window and callable(tokenize):
+            services = replace(services, packet_window=window,
+                               packet_measure=lambda text: tokenize(text, rlog))
     distill = _handoff_distiller(provider, server, rlog)
     if distill is not None:
         # The empty/cut-off briefing retry re-frames the request; it must distill too.

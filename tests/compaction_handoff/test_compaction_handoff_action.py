@@ -56,6 +56,45 @@ def test_generation_retry_retains_task_evidence_and_complete_prior_response():
     assert "Output a single sentence no longer than 20 words." in messages[-1]["content"]
 
 
+def test_packet_budget_keeps_task_and_newest_evidence_with_disclosure():
+    packet = compactionpacket.Packet("original task", ("old " * 20000, "new observation"), "next action")
+    fitted = compactionpacket.fit_packet(packet, window=16384, measure=lambda s: len(s) // 3)
+    assert fitted.task == packet.task and fitted.action == packet.action
+    assert "new observation" in fitted.render()
+    assert "old " * 20000 not in fitted.render()
+    assert "1 earlier turn(s) omitted" in fitted.render()
+    assert len(fitted.render()) // 3 <= 16384 // 4
+    assert compactionpacket.fit_packet(compactionpacket.Packet("task", ("small",)),
+                                       window=16384, measure=lambda s: len(s) // 3).blocks == ("small",)
+    assert compactionpacket.fit_packet(packet, window=16384, measure=lambda s: None) is packet
+    oversized_task = compactionpacket.Packet("task " * 20000, ("history",))
+    assert compactionpacket.fit_packet(oversized_task, window=16384,
+                                      measure=lambda s: len(s) // 3).task == oversized_task.task
+    origin = loop._HandoffOrigin(fitted.render(), "", False, packet=fitted)
+    expanded, _ = loop.reframe_compaction([{"role": "user", "content": fitted.render()}], origin=origin)
+    history = [*expanded, {"role": "assistant", "content": "new work"},
+               {"role": "user", "content": "checkpoint"}]
+    again = memoryhandoff._packet({"messages": history}, memoryhandoff.SessionFacts(
+        original_task=packet.task, prior_handoffs=(origin.continuation,), prior_packet=fitted))
+    assert "HISTORICAL producer-owned historical evidence MESSAGE:" not in again.render()
+    assert again.render().count("new observation") == 1
+    assert again.render().count("1 earlier turn(s) omitted") == 1
+    from dataclasses import replace
+    services = replace(server._handoff_services(), packet_window=16384,
+                       packet_measure=lambda s: len(s) // 3)
+    response = {"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}
+    log = SimpleNamespace(phase="proxy", session=None, emit=lambda *a, **k: None)
+    result = memoryhandoff.harden(response, {"messages": [
+        {"role": "user", "content": "original task"},
+        {"role": "assistant", "content": "old " * 20000},
+        {"role": "assistant", "content": "new observation"},
+        {"role": "user", "content": "checkpoint"}]},
+        memoryhandoff.SessionFacts(original_task="original task"), services,
+        selected=True, chat_fn=None, role=None, rlog=log, settle=lambda *a: None)
+    assert "1 earlier turn(s) omitted" in result.prose
+    assert "new observation" in result.prose and len(result.prose) // 3 <= 16384 // 4
+
+
 def test_only_authenticated_handoff_expands_evidence_and_preserves_followup():
     packet = compactionpacket.Packet("original task", ("tool result: exact output",), "inspect the result")
     origin = loop._HandoffOrigin(packet.render(), "", False, packet=packet)
