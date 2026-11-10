@@ -5,7 +5,13 @@ import subprocess
 
 import pytest
 
-from cria import denial, filecommands, initial_inventory, wsview, writeproxy
+from cria import denial, editsequence, filecommands, initial_inventory, wsview, writeproxy
+
+
+def test_persisted_unisolated_release_is_not_reissued():
+    command = editsequence._seq_release(('a' * 16, 0, (), (0,)))
+    assert editsequence.matches_release(command)
+    assert not editsequence.matches_release(command.replace('python3 -I -', 'python3 -', 1))
 
 
 @pytest.mark.parametrize('route', ['read', 'write', 'edit', 'survey', 'multipart', 'inventory'])
