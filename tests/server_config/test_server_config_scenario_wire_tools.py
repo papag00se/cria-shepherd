@@ -41,11 +41,11 @@ def test_a_write_file_call_reaches_every_wire_mode_as_a_runnable_exec_command_th
     finally:
         w.close()
     calls = tool_calls(mode, raw)
-    assert [n for n, _ in calls] == ["exec_command"] and "write_file" not in raw.split('"cmd"')[0]
+    assert [n for n, _ in calls] == ["exec_command"] and "write_file" not in json.loads(calls[0][1])["cmd"].split("\n", 1)[1]    # the harness gets cria's fixed `write` stub: its one display line names the operation, nothing else does
     work = tmp_path / "harness"
     work.mkdir()
     done = subprocess.run(["bash", "-c", json.loads(calls[0][1])["cmd"]], cwd=work, capture_output=True, text=True)
-    assert done.returncode == 0 and '"k":"landed"' in done.stdout
+    assert done.returncode == 0 and '"landed":1' in done.stdout
     assert (work / "hello.txt").read_text() == "hi there\n"
     if mode == "responses-stream":  # the ticker narrates the pipeline into a status item the model never re-reads
         shown = [e["delta"] for e in sse_events(raw) if e.get("type") == "response.output_text.delta"]

@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from cria import completionmarks, privatepaths, wsview, writeproxy
+from cria import privatepaths, wsview, writeproxy
 from cria.ops import Ops
 
 SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
@@ -33,7 +33,6 @@ def write_edit_workspace_view():
     """Every test answers workspace questions from this machine's disk (production fills the view from a harness survey)."""
     token = wsview.bind(wsview.DirectView())
     writeproxy._SURVEY_SEQ.clear()    # every Nth lowered call carries a survey: a count another test advanced decides the size of this one's command
-    completionmarks._reset()          # the registry of unfinished calls is process memory: one test's never-answered write is not another's
     yield
     wsview.unbind(token)
 
@@ -62,6 +61,8 @@ def lower(calls, *, injected=("write_file", "edit_file"), root="/w", **kw):
     comp = {"choices": [{"message": {"tool_calls": list(calls)}}]}
     kw.setdefault("issue_read", lambda c, a, instead: _ENGINE["ops"].issue_read(
         "s", SHELL, c, a, workspace_root=root, level="write", instead=instead))
+    kw.setdefault("issue_mutations", lambda requests: _ENGINE["ops"].issue_mutations(
+        "s", SHELL, requests, workspace_root=root, level=kw.get("external_dir_permission", "write"), log=kw.get("rlog")))
     writeproxy.translate_outbound(comp, SHELL, injected=set(injected), workspace_root=root, **kw)
     return comp["choices"][0]["message"]["tool_calls"]
 
@@ -73,19 +74,34 @@ def represented(messages, **kw):
     return writeproxy.represent_inbound(messages, **kw)
 
 
-def settle(messages, cwd):
+DROP = object()
+
+
+def settle(messages, cwd, fault=None, ran=None, env=None):
     """The harness side of cria's own operations: answer each primitive call the engine asks for, in the workspace, until it asks no
-    more; returns what `represent_inbound` shows the model, given what the ledger recorded."""
-    engine, messages = _ENGINE["ops"], list(messages)
+    more; returns what `represent_inbound` shows the model, given what the ledger recorded.
+
+    ``fault(call)`` may spoil one call: ``None`` (it runs and answers), ``"never-ran"`` (nothing runs, no answer comes), ``"drop-reply"`` (it
+    runs, the answer is lost), or a function of the harness's answer text (it runs, the answer is altered). ``ran`` collects each command
+    that actually ran."""
+    engine, messages = _ENGINE["ops"], list(messages)      # the harness's own history, which only grows: cria projects it afresh each time
     while True:
         taken = engine.incoming("s", messages)
         if not taken.calls:
             break
-        messages = taken.messages + [{"role": "assistant", "tool_calls": taken.calls}]
+        messages.append({"role": "assistant", "tool_calls": taken.calls})
         for tc in taken.calls:
-            done = run(tc, cwd)
-            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr})
-    return writeproxy.represent_inbound(taken.messages, workspace_root=str(cwd), ledger_outcomes=taken.outcomes, ledger_reads=taken.reads)
+            mode = fault(tc) if fault else None
+            if mode == "never-ran":
+                continue
+            done = run(tc, cwd, env=env)
+            if ran is not None:
+                ran.append(command_of(tc))
+            if mode == "drop-reply":
+                continue
+            text = ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": mode(text) if callable(mode) else text})
+    return writeproxy.represent_inbound(taken.messages, workspace_root=str(cwd), ledger_outcomes=taken.outcomes, ledger_reads=taken.reads, ledger_writes=taken.writes)
 
 
 def command_of(tc):
@@ -108,18 +124,18 @@ def first_record(stdout):
     return rec["k"], rec
 
 
-def shown_to_model(tc, completed, cwd):
+def shown_to_model(tc, completed, cwd, env=None):
     """What the coder is shown for this result: `represent_inbound` over the call and the harness-enveloped output."""
-    return represent(tc, ENVELOPE.format(rc=completed.returncode) + completed.stdout + completed.stderr, cwd)
+    return represent(tc, ENVELOPE.format(rc=completed.returncode) + completed.stdout + completed.stderr, cwd, **({'env': env} if env else {}))
 
 
-def represent(tc, raw, cwd):
-    """`represent_inbound` over a lowered call and whatever raw text the harness handed back for it."""
+def represent(tc, raw, cwd, **settling):
+    """`represent_inbound` over a lowered call and whatever raw text the harness handed back for it (``settling`` spoils later calls: see `settle`)."""
     token = wsview.bind(wsview.View(str(cwd), "we"))
     try:
         messages = [{"role": "assistant", "tool_calls": [tc]}, {"role": "tool", "tool_call_id": tc["id"], "content": raw}]
         if tc["id"].startswith("ctx_"):
-            return settle(messages, cwd)
+            return settle(messages, cwd, **settling)
         return writeproxy.represent_inbound(messages, workspace_root=str(cwd))
     finally:
         wsview.unbind(token)
@@ -130,7 +146,7 @@ def do(name, args, cwd, cid="c1", env=None, **kw):
     kw.setdefault("root", str(cwd))          # a read is carried out where the files are
     tc = lower([call(name, args, cid)], **kw)[0]
     done = run(tc, cwd, env=env)
-    return tc, done, shown_to_model(tc, done, cwd)
+    return tc, done, shown_to_model(tc, done, cwd, env)
 
 
 def run_batch(calls, cwd, start_order, skip=(), **lowering):

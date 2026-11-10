@@ -51,7 +51,7 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
-from . import completionmarks, denial, earliernames, resultpacket
+from . import denial, earliernames, resultpacket
 
 # --------------------------------------------------------------------------- wire format
 

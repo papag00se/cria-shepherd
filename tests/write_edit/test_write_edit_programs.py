@@ -1,4 +1,4 @@
-"""The lowered write/edit PROGRAMS, executed in bash: what lands on disk and what the coder is told."""
+"""Writes and edits through the harness primitives, executed by real stubs in bash: what lands on disk and what the coder is told."""
 import hashlib
 import json
 import os
@@ -7,32 +7,30 @@ import subprocess
 
 import pytest
 
-from cria import denial, editrecovery, writeproxy
-from write_edit_helpers import do, first_record, write_edit_workspace_view  # noqa: F401  (the fixture binds the workspace view)
+from cria import denial, editrecovery
+from write_edit_helpers import command_of, do, write_edit_workspace_view  # noqa: F401  (the fixture binds the workspace view)
 
 TRICKY = "line1\n\ttabbed 'q' \"dq\" $VAR `bt` \\n \u2603\r\nend-without-newline"
 
 
-def test_queued_writes_and_edits_keep_commands_small_and_execute(tmp_path):
-    sequence = ('0123456789abcdef0123456789abcdef', 0, (), (0,))
-    env = {**os.environ, 'TMPDIR': str(tmp_path)}
-    write = writeproxy._write_command('f.txt', 'before\n', seq=sequence)
-    assert len(write.encode()) < 30_000
-    result = subprocess.run(['bash', '-c', write], cwd=tmp_path, env=env, capture_output=True)
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / 'f.txt').read_bytes() == b'before\n'
-    edit = writeproxy._edit_command('f.txt', 'before', 'after', seq=sequence)
-    assert len(edit.encode()) < 35_000
-    result = subprocess.run(['bash', '-c', edit], cwd=tmp_path, env=env, capture_output=True)
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / 'f.txt').read_bytes() == b'after\n'
+def test_a_write_and_an_edit_send_the_fixed_stub_and_only_their_own_bytes(tmp_path):
+    """The harness is shown a short constant program and the bytes that change: a 2 KB write is about 5.6 KB of command, and an edit of a
+    file of 300 KB (read once, so cria holds it) is about 3 KB however large the file is."""
+    big = "".join(f"line {i} of a large file\n" for i in range(12_000))
+    (tmp_path / "big.txt").write_text(big)
+    tc, done, msgs = do("write_file", {"path": "new.txt", "content": "x" * 2000}, tmp_path)
+    assert done.returncode == 0 and denial.landed(msgs[1]) and len(command_of(tc).encode()) < 6_000
+    do("read_file", {"path": "big.txt"}, tmp_path, cid="r", injected=("read_file",))
+    tc, done, msgs = do("edit_file", {"path": "big.txt", "old_string": "line 6000 of", "new_string": "LINE 6000 of"}, tmp_path, cid="e")
+    assert denial.landed(msgs[1]) and (tmp_path / "big.txt").read_text() == big.replace("line 6000 of", "LINE 6000 of")
+    assert len(command_of(tc).encode()) < 3_400, len(command_of(tc).encode())
 
 
 def test_large_write_payload_is_carried_once_and_round_trips(tmp_path):
     content = ''.join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(400))
     tc, done, msgs = do('write_file', {'path': 'a.txt', 'content': content}, tmp_path)
     command = json.loads(tc['function']['arguments'])['cmd']
-    assert len(command.encode()) < 55_000
+    assert len(command.encode()) < 40_000       # the 25 KB of content once, as base64 (34 KB), the 2.7 KB stub and, on a first call, the workspace survey's ride
     assert done.returncode == 0, done.stderr
     assert (tmp_path / 'a.txt').read_text() == content
     assert json.loads(msgs[0]['tool_calls'][0]['function']['arguments']) == {'path': 'a.txt', 'content': content}
@@ -40,7 +38,7 @@ def test_large_write_payload_is_carried_once_and_round_trips(tmp_path):
     replacement = content[::-1]
     tc, done, msgs = do('edit_file', {'path': 'a.txt', 'old_string': content, 'new_string': replacement}, tmp_path)
     command = json.loads(tc['function']['arguments'])['cmd']
-    assert len(command.encode()) < 100_000
+    assert len(command.encode()) < 40_000       # the edit's own bytes once (the 25 KB replacement), not the file's too (its 25 KB are not resent)
     assert done.returncode == 0, done.stderr
     assert (tmp_path / 'a.txt').read_text() == replacement
     assert json.loads(msgs[0]['tool_calls'][0]['function']['arguments']) == {'path': 'a.txt', 'old_string': content, 'new_string': replacement}
@@ -54,7 +52,7 @@ def test_a_whole_write_lands_exactly_the_bytes_sent_and_replays_as_the_models_ow
     (tmp_path / "a/f.txt").write_bytes(b"before")
     tc, done, msgs = do("write_file", {"path": "a/f.txt", "content": content}, tmp_path)
     assert (tmp_path / "a/f.txt").read_bytes() == content.encode()
-    assert first_record(done.stdout)[0] == denial.LANDED and denial.landed(msgs[1])
+    assert denial.landed(msgs[1])
     assert json.loads(msgs[0]["tool_calls"][0]["function"]["arguments"]) == {"path": "a/f.txt", "content": content}
     assert os.listdir(tmp_path / "a") == ["f.txt"]
 
@@ -65,7 +63,7 @@ def test_a_write_with_no_content_is_refused_not_written_as_an_empty_file(tmp_pat
     (tmp_path / "keep.py").write_text("before = 1\n")
     tc, done, msgs = do("write_file", args, tmp_path)
     assert (tmp_path / "keep.py").read_text() == "before = 1\n"
-    assert first_record(done.stdout)[0] == denial.REFUSED and "cut off" in msgs[1]["content"]
+    assert denial.refused(msgs[1]) and "cut off" in msgs[1]["content"]
     assert denial.is_denied(msgs[1]["content"]) and not denial.landed(msgs[1])
 
 
@@ -145,25 +143,23 @@ def test_an_edit_applies_only_on_one_match_and_reports_facts_otherwise(tmp_path,
     """Edit executor: whitespace-flexible unique match lands; 0/many matches/no-ops/phantoms never write and carry typed facts."""
     (tmp_path / "f.py").write_text(before)
     tc, done, msgs = do("edit_file", {"path": "f.py", "old_string": old, "new_string": new}, tmp_path)
-    kind, rec = first_record(done.stdout)
     if mode is None:
-        assert (tmp_path / "f.py").read_bytes().decode() == after and kind == denial.LANDED and done.returncode == 0       # bytes: read_text would fold CRLF
+        assert (tmp_path / "f.py").read_bytes().decode() == after and denial.landed(msgs[1])       # bytes: read_text would fold CRLF
         return
-    assert (tmp_path / "f.py").read_bytes().decode() == before and kind == "unapplied" and done.returncode != 0
-    report = editrecovery.decode_report(rec["rep"]["ef"])
-    assert report["mode"] == mode
+    assert (tmp_path / "f.py").read_bytes().decode() == before and denial.proof(msgs[1]) == denial.UNAPPLIED
+    assert denial.report(msgs[1])["ef"]["mode"] == mode                      # the typed facts of the miss (the directive is composed from them)
     assert denial.unlanded(msgs[1]) and not denial.landed(msgs[1])
 
 
 def test_an_edit_that_would_break_a_parsing_file_is_held_but_fixing_a_broken_one_lands(tmp_path):
     """Edit validation is regression-only: `would_break` leaves the valid file alone; a fix of a broken file applies."""
     (tmp_path / "f.py").write_text("x = 1\ny = 2\n")
-    tc, done, _ = do("edit_file", {"path": "f.py", "old_string": "y = 2", "new_string": "y = (2"}, tmp_path)
-    assert editrecovery.decode_report(first_record(done.stdout)[1]["rep"]["ef"])["mode"] == "would_break"
+    tc, done, msgs = do("edit_file", {"path": "f.py", "old_string": "y = 2", "new_string": "y = (2"}, tmp_path)
+    assert denial.report(msgs[1])["ef"]["mode"] == "would_break"
     assert (tmp_path / "f.py").read_text() == "x = 1\ny = 2\n"
     (tmp_path / "g.py").write_text("def h(:\n    pass\n")
-    _, done, _ = do("edit_file", {"path": "g.py", "old_string": "def h(:", "new_string": "def h():"}, tmp_path, cid="g")
-    assert first_record(done.stdout)[0] == denial.LANDED and "def h():" in (tmp_path / "g.py").read_text()
+    _, done, fixed = do("edit_file", {"path": "g.py", "old_string": "def h(:", "new_string": "def h():"}, tmp_path, cid="g")
+    assert denial.landed(fixed[1]) and "def h():" in (tmp_path / "g.py").read_text()
 
 
 def test_an_edit_is_written_through_a_symlink_and_a_failed_edit_leaves_no_temp(tmp_path):
@@ -185,8 +181,11 @@ def test_an_edit_is_written_through_a_symlink_and_a_failed_edit_leaves_no_temp(t
 
 @pytest.mark.parametrize("case", ["symlink", "symlink_other_dir", "dangling", "hardlink", "new_dir", "exact_bytes"])
 def test_a_whole_write_lands_through_links_like_the_edit_path(tmp_path, case):
-    """The write and the edit program share ONE landing: a symlink (even to another directory, even dangling) is written
-    THROUGH and stays a link; a hard-linked file is rewritten in place so every name sees it; bytes stay exact."""
+    """The write and the edit share ONE landing: a symlink inside the workspace (even to another directory, even dangling) is written
+    THROUGH and stays a link; bytes stay exact. A hard-linked file is replaced atomically, like any other file: the name written gets the
+    bytes and the other name keeps what it had (the harness `write` stub renames over the name, and a hard link is not a symlink: the
+    docs/harness-primitives.md section 3 leaves them to the sandbox; the old program rewrote such a file in place - decision recorded in
+    docs/harness-programs.md section 7, Phase 5 result)."""
     (tmp_path / "other").mkdir()
     old = "x = 1  # the old text is LONGER than the new, so a rewrite that does not truncate leaves a tail\n"
     (tmp_path / "real.py").write_text(old)
@@ -206,12 +205,14 @@ def test_a_whole_write_lands_through_links_like_the_edit_path(tmp_path, case):
         target = tmp_path / "lnk.py"; content = "a\r\nb\u2603\x00c\n"
     path = "fresh/deep/lnk.py" if case == "new_dir" else "lnk.py"
     _, done, msgs = do("write_file", {"path": path, "content": content}, tmp_path)
-    assert denial.landed(msgs[1]) and target.read_bytes() == content.encode()
+    assert denial.landed(msgs[1])
+    if case == "hardlink":
+        assert (tmp_path / "lnk.py").read_bytes() == content.encode() and target.read_text() == old and os.stat(target).st_nlink == 1
+    else:
+        assert target.read_bytes() == content.encode()
     if case in ("symlink", "symlink_other_dir", "dangling"):
         assert os.path.islink(tmp_path / "lnk.py")
-    if case == "hardlink":
-        assert (tmp_path / "lnk.py").read_bytes() == content.encode() and os.stat(target).st_nlink == 2
-    assert not [n for d in (tmp_path, tmp_path / "other", tmp_path / "fresh/deep") if d.exists() for n in os.listdir(d) if ".atomic-" in n]
+    assert not [n for d in (tmp_path, tmp_path / "other", tmp_path / "fresh/deep") if d.exists() for n in os.listdir(d) if n.startswith(".ctx")]
 
 
 @pytest.mark.parametrize("case", ["readonly_dir", "readonly_parent_of_new_dir", "link_into_a_file", "directory_target", "file_in_parent_chain"])

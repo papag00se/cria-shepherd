@@ -30,6 +30,13 @@ class FileCache:
         item = self.get(root, rel)
         return item[2] if item is not None and item[:2] == (sha, size) else b''
 
+    def drop(self, root: str, rel: str) -> None:
+        """Forget a file: it changed in a way cria did not see whole."""
+        with self._lock:
+            old = self._items.pop((root, rel), None)
+            if old is not None:
+                self._held -= len(old[2])
+
     def put(self, root: str, rel: str, sha: str, size: int, data: bytes) -> None:
         if len(data) > self.cap:
             return

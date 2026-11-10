@@ -226,11 +226,6 @@ def _utf8(data):
 def run_case(name, tmp_path):
     """Drive one case; returns what the model read, what is on disk and what it cost."""
     c = CASES[name]
-    try:                                    # the route that shipped before Phase 5 kept a registry of unfinished writes in process memory
-        from cria import completionmarks
-        completionmarks._reset()
-    except ImportError:
-        pass
     ws = build(c, tmp_path)
     subst = lambda v: json.loads(json.dumps(v).replace('$WS', str(ws).replace('\\', '\\\\')))
     turns = [[(tool, subst(args)) for tool, args in turn] for turn in c['turns']]

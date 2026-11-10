@@ -96,7 +96,7 @@ _SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ 
 _GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
-def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, marks: str = "") -> str:
+def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False) -> str:
     """The leading comment line that lets inbound rebuild the original tool call, statelessly.
 
     It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound) and
@@ -109,21 +109,8 @@ def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, mar
         body["rcpt"] = receipt
         if survey:
             body["sv"] = 1          # the command carries a survey record, on the line after its first record
-        if marks:
-            body["cm"] = marks      # the program leaves a completion mark under this nonce (`completionmarks`)
     payload = base64.b64encode(json.dumps(body).encode("utf-8")).decode("ascii")
     return f"# {_SENTINEL}{payload}"
-
-
-def _sentinel_shared(name: str, arguments, receipt: str, survey: bool = False, marks: str = "") -> str:
-    """Declare arguments once, in the immediately following exported shell assignment."""
-    ordinary = _sentinel(name, arguments, receipt, survey, marks)
-    body = json.loads(base64.b64decode(_SENTINEL_LINE.match(ordinary).group(1)))
-    args = body.pop('arguments')
-    body['argref'] = 1
-    header = base64.b64encode(json.dumps(body).encode()).decode('ascii')
-    payload = base64.b64encode(args.encode('utf-8')).decode('ascii')
-    return f"# {_SENTINEL}{header}\nexport __ctx_args='{payload}'"
 
 
 def _shell_call(orig_id: str, shell_tool: dict, command: str, output_tokens: int = 0) -> dict:
@@ -242,11 +229,6 @@ def _decode_sentinel(command: str) -> dict | None:
     try:
         d = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
         d["name"]
-        if d.get('argref') == 1:
-            ref = re.match(r"export __ctx_args='([A-Za-z0-9+/=]+)'(?:\r?\n|\Z)", command[m.end():])
-            if ref is None or 'arguments' in d:
-                return None
-            d['arguments'] = base64.b64decode(ref.group(1), validate=True).decode('utf-8')
         return d
     except (json.JSONDecodeError, ValueError, KeyError, TypeError):
         return None
@@ -281,13 +263,6 @@ def survey_declared(command: str, call_id=None) -> bool:
     """Did the compiler of this stored command declare a survey record? (Only a receipt-bearing sentinel can.)"""
     d = _declaration(command, call_id)
     return bool(d is not None and d.get("rcpt") and d.get("sv") == 1)
-
-
-def marks_declared(command: str, call_id=None) -> str:
-    """The nonce of the completion mark the compiler of this stored command declared ("" when none, or not this call's)."""
-    d = _declaration(command, call_id)
-    nonce = d.get("cm") if d is not None and d.get("rcpt") else ""
-    return nonce if isinstance(nonce, str) and re.fullmatch(r"[0-9a-f]{16}", nonce) else ""
 
 
 def receipt_of(command: str, call_id=None) -> str:

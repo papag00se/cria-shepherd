@@ -1,11 +1,11 @@
-"""Calls of one turn on one file run in the order SENT, however the harness schedules them; an early call claims no bytes."""
+"""Calls of one turn on one file are applied by cria in the order SENT, however the harness schedules its calls, and cost ONE read and ONE write."""
 import os
-from unittest import mock
+import re
 
 import pytest
 
-from cria import denial, loop, writeproxy
-from write_edit_helpers import call, run_batch, scratch_of, shrink_services, write_edit_workspace_view  # noqa: F401
+from cria import denial
+from write_edit_helpers import call, command_of, lower, run, run_batch, scratch_of, settle, shrink_services, write_edit_workspace_view  # noqa: F401
 
 
 def W(content):
@@ -32,37 +32,35 @@ BATCHES = {
 
 @pytest.mark.parametrize("label", BATCHES)
 def test_a_reversed_concurrent_batch_equals_the_call_order_result_and_leaves_nothing(tmp_path, label):
-    """Start the LAST call first: the same bytes as in-order, every call landed on time (no `late`), no queue litter in tree or TMPDIR."""
+    """Start the LAST call first: the same bytes as in-order, every call landed, no litter in tree or TMPDIR. (cria applies the calls in
+    order itself; the harness's own calls only carry the first one's read and keep the model's calls paired with results.)"""
     calls, before, after = BATCHES[label]
     tmp_path.joinpath("f.txt").write_text(before)
     msgs = run_batch(numbered(calls), tmp_path, list(reversed(range(len(calls)))))
     results = [m for m in msgs if m["role"] == "tool"]
     assert tmp_path.joinpath("f.txt").read_text() == after
-    assert len(results) == len(calls) and all(denial.landed(m) and not denial.report(m).get("late") for m in results)
+    assert len(results) == len(calls) and all(denial.landed(m) for m in results)
     assert os.listdir(tmp_path) == ["f.txt"] and os.listdir(scratch_of(tmp_path)) == ["bin"]
 
 
-def test_a_resent_identical_batch_does_not_inherit_the_first_batchs_marks(tmp_path):
-    """Two lowerings of the same two edits get distinct queues: the first batch's finished call must not satisfy the retry's predecessor."""
-    tmp_path.joinpath("f.txt").write_text("a")
-    edits = numbered([E("a", "b"), E("b", "c")])
-    with mock.patch.object(writeproxy, "EDIT_SEQ_WAIT_SECONDS", 0.3):
-        first = run_batch(edits, tmp_path, [0], skip={1})               # batch 1: only call 0 ever runs
-        second = run_batch(edits, tmp_path, [1], skip={0})              # the retry sends both again; only call 1 runs
-    assert tmp_path.joinpath("f.txt").read_text() == "c"
-    assert denial.report(second[1]).get("late") is True and not denial.report(first[1]).get("late")
-
-
-def test_a_call_that_ran_before_its_predecessor_finished_says_so_and_claims_no_bytes(tmp_path):
-    """The predecessor never arrives: the write applies (never held forever), its record says `late`, the coder is told, and the
-    file-event ledger records an unestablished touch — not 'N bytes written' (what is on disk is not attributable to this call)."""
-    tmp_path.joinpath("f.txt").write_text("init\n")
-    with mock.patch.object(writeproxy, "EDIT_SEQ_WAIT_SECONDS", 0.3):
-        msgs = run_batch(numbered([W("AAAA\n"), W("BBBBBBBB\n")]), tmp_path, [1, 0], skip={0})
-    (reply,) = [m for m in msgs if m["role"] == "tool"]
-    assert denial.landed(reply) and denial.report(reply).get("late") is True
-    assert "ran before one or more calls you sent ahead of it" in reply["content"]
-    assert [e[2] for e in loop._file_events(msgs)] == ["shell"]
+def test_thirty_edits_of_one_file_in_one_turn_are_one_read_and_one_write(tmp_path):
+    """phi4 / Java A11 call 0016: thirty-odd edits in one turn ran concurrently, lost updates, and twenty-odd were refused with an empty
+    `current`. cria reads the file once, applies the thirty in call order to the evolving text and writes the result once; each call
+    is answered on its own."""
+    body = "".join(f"row {i} = {i}\n" for i in range(60))
+    tmp_path.joinpath("f.txt").write_text(body)
+    calls = [call("edit_file", {"path": "f.txt", "old_string": f"row {i} = {i}\n", "new_string": f"row {i} = {i + 1000}\n"}, f"c{i}") for i in range(30)]
+    first = lower(calls, root=str(tmp_path))
+    ran = [command_of(tc) for tc in first]
+    msgs = [{"role": "assistant", "tool_calls": first}] + [
+        {"role": "tool", "tool_call_id": tc["id"], "content": "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n"
+         + (lambda d: d.stdout)(run(tc, tmp_path))} for tc in first]
+    shown = settle(msgs, tmp_path, ran=ran)
+    results = [m for m in shown if m["role"] == "tool"]
+    assert len(results) == 30 and all(denial.landed(m) for m in results)
+    assert tmp_path.joinpath("f.txt").read_text() == "".join(f"row {i} = {i + (1000 if i < 30 else 0)}\n" for i in range(60))
+    stubs = lambda needle: [c for c in ran if needle in c]
+    assert len(stubs("CTX_EOF")) == 1 and len([c for c in ran if "os.O_NONBLOCK" in c and "CTX_EOF" not in c and "fsha" in c]) == 1, "one write, one read"
 
 
 @pytest.mark.parametrize("first", ["refused edit", "held write"])

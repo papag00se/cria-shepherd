@@ -1,5 +1,10 @@
-"""Characterisation of write_file / create_file / edit_file / str_replace: what the model reads and what lands on disk, case by case, against the
-capture of the route that shipped before Phase 5 (tests/fixtures/write_characterization.json). `CRIA_CHARACTERIZE=<path>` writes the capture instead."""
+"""Characterisation of write_file / edit_file: what the model reads and what lands on disk, case by case, against the capture of the
+route that shipped before Phase 5 (tests/fixtures/write_characterization.json: one Python program per call, run by the harness).
+`CRIA_CHARACTERIZE=<path>` writes a capture of the route under test instead.
+
+The model-visible texts are the same byte for byte except where listed in INTENDED, with the reason; one thing is normalised everywhere:
+the old route's results came through a pty and carried a CR before every line feed and a trailing newline, which the text cria composes
+now does not have."""
 import json
 import os
 import pathlib
@@ -10,6 +15,36 @@ import char_rig
 from ops_rig import isolated_home  # noqa: F401
 
 FIXTURE = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'write_characterization.json'
+
+
+def norm(text):
+    return text.replace('\r\n', '\n').rstrip('\n')
+
+
+def refused(*fragments):
+    def check(got):
+        assert len(got['results']) == 1 and got['results'][0].startswith('⟦ctx:denied⟧'), got['results']
+        assert all(f in got['results'][0] for f in fragments), got['results'][0]
+    return check
+
+
+def landed_big(got):
+    assert got['results'] == ['Wrote big.txt']
+    on_disk = got['disk']['big.txt']
+    assert on_disk['size'] >= 100_000 and 'text' in on_disk or on_disk['size'] > 60_000
+
+
+# name -> (what changed, what the model reads / what is on disk now)
+INTENDED = {
+    'e_missing_file': ('a traceback became an answer in cria\'s words', refused('`nope.py` is not there — nothing was changed')),
+    'e_dir_target': ('a traceback became an answer in cria\'s words', refused('`d` is a DIRECTORY, not a file — nothing was changed')),
+    'w_symlink_outside': ('a link to a file outside the workspace is refused, not written through', refused('outside the project directory')),
+    'e_symlink_outside': ('a link to a file outside the workspace is refused, not edited through', refused('outside the project directory')),
+    'e_unsafe_cleanup': ('an edit whose complete candidate is proven unsafe is withheld on the bytes cria holds (the old route could only '
+                         'judge it when the workspace view happened to hold the file)', refused('withheld for revision')),
+    'w_100k': ('a write past the kernel\'s argument limit lands (it failed with E2BIG)', landed_big),
+    'w_400k': ('a write past the kernel\'s argument limit lands (it failed with E2BIG)', landed_big),
+}
 
 
 @pytest.mark.parametrize('name', sorted(char_rig.CASES))
@@ -23,5 +58,14 @@ def test_case(tmp_path, name):
         path.write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False))
         return
     want = json.loads(FIXTURE.read_text())[name]
-    assert got['results'] == want['results']
+    if name in INTENDED:
+        INTENDED[name][1](got)
+        if name.endswith('_outside'):
+            assert got['outside'] == json.loads(FIXTURE.read_text())['e_exact']['outside'] or all(
+                v['text'] in ('OUTSIDE ORIGINAL\n', 'x = 1\n') for k, v in got['outside'].items() if 'text' in v)
+        return
+    assert [norm(t) for t in got['results']] == [norm(t) for t in want['results']]
+    if name == 'w_mode_kept':          # a whole write keeps the file's mode and owner (the old route reset it to 0666 & ~umask)
+        assert got['disk']['run.sh']['mode'] == '0o755' and got['disk']['run.sh']['text'] == want['disk']['run.sh']['text']
+        return
     assert got['disk'] == want['disk'] and got['outside'] == want['outside']

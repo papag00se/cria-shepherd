@@ -52,7 +52,6 @@ class State(Protocol):
     gate_unknown_streak: int
     gate_unknown_sig: str
     gate_unsettled_streak: int
-    gate_marks: dict | None
     last_gate_skipped: int
     tests_passed_high: dict[str, int]
     last_regression: tuple[str, int, int] | None
@@ -321,25 +320,10 @@ def _count_unknown(state: State, outcome: probegate.GateOutcome) -> None:
     state.gate_unknown_sig = sig
 
 
-def _learn_marks(state: State, outcome: probegate.GateOutcome) -> None:
-    """The gate read the completion marks of the session's unreplied write calls (`completionmarks`): every FINISHED one is now a
-    known state for this process (held on the session for the history readers), and a reading that left one unsettled counts toward
-    the same bound as an unknown one.
-
-    The mark FILE is not released here. No coder-visible result carries the gate's reading (`probegate.clean_gate_results`), so
-    `gate_marks` dies with the process while the re-presented history still names the call with no reply: a mark released now and
-    a restart left that call `incomplete` for good (a landed write read as unknown). The call stays outstanding until a record the
-    history DOES keep - a later write's or read's `pm`, or the call's own reply - settles it (`writeproxy._learn_completions`)."""
-    witnessed = getattr(outcome, "witnessed", None) or {}
-    if witnessed:
-        state.gate_marks = {**(state.gate_marks or {}), **witnessed}
-    state.gate_unsettled_streak = state.gate_unsettled_streak + 1 if outcome.unsettled_writes else 0
-
-
 def record(source: Input, state: State, outcome: probegate.GateOutcome, findings: str,
            evidence: EvidenceServices) -> None:
     """Single shared check-state settlement; F44 progress bookkeeping stays shared."""
-    _learn_marks(state, outcome)
+    state.gate_unsettled_streak = state.gate_unsettled_streak + 1 if outcome.unsettled_writes else 0   # an unconfirmed write the gate cannot settle counts toward the bound
     state.last_gate_ran = bool(outcome.ran)
     state.last_gate_participation = outcome.participation
     state.gate_replan_required = bool(outcome.replan_after_survey)

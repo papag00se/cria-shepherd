@@ -6,10 +6,10 @@ close-miss → "copy verbatim, don't rewrite"; …). Each branch was locally rea
 so across a stuck session the model was told to rewrite and not-to-rewrite by turns — a whipsaw (one
 live walk showed "do not rewrite the whole file" 80× vs "REWRITE THE WHOLE FILE" 11×).
 
-Now the heredoc only does what it alone can — APPLY the edit (exact → whitespace-flexible) and, on a
-miss, REPORT the facts as a ``⟦ctx:editfail⟧`` marker (mode + the file's real current bytes + the near
-anchor). This module is the one place that turns that fact-report into a directive, keyed on the file's
-own failure history (reconstructed statelessly from the conversation). The policy is MONOTONIC: surgical
+The edit itself is applied in cria (:mod:`cria.editapply`), which on a miss reports the FACTS (mode + the
+file's real current bytes + the near anchor) and keeps them, typed, in the operation's ledger record. This
+module is the one place that turns that fact report into a directive, keyed on the file's own failure
+history (reconstructed statelessly from the conversation). The policy is MONOTONIC: surgical
 guidance while failures are few, then a single COMMITTED escalation to a grounded whole-file rewrite —
 no oscillation, and it commits to the action a weak model can actually complete (rewrite the whole file
 from the exact bytes it's shown, rather than pin an ``old_string`` it keeps mis-copying).
@@ -20,42 +20,15 @@ close / no-anchor) is the one that escalates.
 """
 from __future__ import annotations
 
-import base64
-import json
 import os
-import zlib
 
 from . import denial, prompts
 
-# Heredoc → cria: a structured edit-FAILURE fact-report (base64 JSON follows the marker).
-EDITFAIL = "⟦ctx:editfail⟧"
-ORDER_LATE = "⟦ctx:editorder⟧"   # == writeproxy.EDIT_ORDER_LATE (that module imports this one)
-# A report may travel as ``PACKED_PREFIX`` + base64(zlib(json)) instead of base64(json). '.' is not in the
-# base64 alphabet, so the two cannot be confused; zlib's own checksum rejects a corrupted stream.
-PACKED_PREFIX = "z."
 # cria → model: the composed directive. Carries the file's basename so this module can COUNT how many
 # times it has already steered edits on that file (the escalation clock), statelessly from history.
 EDIT_MARK = "⟦ctx:edit⟧"
 # Surgical guidance for this many failures on a file; on the next one, COMMIT to the whole-file rewrite.
 ESCALATE_AFTER = 3
-
-
-def decode_report(token: str) -> dict:
-    """The fact-report inside one ``⟦ctx:editfail⟧`` token, packed or not. Raises ``ValueError`` (which
-    ``JSONDecodeError`` and ``UnicodeDecodeError`` are) for anything that is not a whole report, so a
-    cut or corrupted one is reported as unreadable — never half-decoded."""
-    token = token.strip()
-    try:
-        if token.startswith(PACKED_PREFIX):
-            raw = zlib.decompress(base64.b64decode(token[len(PACKED_PREFIX):].split()[0].encode("ascii"), validate=True))
-        else:
-            raw = base64.b64decode(token.encode("ascii"))
-        fail = json.loads(raw.decode("utf-8"))
-    except zlib.error as e:
-        raise ValueError(str(e)) from e
-    if not isinstance(fail, dict):
-        raise ValueError("report is not an object")
-    return fail
 
 
 def _tag(path: str) -> str:
@@ -204,43 +177,9 @@ def compose(fail: dict, prior: int, grounded: bool = True) -> str:
     return report("no_anchor")
 
 
-def recover(content: str, prior_msgs: list, rlog=None) -> str:
-    """If ``content`` is a heredoc edit-FAIL fact-report, compose the one directive (keyed on the file's
-    prior edit-steer count in ``prior_msgs``). Otherwise return it unchanged — non-edit-fail results
-    (write refusals, real errors) pass straight through."""
-    i = content.find(EDITFAIL)
-    if i < 0:
-        return content
-    # FIND, NOT STARTSWITH — the same lookup :func:`summarize` has always used, for the same marker,
-    # in the same module. They disagreed, and that disagreement silently killed this function.
-    #
-    # `_strip_exec_envelope` was taught on 2026-08-26 to KEEP the harness's `Warning: truncated
-    # output (original token count: N)` line above the payload, so the coder is told the report is a
-    # piece. Correct, and it put one line in front of the marker — which is all it took: the guard
-    # here was positional, so every edit miss that came back with a cut warning skipped recovery and
-    # handed the coder 3,200 characters of base64 instead of "your copy first differs at LINE 53".
-    #
-    # Measured on shipping-rates-rb x nemotron-elastic 1787950133, found twice in one walk. At 0047
-    # and again at 0081 the coder read the warning as a fact about its OWN edit — 0086: "The previous
-    # edit we made was to add the require "countries" line but it got truncated." It then spent calls
-    # 0086, 0087, 0089 and 0090 re-reading the file to settle a question cria had already answered,
-    # and the blob rode every prompt from 0081 to 0091. The contrast is in the same run: at 0036 and
-    # 0085 there was no warning, `startswith` matched, and the directive landed.
-    #
-    # Whatever preceded the marker is kept in place — the warning is still true and still wanted; it
-    # simply belongs ABOVE the directive rather than in front of a prefix test.
-    head, rest = content[:i], content[i + len(EDITFAIL):]
-    # An order note rides in front of the report (the edit ran ahead of its predecessors in the turn): said in words.
-    if ORDER_LATE in head:
-        head = head.replace(ORDER_LATE, prompts.load("edit_order_late").strip())
-        head = head.rstrip("\n") + "\n"
-    try:
-        fail = decode_report(rest)
-    except ValueError:
-        # A REPORT THAT WAS REALLY CUT STILL MUST NOT SHIP AS BASE64. Returning `content` unchanged
-        # is what leaked the blob for ten calls; the marker proves an edit_file failed, so cria can
-        # always say that much in words even when it can no longer say which line (#5, #5b).
-        return head + prompts.load("editfail_unreadable")
+def recover(fail: dict, prior_msgs: list, rlog=None) -> str:
+    """The ONE directive for an edit that did not apply, composed from the facts of the miss (``fail``: mode, path, and the file's text
+    or the near anchor) and keyed on the file's prior edit-steer count in ``prior_msgs``."""
     path = fail.get("path") or ""
     # ONE BATCH IS ONE ATTEMPT. A turn of N edits to the same file is answered with N results at once; the
     # coder cannot act on the first before it has sent the last. Counting each result against the ones
@@ -265,28 +204,8 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
             and (prior + 1 >= ESCALATE_AFTER or not grounded):
         # The first of this turn's failed edits to the file already carried the committed directive (with
         # the file's text); said once, not once per edit.
-        return head + _tag(path) + prompts.fill(prompts.load_map("editfail_reports")["batch_repeat"], path=os.path.basename(path))
-    return head + compose(fail, prior, grounded)
-
-
-def summarize(content: str) -> str:
-    """Collapse a raw ``⟦ctx:editfail⟧<base64>`` report to a ONE-LINE fact — for a REASONER session only.
-    The base64 embeds the file's FULL current bytes: useless noise a reasoner can't decode (three such
-    blobs were ~96K tokens of poison in a single verify prompt). The MODEL keeps the raw marker —
-    :func:`recover` turns it into the recovery directive it actually needs. Unchanged if no marker."""
-    i = content.find(EDITFAIL)
-    if i < 0:
-        return content
-    rest = content[i + len(EDITFAIL):]
-    b64 = rest.split(None, 1)[0] if rest.strip() else ""   # the report is one whitespace-free token
-    tail = rest[len(b64):]
-    try:
-        fail = decode_report(b64)
-        path = os.path.basename(fail.get("path") or "a file")
-        note = f"[edit_file on {path} did not apply (mode={fail.get('mode') or 'miss'}); cria gave the coder the exact fix]"
-    except ValueError:
-        note = "[edit_file did not apply; cria gave the coder the fix]"
-    return content[:i] + note + tail
+        return _tag(path) + prompts.fill(prompts.load_map("editfail_reports")["batch_repeat"], path=os.path.basename(path))
+    return compose(fail, prior, grounded)
 
 
 def rewrite_sanctioned(msgs: list, path: str) -> bool:

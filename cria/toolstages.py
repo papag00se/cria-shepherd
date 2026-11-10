@@ -15,9 +15,9 @@ from typing import Iterable, Literal
 
 # Compatibility surface: the canonical records live below execution/default assembly.
 from .toolcontracts import (EventLog, _PolicyLog, policy_log, CompletionTransform, CompletionRepair,
-    CompletionDefinition, ShrinkFinding, ShrinkCheck, EditSequence, LoweringRequest,
+    CompletionDefinition, ShrinkFinding, ShrinkCheck, LoweringRequest,
     OutboundCall, RewrittenCall, ReadIntent, ShellCommand, OutboundEffect, OutboundDefinition,
-    MutationDefinition, ReturnedResult, ReturnedDefinition, ReturnedHistory,
+    MutationDefinition, MutationPlan, MutateIntent, ReviewTerms, ReturnedResult, ReturnedDefinition, ReturnedHistory,
     HistoryDefinition, RejectedDraft, DraftDefinition, ToolDefinition, ShrinkServices)
 
 
@@ -102,7 +102,7 @@ class ToolStages:
             if isinstance(result, RewrittenCall):
                 arguments = (result.arguments if result.arguments is not None else
                              parse_args((result.call.get('function') or {}).get('arguments')))
-                source = OutboundCall(result.call, arguments, source.request, source.sequence, source.log)
+                source = OutboundCall(result.call, arguments, source.request, source.log)
         # Transport adaptation only, at the original last-admission position.
         # Research owns selection, detection, state and the refusal text.
         effect = None
@@ -117,10 +117,12 @@ class ToolStages:
                     effect = ShellCommand(_refusal_command(refusal))
         return source.call, source.arguments, effect
 
-    def mutation_command(self, source: OutboundCall, command: str) -> str:
+    def mutation_plan(self, source: OutboundCall) -> MutationPlan:
+        """What the selected mutation policies decided about this file mutation (facts cria acts on in-process)."""
+        plan = MutationPlan()
         for definition in self.mutations:
-            command = definition.execute(replace(source, log=policy_log(source.log, definition.policy)), command)
-        return command
+            plan = definition.execute(replace(source, log=policy_log(source.log, definition.policy)), plan)
+        return plan
 
     def returned_result(self, source: ReturnedResult) -> dict | None:
         for definition in self.returned:

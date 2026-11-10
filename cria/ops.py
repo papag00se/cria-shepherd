@@ -20,13 +20,14 @@ import os
 import threading
 from dataclasses import dataclass, field
 
-from . import callauth, denial, externalization, harnessprims, prompts, readops
+from . import callauth, denial, externalization, harnessprims, prompts, readops, resultpacket, writeops
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
 from .opspath import OpsUnavailable, split
 from .opsteps import Final, Issue, Wait
 from .readops import LedgerRead, ReadFact, ReadOps
+from .writeops import LedgerWrite, WriteOps
 from .toolwire import _command_of, _refusal_command, _shell_call
 
 LIST_DIR = 'list_dir'
@@ -47,6 +48,7 @@ class Incoming:
     outcomes: dict = field(default_factory=dict)    # original call id -> denial kind, from the ledger
     reads: dict = field(default_factory=dict)       # original call id -> LedgerRead, for each finished read
     facts: tuple = ()                               # ReadFact of each verified read the model's wire has not yet accepted
+    writes: dict = field(default_factory=dict)      # original call id -> LedgerWrite, for each finished file mutation
 
 
 def _reason(header: dict) -> str:
@@ -94,7 +96,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps):
+class Ops(ReadOps, WriteOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -103,6 +105,9 @@ class Ops(ReadOps):
         self.menu = None            # the harness's tool menu and the room one result may take in the model's measured window,
         self.room = None            # as of the request being handled (read answers name routes from the menu and decide fit)
         self._rate = readops.DEFAULT_RATE
+        self._carry: dict = {}      # (operation, sha-256) -> the bytes a planned write will leave, for the cache once it lands
+        self._rides: dict = {}      # operation -> composes the workspace survey that rides with its landing write (process memory: lost on restart, harmlessly)
+        self._rlog = None
         self._lock = threading.RLock()      # the ledger's folded state is shared: one request at a time advances operations
 
     # ---------------------------------------------------------------- issuing
@@ -145,6 +150,8 @@ class Ops(ReadOps):
     def _command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict | None = None) -> str:
         nonce = callauth.nonce(op, s)
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
+        if what in writeops.WHATS:
+            return writeops.command(op, ctx, s, what, args, blobs or {})
         if what == 'ls':
             # AFTER travels as the hex of the name's bytes: a name that is not UTF-8 (a lone surrogate here) must not enter a command
             words, payload, comment = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', os.fsencode(args.get('after', '')).hex()], None, label
@@ -171,6 +178,7 @@ class Ops(ReadOps):
         harness's tool menu and ``room`` the tokens one tool result may take in the model's measured window (None: unknown; a callable is asked only when a read's first frame is in hand)."""
         with self._lock:
             self.menu, self.room = tools, room
+            self._rlog = log if log is not None else self._rlog
             return self._incoming(session, messages, log)
 
     def _incoming(self, session: str, messages: list, log) -> Incoming:
@@ -185,8 +193,10 @@ class Ops(ReadOps):
             for cid, (op, s) in verified.items():
                 step = ledger_ops[op].steps[s]
                 if step.frame is None and ledger_ops[op].final is None:
-                    if cid in results:
-                        frames.append(self._frame_record(op, s, results[cid]))
+                    if cid in results and step.what == 'noop':      # a call that only keeps the model's call and its result paired: nothing to read
+                        frames.append({'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': 1}, 'text': ''})
+                    elif cid in results:
+                        frames.append(self._frame_record(op, s, results[cid], step))
                     else:      # none or several results: UNKNOWN (never "did not run", never "ran"), so the retry ladder or the final takes over
                         frames.append({'t': 'frame', 'op': op, 's': s, 'text': '', 'hdr': {'ok': -1, 'unknown': (
                             'no result for this call' if not self._result_count(messages, cid) else 'several results for this call')}})
@@ -246,13 +256,35 @@ class Ops(ReadOps):
         return out
 
     @staticmethod
-    def _frame_record(op: str, s: int, text: str) -> dict:
+    def _frame_record(op: str, s: int, text: str, step=None) -> dict:
+        nonce = callauth.nonce(op, s)
         try:
-            frame = harnessprims.read_frame(text, callauth.nonce(op, s))
+            frame = harnessprims.read_frame(text, nonce)
         except harnessprims.FrameUnknown as exc:
             return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc)}, 'text': '', 'wire': len(text)}
-        return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
-                'wire': len(text)}
+        record = {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
+                  'wire': len(text)}
+        if step is not None and step.args.get('ride'):
+            survey = Ops._survey_after(text, nonce, writeops.survey_token(op))
+            if survey:
+                record['sv'] = survey
+        return record
+
+    @staticmethod
+    def _survey_after(text: str, nonce: str, token: str) -> str:
+        """The workspace survey that rode home on the line after a frame (the typed survey record, read at that position only), or ''."""
+        clean = text.replace('\r', '')
+        end = clean.find('CTX1 ' + nonce + ' END')
+        if end < 0:
+            return ''
+        at = clean.find('\n', end) + 1
+        record = resultpacket.read_record(clean, at, token, survey=True) if at else None
+        if record is None or record.body is None:
+            return ''
+        try:
+            return record.body.decode('utf-8')
+        except UnicodeDecodeError:
+            return 
 
     def _advance(self, session: str, op_ids: set, present: set, log) -> list:
         """Decide each operation's next step from the ledger alone. Returns the primitive calls the harness has not seen:
@@ -285,6 +317,8 @@ class Ops(ReadOps):
         wave = [st for st in steps if st.args['wave'] == steps[-1].args['wave']]
         if any(st.frame is None for st in wave):
             return Wait
+        if op.kind == writeops.MUTATE:
+            return self._m_after(op, wave, steps)
         table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
                  else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
         return table[wave[0].what](op, wave, steps)
@@ -365,11 +399,11 @@ class Ops(ReadOps):
         return Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(wave[0].args['errno'])))
 
     @staticmethod
-    def _reguard(path: str, ctx: dict) -> str | None:
+    def _reguard(path: str, ctx: dict, write: bool = False) -> str | None:
         """A link cria resolved leads somewhere new; the guards that judged the model's own path judge that one too."""
         from . import dirguard
         from .filecommands import _targets_cria_home
-        if (refusal := dirguard.path_refusal(path, False, ctx['level'], ctx.get('wsroot'), tuple(ctx['roots']))):
+        if (refusal := dirguard.path_refusal(path, write, ctx['level'], ctx.get('wsroot'), tuple(ctx['roots']))):
             return refusal
         return prompts.load('cria_home_refusal') if _targets_cria_home(path) else None
 
@@ -419,7 +453,14 @@ class Ops(ReadOps):
     def _project(self, session: str, messages: list, verified: dict, calls: list, log) -> Incoming:
         ops = self.ledger.ops(session)
         finished = {cid: (op, s) for cid, (op, s) in verified.items() if ops[op].final is not None}
-        outcomes, reads, facts, out = {}, {}, [], []
+        outcomes, reads, writes, facts, out, emitted = {}, {}, {}, [], [], set()
+
+        def answers(cid):
+            """The model's call this primitive call stands for: the first step of each of the operation's calls, in order."""
+            op, s = finished[cid]
+            step = ops[op].steps[s]
+            return s if s < len(ops[op].calls) and step.args.get('wave') == 0 else None
+
         for m in messages:
             if not isinstance(m, dict):
                 out.append(m)
@@ -429,8 +470,8 @@ class Ops(ReadOps):
                 kept = []
                 for c in m['tool_calls']:
                     cid = c.get('id') if isinstance(c, dict) else None
-                    if cid in finished and finished[cid][1] == 0:
-                        original = ops[finished[cid][0]].call
+                    if cid in finished and answers(cid) is not None:
+                        original = ops[finished[cid][0]].calls[answers(cid)]
                         kept.append({'id': original['id'], 'type': 'function',
                                      'function': {'name': original['name'], 'arguments': original['arguments']}})
                     elif cid not in finished:
@@ -441,20 +482,32 @@ class Ops(ReadOps):
                     out.append({**{k: v for k, v in m.items() if k != 'tool_calls'}, **({'tool_calls': kept} if kept else {})})
             elif role == 'tool' and m.get('tool_call_id') in finished:
                 op, _ = finished[m['tool_call_id']]
-                if ops[op].call['id'] not in outcomes:         # the operation's answer, once: where its first result sits
-                    out.append(self._model_result(ops[op], outcomes, reads, facts))
+                here = answers(m['tool_call_id'])
+                # Each call's answer sits where its own first step's result sits; the answers of calls whose own step never
+                # returned a result (a lost reply the operation went on from) sit at the first later result of the operation.
+                for i in ([here] if here is not None else range(len(ops[op].calls))):
+                    if (op, i) not in emitted:
+                        emitted.add((op, i))
+                        out.append(self._model_result(ops[op], outcomes, reads, facts, writes, i))
             else:
                 out.append(m)
         unrecorded = {cid for cid in self._unrecorded(messages, verified)}
         if unrecorded:
             out = self._label(out, unrecorded, log)
-        return Incoming(out, calls, outcomes, reads, tuple(facts))
+        return Incoming(out, calls, outcomes, reads, tuple(facts), writes)
 
-    def _model_result(self, op: Op, outcomes: dict, reads: dict, facts: list) -> dict:
-        """The tool result the model is shown for a finished operation, and what the wire and the history readers are told about
-        it: the outcome, and for a read the verified body."""
+    def _model_result(self, op: Op, outcomes: dict, reads: dict, facts: list, writes: dict, i: int = 0) -> dict:
+        """The tool result the model is shown for one call of a finished operation, and what the wire and the history readers are
+        told about it: the outcome, and for a read the verified body, for a file mutation the typed result."""
         from . import resultnotes
-        final, original = op.final, op.call
+        final, original = op.final, op.calls[i]
+        if op.kind == writeops.MUTATE:
+            r = final['results'][i]
+            outcomes[original['id']] = r['o']
+            survey = next((st.frame.get('sv', '') for st in op.steps.values() if st.s == 0 and st.frame), '') if i == 0 else ''
+            writes[original['id']] = LedgerWrite(original['name'], original['arguments'], r['o'], r.get('text', ''),
+                                                 {'ef': r['ef']} if r.get('ef') else {}, survey)
+            return {'role': 'tool', 'tool_call_id': original['id'], 'content': r.get('text', '')}
         text, note, outcome = final['text'], final.get('note'), final['outcome']
         body = final.get('src') is not None and op.withheld is None
         if op.kind == readops.READ and op.withheld:

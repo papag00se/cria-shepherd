@@ -4,7 +4,7 @@ import os
 
 from cria import assistruntime, cleanupsafety, denial, dirguard, writeproxy, wsview
 from cria.config import CRIA_HOME
-from write_edit_helpers import SHELL, call, command_of, do, lower, write_edit_workspace_view  # noqa: F401
+from write_edit_helpers import SHELL, call, command_of, do, lower, settle, write_edit_workspace_view  # noqa: F401
 
 SOURCE_DELETES_SHARED_TMP = ("import os, shutil, tempfile\n\n\ndef test_it():\n    fd, path = tempfile.mkstemp()\n"
                              "    shutil.rmtree(os.path.dirname(path), ignore_errors=True)\n")
@@ -57,11 +57,11 @@ def test_a_write_or_edit_whose_candidate_would_delete_outside_the_workspace_is_w
     never lands (write, or the whole candidate an edit would produce); the file keeps its bytes; removing the operation lands."""
     target = tmp_path / "test_http.py"
     _, done, msgs = do("write_file", {"path": str(target), "content": SOURCE_DELETES_SHARED_TMP}, tmp_path)
-    assert done.returncode != 0 and not target.exists() and "withheld" in msgs[1]["content"] and denial.unlanded(msgs[1])
+    assert not target.exists() and "withheld" in msgs[1]["content"] and denial.unlanded(msgs[1])
     target.write_text(SAFE)
     _, done, msgs = do("edit_file", {"path": str(target), "old_string": "os.close(fd)",
                                      "new_string": "shutil.rmtree(os.path.dirname(path), ignore_errors=True)"}, tmp_path, cid="e")
-    assert done.returncode != 0 and target.read_text() == SAFE and denial.unlanded(msgs[1])
+    assert target.read_text() == SAFE and denial.unlanded(msgs[1])
     target.write_text(SOURCE_DELETES_SHARED_TMP)
     _, done, msgs = do("edit_file", {"path": str(target), "old_string": "shutil.rmtree(os.path.dirname(path), ignore_errors=True)",
                                      "new_string": "os.close(fd)"}, tmp_path, cid="r")
@@ -130,22 +130,29 @@ def test_survey_follows_owned_record_even_when_command_stderr_precedes_it(tmp_pa
     assert denial.landed(messages[1]) and '"k":"survey"' not in messages[1]['content']
 
 
-def test_the_workspace_survey_rides_only_on_one_line_results_never_on_a_listing(tmp_path, monkeypatch):
+def test_the_workspace_survey_rides_only_on_one_line_results_never_on_a_listing(tmp_path):
     """144-cell ladder: list_dir (a listing capped at 9,000 bytes) carried the 6.6-10 KB survey, a ~19 KB result the harness cut in the
-    middle; apply_survey refused the remains (449 refused surveys in 11 cells) and the view went stale. Writes and edits keep carrying it;
-    a listing is now cria's own `ls` primitive call, which carries nothing but its arguments."""
-    from cria import ops, privatepaths
-    monkeypatch.setattr(privatepaths, "CRIA_HOME", tmp_path / ".cria")
-    engine = ops.Ops()
-    token = wsview.bind(wsview.View("/w", "unsurveyed"))        # nothing surveyed yet: every call is due
+    middle; apply_survey refused the remains (449 refused surveys in 11 cells) and the view went stale. Writes and edits keep carrying it,
+    on the call that lands their bytes (the `write` that answers in one frame; never on a read, whose result is the file); a listing is
+    cria's own `ls` primitive call, which carries nothing but its arguments."""
+    from write_edit_helpers import _ENGINE
+    engine = _ENGINE["ops"]
+    (tmp_path / "m.txt").write_text("a\n")
+    token = wsview.bind(wsview.View(str(tmp_path), "unsurveyed"))        # nothing surveyed yet: every call is due
     try:
-        cmds = {c["id"]: command_of(c) for c in lower(
+        first = lower(
             [call("list_dir", {"path": "."}, "ls"), call("write_file", {"path": "n.txt", "content": "x\n"}, "wr"),
              call("edit_file", {"path": "m.txt", "old_string": "a", "new_string": "b"}, "ed")],
-            injected=("write_file", "edit_file", "list_dir"),
-            issue_list_dir=lambda c, a: engine.issue_list_dir("s", SHELL, c, a, workspace_root="/w", level="none"))}
+            injected=("write_file", "edit_file", "list_dir"), root=str(tmp_path),
+            issue_list_dir=lambda c, a: engine.issue_list_dir("s", SHELL, c, a, workspace_root=str(tmp_path), level="none"),
+            issue_mutations=lambda reqs: engine.issue_mutations("s", SHELL, reqs, workspace_root=str(tmp_path), level="none"))
+        ran = []
+        settle([{"role": "assistant", "tool_calls": first}], tmp_path, ran=ran)
     finally:
         wsview.unbind(token)
-    listing = next(v for k, v in cmds.items() if k.startswith("ctx_"))
-    assert wsview.SURVEY_CMD_OPEN not in listing and "ls" not in cmds and listing.count("python3") == 1
-    assert wsview.SURVEY_CMD_OPEN in cmds["wr"] and wsview.SURVEY_CMD_OPEN in cmds["ed"]
+    first = [command_of(c) for c in first]
+    assert wsview.SURVEY_CMD_OPEN not in first[0] and first[0].count("python3") == 1
+    assert wsview.SURVEY_CMD_OPEN in first[1]                                   # a new file: the write is the first call
+    assert wsview.SURVEY_CMD_OPEN not in first[2]                               # an unread file: its first call is the read
+    landing = [c for c in ran if "CTX_EOF" in c and c.startswith("# edit_file")]
+    assert len(landing) == 1 and wsview.SURVEY_CMD_OPEN in landing[0]           # ...and the edit's survey rides on its landing write

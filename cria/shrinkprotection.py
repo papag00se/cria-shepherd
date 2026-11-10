@@ -1,13 +1,16 @@
-"""Measured whole-file shrink protection and byte-bound command settlement.
+"""Measured whole-file shrink protection.
 
 The caller supplies only live session state, the surveyed view and a closed
 reader. No provider decides whether to hold or formats this policy's guidance.
 The state is transient per task/session; compaction keeps it, new tasks/forks and
 durable reconstruction start fresh. Only affirmative candidate judgments cache.
+
+The finding is a FACT about bytes the view measured (the text to say, whether the removal lands with facts or the write is held, and
+those bytes). It is settled in cria against the bytes the harness reports for the file (:mod:`cria.writeops`): a view that went
+stale never refuses a write and never emits old facts.
 """
 from __future__ import annotations
 
-import base64
 from collections import Counter
 from dataclasses import dataclass, field
 import hashlib
@@ -15,8 +18,7 @@ from typing import Callable, Collection, Protocol
 
 from . import prompts
 from .assistcontract import Policy, Reference
-from .editsequence import _seq_release
-from .toolcontracts import EventLog, MutationDefinition, ShrinkFinding, policy_log
+from .toolcontracts import EventLog, MutationDefinition, MutationPlan, ShrinkFinding, policy_log
 from .wholefile import ClosedJudge, judge_whole_file
 
 SHRINK_MIN_LINES = 8
@@ -61,7 +63,6 @@ class ShrinkCall(Protocol):
     name: str
     arguments: dict
     request: ShrinkRequest
-    sequence: object | None       # the call's place in its turn's per-file queue (`toolcontracts.EditSequence`) or None
     log: EventLog | None
 
 
@@ -160,43 +161,25 @@ def check_write(services: ShrinkServices, path: str, content: str, edit_tool: st
     return {'text': text, 'bytes': raw}
 
 
-def wrap_finding(path: str, finding: ShrinkFinding, command: str, release: str = "") -> str:
-    """Settle against measured bytes; stale views never refuse or emit old facts.
-
-    ``release`` is what answers the call's queue slot when the HOLD branch runs instead of the write program: that program's
-    own exit marks the call done, so a held write that skipped it would leave its successors waiting out the whole queue bound."""
-    from shlex import quote as _qbash
-    from .toolwire import _b64, _refusal_command
-    same = ('import base64,pathlib,sys; '
-            'p=pathlib.Path(base64.b64decode(' + repr(_b64(path)) + ').decode()); '
-            'sys.exit(0 if p.is_file() and p.read_bytes()==base64.b64decode('
-            + repr(base64.b64encode(finding['bytes']).decode('ascii')) + ') else 1)')
-    if finding.get('land'):
-        # The measured facts ride into the write program, which reports them as the typed `rm` field of ITS OWN `landed`
-        # record — only when it actually landed, only when the disk still held the measured bytes (the `same` check).
-        return f'if python3 -I -c {_qbash(same)}; then\nexport CTX_RM={_qbash(finding["text"])}\n{command}\nelse\n{command}\nfi'
-    return f"if python3 -I -c {_qbash(same)}; then\n{release}{_refusal_command(finding['text'])}\nelse\n{command}\nfi"
-
-
-def shrinking_replacement(source: ShrinkCall, command: str) -> str:
+def shrinking_replacement(source: ShrinkCall, plan: MutationPlan) -> MutationPlan:
+    from dataclasses import replace
     from .filecommands import _WRITE_NAMES, _EDIT_NAMES, _prepare_file_mutation
     from .callliterals import _repair_double_escaped
     if source.name not in _WRITE_NAMES or source.request.shrink_services is None:
-        return command
+        return plan
     services = source.request.shrink_services
     if services.ask is None:
-        return command
+        return plan
     mutation = _prepare_file_mutation(source.name, source.arguments)
     path, candidate = str(mutation.path), _repair_double_escaped(mutation.content)
     edit_names = source.request.injected & _EDIT_NAMES
     finding = check_write(services, path, candidate, sorted(edit_names)[0] if edit_names else '')
     if finding is None:
-        return command
-    result = wrap_finding(path, finding, command, _seq_release(source.sequence) if source.sequence is not None else "")
+        return plan
     if source.log is not None:
         event = 'writeproxy.write_removal_facts' if finding.get('land') else 'writeproxy.write_shrink_held'
         policy_log(source.log, DEFINITION.policy).emit(event, tool=source.name, path=path)
-    return result
+    return replace(plan, shrink=finding)
 
 
 DEFINITION = MutationDefinition(
@@ -210,8 +193,3 @@ DEFINITION = MutationDefinition(
                         Reference('tests/write_edit/test_write_edit_held_writes.py', 'test_a_removal_that_keeps_enough_lines_lands_and_the_facts_ride_on_the_result'),
                         Reference('tests/write_edit/test_write_edit_scenario_wire_turn.py', 'test_a_legacy_shrink_callback_wraps_the_program_so_a_stale_measure_never_refuses_a_write')),
            migrated=False), shrinking_replacement)
-
-
-def run_selected(definition: MutationDefinition | None, source: Callable[[], ShrinkCall], command: str) -> str:
-    """Selection precedes preparation, measurements, view/state access and questions."""
-    return command if definition is None else definition.execute(source(), command)

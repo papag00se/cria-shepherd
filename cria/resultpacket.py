@@ -33,7 +33,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import completionmarks, fetchfacts
+from . import fetchfacts
 
 VERSION = 1
 RAN, REFUSED, UNAPPLIED, LANDED, UNCERTAIN, SURVEY = "ran", "refused", "unapplied", "landed", "uncertain", "survey"
@@ -80,18 +80,12 @@ def _rec(kind, **rep):
 
 # THE TYPED REPORTS a record may carry (`rep`): the producer declares each fact as a field, so no reader ever looks for a tag
 # in a tail a file, a page or the edited text could quote.
-#   ev    the edit executor's window report token (base64 / zlib-packed JSON) of a landed edit
-#   late  the edit ran before a predecessor in its batch finished
-#   rm    the measured removal facts a landed whole-file write carries
-#   ef    the edit-fail fact report (token) of an unapplied edit
 #   st    the stored-fact of a spill / search: {operation, target, byte_count, sha256}
-#   pm    the completion marks the program READ BACK (`completionmarks`): {receipt: [state, sha256]} for every earlier call of the
-#         session whose outcome cria had not learned; state is landed / did_not_run / uncertain (a final mark), running / dead (the
-#         writer's own start record and /proc: still the process that wrote it / gone with no final mark) or incomplete (nothing can be said)
 #   fx    the fetch fact of a web_fetch (`fetchfacts.valid_report`): {url, status, observed: str; routes, catalog: [str]; shapes: [{head, route,
 #         params, body, fields}]}; `status` is what the GET answered, `observed` the protocol a successful discovery probe read ("mcp"/"graphql"), empty otherwise — two facts, never one), from the producer's own parse
-REPORT_STR = ("ev", "rm", "ef")
-REPORT_KEYS = ("ev", "late", "rm", "ef", "st", "fx", "pm")
+# (The write and edit programs' reports - the edit window, the batch-order flag, the removal facts, the miss facts, the completion marks -
+# are gone with the programs: cria composes those from the bytes it holds and keeps them in its own ledger, `cria.writeops`.)
+REPORT_KEYS = ("st", "fx")
 
 _ns: dict = {}
 exec(compile(ENCODER_PY, "<cria.resultpacket.ENCODER_PY>", "exec"), _ns)
@@ -249,13 +243,7 @@ def _report(rep) -> dict | None | bool:
     if not isinstance(rep, dict) or not rep or any(k not in REPORT_KEYS for k in rep):
         return False
     for key, value in rep.items():
-        if key in REPORT_STR and not isinstance(value, str):
-            return False
-        if key == "late" and value is not True:
-            return False
         if key == "fx" and not fetchfacts.valid_report(value):
-            return False
-        if key == "pm" and not _valid_marks(value):
             return False
         if key == "st" and not (isinstance(value, dict) and set(value) == {"operation", "target", "byte_count", "sha256"}
                                 and isinstance(value["operation"], str) and isinstance(value["target"], str)
@@ -263,20 +251,3 @@ def _report(rep) -> dict | None | bool:
                                 and isinstance(value["sha256"], str)):
             return False
     return rep
-
-
-def _valid_marks(value) -> bool:
-    """``{receipt: [state, sha256]}`` exactly: a 16-hex receipt, a known state, a 64-hex digest iff landed."""
-    if not isinstance(value, dict) or not value or len(value) > 64:
-        return False
-    hexdigits = set("0123456789abcdef")
-    for receipt, item in value.items():
-        if not (isinstance(receipt, str) and len(receipt) == 16 and set(receipt) <= hexdigits):
-            return False
-        if not (isinstance(item, list) and len(item) == 2 and item[0] in completionmarks.OBSERVED
-                and isinstance(item[1], str)):
-            return False
-        digest = item[1]
-        if (item[0] == "landed") != (len(digest) == 64 and set(digest) <= hexdigits) or (item[0] != "landed" and digest):
-            return False
-    return True

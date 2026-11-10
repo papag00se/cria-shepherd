@@ -1,0 +1,1 @@
+[YOUR LAST WRITE WAS REFUSED] `%%NAME%%` is not a regular file (it is a device, a pipe or a socket) — nothing was written. Choose a path that names an ordinary file.

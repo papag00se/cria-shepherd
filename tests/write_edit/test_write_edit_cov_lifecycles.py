@@ -189,11 +189,14 @@ def test_a_missing_dependency_is_noted_on_the_latest_failing_result_only_and_nev
     assert own.endswith('(LoadError)\n') and 'Note:' not in own
 
 def test_edit_recovery_and_environment_advice_act_only_on_proven_unapplied_edits_and_non_mutation_results():
-    """An edit-miss report is rewritten into a directive only when cria PROVED the edit unapplied; a PEP 668 refusal gets its remedy unless the failing call was a write/edit."""
-    report = editrecovery.EDITFAIL + '{}'; tool = {'role': 'tool', 'tool_call_id': '1', 'content': report}
-    assert rp.edit_failure(ReturnedResult(tool, report, '', [], mutation_failure=True)) is None and rp.edit_failure(ReturnedResult({**tool, bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}, report, '', [])) is None
-    fixed = rp.edit_failure(ReturnedResult({**tool, bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}, report, '', [], mutation_failure=True))
-    assert fixed['content'] != report and 'NOT APPLIED' in fixed['content']
+    """An edit-miss is turned into a directive only when cria PROVED the edit unapplied and holds the facts of the miss; a PEP 668 refusal gets its remedy unless the failing call was a write/edit."""
+    tool = {'role': 'tool', 'tool_call_id': '1', 'content': 'whatever the tool said'}
+    facts = {bodykeys.RESULT_OUTCOME: denial.UNAPPLIED, bodykeys.RESULT_REPORT: {'ef': {'mode': 'identical', 'path': 'app.py'}}}
+    assert rp.edit_failure(ReturnedResult({**tool, bodykeys.RESULT_REPORT: facts[bodykeys.RESULT_REPORT]}, tool['content'], '', [], mutation_failure=True)) is None   # no proof
+    assert rp.edit_failure(ReturnedResult({**tool, bodykeys.RESULT_OUTCOME: denial.UNAPPLIED}, tool['content'], '', [], mutation_failure=True)) is None            # proof, no facts
+    assert rp.edit_failure(ReturnedResult({**tool, **facts}, tool['content'], '', [])) is None                                                                       # not a mutation failure
+    fixed = rp.edit_failure(ReturnedResult({**tool, **facts}, tool['content'], '', [], mutation_failure=True))
+    assert fixed['content'].startswith(editrecovery.EDIT_MARK + ' app.py') and 'old_string and new_string are identical' in fixed['content']
     pip = {'role': 'tool', 'tool_call_id': '1', 'content': 'error: externally-managed-environment\n'}
     assert 'PEP 668' in rp.environment_advice(ReturnedResult(pip, pip['content'], 'pip install x', []))['content']
     assert rp.environment_advice(ReturnedResult(pip, pip['content'], 'pip install x', [], mutation_failure=True)) is None

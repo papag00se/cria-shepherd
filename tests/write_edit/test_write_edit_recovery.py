@@ -72,15 +72,14 @@ def test_phantom_and_would_break_directives_never_escalate_to_a_rewrite(tmp_path
     assert all(says in m["content"] and "FULL file" not in m["content"] for m in results[1:]), results[-1]["content"]
 
 
-def test_a_reasoner_sees_a_one_line_summary_of_a_huge_miss_report_never_the_file_bytes():
-    """The raw editfail report embeds the file's whole current bytes (96K tokens of poison in a judge prompt)."""
-    import base64
-    import json
-    report = {"mode": "identical", "path": "api.json", "current": "{" + "x" * 90000 + "}"}
-    raw = "  -> " + editrecovery.EDITFAIL + base64.b64encode(json.dumps(report).encode()).decode()
-    out = editrecovery.summarize(raw)
-    assert len(out) < 200 and "api.json" in out and "identical" in out and "xxxx" not in out
-    assert editrecovery.summarize("a normal tool result") == "a normal tool result"
+def test_a_miss_reaches_every_reader_as_words_and_typed_facts_never_as_an_encoded_report(tmp_path):
+    """The facts of a miss are kept typed in cria's ledger and the directive is composed from them: no model (coder or reasoner) is ever
+    handed a base64 blob that embeds the file's bytes (96K tokens of poison in one judge prompt, once)."""
+    (tmp_path / "api.json").write_text("{" + "x" * 90_000 + "}")
+    _, _, msgs = do("edit_file", {"path": "api.json", "old_string": "nothing like it", "new_string": "z"}, tmp_path)
+    text = msgs[1]["content"]
+    assert denial.proof(msgs[1]) == denial.UNAPPLIED and len(text) < 600 and "xxxx" not in text and "read api.json in full" in text
+    assert denial.report(msgs[1])["ef"]["mode"] == "no_anchor" and "current" not in denial.report(msgs[1])["ef"]      # too big to quote: not kept either
 
 
 BIG = "\n".join(f"v{i} = {i}" for i in range(400))
@@ -129,28 +128,9 @@ def test_an_edit_that_replaced_only_the_head_of_a_member_is_told_its_old_body_st
     assert "directly after your replacement" not in legit
 
 
-@pytest.mark.parametrize("name,write", [("edit_file", False), ("write_file", True)])
-def test_a_write_that_may_have_landed_is_never_called_unchanged_or_unlanded(tmp_path, name, write, monkeypatch):
-    """The target was replaced and THEN the program failed (EIO after os.replace): the record is `uncertain`, the answer does not say
-    'nothing was changed', the call is not unlanded, and the rejected payload is not labelled 'never reached disk'."""
-    (tmp_path / "f.txt").write_text("old content\n")
-    from cria import ownedfiles
-    injected = ownedfiles.ATOMIC_REPLACE_PROGRAM.replace(
-        '            os.replace(tmp,path)\n',
-        "            os.replace(tmp,path)\n            raise OSError(errno.EIO, 'injected after replace')\n")
-    assert injected != ownedfiles.ATOMIC_REPLACE_PROGRAM
-    monkeypatch.setattr(ownedfiles, 'ATOMIC_REPLACE_PROGRAM', injected)
-    args = ({"path": "f.txt", "content": "new content\n"} if write else
-            {"path": "f.txt", "old_string": "old content", "new_string": "new content"})
-    tc, done, msgs = do(name, args, tmp_path)
-    assert (tmp_path / "f.txt").read_text() == "new content\n"
-    assert '"k":"uncertain"' in done.stdout.split("\n", 1)[0] and not denial.is_denied(done.stdout)
-    assert "Nothing was changed" not in done.stdout and not denial.unlanded_call_ids(msgs)
-    assert "never reached disk" not in str(msgs) and "rejected-candidate" not in str(msgs)
-
-
 def test_an_edit_keeps_the_targets_identity_mode_symlinks_and_hard_links(tmp_path):
-    """Edit executor: keeps the file's mode, writes through a symlink (into another directory too, beside its target), keeps every hard link in step."""
+    """Edit: keeps the file's mode and writes through a symlink (into another directory too, beside its target). A hard-linked name is
+    replaced by the atomic rename like any file (the other name keeps what it held: docs/harness-programs.md section 7, Phase 5)."""
     (tmp_path / "run.sh").write_text("echo a\n")
     os.chmod(tmp_path / "run.sh", 0o755)
     do("edit_file", {"path": "run.sh", "old_string": "echo a", "new_string": "echo b"}, tmp_path)
@@ -161,4 +141,4 @@ def test_an_edit_keeps_the_targets_identity_mode_symlinks_and_hard_links(tmp_pat
     os.link(tmp_path / "other/real.txt", tmp_path / "hard.txt")
     do("edit_file", {"path": "lnk.txt", "old_string": "x = 1", "new_string": "x = 2"}, tmp_path, cid="s")
     assert os.path.islink(tmp_path / "lnk.txt") and (tmp_path / "other/real.txt").read_text() == "x = 2\n"
-    assert (tmp_path / "hard.txt").read_text() == "x = 2\n" and os.listdir(tmp_path / "other") == ["real.txt"]
+    assert (tmp_path / "hard.txt").read_text() == "x = 1\n" and sorted(os.listdir(tmp_path / "other")) == ["real.txt"]

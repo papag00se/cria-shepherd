@@ -32,18 +32,18 @@ import re
 from dataclasses import dataclass, replace
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import bodykeys, brave, completionmarks, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
-from .editsequence import EDIT_SEQ_DIR, EDIT_SEQ_WAIT_SECONDS, _HD_PY, _seq_release
-from .toolstages import EditSequence, LoweringRequest, OutboundCall, ReadIntent, ShellCommand, ReturnedResult, ReturnedHistory
+from . import bodykeys, brave, denial, resultpacket, depsurface, dirguard, prompts, webfetch, wsview, toolstages
+from .toolstages import LoweringRequest, MutateIntent, OutboundCall, ReadIntent, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
 from .outboundpolicies import _external_refusal
-from .shrinkprotection import ShrinkServices, wrap_finding
+from .shrinkprotection import ShrinkServices
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
 from .privatepaths import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
+from .readops import LedgerRead
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, patch_paths, tool_path as _tool_path
 from . import filecommands, harnessprims, ops
 # Canonical pure helpers; transport/service composition remains in this facade.
@@ -55,8 +55,8 @@ from .filecommands import (
     _targets_cria_home, _guarded_path, READ_INLINE_MAX)
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
-    _sentinel, _sentinel_shared, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
-    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration, marks_declared,
+    _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
+    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration,
     GATE_SENTINEL)
 
 from .resultnotes import (
@@ -228,20 +228,6 @@ def _file_mutation_refusal(name: str, mutation: _FileMutation, injected: set, rl
     return _refusal_command(message)
 _FETCH_NAMES = {"web_fetch"}
 _SEARCH_NAMES = {"web_search", "local_web_search"}
-# Heredoc terminator — the payload rides on stdin, so there is NO arg-size limit (no chunking). Both
-# the write and edit commands are python heredocs (they share the validate-before-lower syntax check).
-# A per-write temp suffix keeps the write atomic (write temp, then mv over the target). The temp is
-# removed on ANY failure: `os.replace` onto a directory raises, and the file used to survive — measured
-# (run 0727-161325), 1,089 bytes of the model's code were left at
-# `/home/jesse/src/<workspace>.cria-tmp`, a SIBLING of the workspace, because `Path("<ws>/.")`
-# normalizes to `<ws>` and `str(p) + suffix` then lands one level UP. The dirguard had checked the
-# MODEL's path (`<ws>/.`, legitimately inside); the temp path cria derived from it was never
-# re-checked. A directory target is now refused before any temp exists, which removes the escape at
-# its source; the cleanup covers every other way a write can fail.
-# A result line saying the edit ran BEFORE one or more edits the coder sent ahead of it in the same turn had
-# finished (see `_EDIT_SEQ_BLOCK`). Rendered into prose by `render_edit_echo` / `editrecovery.recover`.
-EDIT_ORDER_LATE = editrecovery.ORDER_LATE
-_TMP_SUFFIX = ownedfiles.TEMP_SUFFIX   # shared atomic resource contract; no PID-derived allocations
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
 # actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
 # total count, so the model is never silently capped at the top few and knows how many exist. 20 is
@@ -358,578 +344,6 @@ def advertise(body: dict, rlog=None, brave_key: str | None = None, *, search_onl
     if injected and rlog is not None:
         rlog.emit("writeproxy.advertised", tools=sorted(injected))
     return injected
-
-
-# VALIDATE-BEFORE-LOWER: a shared, in-process syntax check for the languages cria can parse with the
-# stdlib (Python via compile, JSON via json, TOML via tomllib/tomli). Returns a parser message on a
-# syntax error, else None. It runs INSIDE the lowered write/edit command, so a syntactically-broken
-# file never reaches disk — the model gets the exact parser error immediately instead of the churn of
-# writing garbage, hitting the completion gate two turns later, and re-breaking on the next edit.
-# REGRESSION-ONLY (the write/edit callers gate on the BEFORE state): it refuses only when a write/edit
-# would break a file that currently PARSES; it NEVER blocks a model from editing an already-broken file
-# toward valid (broken→still-broken and broken→valid both write freely). Version-scoped to what the
-# workspace python's own compile() accepts, which is the interpreter that will run the code anyway.
-# ONE ext -> validator table, and it runs INSIDE the lowered heredoc, so it may use Python's own
-# parsers in-process and must shell out for the rest.
-#
-# THE HOLE THIS CLOSES. It used to dispatch on .py/.pyi, .json and .toml and fall off the end for
-# everything else, returning None — "no opinion". Both callers read None as "nothing to refuse", so
-# for a .rb, .go, .java, .rs or .js file the validate-before-lower refusal branch was UNREACHABLE:
-# cria would happily replace a parsing Ruby file with one that does not parse, and the edit path's
-# would_break check was likewise always False. Measured across the six-language battery, where
-# cria's own write path corrupted a pom.xml with nothing detecting it.
-#
-# cria already owns a per-extension syntax-command table 600 lines away in probediscovery
-# (node --check, php -l, ruby -c). This is the same knowledge, needed in a place that cannot import
-# it. Per-language entries are correct here — every language gets its equivalent check; the defect
-# was the missing rows, not the table.
-#
-# UNKNOWN STAYS SAFE. A tool that is not installed, a timeout, or an extension with no parser all
-# return None, which means "cria cannot judge this" and never refuses. The guard stays
-# regression-only (#2): it may only refuse replacing a file that currently parses.
-_VALIDATE_FN = r'''import shutil as _sh, subprocess as _sp, tempfile as _tf, os as _os
-# NO literal braces anywhere in this source: it is prepended to the heredoc templates below, which
-# are .format()ed, and a dict literal's braces read as format placeholders.
-_EXT_CMD = dict([('.rb', ['ruby', '-c']), ('.js', ['node', '--check']),
-                 ('.mjs', ['node', '--check']), ('.cjs', ['node', '--check']),
-                 ('.php', ['php', '-l']), ('.go', ['gofmt', '-e'])])
-
-
-def _v(path, raw):
-    try:
-        text = raw.decode() if isinstance(raw, bytes) else raw
-    except Exception:
-        return None
-    low = path.lower()
-    _dot = low.rfind('.')
-    ext = low[_dot:] if _dot >= 0 else ''
-    try:
-        if ext in ('.py', '.pyi'):
-            compile(text, path, 'exec')
-        elif ext == '.json':
-            import json as _json; _json.loads(text)
-        elif ext == '.xml':
-            from xml.etree import ElementTree as _ET; _ET.fromstring(text)
-        elif ext == '.toml':
-            try:
-                import tomllib as _t
-            except ImportError:
-                try:
-                    import tomli as _t
-                except ImportError:
-                    return None
-            _t.loads(text)
-        elif ext in _EXT_CMD:
-            _argv = _EXT_CMD[ext]
-            if _sh.which(_argv[0]) is None:
-                return None
-            _fd, _tmp = _tf.mkstemp(suffix=ext)
-            try:
-                with _os.fdopen(_fd, 'w') as _fh:
-                    _fh.write(text)
-                # Syntax checkers must not load ambient interpreter hooks from the harness environment.
-                _blocked = ('NODE_OPTIONS', 'NODE_PATH', 'RUBYOPT', 'RUBYLIB', 'RUBYGEMS_GEMDEPS', 'PHPRC', 'PHP_INI_SCAN_DIR')
-                _env = dict((k, v) for k, v in _os.environ.items() if k not in _blocked)
-                _r = _sp.run(_argv + [_tmp], capture_output=True, text=True, timeout=20, env=_env)
-                if _r.returncode != 0:
-                    _msg = ((_r.stderr or '') + (_r.stdout or '')).strip()
-                    # THE TEMP PATH GOES, IT IS NOT REPLACED. This used to substitute the real
-                    # absolute workspace path back in and THEN cut to `splitlines()[0][:200]`.
-                    # `ruby -c` prints the path TWICE on line one, and a suite workspace path is 96
-                    # characters, so 198 of the 200 were path: the coder was refused with the
-                    # message `:36: s` and, unable to see what was wrong, discarded a complete
-                    # five-change implementation it had just written. Measured and reproduced
-                    # byte-exact. The cap was never the size the message needed; the substitution
-                    # inflated the string four and a half times and the cap then cut the half that
-                    # carried the diagnosis.
-                    #
-                    # The coder already knows which file it just tried to write, so the path is the
-                    # one part of this that carries no information. Stripping it leaves the
-                    # coordinate and the text — and the checker's own caret line, which is two
-                    # thirds of what makes a syntax error actionable and which `splitlines()[0]`
-                    # threw away before the cap even ran (#5: per-line caps and character budgets
-                    # are truncation; this is tool output the checker itself produced).
-                    _base = _os.path.basename(path)
-                    _msg = _msg.replace(_tmp + ':', _base + ':').replace(_tmp, _base)
-                    _msg = _msg.replace(_base + ': ' + _base + ':', _base + ':')
-                    return _msg if _msg else 'does not parse'
-            except Exception:
-                return None
-            finally:
-                try:
-                    _os.unlink(_tmp)
-                except OSError:
-                    pass
-    except Exception as _e:
-        return str(_e)
-    return None
-
-
-def _at(raw, msg):
-    # SHOW THE LINE THE COORDINATE POINTS AT. The refusal used to carry only the parser's message —
-    # "not well-formed (invalid token): line 34, column 1" — into content the coder cannot re-read
-    # (a rejected payload is elided from the history). A line number into an invisible document points at nothing.
-    #
-    # Walked on cycle 4 cell 22 (`feed-pipeline-java x nemotron-elastic`, 5% useful): eight refusals
-    # of pom.xml, every one at line 34, and line 34 of the content the model sent was `</function>`
-    # — a tool-call terminator that had been swallowed into the file body. Across all eight the
-    # model's reasoning never once mentions line 34; at call 0016 it re-derived the identical pom by
-    # hand and was refused again. The sibling EDIT path has done this right for months: it quotes the
-    # file's real text around the divergence.
-    try:
-        text = raw.decode() if isinstance(raw, bytes) else raw
-        import re as _re
-        # BOTH SHAPES A CHECKER EMITS. This matched `line\s+(\d+)` only — Python's compile() and an
-        # XML parser say "line 34, column 1", which is the run this helper was written for. Ruby
-        # says `rates.rb:36:`, and so do `node --check`, `php -l` and `gofmt -e`. So the assist
-        # abstained SILENTLY on four of the six languages the validator beside it covers, which is
-        # worse than absent: it looks present. A matcher keyed to one tool's phrasing is inert on
-        # every other tool (#20).
-        # `node --check` prints `f.js:3` with NO trailing colon, `gofmt -e` prints `f.go:3:5`, ruby
-        # and php print `f.rb:36:`. Requiring a filename-shaped token before the number keeps a port
-        # or a timestamp in the message from being read as a line.
-        m = (_re.search(r'line\s+(\d+)', msg or '')
-             or _re.search(r'[\w./\-]+\.\w+:(\d+)\b', msg or ''))
-        if not m:
-            return ''
-        n = int(m.group(1))
-        lines = text.splitlines()
-        if not (1 <= n <= len(lines)):
-            return ''
-        # The line goes whole — a cap here cuts exactly the long line most likely to be the fault.
-        return ' Line %d of the content you sent is: %s' % (n, lines[n - 1].strip())
-    except Exception:
-        return ''
-'''
-
-# THE ONE STATEMENT for bytes that could not be put on a file, shared by the write and the edit program (it reads
-# their `p`, `_late` and `_rec`). A refusal before anything was touched is a plain "did not run" result; a failure
-# after the target may have changed is an `uncertain` record plus the mutation-unknown statement. Never a traceback.
-_UNLANDED_PY = r'''
-def _fill(_tpl,**_kv):
-    # ONE PASS: a value is never itself searched for a placeholder. Two chained replaces rewrote a file NAME that spells the second placeholder (`x%%ERR%%y`) with the error text.
-    import re
-    return re.sub('%%('+'|'.join(_kv)+')%%',lambda _m:_kv[_m.group(1)],_tpl)
-def _unlanded(_e):
-    _t='%%UNCERTAIN%%' if isinstance(_e,_TargetMutationUncertain) else '%%UNWRITABLE%%'
-    if _t=='%%UNCERTAIN%%': sys.stdout.write(_rec('uncertain', **({'late':True} if _late else {}))); sys.stdout.flush()
-    sys.exit(_fill(base64.b64decode(_t).decode(),NAME=p.name,ERR=_e.strerror or str(_e)))
-'''
-
-# Byte-exact atomic write (python heredoc — content rides in the source on stdin, no arg-size limit /
-# no chunking), with validate-before-write: refuse only when this would replace a currently-VALID file
-# with content that does not parse. A new file or an already-broken file writes freely.
-_WRITE_PY = r'''import base64,sys,pathlib,os
-%%RECORD%%
-p=pathlib.Path(base64.b64decode('{path}').decode())
-raw=base64.b64decode('{content}')
-_late=False
-#%%SEQ%%
-#%%XSEQ%%
-_after=_v(str(p),raw)
-if _after is not None and p.exists() and _v(str(p),p.read_bytes()) is None:
-    sys.exit(_fill(base64.b64decode('{refused}').decode(),NAME=p.name,AFTER=_after)+_at(raw,_after))
-if p.is_dir():
-    sys.exit(_fill(base64.b64decode('{isdir}').decode(),NAME=str(p)))
-_bp=next((a for a in p.parents if a.exists()), None)
-if _bp is not None and not _bp.is_dir():
-    sys.exit(_fill(base64.b64decode('{parentfile}').decode(),NAME=str(p),BLOCK=str(_bp)))
-rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is written THROUGH, never replaced
-try:
-    rp.parent.mkdir(parents=True,exist_ok=True)
-    _lk=_lock_directory(rp)       # the SAME directory lock the edit executor takes: a write and an edit in one batch cannot interleave
-    _write_through(rp,raw)
-except OSError as _e:
-    _unlanded(_e)
-# THE LANDED FACT, and the removal facts the shrink protection measured (handed in by its wrapper), are TYPED fields of the
-# record — never lines a reader has to find.
-sys.stdout.write(_rec('landed', **({{'rm':os.environ['CTX_RM']}} if os.environ.get('CTX_RM') else {{}}), **({{'late':True}} if _late else {{}})))
-'''
-
-
-class WriteCommand(str):
-    """The actual whole-write producer's admission facts; shell bytes are unchanged."""
-    def __new__(cls, command, path, content):
-        result = super().__new__(cls, command)
-        object.__setattr__(result, 'path', path)
-        object.__setattr__(result, 'content', content)
-        return result
-
-    def __setattr__(self, name, value):
-        raise AttributeError('Write producer facts are immutable')
-
-
-def _write_command(path: str, content: str, seq: "EditSequence | None" = None, marks: "completionmarks.Plan | None" = None) -> str:
-    """Byte-exact atomic write via a python heredoc: validate-before-write (a broken write over a valid
-    file is refused), then write to a temp and os.replace over the target so a partial write never
-    leaves a half-written file. The content rides in the heredoc, so there is nothing to escape and
-    no chunking.
-
-    THERE IS STILL A CEILING, and it is not the heredoc's. The harness runs `bash -lc "<command>"`,
-    so the whole command is ONE argv string and Linux caps a single argument at MAX_ARG_STRLEN =
-    128 KiB. A heredoc does not get around that — its bytes are in the same string. A write past
-    :data:`COMMAND_ARG_BUDGET` therefore dies in the harness with "Argument list too long (os error
-    7)" before any of this runs. MEASURED, not assumed (2026-11-01, every capture under ~/.cria/calls):
-    6,161 well-formed write_file/edit_file/apply_patch calls, largest 21.7 KB, none past 24 KB; the
-    only calls past 24 KB were 9 of the 31 unparseable arguments, all runaway generations cut at
-    finish_reason length or aborted for rumination, which the loop refuses BEFORE lowering (and tells the
-    model to build the file in pieces). The command's fixed
-    overhead is ~13 KB, so the ceiling is ~88 KB of content. The fetch-spill path, where the cap WAS
-    observed, states its own bound and cuts with disclosure."""
-    py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
-                                           suffix=_TMP_SUFFIX,
-                                           # Both are REFUSALS decided inside the lowered heredoc —
-                                           # validate-before-lower rejected the content, or the path
-                                           # is a directory. Nothing was written either way, so both
-                                           # carry the did-not-run mark from the site that authors them.
-                                           refused=_b64(denial.mark(prompts.load("write_refused"))),
-                                           isdir=_b64(denial.mark(prompts.load("write_isdir"))),
-                                           # Walked on nemotron poff 1785946072: a mis-split fused
-                                           # call planted a junk FILE named `tests`; every later
-                                           # write below it died in this heredoc's mkdir with a raw
-                                           # FileExistsError traceback — cause invisible, three
-                                           # identical retries, tests never landed. Name the block.
-                                           parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
-    py = py.replace("%%RECORD%%", _record_block(marks))
-    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("write_unwritable")))).replace(
-        '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
-    py = _queued(py, seq, marks)
-    return WriteCommand(f"python3 -I - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
-
-
-# The edit executor (old/new/path base64'd — nothing to escape). Tries an EXACT single match first
-# (precise); then a WHITESPACE-FLEXIBLE match — the non-whitespace tokens of old_string separated by
-# any whitespace — which forgives the indentation / blank-line / trailing-space drift a 9B routinely
-# produces (a byte-exact-only match failed ~1/3 of real edits). Still fail-CLOSED: 0 or ambiguous
-# matches never write. On a genuine miss it hands the model the file's ACTUAL content near its target
-# so its next attempt can copy the exact text, instead of a bare "found 0" it can only guess against.
-# On a MISS the heredoc does NOT compose prose — it reports the FACTS (mode + the file's real current
-# bytes + the near anchor) as a ``⟦ctx:editfail⟧`` marker; cria.editrecovery turns that into the one
-# monotonic directive (surgical → committed whole-file rewrite), keyed on the file's failure history.
-# This keeps the history-blind, whipsawing rewrite/don't-rewrite advice OUT of the per-call heredoc.
-_EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
-%%RECORD%%
-import os
-p=pathlib.Path(base64.b64decode('{path}').decode())
-rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is read and written THROUGH, never replaced
-old=base64.b64decode('{old}').decode()
-new=base64.b64decode('{new}').decode()
-# ONE EDIT AT A TIME PER DIRECTORY. A coder that sends a batch of edits gets them run CONCURRENTLY by its
-# harness, each in its own process, and read-modify-write on one file loses updates — and a write that
-# truncates in place lets a sibling's read land on an EMPTY file and be told the text it anchored on is
-# "not in the file". Walked on phi4 / Java A11 call 0016 (thirty-odd edits in one turn, twenty-odd refused
-# with an empty `current`). So: take the lock, and swap the new bytes in atomically (below). The lock is on
-# the directory, so it leaves nothing in the user's tree; it is released when this process exits.
-_late=False
-#%%SEQ%%
-#%%XSEQ%%
-_lk=_lock_directory(rp)
-# THE FILE IS READ AS BYTES, NOT AS TEXT. `read_text()` is universal-newline mode: it turned every CRLF and lone CR into LF, and the write below saved
-# that, so an edit of ONE line rewrote every line ending of a Windows-style file (and a file with one stray non-UTF-8 byte died here in a traceback).
-# The bytes the edit does not name now come back exactly as they were; an undecodable byte rides through as a surrogate escape and is written back as itself.
-s=rp.read_bytes().decode('utf-8','surrogateescape')
-_shown=lambda t: t.encode('utf-8','surrogateescape').decode('utf-8','replace')    # what the coder is TOLD about the file: never a lone surrogate
-if '\r\n' in s and s.count(chr(10))==s.count('\r\n') and '\r' not in old+new:
-    # a file that is CRLF throughout: the LF text the coder sends spells that file's line ending (before this, the matching was done on a normalised copy)
-    old=old.replace(chr(10),'\r\n'); new=new.replace(chr(10),'\r\n')
-def _fail(mode,**kw):
-    kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
-    kw=dict((k,_shown(v) if isinstance(v,str) else v) for k,v in kw.items())   # (no braces: this template is .format()ed)
-    _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
-    _r=_b(kw)
-    if len('{editfail}')+len(_r)>{cap}:
-        kw.pop('current',None); _r=_b(kw)
-{packblock}    # THE FACT REPORT IS A TYPED FIELD of the record (`ef`), and the batch-order note a flag (`late`): nothing for a reader to find.
-    sys.stdout.write(_rec('unapplied', ef=_r, **({{'late':True}} if _late else {{}}))); sys.stdout.flush()
-    sys.exit(1)
-if old==new:
-    _fail('identical')
-_before=_v(str(p),s)
-{echodef}def _w(res):
-    if _before is None:                       # the file PARSES now — do not let this edit break it
-        _e=_v(str(p),res)
-        if _e is not None:
-            _fail('would_break',err=_e)
-    try:
-        _write_through(rp,res.encode('utf-8','surrogateescape'),preserve=True)
-    except OSError as _e:
-        _unlanded(_e)
-    _ev={echocall}
-    sys.stdout.write(_rec('landed', **({{'ev':_ev}} if _ev else {{}}), **({{'late':True}} if _late else {{}})))
-    sys.exit()
-n=s.count(old)
-if n==1:
-    {posx}_w(s.replace(old,new,1))
-if n>1:
-    _fail('multi',n=n)
-toks=old.split()
-if toks:
-    ms=list(re.compile(r'\s+'.join(map(re.escape,toks))).finditer(s))
-    if len(ms)==1:
-        # The token match starts at the first NON-WHITESPACE character, so the file's leading indent
-        # sits in the prefix. When old_string starts flush (coder gave bare statements), that is the
-        # point: the file's indent survives and a bare new_string lands after it. But when old_string
-        # CARRIES its own leading indent, new_string carries the same indent — and splicing after the
-        # file's indent doubles it. Walked on mellum2 1786196176 call 0190: a correct side_effect fix
-        # (12-space old, 12-space new, off-disk only by a blank line the flexible match forgives)
-        # became a 24-space line, the syntax guard caught the flexible match's own wreckage, and the report told
-        # the coder to "Fix new_string" — for an edit that was right. The same fix, resubmitted with
-        # a one-line old_string, applied verbatim at 0215, 120 calls later. So: old_string indented →
-        # consume the file's indent back to line start and let new_string supply its own.
-        # ...and only when new_string carries indentation of its OWN to replace it with. Gating on
-        # old_string alone regressed the sloppy case the flexible matcher exists for: indented old +
-        # FLUSH new used to land after the file's indent (valid) and would now land at column 0
-        # (broken, then refused as would_break). Both sides indented is the 0190 shape and the only
-        # one where the file's indent is redundant.
-        m=ms[0]; a=m.start()
-        if old[:1] in ' \t' and new[:1] in ' \t':
-            ls=s.rfind(chr(10),0,a)+1
-            if not s[ls:a].strip():
-                a=ls
-        {posf}_w(s[:a]+new+s[m.end():])
-    if len(ms)>1:
-        _fail('multi_flex',n=len(ms))
-oldl=old.split(chr(10))
-o0=next((j for j,l in enumerate(oldl) if l.strip()),0)
-key=oldl[o0].strip() if oldl else ''
-new_first=next((l.strip() for l in new.split(chr(10)) if l.strip()),'')
-lines=s.split(chr(10)); ctx=''; close=''; dline=0
-if key:
-    for i,l in enumerate(lines):
-        if key[:40] in l:
-            # Window the DIVERGENCE, not the head. Anchoring on the first line of old_string put the
-            # 6-line window over the text that already MATCHED — so a 10-line old_string that differs
-            # at line 7 got back six lines it had verbatim, under "The file actually reads", and the
-            # coder resubmitted the same wrong old_string. Walk forward to the first line that
-            # actually differs and centre there.
-            d=i
-            for k in range(o0,len(oldl)):
-                fi=i+k-o0
-                if fi>=len(lines) or lines[fi]!=oldl[k]:
-                    d=min(fi,len(lines)-1); break
-            ctx=chr(10).join(lines[max(0,d-2):d+4]); dline=d+1; break
-    if not ctx:  # no substring anchor — find the file line the old_string is CLOSEST to (a near-miss)
-        cm=difflib.get_close_matches(key, [l.strip() for l in lines if l.strip()], n=1, cutoff=0.75)
-        if cm:
-            close=cm[0]
-if ctx:
-    _fail('anchor',anchor=ctx,line=dline)
-elif close and new_first and len([l for l in new.split(chr(10)) if l.strip()]) == 1 and ' '.join(new_first.split()) == ' '.join(close.split()):
-    # "Already done" is a fact only when the complete proposed replacement equals the complete
-    # current line. Substring containment made `require x` equal `require x "v1.5.0"` and falsely
-    # ordered the coder not to remove the rejected version.
-    _fail('phantom',anchor=close)   # already-correct line the model misremembers
-elif close:
-    _fail('close',anchor=close)     # near-miss: a mistyped token
-else:
-    _fail('no_anchor')
-'''.replace('%%LATE%%', EDIT_ORDER_LATE).replace('%%SUFFIX%%', _TMP_SUFFIX)
-
-
-# THE EDIT'S RESULT, AS THE FILE NOW READS. The executor already holds the post-edit bytes, so for an
-# engaged coder (`translate_outbound(edit_echo=)`) it reports the window it just wrote — the replaced span
-# plus ECHO_CONTEXT lines either side, with the file's line count — as a second marker line that
-# `represent_inbound` renders. It is a window, never a claim about the whole file, and it is read off the
-# bytes on disk, not authored. A span too large to repeat (the coder's own new_string, already in its
-# history) is shown as the two context windows around it, each lossless for the lines it names.
-# Absent the flag none of this is spliced in and the command is byte-for-byte what it always was.
-ECHO_CONTEXT = 3
-# ONE byte bound on the whole echo: the lines shown (span + context), and — separately — the report that
-# carries them (the `_fail` bound). Over it the window is dropped to the two context windows around the
-# span, and over it again to the header alone, which says so. A window is never cut mid-way.
-ECHO_MAX_BYTES = 3000
-ECHO_WIRE_MAX_BYTES = content_reduce_mod.INLINE_RESULT_MAX_BYTES
-
-
-_ECHO_DEF = r'''def _echo(res):
-    a0,a1,flex=_pos
-    L=res.split(chr(10))
-    if res.endswith(chr(10)) or not res: L.pop()
-    total=len(L)
-    nl=lambda i: res.count(chr(10),0,i)+1
-    first=nl(a0); last=nl(max(a0,a1-1)) if a1>a0 else first
-    first=min(max(first,1),max(total,1)); last=min(max(last,first),max(total,1))
-    lo=max(1,first-{ctx}); hi=min(total,last+{ctx})
-    J=chr(10).join
-    cands=[[[lo,J(L[lo-1:hi])]]]
-    if a1>a0:
-        cands.append([x for x in ([[lo,J(L[lo-1:first-1])]] if first>lo else [])+([[last+1,J(L[last:hi])]] if hi>last else [])])
-    cands.append([])
-    if total==0: cands=[[]]
-    # THE LINES THAT NOW FOLLOW THE REPLACEMENT, MEASURED AGAINST IT. An old_string that anchors only the
-    # head of a member (its signature line) while new_string carries the WHOLE member replaces that head
-    # and nothing else: the old body is still in the file, directly under the new one. Counted, not
-    # judged: the first lines after the span (blank ones skipped) that read the same, whitespace
-    # collapsed, as one unbroken stretch of the replacement. Only a replacement longer than what it
-    # replaced can leave such a remainder, and a stretch of one line (or one repeated line) is no signal.
-    dup=None
-    NL=new.split(chr(10))
-    if NL and NL[-1]=='': NL.pop()
-    OL=old.split(chr(10))
-    if OL and OL[-1]=='': OL.pop()
-    if len(NL)>len(OL) and a1>a0:
-        _n=lambda l: ' '.join(l.split())
-        N=[(first+j,_n(l)) for j,l in enumerate(NL) if l.strip()]
-        F=[(last+1+k,_n(l)) for k,l in enumerate(L[last:last+len(NL)]) if l.strip()]
-        best=0; bj=0
-        for j in range(len(N)):
-            m=0
-            while m<len(F) and j+m<len(N) and N[j+m][1]==F[m][1]: m+=1
-            if m>best: best=m; bj=j
-        if best>=2 and len(set(t for _,t in F[:best]))>=2 and any(c.isalnum() for _,t in F[:best] for c in t):
-            dup=[F[0][0],F[best-1][0],N[bj][0],N[bj+best-1][0],len(OL),len(NL)]
-    def _rep(segs,omitted):
-        kw=dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs,omitted=omitted)
-        if dup: kw['dup']=dup
-        _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
-        _r=_b(kw)
-        try:
-            import zlib
-            _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
-            if len(_z)<len(_r): _r=_z
-        except Exception:
-            pass
-        return _r
-    for i,segs in enumerate(cands):
-        omitted=(not segs) and (lo<first or hi>last)
-        if sum(len(t.encode()) for _,t in segs)>{maxb} and i<len(cands)-1: continue
-        r=_rep(segs,omitted)
-        if len(r)>{wire} and i<len(cands)-1: continue
-        return r
-'''
-
-
-# Spliced into `_fail` only for a coder at the gate's rung (`translate_outbound(pack=)`); below it the edit
-# command is byte-for-byte what it always was.
-_EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts; the coder reads the decoding of it. Packed
-    # only when that is smaller; the drop-`current` decision above is made on the UNPACKED size, so what
-    # the coder is shown never depends on whether zlib was there.
-    try:
-        import zlib
-        _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
-        if len(_z)<len(_r):
-            _r=_z
-    except Exception:
-        pass
-'''
-
-
-# THE COMMAND CARRIES ITS PLACE IN THE TURN. A batch of edits the harness runs concurrently must still apply in
-# the order the coder sent them — a later edit is anchored on text an earlier one produces. Each edit in a
-# batch that touches the same file names its predecessors (call indexes in this turn); it waits, OUTSIDE the
-# directory lock, until each has left a done-mark (written at process exit, whether it applied, was refused or
-# failed). A predecessor that never arrives inside the bound is not waited for further: the edit applies and
-# its result says it ran early. Each call first records its own pid and start time (`completionmarks._cm_begin`), so a
-# predecessor known DEAD without its done-mark (read through /proc, no signal) is not waited for at all.
-# A turn with a single edit per file carries none of this.
-_EDIT_SEQ_BLOCK = r'''import time,atexit
-_seq_deadline=time.monotonic()+%(wait)r
-try:
-    _sequence=_seq_open(%(turn)r,%(dir)r,%(participants)r,_seq_deadline)
-    atexit.register(_seq_done,_sequence,%(idx)r)
-    try: _cm_begin(_sequence,str(%(idx)r),%(turn)r)
-    except OSError: pass
-    _miss=lambda: _seq_missing(_sequence,%(preds)r)
-    _live=lambda: [_i for _i in _miss() if not _seq_dead(_sequence,_i,%(turn)r)]
-    while _live() and time.monotonic()<_seq_deadline: time.sleep(0.05)
-    _late=bool(_miss())
-except (OSError,ValueError):
-    _late=bool(%(preds)r)
-'''
-
-
-def _record_block(marks: "completionmarks.Plan | None") -> str:
-    """The program's record builder, and - under a session - the completion mark that outlives its reply (`completionmarks`)."""
-    receipt = denial.active_receipt()
-    block = resultpacket.RECORD_PY.replace("%%RCPT%%", receipt)
-    return block + completionmarks.head(marks, receipt) if marks is not None and receipt else block
-
-
-def _packed_program(program: str) -> str:
-    """Ship a self-contained harness program without installing workspace artifacts."""
-    data = base64.b64encode(zlib.compress(program.encode('utf-8'), 9)).decode('ascii')
-    return "import base64,zlib\nexec(zlib.decompress(base64.b64decode(" + repr(data) + ")))\n"
-
-
-_PACKED_MARKS = _packed_program(completionmarks.directory_program())
-_PACKED_SEQUENCE = _packed_program(editsequence.PROGRAM + completionmarks.FUNCTIONS)
-
-
-def _queued(py: str, seq: "EditSequence | None", marks: "completionmarks.Plan | None" = None) -> str:
-    """``py`` with its place in the turn's per-file queue (the ``#%%SEQ%%`` slot of an edit or whole-write program) filled in,
-    and - when it carries completion marks - the wait for an EARLIER turn's writer of the same file (the ``#%%XSEQ%%`` slot).
-    A call that has neither carries none of it: the slots are comments and the program is byte-for-byte what it was."""
-    if marks is not None:
-        py = py.replace("#%%XSEQ%%\n", completionmarks.wait(marks, EDIT_SEQ_WAIT_SECONDS))
-    if seq is None:
-        return _PACKED_MARKS + py if marks is not None else py
-    turn, idx, preds, participants = seq
-    head = _PACKED_SEQUENCE
-    return head + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
-        dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
-        participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))
-
-
-def render_edit_echo(path: str, rep: "dict | None" = None) -> str:
-    """The landed write's confirmation, plus the window of the file the executor reported (when it did).
-
-    ``rep`` is the record's TYPED reports (`ev` the window report token, `late` the batch-order flag): this reads those
-    fields and nothing else — no tail is searched. Everything after the confirmation is facts read off the post-edit
-    bytes; a missing or unreadable report leaves the plain confirmation — saying less is allowed."""
-    rep = rep or {}
-    confirm = prompts.render("write_confirm", path=path)
-    if rep.get("late"):
-        return render_edit_echo(path, {k: v for k, v in rep.items() if k != "late"}) + "\n" + prompts.load("edit_order_late")
-    for token in ([rep["ev"]] if "ev" in rep else []):
-        try:
-            d = editrecovery.decode_report(token)
-            first, last, total = int(d["first"]), int(d["last"]), int(d["total"])
-            segs = [(int(n), str(t)) for n, t in d["segs"]]
-        except (ValueError, KeyError, TypeError):
-            return confirm
-        if d.get("empty"):
-            head = prompts.render("edit_echo_removed", path=path, total=total, a=first)
-        elif segs and (len(segs) == 1 and segs[0][0] <= first and segs[0][0] + segs[0][1].count("\n") >= last):
-            head = prompts.render("edit_echo", path=path, total=total, a=first, b=last)
-        else:
-            head = prompts.render("edit_echo_span_omitted", path=path, total=total, a=first, b=last)
-        parts = [confirm, head]
-        dup = d.get("dup")
-        if dup:
-            try:
-                a, b, x, y, nold, nnew = (int(v) for v in dup)
-                parts.append(prompts.render("edit_echo_repeat", a=a, b=b, x=x, y=y, old=nold, new=nnew))
-            except (ValueError, TypeError):
-                pass
-        if d.get("flex"):
-            parts.append(prompts.load("edit_echo_flexible"))
-        if d.get("omitted"):
-            parts.append(prompts.load("edit_echo_omitted"))
-        for n, t in segs:
-            rows = t.split("\n")
-            parts.append(prompts.render("edit_echo_window", first=n, last=n + len(rows) - 1))
-            parts.append("\n".join(f"{n + i}: {r}" for i, r in enumerate(rows)))
-        return "\n".join(parts)
-    return confirm
-
-
-def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False,
-                  seq: EditSequence | None = None, marks: "completionmarks.Plan | None" = None) -> str:
-    py = (_VALIDATE_FN + _EDIT_PY).format(
-        echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
-                                     zprefix=editrecovery.PACKED_PREFIX) if echo else ""),
-        echocall="_echo(_shown(res))" if echo else "None",
-        posx="_pos=(s.find(old),s.find(old)+len(new),False)\n    " if echo else "",
-        posf="_pos=(a,a+len(new),True)\n        " if echo else "",path=_b64(path), old=_b64(old), new=_b64(new),
-                                          editfail=editrecovery.EDITFAIL,
-                                          packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
-                                                     if pack else ''),
-                                          cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
-    py = py.replace("%%RECORD%%", _record_block(marks))
-    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + _UNLANDED_PY.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable")))).replace(
-        '%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown"))) + py
-    py = _queued(py, seq, marks)
-    return f"python3 -I - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
 _STDOUT_SPILL_PY = r'''
@@ -1397,41 +811,6 @@ def _first_sight_of_rejection(sess_key: str, tc: dict) -> bool:
     return True
 
 
-def _edit_sequence(tool_calls: list, injected: set) -> dict:
-    """``{call index: (group token, index, predecessor indexes, all participant indexes)}`` for the file-mutating calls (edits AND
-    whole-file writes) of ONE turn that share a file with an earlier such call of the same turn. Everything else is absent: a lone
-    mutation per file runs unqueued.
-
-    A WRITE QUEUES TOO. The harness runs a batch concurrently, and a whole-file write is the one call that REPLACES what its
-    predecessors produced: `write f; edit f` run edit-first anchors on the old file, and `write f=A; write f=B` run B-first leaves
-    A on disk while the coder, the ledger and every later fact say B. Each program leaves its own authenticated done-mark at exit
-    (the producer-issued, invocation-bound completion fact), so ordering is enforced where the writer runs, not inferred from where
-    the replies land."""
-    by_path: dict[str, list[int]] = {}
-    for i, tc in enumerate(tool_calls):
-        fn = tc.get("function") or {}
-        if fn.get("name") not in (_EDIT_NAMES | _WRITE_NAMES) or fn.get("name") not in injected:
-            continue
-        args = _parse(fn.get("arguments"))
-        path = _tool_path(args)
-        if not path:
-            continue
-        queued = ((isinstance(args.get("old_string"), str) and args["old_string"] and "new_string" in args)
-                  if fn.get("name") in _EDIT_NAMES else not _prepare_file_mutation(fn.get("name"), args).error)
-        if queued:
-            by_path.setdefault(os.path.normpath(str(path)), []).append(i)
-    group = [ix for ix in by_path.values() if len(ix) > 1]
-    if not group:
-        return {}
-    nonce = uuid.uuid4().hex     # per translation: a resent identical batch can never see an earlier batch's marks
-    out: dict = {}
-    for ix in group:
-        token = hashlib.sha1((nonce + str(ix)).encode()).hexdigest()[:16]
-        for n, i in enumerate(ix):
-            out[i] = (token, i, ix[:n], ix)
-    return out
-
-
 def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
     """Required harness adapters, independent of optional steering selection.
 
@@ -1443,30 +822,20 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
         mutation = _prepare_file_mutation(name, args)
         if mutation.error:
             return ShellCommand(_file_mutation_refusal(name, mutation, request.injected, source.log))
-        marks = completionmarks.plan(request.session, denial.active_receipt(), str(mutation.path), request.workspace_root)
-        if marks is not None:
-            denial.declare_marks(marks.nonce)
-        if name in _WRITE_NAMES:
-            command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content), seq=source.sequence, marks=marks)
-        else:
-            command = _edit_command(str(mutation.path), mutation.old, mutation.new,
-                pack=request.pack, echo=request.edit_echo, seq=source.sequence, marks=marks)
-        command = toolstages.current().mutation_command(source, command)
-        # Explicit, unbound library callback compatibility only. Production uses
-        # typed factual services; a bound selection never falls back to a whole
-        # legacy policy callback, even when its selected source has no services.
+        plan = toolstages.current().mutation_plan(source)
+        # Explicit, unbound library callback compatibility only. Production uses typed factual services; a bound selection never falls
+        # back to a whole legacy policy callback, even when its selected source has no services.
         if (not toolstages.is_bound() and request.shrink_services is None
                 and request.shrink_check is not None and name in _WRITE_NAMES):
             edits = request.injected & _EDIT_NAMES
             finding = request.shrink_check(str(mutation.path), _repair_double_escaped(mutation.content),
                                            sorted(edits)[0] if edits else '')
             if finding:
-                command = wrap_finding(str(mutation.path), finding, command,
-                                       _seq_release(source.sequence) if source.sequence is not None else "")
+                plan = replace(plan, shrink=finding)
                 if source.log is not None:
                     event = 'writeproxy.write_removal_facts' if finding.get('land') else 'writeproxy.write_shrink_held'
                     source.log.emit(event, tool=name, path=str(mutation.path))
-        return ShellCommand(command)
+        return MutateIntent(mutation, plan)
     if name in _READ_NAMES and name in request.injected:
         return ReadIntent()
     elif name in _LIST_NAMES and name in request.injected:
@@ -1495,6 +864,57 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
     return ShellCommand(command) if command is not None else None
 
 
+class WriteFact(NamedTuple):
+    """A whole-file write cria carried out: its path and the content the coder sent (the pasted-file recovery settles on it)."""
+    path: str
+    content: str
+
+
+def _ride(request: LoweringRequest, pack: bool, rlog):
+    """The workspace survey that rides home with a landing write, composed when the write is issued (given the receipt its step
+    gives it): the same budget and the same program as before, now appended to the harness `write` call instead of an inlined one."""
+    def compose(token: str) -> str:
+        room = resultpacket.max_text_for_wire(content_reduce_mod.INLINE_RESULT_MAX_BYTES
+                                              - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
+        if room < wsview.TREE_MIN_BYTES:
+            if rlog is not None:
+                rlog.emit("wsview.survey_not_carried", level="info", left=room, need=wsview.TREE_MIN_BYTES)
+            return ''
+        with denial.receipt_scope(token, denial.Declaration()):
+            return wsview.survey_command(request.session or '', cd=request.workspace_root or '', budget=room, pack=pack)
+    return compose
+
+
+def _carry_out(mutations: list, rebuilt: list, request: LoweringRequest, shell_tool: dict, rlog, notes: list, pack: bool) -> None:
+    """Carry out a turn's cleared file mutations through the harness primitives (cria.writeops): the calls of one file are one operation.
+    ``rebuilt[i]`` is replaced by the first primitive call of the model's i-th call; the model's calls and their results stay the
+    ledger's, the harness is shown cria's own calls."""
+    from .writeops import MutationRequest
+    requests = []
+    for _index, tc, args, effect in mutations:
+        name = (tc.get('function') or {}).get('name')
+        finding, terms = effect.plan.shrink, effect.plan.review
+        requests.append(MutationRequest(
+            tc, args, 'write' if name in _WRITE_NAMES else 'edit', str(effect.mutation.path),
+            shrink=({'text': finding['text'], 'land': bool(finding.get('land')), 'sha': hashlib.sha256(finding['bytes']).hexdigest()}
+                    if finding else None),
+            review={'permission': terms.permission, 'ws': terms.workspace_root} if terms else None, echo=request.edit_echo,
+            ride=_ride(request, pack, rlog) if _survey_due(request.session, name) else None))
+    try:
+        issued = request.issue_mutations(requests) if request.issue_mutations is not None else None
+    except ops.OpsUnavailable as exc:
+        if rlog is not None:
+            rlog.emit('ops.unavailable', level='error', error=str(exc))
+        issued = [_shell_call(tc.get('id'), shell_tool, _refusal_command(prompts.load('mutation_unavailable')), 0) for _i, tc, _a, _e in mutations]
+    for (index, tc, args, effect), call in zip(mutations, issued or [None] * len(mutations)):
+        rebuilt[index] = call or tc
+        name = (tc.get('function') or {}).get('name')
+        notes.append((index, tc, call or tc, WriteFact(str(effect.mutation.path), _repair_double_escaped(effect.mutation.content))
+                      if call is not None and name in _WRITE_NAMES else None))
+        if call is not None and rlog is not None:
+            rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "", detail="")
+
+
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
@@ -1503,7 +923,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
                        observe_externalization=None, only_injected: bool = False, issue_list_dir=None,
-                       issue_read=None, safe_path: str = harnessprims.SAFE_PATH) -> dict:
+                       issue_read=None, issue_mutations=None, safe_path: str = harnessprims.SAFE_PATH) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1516,11 +936,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     """
     injected = injected or set()
     from . import assistruntime
-    completionmarks.begin_turn(session)
     request = LoweringRequest(frozenset(injected), brave_key, native_search, session, workspace_root,
         external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
         externalization_owner, assistruntime.current().externalization, observe_externalization,
-        (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path, issue_read)
+        (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path, issue_read,
+        issue_mutations)
 
     for choice in completion.get("choices", []):
         tool_calls = (choice.get("message") or {}).get("tool_calls")
@@ -1528,7 +948,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             continue
         rebuilt: list[dict] = []
         held_reads: set[str] = set()
-        edit_seq = _edit_sequence(tool_calls, injected)
+        mutations: list = []        # (index in `rebuilt`, the model's call, its arguments, the MutateIntent): carried out together below
+        notes: list = []            # (index in `rebuilt`, the model's call, what it became, the whole-file write proposed): reported to the observer in order
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
@@ -1550,15 +971,14 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             declaration = denial.Declaration()      # what this call's compiler declares for its sentinel (a survey record)
             with denial.receipt_scope(receipt, declaration):
                 tc, args, effect = toolstages.current().outbound_call(
-                    OutboundCall(tc, args, call_request, edit_seq.get(ti), rlog))
+                    OutboundCall(tc, args, call_request, rlog))
                 fn = tc.get("function") or {}
                 name = fn.get("name")
                 if effect is None:
-                    effect = _lower_synthetic(OutboundCall(tc, args, call_request, edit_seq.get(ti), rlog))
+                    effect = _lower_synthetic(OutboundCall(tc, args, call_request, rlog))
             if isinstance(effect, dict):
                 rebuilt.append(effect)
-                if observe_lowering is not None:
-                    observe_lowering(tc, effect, None)
+                notes.append((len(rebuilt) - 1, tc, effect, None))
                 continue
             if isinstance(effect, ReadIntent):
                 # A read, or a held write answered with one: carried out through the harness's `read` primitive. A second held
@@ -1579,13 +999,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 rebuilt.append(issued or tc)
                 if issued is not None and hold_key is not None:
                     held_reads.add(hold_key)
-                if observe_lowering is not None:
-                    observe_lowering(tc, issued or tc, None)
+                notes.append((len(rebuilt) - 1, tc, issued or tc, None))
                 if issued is not None and rlog is not None:
                     rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "", detail="")
                 continue
+            if isinstance(effect, MutateIntent):
+                # A file mutation cleared by every guard: carried out through the harness primitives, the calls of one file together.
+                mutations.append((len(rebuilt), tc, args, effect))
+                rebuilt.append(tc)
+                continue
             cmd = effect.command if effect is not None else None
-            proposed_write = cmd if isinstance(cmd, WriteCommand) else None
             if cmd is not None:
                 # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
                 # workspace a question only by putting a command in the reply it is already
@@ -1614,34 +1037,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
-                if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
-                    cmd = _seq_release(edit_seq[ti]) + cmd
-                # The original JSON is needed for restart-safe reconstruction. An ordinary
-                # mutation can consume that same copy instead of carrying its text twice.
-                # Refusals, transformed writes and unrecognized programs keep the old form.
-                shared = False
-                if name in (_WRITE_NAMES | _EDIT_NAMES):
-                    try:
-                        original_args = json.loads(fn.get('arguments'))
-                        denial.canonical_arguments(fn.get('arguments')).encode('utf-8')
-                        if name in _WRITE_NAMES:
-                            content = original_args.get('content')
-                            pairs = [('raw', 'content', content, '')] if isinstance(content, str) and _repair_double_escaped(content) == content else []
-                        else:
-                            old, new = original_args.get('old_string'), original_args.get('new_string')
-                            pairs = [('old', 'old_string', old, '.decode()'), ('new', 'new_string', new, '.decode()')] if isinstance(old, str) and isinstance(new, str) else []
-                        literals = [(var, key, "{}=base64.b64decode('{}'){}".format(var, _b64(value), suffix)) for var, key, value, suffix in pairs]
-                        if literals and all(cmd.count(literal) == 1 for _, _, literal in literals):
-                            for var, key, literal in literals:
-                                expression = "json.loads(base64.b64decode(os.environ['__ctx_args']))[" + repr(key) + "]"
-                                if var == 'raw':
-                                    expression += ".encode('utf-8')"
-                                cmd = cmd.replace(literal, 'import json,os\n' + var + '=' + expression, 1)
-                            shared = True
-                    except (TypeError, ValueError, AttributeError):
-                        pass
-                header = (_sentinel_shared if shared else _sentinel)(name, fn.get('arguments'), receipt,
-                    declaration.survey, declaration.marks)
+                header = _sentinel(name, fn.get('arguments'), receipt,
+                    declaration.survey)
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{header}\n{cmd}", 0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
@@ -1650,8 +1047,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     pending.lowered_type = rebuilt[-1].get('type')
                     if observe_externalization is not None:
                         observe_externalization(tc, rebuilt[-1], pending)
-                if observe_lowering is not None:
-                    observe_lowering(tc, rebuilt[-1], proposed_write)
+                notes.append((len(rebuilt) - 1, tc, rebuilt[-1], None))
                 if rlog is not None:
                     # `target`/`detail` feed the LIVE status ticker — the harness renders the lowered
                     # call as an opaque sentinel blob (operator: "a file wrote to the project, but
@@ -1660,8 +1056,12 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                               detail=str(args.get("query") or args.get("url") or ""))
             else:
                 rebuilt.append(tc)
-                if observe_lowering is not None:
-                    observe_lowering(tc, tc, None)
+                notes.append((len(rebuilt) - 1, tc, tc, None))
+        if mutations:
+            _carry_out(mutations, rebuilt, request, shell_tool, rlog, notes, pack)
+        for _position, original, lowered, written in sorted(notes, key=lambda note: note[0]):     # the observer hears of each call in the model's order
+            if observe_lowering is not None:
+                observe_lowering(original, lowered, written)
         choice["message"]["tool_calls"] = rebuilt
     return completion
 
@@ -1790,15 +1190,6 @@ class _Proof(NamedTuple):
     pre: str = ""             # exact producer-authored prelude, not inferred from file text
 
 
-def _learn_completions(token: str, rep: "dict | None", landed: bool = False) -> None:
-    """cria's own record for ``token`` arrived: that call's outcome is known, and so is every call whose completion mark the
-    record's program read back as final (`completionmarks`); their marks on the harness are released by the next program."""
-    completionmarks.settle(token, landed=landed)
-    for receipt, (state, _digest) in ((rep or {}).get("pm") or {}).items():
-        if state in completionmarks.STATES:       # a final mark only: a dead writer's effect is still unestablished, the gate keeps it
-            completionmarks.settle(receipt)
-
-
 def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
     result after it) and whose STORED command declared a receipt in cria's sentinel.
@@ -1847,13 +1238,9 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
             if found is None:
                 continue
             first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped
-            _learn_completions(token, first.rep, first.kind == denial.LANDED)
             at, survey, rep = first.end, "", first.rep
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
                 at = second.end
-                if second.rep and second.rep.get("pm"):
-                    _learn_completions(token, second.rep)
-                    rep = {**(first.rep or {}), "pm": (first.rep or {}).get("pm") or second.rep["pm"]}   # a write's own read-back is the first record's
                 if second.body is not None:
                     try:
                         survey = second.body.decode("utf-8")
@@ -1861,11 +1248,6 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                         survey = ""
             tail = content[at:]
             if first.body is None:
-                if first.kind == denial.UNAPPLIED and first.rep and "ef" in first.rep:
-                    # the edit program's fact report is a TYPED field; the directive input is composed from it here, by cria,
-                    # so no payload byte can stand in for it
-                    tail = ((EDIT_ORDER_LATE + "\n" if first.rep.get("late") else "")
-                            + editrecovery.EDITFAIL + first.rep["ef"] + "\n" + tail)
                 out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, survey, rep)
                 continue
             try:
@@ -1952,7 +1334,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None, ledger_reads=None) -> list[dict]:
+                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None, ledger_reads=None, ledger_writes=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1971,7 +1353,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     through the harness primitives (`cria.ops`): the outcome is a field of cria's record, never read out of result text.
     ``ledger_reads`` maps a tool call id to the ``readops.LedgerRead`` of a read cria carried out that way: the model's own call (a
     ``read_file``, or the held write it answered with a read), how it ended and the verified body. Such a call is treated as the
-    lowered call it was; what it proved is the ledger's, not a record parsed out of its result."""
+    lowered call it was; what it proved is the ledger's, not a record parsed out of its result.
+    ``ledger_writes`` maps a tool call id to the ``writeops.LedgerWrite`` of a file mutation cria carried out that way: the model's own
+    call, how it ended (landed, refused, did not apply, uncertain), the text the coder is shown and, for an edit that did not apply, the
+    facts of the miss. The typed outcome is the ledger's; nothing is read out of result text."""
     # Retired client-supplied hint spellings are never provenance, regardless
     # of message role. Only the typed current owner marker can withhold proof.
     messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
@@ -1992,10 +1377,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # its payload, its envelope handling, the file fact it would cache) only when the id names exactly one call and
     # one result after it (`denial.paired_results`). An ambiguous result keeps its actual bytes and teaches nothing.
     paired = set(denial.paired_results(messages))
-    ledger_reads = ledger_reads or {}
+    ledger_reads, ledger_writes = ledger_reads or {}, ledger_writes or {}
     proofs = {**_frame_proofs(messages),
               **{tid: _Proof(r.kind, r.pre + r.text, r.text, True, "", None, r.observe, r.pre)
-                 for tid, r in ledger_reads.items() if r.text is not None}}
+                 for tid, r in ledger_reads.items() if r.text is not None},
+              **{tid: _Proof(w.kind, w.text, None, False, w.survey, w.rep or None) for tid, w in ledger_writes.items()}}
     outcomes = {tid: p.kind for tid, p in proofs.items() if p.kind in (denial.REFUSED, denial.UNAPPLIED)}
     outcomes |= {tid: kind for tid, kind in (ledger_outcomes or {}).items() if kind in (denial.REFUSED, denial.UNAPPLIED)}
     landed_ids = {tid for tid, p in proofs.items() if p.kind == denial.LANDED}   # cria's own program reported the mutation landed
@@ -2028,6 +1414,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     def may_mutate(tc):
         if tc.get('id') in private_readonly_calls or tc.get('id') in ledger_reads:
             return False
+        if tc.get('id') in ledger_writes:
+            return tc.get("id") not in failed_ids
         fn = tc.get("function") or {}
         original = (_read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
                     if is_shell_tool_name(fn.get("name")) else None)
@@ -2045,7 +1433,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             for tc in m["tool_calls"]:
                 fn = tc.get("function") or {}
                 name = fn.get("name")
-                led = ledger_reads.get(tc.get("id"))
+                led = ledger_reads.get(tc.get("id")) or ledger_writes.get(tc.get("id"))
                 if led is not None or is_shell_tool_name(name):
                     orig = ({"name": led.name, "arguments": led.arguments} if led is not None
                             else _read_sentinel(_command_of(fn.get("arguments")), tc.get("id")))
@@ -2060,7 +1448,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                             mutation_ids.add(tc.get("id"))
                             view.note_possible_effect()
                     if orig is not None:
-                        if led is not None and led.hold:
+                        if isinstance(led, LedgerRead) and led.hold:
                             unread_hold_ids.add(tc.get('id'))
                         lowered_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
@@ -2076,7 +1464,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 preimage = view.capture_edit_preimage(_tool_path(p))
                                 if preimage is not None:
                                     edit_preimages[tc.get("id")] = preimage[0]
-                            if tc.get("id") not in failed_ids and led is None:
+                            if tc.get("id") not in failed_ids and not isinstance(led, LedgerRead):
                                 mutation_ids.add(tc.get("id"))
                                 view.note_a_mutator_ran()
                             write_paths[tc.get("id")] = _tool_path(p) or ""
@@ -2235,10 +1623,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     wsview.from_observation(observation, view.note_changed, write_paths[tid])
             if tid in strip_ids:                          # read/nav result → drop only proven framing, never EOF
                 out.append({**m, "content": _strip_exec_envelope(content)})
-            elif tid in write_paths and tid in landed_ids:  # write/edit SUCCESS
-                rendered = render_edit_echo(write_paths[tid], proof.rep if proof is not None else None)
-                facts = ((proof.rep or {}).get("rm") or "").strip() if proof is not None else ""
-                out.append({**m, "content": f"{rendered}\n{facts}" if facts else rendered})
+            elif tid in write_paths and tid in landed_ids:  # write/edit SUCCESS: the ledger's text (the confirmation, the window, the removal facts)
+                out.append({**m, "content": proof.content})
             elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
                 # composes the single monotonic directive keyed on this file's failure history so far
@@ -2265,43 +1651,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         view.note_possible_effect()
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
-    _adopt_marks(messages, out, sess_key, workspace_root)
     toolstages.current().returned_history(
         ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog, window, ask))
     return out
-
-
-def _adopt_marks(messages: list[dict], out: list[dict], session: str, root: str | None) -> None:
-    """Re-derive the registry of unresolved lowered writes from the history in hand (`completionmarks.adopt`): a restart forgot it,
-    and the stored sentinel of every lowered write/edit names its receipt, its mark's nonce and its target. A call whose outcome the
-    history establishes (its own terminal record, or a mark a later program or the gate read back) is not unresolved."""
-    if not session:
-        return
-    declared = []
-    for m in messages:
-        if not isinstance(m, dict) or m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
-            cid = tc.get("id") if isinstance(tc, dict) else None
-            if not cid or not is_shell_tool_name(fn.get("name")):
-                continue
-            command = _command_of(fn.get("arguments"))
-            nonce = marks_declared(command, cid)
-            if nonce:
-                d = _declaration(command, cid)
-                declared.append((d["rcpt"], nonce, str(_tool_path(_parse(d.get("arguments") or "{}")) or ""), cid))
-    if not declared:
-        return
-    paired, witnessed = denial.paired_results(out), denial.witnessed_completions(out)
-    closed = (denial.REFUSED, denial.UNAPPLIED, denial.LANDED, denial.UNCERTAIN)
-    unresolved = {receipt for receipt, _n, _p, cid in declared
-                  if denial.proof(paired.get(cid)) not in closed and witnessed.get(cid, ("incomplete",))[0] not in completionmarks.STATES}
-    landed = {cid for cid in paired if denial.proof(paired[cid]) == denial.LANDED}
-    superseded = frozenset(receipt for i, (receipt, _n, path, _c) in enumerate(declared) if receipt in unresolved
-                           and any(later in landed and completionmarks.same_file(path, later_path, root)
-                                   for _r, _m, later_path, later in declared[i + 1:]))
-    completionmarks.adopt(session, [item[:3] for item in declared], unresolved, root, superseded)
 
 
 # The dependency-note budgets (one surface inline, and the sum of all notes per request) live in

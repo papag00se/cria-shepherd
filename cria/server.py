@@ -1397,7 +1397,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._ops_session = sess_key       # ONE ledger for the request: results are read from it here and calls are issued into it in _translate_out
         taken = self.server.ops.incoming(sess_key, before, rlog, tools=body.get('tools'), room=lambda: self._read_room(rlog))
         body['messages'] = taken.messages
-        self._ops_outcomes, self._ops_reads, self._read_facts = taken.outcomes, taken.reads, taken.facts
+        self._ops_outcomes, self._ops_reads, self._ops_writes, self._read_facts = taken.outcomes, taken.reads, taken.writes, taken.facts
         if not taken.calls:
             return False
         completion = {'id': 'ops_' + uuid.uuid4().hex, 'object': 'chat.completion',
@@ -1433,7 +1433,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if taken.calls:
             return None
         again['messages'] = taken.messages
-        self._ops_outcomes, self._ops_reads, self._read_facts = taken.outcomes, taken.reads, taken.facts
+        self._ops_outcomes, self._ops_reads, self._ops_writes, self._read_facts = taken.outcomes, taken.reads, taken.writes, taken.facts
         self._strip_and_reframe_inbound(again, sess_key, rlog)
         self._setup_translation(again, sess_key, rlog)
         return again
@@ -1755,7 +1755,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                               window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog),
                               ask=self._reasoner_question(rlog), private_readonly_calls=private_readonly,
                               ledger_outcomes=getattr(self, '_ops_outcomes', None),
-                              ledger_reads=getattr(self, '_ops_reads', None)),
+                              ledger_reads=getattr(self, '_ops_reads', None),
+                              ledger_writes=getattr(self, '_ops_writes', None)),
             self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness
@@ -1818,8 +1819,22 @@ class CriaHandler(BaseHTTPRequestHandler):
         settle = getattr(self, '_pasted_retention', None)
         self._pasted_retention = None
         if settle is not None:
-            settle(completion, getattr(self, '_pasted_lowered', None))
+            settle(self._as_the_models_calls(completion), getattr(self, '_pasted_lowered', None))
         return completion
+
+    def _as_the_models_calls(self, completion):
+        """The completion with each primitive call named by the id of the model's call it stands for: the pasted-file recovery
+        settles on the calls it prepared, by their own ids (a copy; what goes to the harness is untouched)."""
+        originals = getattr(self, '_pasted_originals', None)
+        if not originals or not isinstance(completion, dict):
+            return completion
+        renamed = []
+        for choice in completion.get('choices') or []:
+            message = dict(choice.get('message') or {})
+            if message.get('tool_calls'):
+                message['tool_calls'] = [{**c, 'id': originals.get(c.get('id'), c.get('id'))} for c in message['tool_calls']]
+            renamed.append({**choice, 'message': message})
+        return {**completion, 'choices': renamed}
 
     def _retain_external_output(self, completion: dict, sess_key: str) -> dict:
         owner = self.server.loop_store.get_guard(sess_key)
@@ -1837,10 +1852,11 @@ class CriaHandler(BaseHTTPRequestHandler):
                        for tc in (choice.get('message') or {}).get('tool_calls') or [])
         owner = self.server.loop_store.get_guard(sess_key, create=(research and
             assistruntime.current().externalization is not None))
-        admitted = {}
+        admitted, originals = {}, {}
         def observed(original, lowered, proposed_write):
+            originals[lowered.get('id')] = original.get('id')      # cria's primitive call stands for the model's call
             if proposed_write is not None:
-                admitted[lowered.get('id')] = proposed_write
+                admitted[original.get('id')] = proposed_write
         if self._shell_tool is not None:
             lowering = loweringoptions.resolve(assistruntime.current() if assistruntime.is_bound()
                                                else self.server.pilot_runtime)
@@ -1863,12 +1879,15 @@ class CriaHandler(BaseHTTPRequestHandler):
                                    workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ()),
                                    instead=instead),
+                               issue_mutations=lambda requests: self.server.ops.issue_mutations(
+                                   getattr(self, '_ops_session', sess_key), self._shell_tool, requests, workspace_root=getattr(self, "_workspace_root", None),
+                                   level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ()), log=rlog),
                                issue_list_dir=lambda call, args: self.server.ops.issue_list_dir(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())))
-            self._pasted_lowered = admitted
+            self._pasted_lowered, self._pasted_originals = admitted, originals
         else:
-            self._pasted_lowered = None
+            self._pasted_lowered = self._pasted_originals = None
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

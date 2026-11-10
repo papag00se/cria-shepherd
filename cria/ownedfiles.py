@@ -2,14 +2,12 @@
 
 TEMP_SUFFIX = '.tmp-partial'
 
-ATOMIC_REPLACE_PROGRAM = r'''import errno,fcntl,hashlib,os,stat,tempfile
-
-_LANDED_SHA=''   # the sha256 of the bytes the LAST successful `_write_through` put on its file (the completion mark reads it)
+ATOMIC_REPLACE_PROGRAM = r'''import errno,os,stat,tempfile
 
 class _TargetMutationUncertain(OSError):
     pass
 
-def _atomic_replace(path, data, preserve=False):
+def _atomic_replace(path, data):
     path=os.fspath(path)
     parent=os.path.dirname(path) or '.'
     fd,tmp=tempfile.mkstemp(prefix='.atomic-',suffix='%%SUFFIX%%',dir=parent)
@@ -27,14 +25,8 @@ def _atomic_replace(path, data, preserve=False):
                 count=stream.write(data)
                 if count!=len(data): raise OSError(errno.EIO,os.strerror(errno.EIO),tmp)
                 stream.flush()
-                if preserve:
-                    source=os.stat(path)
-                    os.fchmod(stream.fileno(),source.st_mode&0o7777)
-                    try: os.fchown(stream.fileno(),source.st_uid,source.st_gid)
-                    except OSError: pass
-                else:
-                    mask=os.umask(0); os.umask(mask)
-                    os.fchmod(stream.fileno(),0o666&~mask)
+                mask=os.umask(0); os.umask(mask)
+                os.fchmod(stream.fileno(),0o666&~mask)
             if not owned(): raise OSError(errno.ESTALE,os.strerror(errno.ESTALE),tmp)
             target_attempted=True
             os.replace(tmp,path)
@@ -46,44 +38,9 @@ def _atomic_replace(path, data, preserve=False):
         if target_attempted: raise _TargetMutationUncertain(*error.args) from error
         raise
 
-def _lock_directory(path):
-    # ONE WRITE AT A TIME PER DIRECTORY, whichever program holds the pen (edit or whole write). The lock sits on the
-    # directory of the file ITSELF (a symlink resolved first), so it leaves nothing in the user's tree and is
-    # released when the process exits. The returned descriptor must stay referenced; None means no lock was possible.
-    try:
-        descriptor=os.open(os.path.dirname(os.path.realpath(os.fspath(path))) or '.',os.O_RDONLY)
-        fcntl.flock(descriptor,fcntl.LOCK_EX)
-        return descriptor
-    except OSError:
-        return None
-
-def _write_through(path, data, preserve=False):
-    # THE landing of bytes on a named file, for every program that writes one. A symlink is written THROUGH (the link
-    # stays a link, the file it names changes); a file with more than one hard link is rewritten IN PLACE (replacing it
-    # would split the names); anything else is swapped atomically. Uncertainty about whether the target changed is one
-    # exception type, _TargetMutationUncertain, whichever branch raised it.
-    global _LANDED_SHA
-    path=os.path.realpath(os.fspath(path))
-    try: links=os.stat(path).st_nlink
-    except FileNotFoundError: links=1
-    if links<=1:
-        _atomic_replace(path,data,preserve)
-        _LANDED_SHA=hashlib.sha256(data).hexdigest()
-        return
-    started=False
-    try:
-        with open(path,'r+b') as stream:   # open without truncating: a pre-open refusal is still nonmutating
-            started=True
-            stream.truncate(0)
-            stream.write(data)
-    except OSError as error:
-        if started: raise _TargetMutationUncertain(*error.args) from error
-        raise
-    _LANDED_SHA=hashlib.sha256(data).hexdigest()
-
 '''.replace('%%SUFFIX%%', TEMP_SUFFIX)
 
-# One credentialed directory capability for batch markers and gate scratch.
+# One credentialed directory capability for the gate's scratch.
 # Creation is exclusive; reuse authenticates its actual descriptors and scope.
 # Missing/foreign certificates never authorize adoption, truncation or cleanup.
 DIRECTORY_PROGRAM = r'''import errno,json,os,stat,time

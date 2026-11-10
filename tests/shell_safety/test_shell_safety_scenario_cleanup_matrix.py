@@ -2,13 +2,15 @@
 of inert source rows (never run): a represented external/root mutation blocks, the same call inside the project is WITHIN_SCOPE,
 `write` permission lifts only the external rule, and comments, quoted examples, shadowed names, unevaluated forms and dynamic
 targets never block. A tool call (write_file/edit_file) then goes through real lowering and is withheld."""
-import json
-import subprocess
-import unittest.mock as mock
+import sys
+import pathlib
 
 import pytest
 
-from cria import writeproxy
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / 'write_edit'))
+from write_edit_helpers import do, operations_engine, write_edit_workspace_view  # noqa: F401,E402  (file mutations are cria's own operations)
+
+from cria import denial
 from cria.cleanupsafety import analyze
 
 WS = '/workspace'
@@ -118,17 +120,12 @@ def test_real_lowering_withholds_each_language_without_executing_the_source(tmp_
     path, previous, candidate = 'cleanup' + suffix, prelude + op.replace('/outside/data', '/workspace/scratch'), prelude + op
     args = ({'path': path, 'content': candidate} if tool == 'write_file'
             else {'path': path, 'old_string': '/workspace/scratch', 'new_string': '/outside/data'})
-    completion = {'choices': [{'message': {'tool_calls': [{'id': 'one', 'type': 'function', 'function': {'name': tool, 'arguments': json.dumps(args)}}]}}]}
-    view = writeproxy.wsview.View(WS)
-    view.note_read(path, previous)
+    (tmp_path / path).write_text(previous)
     events = []
     log = type('L', (), {'emit': lambda self, *a, **k: events.append((a, k))})()
-    with mock.patch.object(writeproxy.wsview, 'current', return_value=view):
-        writeproxy.translate_outbound(completion, {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}},
-                                      injected={tool}, workspace_root=WS, external_dir_permission='none', rlog=log)
-    (tmp_path / path).write_text(previous)
-    cmd = json.loads(completion['choices'][0]['message']['tool_calls'][0]['function']['arguments'])['cmd']
-    run = subprocess.run(['bash', '-c', cmd], cwd=tmp_path, capture_output=True, text=True)      # the lowered program really refuses
-    assert 'withheld' in cmd and run.returncode == 1 and 'outside the permitted workspace boundary' in run.stdout + run.stderr
+    # the real route: cria reviews the complete candidate (for an edit: the file as the harness returned it, with the edit applied) before anything lands
+    _, _, shown = do(tool, args, tmp_path, external_dir_permission='none', rlog=log, injected=(tool,), root=str(tmp_path))
+    text = shown[1]['content']
+    assert 'withheld' in text and 'outside the permitted workspace boundary' in text and denial.unlanded(shown[1])
     assert (tmp_path / path).read_text() == previous              # nothing was written
     assert any(a[0] == 'safety.cleanup_review' and k['verdict'] == 'UNSAFE' for a, k in events)

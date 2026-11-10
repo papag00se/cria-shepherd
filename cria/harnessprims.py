@@ -232,6 +232,14 @@ _NONCE = re.compile(r'[0-9a-f]{32}\Z')
 _COMMENT_MAX = 160
 
 
+class Raw(str):
+    """A shell word cria itself wrote, never data: `compose` passes it unquoted (the harness shell expands it)."""
+
+
+# The harness's own temporary directory, expanded by the harness shell: cria never assumes one (principle 23c).
+TMPDIR = Raw('"${TMPDIR:-/tmp}"')
+
+
 class FrameUnknown(ValueError):
     """The result holds no usable frame for this call: it did not run to completion, was cut, or was altered.
     UNKNOWN is never "did not run" and never "ran": the caller decides what an unknown result means for its operation."""
@@ -260,7 +268,7 @@ def compose(stub: str, nonce: str, args=(), payload: bytes | None = None, *, com
     # and receives the environment as one base64 value (NUL-separated entries) that only the command it starts reads.
     prefix = (f'{ENV} -i PATH={head} CTX_ENV="$({ENV} -0 | /usr/bin/base64 | /usr/bin/tr -d \'\\n\')"'
               if stub == 'run' else f'{ENV} -i PATH={head}')
-    words = ' '.join(shlex.quote(str(a)) for a in (nonce, *args))
+    words = ' '.join(a if isinstance(a, Raw) else shlex.quote(str(a)) for a in (nonce, *args))
     command = f"{prefix} \\\n  python3 -I -S -c '{STUBS[stub]}' {words}"
     if payload is not None:
         body, terminator = base64.b64encode(payload).decode(), 'CTX_EOF'

@@ -419,7 +419,10 @@ def edit_failure(source: ReturnedResult) -> dict | None:
     if not source.mutation_failure or denial.outcome(source.message) != denial.UNAPPLIED:
         return None                  # unproven: the tool's own bytes stay (never an invented cut/mismatch)
     from . import editrecovery
-    return {**source.message, 'content': editrecovery.recover(source.content, source.prior, source.log)}
+    fail = denial.report(source.message).get('ef')
+    if not isinstance(fail, dict):
+        return None                  # no facts of the miss: the tool's own bytes stay (never an invented cut/mismatch)
+    return {**source.message, 'content': editrecovery.recover(fail, source.prior, source.log)}
 
 
 def environment_advice(source: ReturnedResult) -> dict | None:

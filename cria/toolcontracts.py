@@ -47,9 +47,6 @@ class ShrinkFinding(TypedDict):
 
 
 ShrinkCheck = Callable[[str, str, str], ShrinkFinding | None]
-# Group credential, this call index, predecessors, ALL participants. Closure
-# depends on observed completion, never an assumption that the last call ran last.
-EditSequence = tuple[str, int, list[int], list[int]]
 
 
 @dataclass(frozen=True)
@@ -73,6 +70,7 @@ class LoweringRequest:
     issue_list_dir: Callable[[dict, dict], dict] | None = None   # (the model's call, its arguments) -> the harness call (cria.ops)
     safe_path: str = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'   # [harness] safe_path: where `python3` is looked up
     issue_read: Callable[[dict, dict, dict | None], dict | None] | None = None   # (call, arguments, held-write facts) -> the harness call
+    issue_mutations: Callable[[list], list] | None = None   # ([MutationRequest]) -> one harness call each, in order (cria.ops)
 
 
 @dataclass(frozen=True)
@@ -80,7 +78,6 @@ class OutboundCall:
     call: dict
     arguments: dict
     request: LoweringRequest
-    sequence: EditSequence | None = None
     log: EventLog | None = None
 
     @property
@@ -111,6 +108,30 @@ class ReadIntent:
     fact: str | None = None
 
 
+@dataclass(frozen=True)
+class ReviewTerms:
+    """The candidate-safety policy is selected: every complete candidate is reviewed under these terms before it lands."""
+    permission: str
+    workspace_root: str | None
+
+
+@dataclass(frozen=True)
+class MutationPlan:
+    """What the selected mutation policies decided about one file mutation, as facts: ``review`` the candidate-safety terms,
+    ``shrink`` the measured whole-file shrink finding. Both are acted on by cria in-process, on the bytes cria holds."""
+    review: ReviewTerms | None = None
+    shrink: ShrinkFinding | None = None
+
+
+@dataclass(frozen=True)
+class MutateIntent:
+    """The call is a file mutation (``write_file``, ``edit_file``) cleared by every guard: cria carries it out through the harness
+    primitives, grouping the calls of one turn that name one file (cria.writeops). ``mutation`` is the validated arguments
+    (``filecommands._FileMutation``); ``plan`` what the mutation policies decided."""
+    mutation: object
+    plan: MutationPlan
+
+
 # None means not applicable, RewrittenCall continues, ShellCommand and ReadIntent terminate.
 OutboundEffect = RewrittenCall | ShellCommand | ReadIntent | None
 
@@ -124,7 +145,7 @@ class OutboundDefinition:
 @dataclass(frozen=True)
 class MutationDefinition:
     policy: Policy
-    execute: Callable[[OutboundCall, str], str]
+    execute: Callable[[OutboundCall, MutationPlan], MutationPlan]
 
 
 @dataclass(frozen=True)

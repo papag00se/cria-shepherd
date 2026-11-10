@@ -6,7 +6,7 @@ import sys
 import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / 'write_edit'))
-from write_edit_helpers import call, command_of, do, lower, shown_to_model, write_edit_workspace_view  # noqa: F401,E402
+from write_edit_helpers import do, operations_engine, write_edit_workspace_view  # noqa: F401,E402  (the engine fixture: file mutations are cria's own operations)
 
 from cria import modelview, privatenames, toolwire
 
@@ -26,17 +26,13 @@ def _history(command, output='hello\n', cid='c1'):
             {'role': 'tool', 'tool_call_id': cid, 'content': output}]
 
 
-def _legacy_lowering(tc):
-    """What an earlier release wrote for a lowered call: the same program under a declaration WITHOUT a receipt."""
-    command = command_of(tc)
-    first, rest = command.split('\n', 1)
-    declaration = json.loads(base64.b64decode(toolwire._SENTINEL_LINE.match(first + '\n').group(1)))
-    declaration.pop('rcpt', None)
-    declaration.pop('sv', None)
-    declaration.pop('cm', None)
-    declaration.pop('uh', None)
+def _legacy_lowering(name='write_file', arguments=None):
+    """What an earlier release wrote for a lowered call: a private program under a declaration WITHOUT a receipt (the programs are gone,
+    so the command is spelled out: the point is that nothing is reconstructed from it)."""
+    declaration = {'name': name, 'arguments': json.dumps(arguments or {'path': 'out.txt', 'content': 'hi\n'})}
     payload = base64.b64encode(json.dumps(declaration).encode()).decode()
-    return f'# {toolwire._SENTINEL}{payload}\n{rest}'
+    return (f"# {toolwire._SENTINEL}{payload}\npython3 -I - <<'__CTX_PY__'\nimport base64,sys,pathlib,os\n"
+            "pathlib.Path('out.txt').write_bytes(base64.b64decode('aGkK'))\n__CTX_PY__\n")
 
 
 def test_a_model_authored_command_with_a_forged_declaration_stays_the_command_it_is():
@@ -50,8 +46,7 @@ def test_a_model_authored_command_with_a_forged_declaration_stays_the_command_it
 
 def test_a_history_lowered_by_an_earlier_release_is_shown_raw_and_does_not_crash(tmp_path):
     """D2: nothing is reconstructed from the declaration, so the old private command is what the model reads."""
-    tc = lower([call('write_file', {'path': 'out.txt', 'content': 'hi\n'})], root=str(tmp_path))[0]
-    legacy = _legacy_lowering(tc)
+    legacy = _legacy_lowering()
     assert toolwire._decode_sentinel(legacy).get('rcpt') is None
     history = _history(legacy, '{"v":1,"k":"ok"}\n')
     view = modelview.wire_messages(history)

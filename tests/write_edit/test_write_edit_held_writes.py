@@ -705,7 +705,7 @@ def test_a_fragment_that_would_gut_a_file_is_held_with_measured_facts_and_nothin
     asked = []
     _, done, msgs = shrink(ws, FRAGMENT, asked=asked)
     text = msgs[1]["content"]
-    assert (ws / "f.txt").read_text() == FILE and done.returncode != 0 and denial.refused(msgs[1])
+    assert (ws / "f.txt").read_text() == FILE and denial.refused(msgs[1])
     assert "f.txt exists on disk: 168 bytes, 16 non-blank lines, 16 of them distinct" in text
     assert "repeats 0 of the file's 16 distinct non-blank lines" in text
     assert "This write_file call was not run, so nothing was written and the file is unchanged" in text
@@ -735,8 +735,7 @@ def test_a_removal_that_keeps_enough_lines_lands_and_the_facts_ride_on_the_resul
     asked = []
     _, done, msgs = shrink(ws, REMOVAL, asked=asked)
     assert (ws / "f.txt").read_text() == REMOVAL and denial.landed(msgs[1]) and not asked
-    assert "removed at least 16 of the file's 16 non-blank lines" in json.loads(done.stdout.split("\n", 1)[0])["rep"]["rm"]
-    assert "removed at least" in msgs[1]["content"]
+    assert "removed at least 16 of the file's 16 non-blank lines" in msgs[1]["content"]       # the measured facts ride on the landed result (a typed field of cria's ledger)
     for kwargs in ({"baseline": ("other.txt",)}, {"disk": FILE + "changed since the survey\n"}):
         _, done, msgs = shrink(ws, REMOVAL, **kwargs)
         assert denial.landed(msgs[1]) and "removed at least" not in msgs[1]["content"]

@@ -4,12 +4,13 @@ One append-only JSON-lines file per session under ``~/.cria/ops/`` (a private di
 0600, ``flock`` around every append, ``fsync`` before an append returns). Nothing else holds operation state: a restarted
 cria reads the file and is where it was. Seven record types, folded in order:
 
-* ``op``    the model's own call (id, name, arguments), the kind of operation and the guard facts it was issued under;
+* ``op``    the model's own call (id, name, arguments; the several of a group of file mutations), the kind of operation and the
+            guard facts it was issued under;
 * ``step``  one primitive call cria issued: its step number, tool-call id, the sha-256 of its command, what it was and the
             arguments that re-derive it (so a retried request composes the identical command);
 * ``blob``  a text steps refer to by its hash (a spill's whole text), recorded once and not in every step;
 * ``frame`` the authenticated result of a step (header and decoded payload, and the size of the result as the harness
-            returned it), recorded once, the first one wins;
+            returned it, and the workspace survey that rode home with it, when one did), recorded once, the first one wins;
 * ``final`` the typed outcome and the exact text the model was told (and, for a read, the facts the wire binds to it: the
             verified source identity, what the text is, the prose that precedes it, a note that follows it);
 * ``settle`` a read the model's wire accepted: it is an ordinary result from then on, no longer protected;
@@ -52,8 +53,14 @@ class Op:
     steps: dict = field(default_factory=dict)
     blobs: dict = field(default_factory=dict)
     final: dict | None = None
+    extra_calls: list = field(default_factory=list)
     settled: bool = False
     withheld: str | None = None
+
+    @property
+    def calls(self) -> list:
+        """The model's calls this operation answers, in the model's order (a group of file mutations answers several)."""
+        return self.extra_calls or [self.call]
 
 
 class Ledger:
@@ -156,19 +163,41 @@ class Ledger:
             finally:
                 os.close(directory)
 
+    def unresolved_writes(self, session: str) -> list:
+        """``[(operation, path)]`` for each file mutation the harness never confirmed and the file could not settle (a write that may or
+        may not have landed): the last mutation of a path that ended that way, unless a later one landed there. A reply that was lost
+        is asked of the file itself and the write sent again before anything reads this, so only an unsettled one remains."""
+        open_: dict = {}
+        for op in self.ops(session).values():
+            if op.kind != 'mutate' or op.final is None:
+                continue
+            for call, result in zip(op.calls, op.final.get('results') or ()):
+                import json as _json
+                try:
+                    args = _json.loads(call['arguments']) if isinstance(call['arguments'], str) else call['arguments']
+                    path = str(args.get('path') or args.get('file_path') or args.get('filename') or '')
+                except (ValueError, AttributeError, TypeError):
+                    continue
+                key = os.path.normpath(os.path.join(op.ctx.get('wsroot') or '', path))
+                if result.get('o') == 'uncertain':
+                    open_[key] = (op.op, path)
+                elif result.get('o') == 'landed':
+                    open_.pop(key, None)
+        return list(open_.values())
+
     @staticmethod
     def _fold(ops: dict, raw: bytes) -> None:
         try:
             r = json.loads(raw)
             kind, op = r['t'], r['op']
             if kind == 'op':
-                ops.setdefault(op, Op(op, r['kind'], r['call'], r.get('ctx') or {}))
+                ops.setdefault(op, Op(op, r['kind'], r['call'], r.get('ctx') or {}, extra_calls=r.get('calls') or []))
             elif kind == 'step' and op in ops:
                 ops[op].steps.setdefault(r['s'], Step(r['s'], r['id'], r['cmd'], r['what'], r.get('args') or {}))
             elif kind == 'blob' and op in ops:
                 ops[op].blobs.setdefault(r['h'], r['text'])
             elif kind == 'frame' and op in ops and r['s'] in ops[op].steps:
-                ops[op].steps[r['s']].frame = ops[op].steps[r['s']].frame or {'hdr': r['hdr'], 'text': r['text'], 'wire': r.get('wire', 0)}
+                ops[op].steps[r['s']].frame = ops[op].steps[r['s']].frame or {'hdr': r['hdr'], 'text': r['text'], 'wire': r.get('wire', 0), **({'sv': r['sv']} if r.get('sv') else {})}
             elif kind == 'final' and op in ops:
                 ops[op].final = ops[op].final or {k: v for k, v in r.items() if k not in ('t', 'op')}
             elif kind == 'settle' and op in ops:

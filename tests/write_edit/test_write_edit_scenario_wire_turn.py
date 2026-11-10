@@ -7,8 +7,8 @@ import json
 import subprocess
 from unittest import mock
 
-from cria import wsview, writeproxy
-from write_edit_helpers import ENVELOPE, call, command_of, harness_env, lower, surveyed_view
+from cria import denial, wsview, writeproxy
+from write_edit_helpers import ENVELOPE, call, command_of, do, harness_env, lower, surveyed_view, write_edit_workspace_view  # noqa: F401
 
 KEY = "brv-secret-key-123456"
 BRAVE = '{"web":{"results":[{"title":"Walrus op","url":"https://x.test/w","description":"The := operator"}]}}'
@@ -74,19 +74,20 @@ def test_search_routes_to_the_harness_native_tool_and_unknown_native_effects_mak
     assert ("harness.truncated_a_result", {"level": "warn", "amount": "12,345", "unit": "tokens"}) in events and shown[4]["content"] == cut
 
 
-def test_a_legacy_shrink_callback_wraps_the_program_so_a_stale_measure_never_refuses_a_write(tmp_path):
-    """Explicit library callers (unbound): the finding's bytes are compared ON THE DISK by the lowered program itself: held when the
-    file still holds the measured bytes, written when it moved since (a stale view never refuses), removal facts only when it landed."""
+def test_a_legacy_shrink_callback_is_settled_against_the_disk_so_a_stale_measure_never_refuses_a_write(tmp_path):
+    """Explicit library callers (unbound): the finding's bytes are compared with the DISK by cria itself: held when the file still holds
+    the measured bytes, written when it moved since (a stale view never refuses), removal facts only when it landed over those bytes."""
     measured = b"".join(b"line %d\n" % i for i in range(20))
     for finding, held in (({"text": "HELD the gutting write", "bytes": measured}, True), ({"text": "REMOVED 19 lines", "bytes": measured, "land": True}, False)):
         events = []
         log = type("L", (), {"emit": lambda self, kind, **f: events.append(kind)})()
-        tc = lower([call("write_file", {"path": "f.txt", "content": "x\n"}, "w1")], shrink_check=lambda path, content, edit: finding, rlog=log)[0]
         for disk, refused in ((measured, held), (b"someone else wrote this\n", False)):
             (tmp_path / "f.txt").write_bytes(disk)
-            done = subprocess.run(["bash", "-c", command_of(tc)], cwd=tmp_path, env=harness_env(tmp_path), capture_output=True, text=True, timeout=30)
-            assert ((tmp_path / "f.txt").read_bytes() == disk) is refused and ("HELD" in done.stdout + done.stderr) is refused
-        assert events.count("writeproxy.write_shrink_held" if held else "writeproxy.write_removal_facts") == 1
+            _, _, msgs = do("write_file", {"path": "f.txt", "content": "x\n"}, tmp_path, shrink_check=lambda path, content, edit: finding, rlog=log)
+            assert ((tmp_path / "f.txt").read_bytes() == disk) is refused and ("HELD" in msgs[1]["content"]) is refused
+            assert denial.refused(msgs[1]) is refused and denial.landed(msgs[1]) is not refused
+            assert ("REMOVED 19 lines" in msgs[1]["content"]) is (bool(finding.get("land")) and disk == measured)
+        assert events.count("writeproxy.write_shrink_held" if held else "writeproxy.write_removal_facts") == 2
     assert lower([call("write_file", {"path": "f.txt", "content": "x\n"}, "w1")], shrink_check=lambda *a: None)
 
 

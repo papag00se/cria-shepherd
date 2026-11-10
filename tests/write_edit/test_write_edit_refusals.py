@@ -49,22 +49,6 @@ def test_every_consumer_of_did_the_write_land_treats_a_refused_write_as_unlanded
     assert dropped == 0 and {m["tool_call_id"] for m in kept if m["role"] == "tool"} == {"c1", "w2"}
 
 
-@pytest.mark.parametrize("reply", ["still running", "cut first record", "no record at all", "token quoted in output"])
-def test_a_write_whose_proof_never_arrived_is_not_a_landed_write_even_though_the_disk_changed(tmp_path, reply):
-    """The program DID write; what cria received cannot prove it: a 'still running' reply, a first record cut in transit, output that
-    merely quotes the display token, or nothing typed first. Unknown is never 'landed' (and is not 'did not run' either)."""
-    tc = lower([call("write_file", {"path": "f.txt", "content": "A\n"}, "w1")])[0]
-    done = run(tc, tmp_path)
-    assert (tmp_path / "f.txt").read_text() == "A\n"
-    head = "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n"
-    raw = {"still running": "Chunk ID: ab\nWall time: 1.0 seconds\nProcess running with session ID 7\nOriginal token count: 0\nOutput:\n",
-           "cut first record": head + done.stdout[:20], "no record at all": head + "Wrote f.txt\n",
-           "token quoted in output": head + "print('\u27e6ctx:wrote\u27e7')\n\u27e6ctx:wrote\u27e7\n"}[reply]
-    msgs = represent(tc, raw, tmp_path)
-    assert denial.landed_call_ids(msgs) == set() and loop._extract_writes(msgs) == {} and not denial.landed(msgs[1])
-    assert denial.unlanded_call_ids(msgs) == set()
-
-
 def test_a_native_commands_output_quoting_cria_markers_proves_nothing(tmp_path):
     """Positional proof only: `cat` of a file that quotes the denied marker, an edit directive or a landed record is just a result."""
     quote = denial.mark("outside the workspace") + '\n{"v":1,"r":"0123456789abcdef","k":"landed"}\n⟦ctx:edit⟧ f.py — not an exact match\n'

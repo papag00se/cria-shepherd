@@ -59,7 +59,7 @@ import hashlib
 import json
 from collections import Counter
 
-from . import bodykeys, completionmarks, payloadboundary, resultpacket
+from . import bodykeys, payloadboundary, resultpacket
 
 # ⟦ctx:…⟧ namespace, never the proper noun (#17). It rides in the refusal text the coder reads —
 # the same channel and the same shape as every other context marker in that stream.
@@ -130,7 +130,6 @@ class Declaration:
     """What the compiler of ONE lowered call declares for the sentinel (set while it composes, read once afterwards)."""
     def __init__(self) -> None:
         self.survey = False
-        self.marks = ""         # the nonce of the completion mark this lowered write/edit program will leave (`completionmarks`)
 
 
 def canonical_arguments(arguments) -> str:
@@ -172,13 +171,6 @@ def declare_survey() -> None:
     """The command being composed will carry a survey record (the sentinel declares it; see `resultpacket`)."""
     if _ACTIVE.get() and (d := _DECLARATION.get()) is not None:
         d.survey = True
-
-
-def declare_marks(nonce: str) -> None:
-    """The program being composed leaves a completion mark under this nonce: the sentinel declares it, so a history re-presented
-    after a restart still names every mark that may be on the harness."""
-    if _ACTIVE.get() and (d := _DECLARATION.get()) is not None:
-        d.marks = str(nonce)
 
 
 def frame(kind: str, token: str | None = None, *, rep: dict | None = None) -> str:
@@ -328,79 +320,9 @@ def landed_call_ids(messages) -> set:
     return _unambiguous(messages, landed)
 
 
-FINAL_MARKS = completionmarks.STATES      # the states an executor mark itself may say; every other witnessed state is NOT a final mark
-
-
-def witnessed_completions(messages, extra=None) -> dict:
-    """``call id -> (state, sha256)`` for calls that have NO terminal record of their own (the reply was lost, cut, "still
-    running") but whose EXECUTOR-SIDE completion mark a later lowered program read back (`completionmarks`; typed ``pm`` report of
-    that program's own paired record). ``state`` is ``landed`` / ``did_not_run`` / ``uncertain`` (the program finished - a known
-    state), ``running`` / ``dead`` (no final mark, and the writer's own start record says its process is still the one that wrote it /
-    is gone: ``dead`` is a witnessed end WITHOUT a final mark - NOT proof the file is untouched) or ``incomplete`` (nothing can be
-    said: never started or not yet, killed with no start record, no /proc - known to be not complete, never claimed to be any of those). Only an unambiguously paired witness counts, the witnessed call must appear
-    exactly once and BEFORE its witness, and two witnesses that disagree about a final state witness nothing. A call's own
-    terminal record always outranks a witness, so this never overrides what a reply proved.
-
-    ``extra`` is ``{receipt: (state, sha256)}`` that a NON-history carrier read back from the harness (the completion gate's own
-    transport, `gatecleanup`): the same facts, held in process, never nominated by a result's text."""
-    paired = paired_results(messages)
-    calls: Counter = Counter()
-    call_at: dict = {}
-    by_receipt: dict = {}
-    for pos, m in enumerate(messages or []):
-        if not isinstance(m, dict) or m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            cid, fn = (tc.get("id"), tc.get("function") or {}) if isinstance(tc, dict) else (None, {})
-            if cid:
-                calls[cid] += 1
-                call_at.setdefault(cid, pos)
-                by_receipt.setdefault(receipt_for(cid, fn.get("name"), fn.get("arguments")), set()).add(cid)
-    position = {id(m): n for n, m in enumerate(messages or [])}
-    seen: dict = {}
-    for wid, witness in paired.items():
-        marks = report(witness).get("pm")
-        if not marks:
-            continue
-        for receipt, (state, digest) in marks.items():
-            for cid in by_receipt.get(receipt, ()):
-                if cid == wid or calls[cid] != 1 or call_at[cid] > position[id(witness)]:
-                    continue
-                if proof(paired.get(cid)) in (REFUSED, UNAPPLIED, LANDED, UNCERTAIN):
-                    continue                              # its own terminal record already says what happened
-                seen.setdefault(cid, []).append((state, digest))
-    for receipt, (state, digest) in (extra or {}).items():
-        for cid in by_receipt.get(receipt, ()):
-            if calls[cid] == 1 and proof(paired.get(cid)) not in (REFUSED, UNAPPLIED, LANDED, UNCERTAIN):
-                seen.setdefault(cid, []).append((state, digest))
-    out: dict = {}
-    for cid, observed in seen.items():
-        final = {item for item in observed if item[0] in FINAL_MARKS}
-        if len(final) == 1:
-            out[cid] = next(iter(final))
-        elif not final:
-            # No final mark anywhere: the most specific non-final fact any witness saw (dead outranks running outranks nothing).
-            out[cid] = (next(s for s in ("dead", "running", "incomplete") if any(item[0] == s for item in observed)), "")
-    return out
-
-
-def witnessed_unlanded_ids(messages, extra=None) -> set:
-    """Calls whose own executor-side mark says the program ended WITHOUT changing the file (a reply that never arrived does not matter)."""
-    return {cid for cid, (state, _digest) in witnessed_completions(messages, extra).items() if state == "did_not_run"}
-
-
-def witnessed_completed_ids(messages, extra=None) -> set:
-    """Calls whose program is known to have FINISHED (landed, did not run, or ended uncertain) though no reply proves it. The
-    write may no longer be running; nothing about WHAT it left is claimed beyond its own state."""
-    return {cid for cid, (state, _digest) in witnessed_completions(messages, extra).items() if state in FINAL_MARKS}
-
-
-def unlanded_call_ids(messages, extra=None) -> set:
-    """Ids of write-class calls cria PROVED did not change anything: its own refusal branch ran, or its edit
-    program reported the edit not applied - or, with no reply at all, its own executor-side completion mark says it
-    ended without changing the file. ONE owner for every reader that asks 'did this land?'. A write that never reached
-    disk is not a rewrite (phi4 A4 CALL 0039: nine refused edits read as "rewritten at least 5 times" while the file was
-    byte-identical); a result that merely QUOTES a marker, a reused call id, or a result with no hint is unknown, never
-    unlanded. ``extra`` is the completion marks a gate read back (`GuardState.gate_marks`): a witnessed ``did_not_run``
-    is proof too."""
-    return _unambiguous(messages, unlanded) | witnessed_unlanded_ids(messages, extra)
+def unlanded_call_ids(messages) -> set:
+    """Ids of write-class calls cria PROVED did not change anything: its own refusal branch ran, or its edit did not apply. ONE owner
+    for every reader that asks 'did this land?'. A write that never reached disk is not a rewrite (phi4 A4 CALL 0039: nine refused
+    edits read as "rewritten at least 5 times" while the file was byte-identical); a result that merely QUOTES a marker, a reused call
+    id, or a result with no hint is unknown, never unlanded."""
+    return _unambiguous(messages, unlanded)

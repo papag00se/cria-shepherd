@@ -19,6 +19,10 @@ BENIGN_SLICES = {  # (file, expression): display tables, ids, parsing, both halv
     ("dedup.py", "us[cur:]"), ("dedup.py", "us[cur:a]"), ("callliterals.py", "lines[:cut]"),
     ("writeproxy.py", "raw[i:i + width]"), ("outboundpolicies.py", "command.lstrip().splitlines()[:2]"),
     ("contextfloor.py", "text[tail_start:]"),   # the newest part of a user message, beside the label stating what was omitted
+    ("editapply.py", "lines[max(0, d - 2):d + 4]"),   # the edit-miss window: the lines around the divergence, which the directive names as exactly that
+    ("splice.py", "self.base[p[1]:p[2]]"),            # the bytes of a file (joined as bytes), not text a reader is shown
+    ("writeops.py", "callauth.group(op.op)[:16]"),    # an id: the name of the staging file the `put` stub derives from the same 32 hex digits
+    ("writeops.py", "callauth.nonce(op.op, write.s)[:16]"),   # an id: the name of the temporary file the `write` stub derives from its own nonce
 }
 
 def sliced_into_text():

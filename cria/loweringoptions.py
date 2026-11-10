@@ -3,8 +3,9 @@
 `translate_outbound` lowers the model's tool calls into the harness's shell. Two of its options change what the model
 READS or what the harness is made to carry, and each belongs to a rung above the ones that lower at all:
 
-* `harness-plumbing-packing` (L4) — the edit-failure report and the workspace-survey ride are packed (zlib) into the
-  harness's own plumbing, which the harness keeps and counts and the coder reads decoded;
+* `harness-plumbing-packing` (L4) — the workspace-survey ride is packed (zlib) into the harness's own plumbing, which the
+  harness keeps and counts and the coder reads decoded (the edit-failure report no longer travels through the harness: cria
+  applies the edit itself and keeps the facts of a miss in its own ledger);
 * `edit-result-echo` (L5) — a landed edit reports the window of the file it just wrote.
 
 They were `cfg.routing.done_refusals` / `assists_enabled` flags passed from the server, which neither the registry,
@@ -41,19 +42,19 @@ class Definition:
 
 
 _HOOKS = (Reference("cria/server.py", "CriaHandler._translate_out"),
-          Reference("cria/writeproxy.py", "_edit_command"))
+          Reference("cria/writeproxy.py", "_carry_out"))
 _REGRESSION = Reference("tests/write_edit/test_write_edit_programs.py", "test_an_edit_applies_only_on_one_match_and_reports_facts_otherwise")
 
 PACKING = Definition(Policy(
     "harness-plumbing-packing", STAGE, 4, family_id="F26",
-    services=("lowered edit command", "workspace survey ride"),
+    services=("workspace survey ride",),
     hooks=_HOOKS, regressions=(_REGRESSION,)), _pack)
 
 ECHO = Definition(Policy(
     "edit-result-echo", STAGE, 5, family_id="F17",
     prompts=("edit_echo", "edit_echo_removed", "edit_echo_span_omitted", "edit_echo_repeat",
              "edit_echo_flexible", "edit_echo_omitted", "edit_echo_window"),
-    services=("lowered edit command",),
+    services=("edit window",),
     hooks=_HOOKS, regressions=(_REGRESSION,)), _echo)
 
 DEFINITIONS = (PACKING, ECHO)

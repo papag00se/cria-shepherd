@@ -13,7 +13,7 @@ import pytest
 
 from cria import probegate
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / 'write_edit'))
-from write_edit_helpers import call, command_of, harness_env, lower, run, write_edit_workspace_view  # noqa: F401,E402
+from write_edit_helpers import do, harness_env, operations_engine, write_edit_workspace_view  # noqa: F401,E402
 
 CRIA = pathlib.Path(probegate.__file__).parent
 POISON = "open('POISONED', 'a').write('executed\\n')\n"
@@ -55,43 +55,24 @@ def test_gate_and_its_detached_worker_do_not_import_workspace_modules(tmp_path):
     assert result.stdout.startswith(b'___CTX_GATE_TRANSPORT_') and b'___CTX_GATE_TRANSPORT_END_' in result.stdout
 
 
-UNSAFE_EDIT = {'old_string': 'os.close(fd)', 'new_string': 'shutil.rmtree(os.path.dirname(path), ignore_errors=True)'}
-SAFE_SOURCE = ("import os, shutil, tempfile\n\n\ndef test_it():\n    fd, path = tempfile.mkstemp()\n    os.close(fd)\n")
-
-
-def _unsafe_edit_command(workspace):
-    """The real lowering of an edit whose candidate is proven unsafe: the refuse-if-unchanged wrapper that runs python3 in the harness."""
-    target = workspace / 'test_http.py'
-    target.write_text(SAFE_SOURCE)
-    tc = lower([call('edit_file', {'path': str(target), **UNSAFE_EDIT})], root=str(workspace))[0]
-    assert 'python3' in command_of(tc)
-    return tc, target
-
-
-def test_candidate_safety_stale_check_does_not_import_workspace_modules(tmp_path):
+def test_a_write_and_an_edit_run_no_workspace_code_and_use_no_planted_python3_or_env(tmp_path):
+    """The write route (R1/R2/R7 of docs/harness-programs.md) is the fixed stubs: in a workspace that shadows the standard library
+    (`hashlib`, `json`, `os`, `sitecustomize`, ...), with PYTHONPATH and the user base pointing at it and a planted `python3` and `env`
+    first on PATH, a whole write, an edit and a refused candidate land and answer exactly as they do anywhere, and nothing planted runs."""
     workspace = _hostile_workspace(tmp_path)
-    environment = {'PYTHONPATH': str(workspace), 'PYTHONUSERBASE': str(workspace)}
-    tc, target = _unsafe_edit_command(workspace)
-    done = run(tc, workspace, env=environment)
-    assert not (workspace / 'POISONED').exists()
-    assert 'withheld' in done.stdout and target.read_text() == SAFE_SOURCE        # control: unchanged file, the refusal still lands
-    tc, target = _unsafe_edit_command(workspace)
-    target.write_text(SAFE_SOURCE + '# changed after review\n')
-    done = run(tc, workspace, env=environment)
-    assert not (workspace / 'POISONED').exists()
-    assert 'changed or could not be read after this edit was reviewed' in done.stdout                  # control: the stale branch still compares real bytes
-
-
-def test_candidate_safety_check_does_not_resolve_python3_through_a_planted_path_entry(tmp_path):
-    workspace = _hostile_workspace(tmp_path)
-    for tool, real in (('python3', os.path.realpath(sys.executable)), ('env', '/usr/bin/env')):     # the interpreter and `env` itself
+    for tool, real in (('python3', os.path.realpath(sys.executable)), ('env', '/usr/bin/env')):
         planted = workspace / 'bin' / tool
         planted.write_text("#!/bin/sh\necho planted-%s >> POISONED\nexec %s \"$@\"\n" % (tool, real))
         planted.chmod(planted.stat().st_mode | stat.S_IXUSR)
-    tc, _ = _unsafe_edit_command(workspace)
     shim = pathlib.Path(harness_env(workspace)['PATH'].split(':')[0])
-    run(tc, workspace, env={'PATH': f'{workspace / "bin"}:{shim}:/usr/bin:/bin'})
+    hostile = {'PYTHONPATH': str(workspace), 'PYTHONUSERBASE': str(workspace), 'PATH': f'{workspace / "bin"}:{shim}:/usr/bin:/bin'}
+    (workspace / 'a.py').write_text('x = 1\n')
+    _, _, wrote = do('write_file', {'path': 'new.txt', 'content': 'written\n'}, workspace, env=hostile)
+    _, _, edited = do('edit_file', {'path': 'a.py', 'old_string': 'x = 1', 'new_string': 'x = 2'}, workspace, cid='e', env=hostile)
+    _, _, refused = do('edit_file', {'path': 'a.py', 'old_string': 'x = 2', 'new_string': 'x = (2'}, workspace, cid='r', env=hostile)
     assert not (workspace / 'POISONED').exists()
+    assert (workspace / 'new.txt').read_text() == 'written\n' and (workspace / 'a.py').read_text() == 'x = 2\n'
+    assert wrote[1]['content'] == 'Wrote new.txt' and edited[1]['content'] == 'Wrote a.py' and 'would break' in refused[1]['content']
 
 
 def _python_invocations_without_isolation():

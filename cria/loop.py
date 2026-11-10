@@ -430,7 +430,6 @@ class GuardState:
     gate_unknown_streak: int = 0
     gate_unknown_sig: str = ""
     gate_unsettled_streak: int = 0   # consecutive gate readings that left an unreplied write call unsettled
-    gate_marks: dict | None = None   # {receipt: (state, sha256)} completion marks a gate read back (`completionmarks`)
     # A gate planned before the workspace survey can return only that survey.  Once it lands, probe
     # discovery has new facts and completion must wait for one newly planned gate.  Separate from
     # ``gate_fresh`` so an already-surveyed project with no applicable probe keeps the bounded
@@ -776,13 +775,10 @@ STEP_THRASH_REPLAN = livingplan.STEP_THRASH_REPLAN
 def _note_write_results(gs: GuardState, messages) -> None:
     """Remember which registered write calls have had a result come back (landed or failed). A result counts only
     through the ONE call/result correlation owner (`denial.paired_results`): an orphan, a result that precedes its
-    call, a second result or a reused id answers nothing. A call with no reply at all also counts once its own executor-side
-    completion mark was read back as final (`denial.witnessed_completed_ids`): its program is finished, so it is no longer a
-    pending write. The raw set is sticky; whether an id still counts is decided at use (`writeobservation.answered_ids`)."""
+    call, a second result or a reused id answers nothing. The raw set is sticky; whether an id still counts is decided at use (`writeobservation.answered_ids`)."""
     answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
     registered = set(getattr(gs, "write_call_ids", None) or [])
-    answered |= registered & (set(denial.paired_results(messages or []))
-                              | denial.witnessed_completed_ids(messages or [], getattr(gs, "gate_marks", None)))
+    answered |= registered & set(denial.paired_results(messages or []))
 
 
 def track_gate_progress(gs: GuardState, finding: str, messages=None, *, count_stall: bool = True) -> None:
@@ -850,7 +846,7 @@ def _observe_history(gs, messages) -> int:
     recovery is selected, the gate registrar, and — inside `record` — the history that precedes a forwarded reply."""
     messages = messages or []
     writeobservation.observe_history(writeobservation.HistoryInput(
-        messages, frozenset(denial.unlanded_call_ids(messages, getattr(gs, "gate_marks", None))), gs, _note_write_results, _is_write_call))
+        messages, frozenset(denial.unlanded_call_ids(messages)), gs, _note_write_results, _is_write_call))
     return len(gs.write_call_ids)
 
 
@@ -6186,25 +6182,10 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
     return out
 
 
-def _collapse_editfails(messages: list[dict]) -> list[dict]:
-    """REASONER-only: one-line each raw ``⟦ctx:editfail⟧<base64>`` tool result. The base64 embeds the
-    file's whole current bytes — noise the reasoner can't use (it can't decode it, and repeated blobs
-    poisoned a verify prompt with ~96K tokens). The coder path deliberately does NOT call this: its
-    represent_inbound decodes the marker into the recovery directive (with the bytes) the model needs."""
-    out: list[dict] = []
-    for m in messages:
-        c = m.get("content")
-        if isinstance(c, str) and denial.unlanded(m) and editrecovery.EDITFAIL in c:
-            m = {**m, "content": editrecovery.summarize(c)}
-        out.append(m)
-    return out
-
-
 def _reasoner_session(messages: list[dict]) -> list[dict]:
-    """Shared scrub for a session about to be serialized for a reasoner: hide cria's own file-ops/banners
-    and collapse edit-fail base64 blobs to one line. (Harness-frame drop is applied separately since one
-    caller reframes gate results between.)"""
-    return _collapse_editfails(_strip_cria_file_ops(messages))
+    """Shared scrub for a session about to be serialized for a reasoner: hide cria's own file-ops/banners.
+    (Harness-frame drop is applied separately since one caller reframes gate results between.)"""
+    return _strip_cria_file_ops(messages)
 
 
 def _drop_harness_frame(messages: list[dict]) -> list[dict]:
@@ -7586,7 +7567,7 @@ def _record_dispatch(gs, coder, messages):
                   for ch in coder.get('choices', [])
                   for tc in (ch.get('message') or {}).get('tool_calls') or [])
     return writeobservation.record(writeobservation.WriteInput(
-        calls, messages or [], frozenset(denial.unlanded_call_ids(messages or [], getattr(gs, "gate_marks", None))), gs, _note_write_results,
+        calls, messages or [], frozenset(denial.unlanded_call_ids(messages or [])), gs, _note_write_results,
         _is_write_call))
 
 

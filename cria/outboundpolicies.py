@@ -1,19 +1,21 @@
 """Ordered outbound policy effects. Shell construction stays a harness adapter."""
 from __future__ import annotations
 import json
-from shlex import quote as _qbash
 
-from . import content_reduce as content_reduce_mod, dirguard, harnessprims, prompts, resultpacket, webfetch, wsview
+from . import content_reduce as content_reduce_mod, dirguard, prompts, resultpacket, webfetch, wsview
 from .assistcontract import Policy, Reference
-from .toolcontracts import OutboundCall, OutboundDefinition, MutationDefinition, ReadIntent, RewrittenCall, ShellCommand
+from dataclasses import replace
+
+from .toolcontracts import (OutboundCall, OutboundDefinition, MutationDefinition, MutationPlan, ReadIntent, ReviewTerms, RewrittenCall,
+                            ShellCommand)
 from .shrinkprotection import DEFINITION as SHRINK_PROTECTION
-from .callliterals import _has_tc_debris, _protocol_debris, _repair_double_escaped
+from .callliterals import _has_tc_debris, _protocol_debris
 from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _guarded_path, _targets_cria_home,
     _prepare_file_mutation, _under_spill_dir, _spill_relpath, _respill_command,
 )
 from .toolwire import (
-    _b64, _refusal_command, _command_of, GATE_SENTINEL, _SENTINEL,
+    _refusal_command, _command_of, GATE_SENTINEL, _SENTINEL,
     _RIDE_ALONG_COMMAND_RESERVE, _RIDE_ALONG_HOST_RESERVE,
 )
 from .shelltool import _CMD_FIELDS, is_shell_tool_name
@@ -144,37 +146,11 @@ def unread_replacement(source: OutboundCall) -> ReadIntent | None:
     return ReadIntent(fact)
 
 
-def candidate_safety(source: OutboundCall, command: str) -> str:
-    """Only proven unsafe complete candidates are refused; unknown stays unknown."""
-    from . import cleanupsafety, wsview, prompts
-    request, name, log = source.request, source.name, source.log
-    mutation = _prepare_file_mutation(name, source.arguments)
-    path = str(mutation.path)
-    if name in _WRITE_NAMES:
-        candidate = _repair_double_escaped(mutation.content)
-        refusal = cleanupsafety.review(path, candidate, None, request.workspace_root, log,
-                                       permission=request.external_dir_permission)
-        return _refusal_command(refusal) if refusal else command
-    raw = wsview.current().read_bytes(path)
-    try:
-        previous = raw.decode() if raw is not None else None
-    except UnicodeError:
-        previous = None
-    old, new = mutation.old, mutation.new
-    if previous is not None and old and previous.count(old) == 1:
-        refusal = cleanupsafety.review(path, previous.replace(old, new, 1), previous,
-            request.workspace_root, log, permission=request.external_dir_permission)
-        if refusal:
-            check = ('import base64,pathlib,sys; p=pathlib.Path(base64.b64decode('
-                     + repr(_b64(path)) + ').decode()); sys.exit(0 if p.read_bytes()==base64.b64decode('
-                     + repr(_b64(previous)) + ') else 1)')
-            stale = _refusal_command(prompts.load('cleanup_stale'))
-            # `env -i PATH=<safe_path>`: the interpreter is found through system directories only, never a workspace entry
-            # (and `env` itself by absolute path: through the harness PATH it could be one).
-            return f'if {harnessprims.ENV} -i PATH={_qbash(request.safe_path)} python3 -I -S -c {_qbash(check)}; then\n{_refusal_command(refusal)}\nelse\n{stale}\nfi'
-    elif log is not None:
-        log.emit('safety.cleanup_review', path=path, verdict='UNKNOWN', reason='complete exact edit candidate unavailable')
-    return command
+def candidate_safety(source: OutboundCall, plan: MutationPlan) -> MutationPlan:
+    """Only proven unsafe complete candidates are refused; unknown stays unknown. The policy's fact is its terms: cria reviews each
+    complete candidate in-process (:mod:`cria.writeops`), on the exact bytes it is about to write, before anything lands."""
+    request = source.request
+    return replace(plan, review=ReviewTerms(request.external_dir_permission, request.workspace_root))
 
 
 def _external_refusal(name, args, fn, injected, level: str, workspace: str | None, roots=()) -> str | None:

@@ -1,11 +1,10 @@
 """What a reasoner or a post-compaction coder is handed about earlier work: the harness summary wherever the harness put it, the action log with
-refused calls labelled and unattributable results counted, edit-failure blobs collapsed to one line, and the fenced text the coder was shown."""
-import base64
+refused calls labelled and unattributable results counted, and the fenced text the coder was shown."""
 import json
 
 import pytest
 
-from cria import bodykeys, denial, editrecovery, loop, prompts, wsview
+from cria import bodykeys, denial, loop, prompts, wsview
 from cria.fetchfacts import Shape
 
 
@@ -54,21 +53,6 @@ def test_the_action_log_labels_only_calls_cria_refused_and_counts_results_it_can
     quiet = Log()
     loop._work_log(msgs[:2], rlog=quiet)
     assert quiet.events == []                                                                   # nothing refused, nothing unattributable: no event
-
-
-def packed(path):
-    return base64.b64encode(json.dumps({"path": path, "mode": "miss"}).encode()).decode()
-
-
-def test_an_edit_failure_blob_is_one_line_for_a_reasoner_and_only_when_cria_proved_the_edit_did_not_apply():
-    blob = f"Error {editrecovery.EDITFAIL}{packed('/w/src/app.py')} tail"
-    bad = f"Error {editrecovery.EDITFAIL}!!notbase64 tail"
-    msgs = [res("a", blob, denial.UNAPPLIED), res("b", bad, denial.UNAPPLIED), res("c", blob), res("d", "plain", denial.UNAPPLIED),
-            {"role": "tool", "tool_call_id": "e", "content": None}]
-    out = [m.get("content") for m in loop._collapse_editfails(msgs)]
-    assert out[0] == "Error [edit_file on app.py did not apply (mode=miss); cria gave the coder the exact fix] tail"
-    assert out[1] == "Error [edit_file did not apply; cria gave the coder the fix] tail"
-    assert out[2] == blob and out[3] == "plain" and out[4] is None                                # a quote of the marker, with no proof, is left alone
 
 
 def test_everything_the_coder_was_shown_includes_fetched_response_shapes_and_every_tool_result():

@@ -38,8 +38,9 @@ def test_a_turn_reports_every_call_to_the_lowering_observer_with_what_it_became(
              call("web_fetch", {}, "f"), call("edit_file", {"path": "p", "old_string": "a", "new_string": "b"}, "e")]
     out = lower(calls, injected=INJECTED, root="/w", native_search="native_search", session="s9",
                 observe_lowering=lambda tc, lowered, write: seen.append((tc["id"], lowered["function"]["name"], write is not None)))
-    names = {tc["id"]: tc["function"]["name"] for tc in out}
-    assert names == {"w": SHELL["name"], "u": "totally_unknown", "s": "native_search", "f": "web_fetch", "e": SHELL["name"]}
+    names = [tc["function"]["name"] for tc in out]          # a mutation becomes cria's own primitive call (its id is cria's, not the model's)
+    assert names == [SHELL["name"], "totally_unknown", "native_search", "web_fetch", SHELL["name"]]
+    assert out[0]["id"].startswith("ctx_") and out[4]["id"].startswith("ctx_") and out[1]["id"] == "u"
     assert out[1]["function"]["arguments"] == '{"x": 1}' and out[2]["function"]["arguments"] == '{"query": "q"}' and out[3]["function"]["arguments"] == "{}"
     assert [(i, n) for i, n, _w in seen] == [("w", SHELL["name"]), ("u", "totally_unknown"), ("s", "native_search"), ("f", "web_fetch"), ("e", SHELL["name"])]
     assert [w for _i, _n, w in seen] == [True, False, False, False, False]      # only a whole-file write is proposed as one
