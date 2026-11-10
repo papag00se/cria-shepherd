@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from . import callauth, denial, externalization, harnessprims, ignore, prompts
 from .content_reduce import COMMAND_ARG_BUDGET
 from .ledger import LedgerError
-from .opsteps import Final, Issue, reason as _reason
+from .opsteps import Final, Issue, staging_reason
 from .surveyops import LEVEL_MAXES, TREE_MAX, WAVE, _Tree
 
 SEARCH = 'search'
@@ -602,4 +602,4 @@ class SearchOps:
             return Final(denial.RAN, op.blobs[st.args['ans']])
         if how == 'unknown':
             return Final(denial.UNKNOWN, prompts.render('answer_unknown', target='./' + st.args['rel']))
-        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(st.frame['hdr']))
+        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + staging_reason(st.frame['hdr']))

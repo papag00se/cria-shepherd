@@ -17,6 +17,7 @@ cannot say - and the checker's own file name is replaced by the file's by cria.
 import base64
 import hashlib
 import re
+import shlex
 
 XML_MAX = 1 << 20          # a larger document is not checked here: UNKNOWN
 TIMEOUT = 20               # seconds the harness gives a checker before it is killed (UNKNOWN)
@@ -72,11 +73,18 @@ def candidate_text(raw: "bytes | str") -> "str | None":
         return None
 
 
-def script(path: str, data: bytes, budget: int | None = None) -> str | None:
+def script(path: str, data: bytes, safe_path: str, budget: int | None = None) -> str | None:
     """The shell script the ``run`` stub runs to check ``data`` as the file ``path`` (None: no harness checker for it, or it would
     not fit one command, which is UNKNOWN). The candidate travels as one line of base64 (exact bytes: CRLF and NUL survive), is
     written under the extension to a file beside the script - the run's own private directory, removed when the script ends - and
-    the checker's command line runs on it. No temporary file is made anywhere else."""
+    the checker's command line runs on it. No temporary file is made anywhere else.
+
+    NOTHING IN THE WORKSPACE CAN STAND IN FOR A PROGRAM THIS SCRIPT RUNS. The script directory is found by parameter expansion (``${0%/*}``:
+    no command runs before the ``cd``, where a ``dirname`` found through a ``PATH`` entry in the workspace, relative or absolute, would), and
+    ``PATH`` is the harness's ``safe_path`` (``[harness] safe_path``: absolute system directories only, the same the stubs are launched under)
+    from the first line, so the checker (``ruby``, ``node``, ``php``, ``gofmt``) and the cleanup's ``rm`` are looked up there and never in a
+    directory the project put on the ambient ``PATH`` (``bin``, ``node_modules/.bin``, a virtualenv). The cost: a checker installed only
+    under a user directory the ambient ``PATH`` names (a version manager's shims) is not found, which is exit 127: UNKNOWN, never a refusal."""
     ext = extension(path)
     argv = HARNESS.get(ext)
     if argv is None:
@@ -87,7 +95,7 @@ def script(path: str, data: bytes, budget: int | None = None) -> str | None:
     unset = " ".join(f"-u {name}" for name in BLOCKED_ENV)
     quiet = " >/dev/null" if ext == ".go" else ""
     terminator = "CTX_IN_" + hashlib.sha256(body.encode()).hexdigest()[:12]      # base64 has no underscore: it can never be a line of the body
-    return (f'cd "$(dirname "$0")" || exit 127\nf={CAND}{ext}\ntrap \'rm -f "$f"\' EXIT\n'
+    return (f'PATH={shlex.quote(safe_path)}\ncd "${{0%/*}}" || exit 127\nf={CAND}{ext}\ntrap \'rm -f "$f"\' EXIT\n'
             f"/usr/bin/base64 -d > \"$f\" <<'{terminator}'\n{body}\n{terminator}\n"
             f'/usr/bin/env {unset} {argv} "$f"{quiet}\n')
 

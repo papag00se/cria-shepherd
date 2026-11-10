@@ -87,9 +87,9 @@ def test_a_checkers_verdict_names_the_file_the_coder_wrote_and_only_a_fault_refu
     assert ext('p.php', 255, 0, b'PHP Parse error: x in cand.php on line 2\nErrors parsing cand.php') == 'PHP Parse error: x in p.php on line 2\nErrors parsing p.php'
     assert ext('g.go', 2, 0, b'') == 'does not parse'
     assert syntaxcheck.at(b'a\nb\nc\n', 'r.rb:2: syntax error') == ' Line 2 of the content you sent is: b' and syntaxcheck.at(b'a\n', 'r.rb:9:') == ''
-    script = syntaxcheck.script('x/y.mjs', b'import a from "b";\n')
-    assert script.startswith('cd "$(dirname "$0")"') and 'cand.mjs' in script and 'NODE_OPTIONS' in script and 'x/y.mjs' not in script
-    assert syntaxcheck.script('a.py', b'x') is None and syntaxcheck.kind('a.PY') == 'local' and syntaxcheck.kind('a.go') == 'harness' and syntaxcheck.kind('a.md') == 'none'
+    script = syntaxcheck.script('x/y.mjs', b'import a from "b";\n', '/usr/bin:/bin')
+    assert script.startswith('PATH=/usr/bin:/bin\ncd "${0%/*}" || exit 127') and 'dirname' not in script and 'cand.mjs' in script and 'NODE_OPTIONS' in script and 'x/y.mjs' not in script
+    assert syntaxcheck.script('a.py', b'x', '/usr/bin') is None and syntaxcheck.kind('a.PY') == 'local' and syntaxcheck.kind('a.go') == 'harness' and syntaxcheck.kind('a.md') == 'none'
 
 
 @pytest.mark.parametrize('path,text,fault', [('a.py', 'def f(:\n', True), ('a.py', 'x = 1\n', False), ('a.json', '{"a": }', True), ('a.toml', 'x = = 1', True),

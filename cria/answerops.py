@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from . import denial, harnessprims, prompts, stagesweep
 from .ledger import LedgerError
-from .opsteps import Final, reason as _reason
+from .opsteps import Final, staging_reason
 from .toolwire import _shell_call
 
 ANSWER = 'answer'
@@ -81,7 +81,7 @@ class AnswerOps:
             return Final(op.ctx['outcome'], op.ctx['text'], {'rep': {**op.ctx['rep'], **({'st': ext['stored']} if ext.get('stored') else {})}, 'ext': ext})
         if how == 'unknown':
             return Final(denial.UNKNOWN, prompts.render('answer_unknown', target=op.ctx['save']['target']), {'ext': {**ext, 'stored': None}})
-        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(header or {}), {'ext': {**ext, 'stored': None}})
+        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + staging_reason(header or {}), {'ext': {**ext, 'stored': None}})
 
     @staticmethod
     def _ext(op) -> dict:

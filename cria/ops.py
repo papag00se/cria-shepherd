@@ -26,7 +26,7 @@ from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
 from .opspath import OpsUnavailable, split
-from .opsteps import Final, Issue, Wait, reason as _reason
+from .opsteps import Final, Issue, Wait, reason as _reason, staging_reason
 from .answerops import ANSWER, AnswerOps, LedgerAnswer
 from .probeops import PROBE, ProbeOps
 from .searchops import SEARCH, SearchOps
@@ -506,7 +506,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return self._spill_final(op, 'unknown' if bad.frame['hdr'].get('ok') == -1 else 'failed', bad)
         if bad.frame['hdr'].get('ok') == -1:
             return Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
-        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(bad.frame['hdr']))
+        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + staging_reason(bad.frame['hdr']))
 
     def _after_write(self, op: Op, wave: list, steps: list):
         from . import webfetch
@@ -522,7 +522,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return Issue(self._next(steps, 'write', {**st.args, 'try': st.args['try'] + 1}))
         if header.get('ok') == -1:
             return Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
-        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(header))
+        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + staging_reason(header))
 
     # ---------------------------------------------------------------- what the model sees
     def _project(self, session: str, messages: list, verified: dict, calls: list, log) -> Incoming:

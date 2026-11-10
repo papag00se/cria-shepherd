@@ -6,10 +6,13 @@ import subprocess
 
 import pytest
 
-from cria import denial, syntaxcheck
+from cria import denial, harnessprims, syntaxcheck
 from cria.prompts import load as prompts_load
 from cria.ops import Ops
-from write_edit_helpers import _ENGINE, call, command_of, do, lower, run, settle, write_edit_workspace_view  # noqa: F401
+from write_edit_helpers import _ENGINE, SHELL, call, command_of, do, lower, run, settle, write_edit_workspace_view  # noqa: F401
+
+
+SAFE = harnessprims.SAFE_PATH
 
 
 def stubs(commands, verb):
@@ -39,6 +42,42 @@ def test_a_payload_is_one_command_up_to_45_000_bytes_then_staged_by_put_and_comm
     assert len(stubs(sent, 'put')) == puts and len(stubs(sent, 'write')) == 1             # ceil(size / 45,000) chunks in waves of at most 16, then ONE write that checks the hash
     assert all(len(c.encode()) < 64 * 1024 for c in sent)                                           # no command past the budget (the kernel refuses 128 KiB)
     assert not [n for n in os.listdir(tmp_path) if n.startswith('.ctx')]                           # the staging file went with the landing
+
+
+def _staging_folder_is(tmp_path, how):
+    elsewhere = tmp_path.parent / (tmp_path.name + '.elsewhere')
+    elsewhere.mkdir()
+    if how == 'tmp is a link':
+        os.symlink(elsewhere, tmp_path / 'tmp')
+    elif how == 'tmp/reference is a link':
+        (tmp_path / 'tmp').mkdir()
+        os.symlink(elsewhere, tmp_path / 'tmp' / 'reference')
+    else:
+        (tmp_path / 'tmp').write_text('not a folder\n')
+    return elsewhere
+
+
+@pytest.mark.parametrize('how', ['tmp is a link', 'tmp/reference is a link', 'tmp is a file'])
+def test_a_workspace_whose_staging_folder_is_a_link_or_not_a_folder_is_told_so_not_that_it_is_not_a_directory(tmp_path, how):
+    """A payload past one command is staged in ./tmp/reference, walked without following a link; a Rails-style `tmp` link failed every write over 45 KB with
+    the kernel's `Not a directory`, which says nothing is wrong with the file. The answer names the folder; nothing is written and nothing lands behind the link."""
+    elsewhere = _staging_folder_is(tmp_path, how)
+    _, _, shown = do('write_file', {'path': 'big.txt', 'content': body(100_000).decode()}, tmp_path)
+    text = shown[1]['content']
+    assert denial.unlanded(shown[1]) and 'the staging folder ./tmp/reference is a link or is not a directory' in text and 'Not a directory' not in text and 'big.txt' in text
+    assert not (tmp_path / 'big.txt').exists() and not list(elsewhere.rglob('*'))
+
+
+def test_a_listing_that_cannot_be_saved_because_the_staging_folder_is_a_link_says_so(tmp_path):
+    elsewhere = _staging_folder_is(tmp_path, 'tmp is a link')
+    for i in range(1200):
+        (tmp_path / f'file-with-a-rather-long-name-{i:05}.txt').write_text('x')
+    tc = lower([call('list_dir', {'path': '.'}, 'l')], injected=('list_dir',), root=str(tmp_path),
+               issue_list_dir=lambda c, a: _ENGINE['ops'].issue_list_dir('s', SHELL, c, a, workspace_root=str(tmp_path), level='write'))[0]
+    first = run(tc, tmp_path)
+    shown = settle([{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first.stdout}], tmp_path)
+    text = shown[1]['content']
+    assert 'the staging folder ./tmp/reference is a link or is not a directory' in text and 'Not a directory' not in text and not list(elsewhere.rglob('*'))
 
 
 @pytest.mark.parametrize('size,limit', [(20_000, 10_000), (100_000, 40_000)], ids=['one command', 'staged by put'])
@@ -216,13 +255,33 @@ def test_a_checker_that_says_more_than_the_run_stub_answers_inline_is_read_to_th
     first = run(tc, tmp_path)
     msgs = [{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first.stdout}]
     shown = settle(msgs, tmp_path, ran=ran)
-    wholly = subprocess.run(['sh', '-c', syntaxcheck.script(source, broken.encode()).replace('$(dirname "$0")', str(scratch))], capture_output=True, text=True,
+    wholly = subprocess.run(['sh', '-c', syntaxcheck.script(source, broken.encode(), SAFE).replace('${0%/*}', str(scratch))], capture_output=True, text=True,
                             cwd=scratch if scratch.exists() else tmp_path)            # the checker's own words, all of them, as an oracle
     said = syntaxcheck.interpret(source, 1, 0, (wholly.stdout + wholly.stderr).encode())
     text = shown[1]['content']
     assert len(said) > 40_000 and denial.refused(shown[1]) and said in text and (tmp_path / source).read_text() == good
     assert len(stubs(ran, 'read')) >= 3 and len(stubs(ran, 'rm')) == 1                        # the pages, then the one removal
     assert not [n for n in os.listdir(scratch) if n.startswith('.ctx-run-')]
+
+
+@pytest.mark.skipif(not shutil.which('ruby'), reason='no ruby')
+def test_nothing_in_the_workspace_runs_when_a_harness_checker_checks_a_candidate(tmp_path):
+    """The checker script found its own directory with `dirname` and the checker and `rm` through the harness's `PATH`: with a project `bin` on it
+    (a relative entry, which resolves in the workspace before the script's `cd`, or an absolute one such as a virtualenv's or node_modules/.bin) a planted
+    `dirname`, `ruby` or `rm` ran in place of them. The script now finds its directory by parameter expansion and looks everything up in the safe path."""
+    marker = tmp_path.parent / (tmp_path.name + '.ran')
+    (tmp_path / 'bin').mkdir()
+    for name in ('dirname', 'ruby', 'rm', 'base64', 'env'):
+        (tmp_path / 'bin' / name).write_text(f'#!/bin/sh\necho {name} >> {marker}\nexit 0\n')
+        os.chmod(tmp_path / 'bin' / name, 0o755)
+    (tmp_path / 'r.rb').write_text('def a\n  1\nend\n')
+    path = f'bin:{tmp_path}/bin:/usr/bin:/bin'
+    _, _, shown = do('write_file', {'path': 'r.rb', 'content': 'def a(\n'}, tmp_path, env={'PATH': path})
+    assert not marker.exists(), marker.read_text() if marker.exists() else ''
+    assert denial.refused(shown[1]) and 'r.rb:' in shown[1]['content'] and (tmp_path / 'r.rb').read_text() == 'def a\n  1\nend\n'      # the real ruby judged it
+    _, _, shown = do('write_file', {'path': 'r.rb', 'content': 'def b\n  2\nend\n'}, tmp_path, env={'PATH': path})
+    assert denial.landed(shown[1]) and not marker.exists()
+    assert not [n for n in os.listdir(tmp_path.parent / (tmp_path.name + '.scratch')) if n.startswith('.ctx-run-')]
 
 
 # A checker that fails only on a candidate that says BAD, with 20,000 bytes of words (more than the run stub's 6,000 inline), then lingers if asked to.

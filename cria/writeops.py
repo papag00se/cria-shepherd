@@ -34,7 +34,7 @@ from .filecommands import _WRITE_NAMES, _prepare_file_mutation
 from .ledger import LedgerError
 from .mutplan import UNREAD, Call
 from .opspath import OpsUnavailable, split
-from .opsteps import Final, Issue
+from .opsteps import Final, Issue, staging_reason
 from .toolargs import parse_args as _parse
 
 MUTATE = 'mutate'
@@ -127,7 +127,7 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
         return harnessprims.compose('rm', nonce, [harnessprims.TMPDIR, f".ctx-run-{args['tok']}", 't', '*'],
                                     comment='check cleanup ' + mutplan.name_of(args['path']), safe_path=ctx['safe'])
     wait = args['mode'] == 'wait'
-    text = None if wait else syntaxcheck.script(args['path'], _bytes(blobs, args['blob']))
+    text = None if wait else syntaxcheck.script(args['path'], _bytes(blobs, args['blob']), ctx['safe'])
     return harnessprims.compose('run', nonce, [args['mode'], harnessprims.TMPDIR, args['tok'], syntaxcheck.TIMEOUT, CHECK_WAIT, '', 0],
                                 text=text, comment='check ' + mutplan.name_of(args['path']), safe_path=ctx['safe'])
 
@@ -561,7 +561,7 @@ class WriteOps:
                 return Issue(self._next(steps, 'mput', *({**st.args} for st in wave if st.frame['hdr'].get('ok') != 1)))
             if bad.frame['hdr'].get('ok') == -1:
                 return self._uncertain(op, args, 'the harness did not confirm the content it was sent', steps)
-            return self._unwritable(op, args, readops_reason(bad.frame['hdr']), steps)
+            return self._unwritable(op, args, staging_reason(bad.frame['hdr']), steps)
         size = len(_bytes(op.blobs, args['blob']))
         staged = {st.args['off'] for st in steps if st.what == 'mput' and (st.args['root'], st.args['rel']) == (args['root'], args['rel'])}
         more = [off for off in range(0, size, harnessprims.CHUNK_BYTES) if off not in staged][:harnessprims.PUT_WAVE]
