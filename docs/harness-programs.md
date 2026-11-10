@@ -1,0 +1,254 @@
+# Harness programs — registry, costs, threat check, migration plan
+
+**Status: design of record (phase 1 of the standing order in [`AGENTS.md`](../AGENTS.md)). Written 2026-11-10 against HEAD `89be90d8`.** Sizes marked *measured* were produced by rendering the real composers at HEAD with representative arguments (the call is named in each row); sizes marked *prototype* are the bytes of the scratch stubs in [`harness-primitives.md`](harness-primitives.md) §5. Nothing in `cria/` has changed yet.
+
+This file is the registry the standing order requires ("register each such program in the docs before it ships"). [`harness-primitives.md`](harness-primitives.md) is the contract the implementers build to (stub source, framing, authentication, how each feature survives). Read the standing order in `AGENTS.md`, [`principles.md`](principles.md) (esp. 7, 10, 17, 23, 23c, 24) and [`shephard.md`](shephard.md) first.
+
+## 1. Summary
+
+* Today cria sends the harness about **104 KB of distinct program text in 33 constants**, combined into **15–57 KB per call**. In the captured phi4 / Ruby request `inbound-c6809d8b` (session `01a1c367…`, `~/.cria/test-runs/calls/20261109T190128-…`), 22 lowered calls account for **1,079,914 of 1,194,740 request bytes (90.4%)**: average 49 KB per call (edit 55,668, write 46,662, read 25,311, gate 37,966) against 40,606 bytes of actual results (the capture predates HEAD's packing commits; at HEAD the same calls render 33–40 KB).
+* The design replaces them with **seven fixed stubs, 12.8 KB in total (1.1–2.6 KB each)**, `read`, `write`, `put`, `ls`, `rm`, `run`, `search`, each doing one mechanical thing. Decisions, validation, exact-match editing, syntax tables, ordering, bookkeeping, authentication, paging, survey logic and result parsing move into the cria process. Estimated size of the same 22 calls afterwards: **about 69 KB (15.7x smaller)**, assuming warm caches for the edits.
+* Authentication stops depending on text: call ids are keyed MACs over the exact command, every result frame is anchored by a keyed nonce, outcomes are fields of cria's own persisted ledger.
+* Cost: extra harness round trips (edit with a cold cache: 1 → 2; `.rb/.js/.php/.go` write: 1 → 2; grep: 1 → 2), offset by far fewer trips for large reads and the gate (§5).
+* **Two holes are open at HEAD that the review did not list** and that a two-line change closes now (phase 2): the detached gate worker and the candidate-safety check run Python without `-I` (§2).
+
+## 2. What is wrong at HEAD (security review plus what I verified)
+
+The independent review (agent `a0e431b6…`, reviewed `4610f7a9`) listed four findings and a result-forgery demonstration. Commit `892fce60` ("Isolate harness-side Python helper execution", in HEAD) added `python3 -I` to the programs the review reproduced. Status at HEAD:
+
+| # | Finding | Status at `89be90d8` | Closed by |
+|---|---|---|---|
+| F1 | A repository file runs during a cria-authored read/write/edit/survey (Python imports from the working directory) | **Partly open.** All lowered programs now start `python3 -I` (verified in every composer). Still open, verified by me: **(a)** `cria/gatecleanup.py:164` starts the detached gate worker as `[sys.executable, '-c', …]` with no `-I` and the workspace as working directory. I ran the real helper from `probegate._helper_source()` in a scratch workspace containing `hashlib.py`: the worker imported it and wrote the marker file. **(b)** `cria/outboundpolicies.py:179` runs `python3 -c` (no `-I`) for the candidate-safety stale check; same mechanism, read from the code, not executed. **(c)** `-I` does not protect interpreter *lookup*: `python3` is resolved through the harness `PATH`. With a workspace `bin` first on `PATH`, `python3 -I` ran the planted interpreter (prototype control, primitives §10). | Phase 2 closes (a),(b); phase 3 closes (c) for good (`env -i PATH=<system dirs>`, `-S`) |
+| F2 | A workspace symlink redirects reads and edits outside the workspace; the `~/.cria` guard is lexical | **Open** (not re-run; code unchanged): the write and edit programs `realpath` the target and write through it (`writeproxy.py:538`, `:615`), reads follow links, `dirguard` is lexical. | `no-follow` walk in every primitive (primitives §3) plus cria-side resolution and re-check |
+| F3 | A forged first-line marker exempts a model-authored shell command from the directory guard | **Open** (not re-run): `outboundpolicies.py:212-221` exempts any command whose first two lines start `# ⟦ctx:tool⟧`, `# ⟦ctx:gate⟧` or `cd … ___CTX_GATE_…`. | Phases 7-8: the loop-issued gate call is the last command that passes the guard on the strength of its text, so the exemption cannot go earlier without throwaway authentication; the new design deletes it rather than authenticating it (§6) |
+| F4 | A model-authored command whose first line is an unreceipted legacy declaration is re-presented as a different tool call | **Open** (not re-run): `privatenames.py:128-170`. | Phase 2b if the operator takes D2(a) (one branch of `privatenames._declared_call`), otherwise phase 8; afterwards re-presentation is only for ids that verify (primitives §6, §8.12) |
+| F5 | Result-record forgery: the receipt is `sha256(call id, name, arguments)[:16]` (`denial.py:143`), all model-visible; the reviewer showed code that ran before the producer printing a record `resultpacket.find_record` accepted. | **Open** by design. | Keyed nonce + MAC ids + ledger |
+| F6 | Spilled search results are written by `os.makedirs` + `open(T, "w")` in the harness (`writeproxy.py:1305`), which follows a `tmp` symlink | **Open** (read from code). | Spill goes through `write` (no-follow) |
+
+## 3. Registry of what ships today
+
+All current programs run with exactly the harness's own authority: its sandbox permission profile, its working directory (the workspace), its environment, and the network if the sandbox allows it. None uses `sudo`. The offline re-run (R24) enters user, network and mount namespaces with `unshare -rnm`. Data crossing: file bytes, paths and model arguments in every program; R6 and R7 also embed the *previous* file bytes. Nothing from `~/.cria/.env` rides in any composed command (each composer was read; web search runs in cria, `brave.search`).
+
+Classes: **MOVE** = logic that moves into cria (the harness keeps only a primitive); **STAY-SMALL** = must run where the files are, becomes one of the §4 stubs, with the stated reason; **DELETE** = no longer needed once something else moves; **STAY** = not a program (a shell builtin or the project's own command line).
+
+Sizes: *measured* with the real code at HEAD. "L5 session" = rendered through `translate_outbound` with a session, survey due, pack and echo on, an outstanding write mark; "bare" = the composer alone.
+
+### A. File mutation
+
+| ID | Program (source) | Trigger | What it does, in order | Size at HEAD | Class |
+|---|---|---|---|---|---|
+| R1 | Whole-file write: `writeproxy._write_command` (`writeproxy.py:563`) = `ownedfiles.ATOMIC_REPLACE_PROGRAM` (`ownedfiles.py:5`) + `_UNLANDED_PY` (`:509`) + `_VALIDATE_FN` (`:391`) + `_WRITE_PY` (`:523`) + record block | model `write_file` / `create_file` | decode path and content; validate before write (`compile`, `json`, `xml`, `tomllib`; `ruby -c`, `node --check`, `php -l`, `gofmt -e` on a temp file; env scrubbed); refuse to replace a valid file by an invalid one; refuse a directory or file-as-parent; `realpath` (follows links); `mkdir -p`; directory `flock`; temp file, `fsync`, `os.replace`; typed record; completion mark | 14,954 B bare; 32,923 B L5 session | **MOVE** → `write` (+ `put`) |
+| R2 | Exact edit: `_edit_command` (`writeproxy.py:917`) = R1's blocks + `_EDIT_PY` (`:611`) + `_ECHO_DEF` (`:745`) + `_EDIT_PACK_BLOCK` (`:805`) | model `edit_file` / `str_replace` | read target as bytes (surrogateescape, CRLF rule); exact single match, else whitespace-flexible token match with indentation rule; else miss facts (`anchor`, `phantom`, `close`, …) as a base64 report; validate; write through; echo window | 18,656 B bare; 21,900 B pack+echo; **39,955 B L5 session**; 41,262–41,354 B for each of three same-file batch members | **MOVE** → cria `apply_edit` + `write` |
+| R3 | Batch queue: `editsequence.PROGRAM` (`editsequence.py:8`, 13,879 B incl. R5) + `_EDIT_SEQ_BLOCK` (`writeproxy.py:826`) + `_PACKED_SEQUENCE` (8,179 B) | any batch with two mutations of one file | per-file turn queue with done-marks, waits up to a bound, `/proc` liveness | +8–14 KB per batch member | **DELETE** (cria never has two writes to one path in flight, CAS) |
+| R4 | Completion marks: `completionmarks.HEAD` / `WAIT` / `FUNCTIONS` / `directory_program` (`completionmarks.py:399/441/248/478`, 18,937 B; `_PACKED_MARKS` 7,531 B) | every write/edit in a session | `atexit` handler leaves an authenticated mark file in a private `$TMPDIR` directory, read later by reads, the gate and surveys | +7.5 KB per mutation | **DELETE** (ledger + idempotent re-issue) |
+| R5 | Owned-directory program: `ownedfiles.DIRECTORY_PROGRAM` (`ownedfiles.py:89`, 11,270 B) and `ATOMIC_REPLACE_PROGRAM` (3,516 B) | embedded in R1, R2, R3, R4, R10, R20 | certify private directories by identity/ownership; atomic replace | inside the above | **DELETE** |
+| R6 | Shrink-protection wrapper: `shrinkprotection.wrap_finding` (`shrinkprotection.py:163`) | held whole-file write (L5) | `python3 -I -c` embedding **base64 of the previous file bytes** to check the disk still equals what cria measured, then branch | 6,653 B for a 4.8 KB previous file (1.33x the file + 0.4 KB) | **MOVE** → compare-and-swap |
+| R7 | Candidate-safety stale check: `outboundpolicies.candidate_safety` (`outboundpolicies.py:154-179`) | edit whose result `cleanupsafety` judges unsafe | `python3 -c` (**no `-I`**) embedding the previous bytes, branch refuse/stale | previous file × 1.33 | **MOVE** (cria has the bytes; CAS) |
+
+### B. Reads
+
+| ID | Program (source) | Trigger | What it does | Size at HEAD | Class |
+|---|---|---|---|---|---|
+| R8 | Read: `filecommands._read_command_body` (`filecommands.py:325`) → `_whole_read` (`:254`) / `_ranged_read` (`:128`) = `ENCODER_PY` + `_TRANSPORT_PY` (`:150`) + `_READ_PY` (`:205`) / `_RANGE_PY` (`:226`) | model `read_file` | shell tests (`-d`, `-e`, `-r`), then `python3 -I -`: read once, build a typed record, or numbered window, bounded to the 10,000-byte transport, oversize message | 5,782 B whole; 6,204 B range; 25,887 B in a session with the completion-mark query riding | **MOVE** → `read` |
+| R9 | Read in place of a held write: `_read_in_place_of_write` (`filecommands.py:352`) | unread-file hold (L5), single-target `apply_patch` hold | refusal prose + R8 with a `refused` record | as R8 + prose | **MOVE** → `read`, answer composed in cria |
+| R10 | Multipart page: `build_multipart_page` (`filecommands.py:673`) = `ENCODER_PY` + `_TRANSPORT_PY` + `ownedfiles.DIRECTORY_PROGRAM` + `_MULTIPART_PAGE_PY` (`:447`, 8,003 B) | read whose result exceeds one page | first page copies the file into a private snapshot directory under `$TMPDIR/.ctx-mpsnap-*`, later pages serve from it; digest/identity per page | **24,508 B per page** (first and later alike) | **MOVE** → `read` pages; snapshot **DELETE** |
+
+### C. Listing, search, fetch, spill
+
+| ID | Program (source) | Trigger | What it does | Size at HEAD | Class |
+|---|---|---|---|---|---|
+| R11 | `list_dir`: `_list_command` (`writeproxy.py:1020`) | model `list_dir` | `ls -la -- <path>` in shell, wrapped by R12 | 4,800 B bare; 24,897 B in a session (marks ride) | **MOVE** → `ls` |
+| R12 | Stdout spill wrapper: `_bounded_tool_stdout` (`writeproxy.py:993`) + `_STDOUT_SPILL_PY` (`:936`, 2,155 B) + `externalization.STDOUT_SIZE_PY` | list, grep/glob, fetch, search results | runs the producer under `bash -c`, measures stdout incl. PTY CRs, saves over-limit output to `./tmp/read-only/stdout-<sha>.txt`, prints a pointer | +2.2 KB + the wrapped command | **MOVE** (cria measures; `write`) |
+| R13 | Content search: `contentsearch.command` (`contentsearch.py:128`) = `_PROGRAM` + `_WALK` (5,264 B) + `inspect.getsource(ignore.generated)` (1,028 B) + tables | model `grep` / `glob` | walk with generated-directory proofs, symlink skips, private-dir check, regex or glob in the harness | 15,735 B | **MOVE** the walk and filters; **STAY-SMALL** `search` (decision D3) |
+| R14 | Fetch result / spill: `_fetch_command` (`writeproxy.py:1033`), `_spill_command` (`:1129`) | model `web_fetch` (cria fetches in-process) | `printf %s '<reduced text>'`, or `mkdir -p … && base64 -d > target <<EOF` (shell + coreutils, no Python) | 2,904 B (2 KB doc); 63,173 B (80 KB doc, **cut at 46,080 B**) | spill **MOVE** → `put`/`write`; the `printf` is R26 |
+| R15 | Web search: `_search_command` (`writeproxy.py:1233`) | model `web_search` (cria queries Brave in-process) | `printf '<Brave JSON>' \| python3 -I -c '<parse + spill writer>'`; writes with `os.makedirs` + `open(T, "w")` | 4,872 B for 5 results, grows with the body | **MOVE** (parse in cria, spill via `write`) |
+
+### D. Workspace knowledge
+
+| ID | Program (source) | Trigger | What it does | Size at HEAD | Class |
+|---|---|---|---|---|---|
+| R16 | Survey ride-along: `wsview.survey_command` (`wsview.py:2010`) → `_SURVEY_RECORD_PY` (`:1972`, from `_SURVEY_PY` `:1748`, 7,141 B) | every 4th write/edit, and whenever a question is pending | BFS tree walk with fold, prune and build-output proofs; read up to N wanted bodies; stat outside paths; search PATH for programs; one typed record | 8,183 B per carrying call | **MOVE** → `ls`, `read`, `run command -v` |
+| R17 | Marks ride: `wsview.marks_ride` (`wsview.py:2069`) | read-only call with outstanding marks | completion-mark query as a body-less record | +20 KB per read or listing in a session (25,887 B vs 5,782 B bare) | **DELETE** |
+| R18 | Initial inventory: `initial_inventory.command` (`initial_inventory.py:224`) / `plan` (`:253`) = `_PROGRAM` + `_INDEX_SETUP` + `_SYMBOLS` (10,417 B) | first coder turn | `os.fwalk`, per-file size/blank/digest, a ctags interactive-protocol driver; delivered through the gate transport (spool, pages) | 11,781 B | **MOVE** → `ls` + the real `ctags` through `run` |
+| R19 | Inventory browse: `browse_command` (`initial_inventory.py:411`) | model pages a large inventory | re-surveys, pages ASCII JSON | 3,487 B | **MOVE** (cria pages its own data) |
+
+### E. Gate and probes
+
+| ID | Program (source) | Trigger | What it does | Size at HEAD | Class |
+|---|---|---|---|---|---|
+| R20 | Gate helper: `probegate._helper_source` (`probegate.py:229`) = reader (`:146`, 2,787 B) + `gatecleanup.PROGRAM` (`gatecleanup.py:144`, 32,683 B incl. R5) + survey (7,350 B); installed once per session into `$TMPDIR/.ctx-helper-<sha>.py` by an inline install leg (22,058 B), run through a loader (`:249`) that verifies the full SHA-256 then `exec`s the same bytes | first gate/inventory of a session, then every launch and poll | detached supervisor (allocates a private run directory, runs the script, cleans private scratch, declares section extents, reports marks, runs the survey, writes `.done`), page reader, dispose | **57,527 B** helper; 22,058 B install leg; supervisor spawns its worker with `sys.executable -c` and **no `-I`** (`gatecleanup.py:164`) | supervisor → **STAY-SMALL** as `run` (reason: must outlive a ~10 s harness exec and be killed at a deadline where the files are); everything else **MOVE** or **DELETE** |
+| R21 | Gate script: `plan_gate` (`probegate.py:947`), `_gate_launch_guard` (`:368`), `proberun.compose_probe_command` (`proberun.py:715`) | completion gate, planner survey, periodic gate | cria-composed **shell text**: `cd`, per-probe `timeout -k … </dev/null 2>&1`, exit sentinel, section declarations, offline leg, survey leg | 25,139 B on the first call (helper install inline); **3,081 B** later with zero probes; ≈ 0.6–1.5 KB per probe | **STAY** as shell text delivered by `run` (project code by design; readable in the transcript); the helper plumbing and declarations **MOVE** |
+| R22 | Gate poll / page reader: `continue_transport_command` (`probegate.py:889`) | every poll and page | helper `reader` mode: wait for `.done` up to 8–25 s, then a page of ≤ 6,000 compressed bytes (zlib when the harness Python has it) + offset/total/sha, or `running` | 680 B per call; one page per round trip | **MOVE** → `run wait` + parallel `read` pages |
+| R23 | Spool cleanup: `spool_cleanup_command` (`probegate.py:2653`), `gatecleanup.dispose_command` | next gate after a verified spool | helper `dispose`: delete exactly-owned private files | small + helper | **DELETE** → `rm t` |
+| R24 | Offline re-run: `proberun.offline_probe_command` (`proberun.py:795`) | gate with a test probe that passed | shell text: `unshare -rnm`, read-only bind of the working directory, loopback up, re-run the tests | 559 B for a `pytest -q` probe | **STAY** (shell text inside R21) |
+| R25 | Parse-floor one-liners: `probediscovery.py:1139/1164/1183` | gate with TOML/JSON/XML config present | `python3 -I -c` programs (349/201/201 B) that parse the named files | 751 B total | **STAY** (project-check argv; trivial) |
+
+### F. Not programs
+
+| ID | Item (source) | Class |
+|---|---|---|
+| R26 | Answer and refusal calls: `toolwire._refusal_command` (`toolwire.py:39`), `_oversize_command` (`:22`), the `printf %s '<text>'` of an inline fetch result | **STAY**. A shell builtin printing cria's text so the harness shows and records what the model is told; the exit-code rulings (refusal non-zero, oversize zero) stay. |
+
+### G. cria-side machinery that these programs depend on, and that goes with them
+
+Not harness programs, but each is "authority by text" in the sense of the standing order:
+
+| ID | Item | Fate |
+|---|---|---|
+| R27 | `toolwire._sentinel*`, `_declaration`, `is_crias_own`, `denial.receipt_for` + typed records (`resultpacket`, `resultnotes`), `GATE_SENTINEL` and the `___CTX_GATE_` section/transport markers | **DELETE** (phase 8; per-route as each route migrates) |
+| R28 | `multipart_bridge.Bridge` (802 lines) and `multipart.MultipartRead` | storage code moves to `ledger.py`; the rest **DELETE** (phase 4) |
+| R29 | `privatenames.restore_wire`/`upgrade_names`, `modelview.wire_messages` private-name pass | replaced by `ops.project` (phase 8) |
+| R30 | `outboundpolicies._external_refusal` marker exemption (`:212-221`) | **DELETE** (phase 8; cria-issued calls never pass through the model-call guard) |
+
+## 4. What ships after: the target registry and its budget
+
+Seven stubs, literal source and tests in [`harness-primitives.md`](harness-primitives.md) §5. Reason each cannot live in cria, and size (*prototype*):
+
+| Stub | Why it must run where the files are | Sent size | Budget |
+|---|---|---|---|
+| `read` | Only the harness can open the file; no-follow open, whole-file hash and byte range in one pass | 1,486 B | 1.6 KB |
+| `write` | Atomic same-directory replace, compare-and-swap and a no-follow walk are only meaningful at the file | 2,647 B | 2.8 KB |
+| `put` | Chunks of a payload larger than one command must be staged beside the target | 1,127 B | 1.2 KB |
+| `ls` | A recursive tree walk cannot be done in one round trip per directory; no-follow `lstat` records | 2,059 B | 2.2 KB |
+| `rm` | Unlink / rmdir / tree removal without following links | 1,695 B | 1.8 KB |
+| `run` | Run a command where the project is, outlive a harness exec that yields after ~10 s, kill the process group at a deadline, capture output to a file | 2,149 B | 2.3 KB |
+| `search` (D3) | Searching a tree is bounded by bytes, not round trips; reading every file to cria to grep it would put the repository in the transcript | 1,598 B | 1.7 KB |
+| **Total** | | **12,761 B** | **13.6 KB** |
+
+Allowed alongside (shell text, not programs; each under 1 KB plus data): probe scripts (R21, R24, R25), syntax-check scripts (a single tool line fed the candidate text), `command -v`, `ls -1 $PATH`, the `ctags` invocation, answer/refusal `printf` (R26).
+
+Rules that make this a budget and not a hope (enforced by a structure test in phase 8):
+
+1. The shipped bytes of each stub equal the stub in `harness-primitives.md` §5. A change edits both in one commit.
+2. No module outside `cria/harnessprims.py` contains a `python3` command line, a heredoc program, or `sys.executable` in a harness-bound string.
+3. Every composed harness command starts with exactly the two prefixes of primitives §2 (or is one of the shell-text exceptions above).
+4. A program may not grow past its budget, and a new stub needs a row here first.
+
+## 5. What it costs
+
+### 5.1 Command bytes in the harness transcript (the "36 KB" problem)
+
+Per call (args only; results are the same bytes as today). *Before* measured at HEAD, *after* prototype (stub + arguments + payload).
+
+| Call | Before (bare / L5 session) | After |
+|---|---|---|
+| write a new 2 KB file | 14,954 / 32,923 B | 5,574 B (2,647 stub + 2,667 base64 payload + args) |
+| one-line edit | 18,656 / 39,955 B | 3,026 B (stub + splice list + the inserted bytes), whatever the file size |
+| read, whole or range | 5,782 / 25,887 B | 1,615 B |
+| list a directory | 4,800 / 24,897 B | 2,210 B |
+| grep | 15,735 B | 2,210 B (`ls`, reused when possible) + 2,007 B (`search`, with 20 file names) |
+| survey, per carrying call | 8,183 B | 0 extra rounds: 1–2 extra `ls` calls of 2,210 B in the same reply |
+| gate launch | 25,139 B first, 3,081 B later (+ probes) | 2,441 B + the same probe script |
+| gate poll / page | 680 B per poll; one page (≤ 6,000 compressed bytes, about 16 KB of spool text) per round trip | 1,615 B per page call, about 19 KB of text per page, up to 8 page calls per round trip |
+
+**Real capture, same 22 calls.** From the decoded originals of `inbound-c6809d8b`: before 1,079,914 B; after ≈ 68,938 B (14 edits 45,132 = 14 × (2,647 stub + 379 arguments + base64 `new_string` + splice list); 4 writes 13,520; 3 reads 4,845; the gate 5,441, assuming a 3,000 B script), a **15.7x** reduction, ≈ 17K tokens instead of ≈ 270K by chars/4 (the size investigation measured 319,650 tokens by tokenizer for 22 calls with base64 content). Cold-cache edits add their file's bytes once, as a `read` *result*, not as command bytes.
+
+### 5.2 Round trips
+
+A round trip here is harness exec + the next request carrying the whole history; cria answers instantly and no model inference is involved (cria returns the next step without calling the model, the way multipart continuation does today). The latency per round trip is **an estimate, not a measurement: 0.3–1.5 s** (python start ≈ 30 ms; the rest is the harness). Phase 3's acceptance measures it through a sandboxed Codex; compare with a coder turn of 10–60 s on the local model.
+
+| Route | Before | After, warm cache | After, cold | Where it is recovered |
+|---|---|---|---|---|
+| write a new file ≤ 45 KB | 1 | 1 | 1 | optimistic `EX=-`; `stale` ⇒ +1 read |
+| write over an existing file | 1 (+1 read when held) | 1 | 2 | the hold's read fills the cache |
+| write > 45 KB | refused (E2BIG) / cut | ⌈chunks ÷ 16⌉ + 1 | same | parallel `put` |
+| edit | 1 | 1 | 2 | the model's earlier `read_file` fills the cache |
+| k edits to one file, one turn | 1 (k concurrent + queue) | 1 | 2 | one write for the group |
+| `.rb/.js/.php/.go` write or edit | 1 | 2 | 3 | checks in parallel with the read |
+| read ≤ 16 KB | 1 | 1 | 1 | |
+| read, n pages | n sequential (one ≤ 10,000-byte page per round trip, ≈ 16–20 KB of text when it compresses, each page command 24.5 KB) | 1 + ⌈(pages − 1) ÷ 8⌉ (pages of similar size, 1.6 KB commands) | same | parallel pages; page capacity is unchanged, parallelism is the gain |
+| read over the window | n (then withheld) | 1 | 1 | the floor's own predicate, evaluated on the first frame's size |
+| `list_dir`, `glob` | 1 | 1 | 1 | `glob` reuses the last walk |
+| `grep` | 1 | 1–2 | 2 | walk reused when no command could have changed the tree |
+| survey | 0 extra (rides) | 0 extra | 0 extra | extra parallel calls in the step's reply |
+| `web_fetch` inline / spill ≤ 46 KB | 1 / 1 | 1 / 1 | | |
+| `web_fetch` spill > 46 KB | cut | ⌈chunks ÷ 16⌉ + 1 | | removes a truncation |
+| gate | launch (+1 install, first time) + polls + ⌈spool ÷ 16 KB⌉ sequential pages + cleanup | launch + polls + ⌈⌈spool ÷ 19 KB⌉ ÷ 8⌉ + `rm` | | |
+| initial inventory | launch + polls + pages | walk (1–3 parallel) + 1 `ctags` run | | |
+
+Caching (primitives §8.1, §8.4): cria keeps the bytes it read this session (`path → bytes, sha-256, size, mtime_ns, ino`, 16 MiB LRU). It never serves a *read the model asks for* from the cache without a hash check, and never trusts it for a write without compare-and-swap, so a stale entry costs one round trip, never a wrong result.
+
+## 6. Threat-model check
+
+| Finding | How the new design closes it | What remains |
+|---|---|---|
+| F1 repository code runs during a cria program | The stub is `env -i PATH=<system dirs> python3 -I -S -c '<text>'`: no environment hooks, no workspace-relative lookup, no `site`, no `.pth`, no file to plant. Prototype: workspace shadows of 14 stdlib modules, `sitecustomize`, `PYTHONPATH`, a planted `python3` first on `PATH`: no marker created. cria-side code runs in cria, not in the harness. | The `run` child is project code by design (the gate runs the project's checks); its isolation is the sandbox's. A compromised login profile or `env`/`python3` binary is outside cria's reach (primitives §6). |
+| F2 symlink escape | Every primitive opens each component below `ROOT` with `O_NOFOLLOW` relative to a held descriptor: a link anywhere below `ROOT` is refused at the syscall, and a link swapped in after cria's check cannot redirect. cria resolves a refused link itself, re-runs `dirguard` on the resolved target (workspace, declared roots, `~/.cria`), then re-issues. | Hard links; the harness sandbox remains the primary boundary. |
+| F3 forged first-line marker exempts a command from the directory guard | No exemption exists: cria's own calls are issued by cria after the model-call guard has run and never re-enter it; a model-authored command with any first line is guarded like any other. The only privileged namespace is call ids that verify against a key the model never sees, and cria renames any model-chosen `ctx_` id. | none known |
+| F4 forged history declaration | Nothing is reconstructed from command text. A verified id ties a history call to a ledger entry; everything else is shown as what it is. Legacy reconstruction is deleted (decision D2). | Sessions that began before the cut-over show their old private commands to the model (D2). |
+| F5 result-record forgery | No records. A result is consumed only for a verified id, exactly one result, one frame carrying that call's nonce, length and hash; bytes from files, commands and pages sit inside the frame's base64 payload and are never searched for markers. Forging needs code inside the same call before or instead of the stub, which isolation removes. | Same compromised-harness caveat. |
+| F6 spill through a symlink | Spill uses `write`: no-follow walk, atomic. | none |
+| New: what a malicious *test* can do (gate child) | Read other processes' argv (the nonce) and edit files. It cannot write into another call's stdout. File tampering between cria's read and write is detected by compare-and-swap. | Tampering *after* a landed write is the project's own business. |
+
+Authority and exposure after the change: the harness still sees the commands and payloads (they must reach it); the commands are now 1.5–5 KB of constant, readable text plus data, so a human approving or auditing a transcript can read the whole program once and recognise it afterwards (an approval policy can allow the fixed prefix). Captures keep redacting known secrets; `harness-call.key` is added to that list. No program receives the API keys, the key file, or any `~/.cria` path.
+
+## 7. Migration plan
+
+Phases are ordered so each is shippable and testable on its own, leaves nothing dormant, and never has two implementers in `writeproxy.py` / `filecommands.py` at once. Old and new routes coexist across phases 3–7: a route is cut over completely (outbound, inbound, tests) in the phase that names it, and the old program for that route is deleted in that phase. `represent_inbound` handles verified ids (new) and old sentinels (still-unmigrated routes) side by side until phase 8 removes the old path.
+
+**Common acceptance for every phase** (in addition to the phase's own): `python -m pytest` green; `tests/structure` invisibility scan and `tests/server_config/test_server_config_invis_fixture_session.py` clean (no stub text, no `ctx_` id, no primitive frame in any model-bound body of a whole session and of its replay through a restarted server); the phase's routes exercised through the real pinned Codex in the repo's sandbox policy (`suite/run.py::_codex_argv`, an isolated `CODEX_HOME`, a fake upstream emitting scripted tool calls so no GPU is needed, workspace and install directory the only writable roots); restart safety (kill cria between steps of an operation, restart, the operation completes or is abandoned cleanly, no private call reaches the model); `docs/harness-programs.md` §3 updated (rows deleted or re-sized) in the same commit.
+
+### Phase 2 — close what is open at HEAD without waiting (small; ships first)
+
+* **Phase 2a — files:** `cria/gatecleanup.py:164` (`[sys.executable, '-I', '-c', …]`), `cria/outboundpolicies.py:179` (`python3 -I -c`).
+* **Tests:** extend `tests/read_multipart/test_read_multipart_interpreter_isolation.py`'s approach (workspace `hashlib.py`/`base64.py` markers) to: the gate launch and its detached worker (run the real `probegate._helper_source()` as in §2 F1(a)); the candidate-safety command; plus a registry-driven check that renders every harness-bound program constant in `cria/` and fails on any `python3` or `sys.executable` invocation lacking `-I`. Fails before: workspace `hashlib.py` runs in the worker. Passes after.
+* **Phase 2b (only if D2 = (a)):** `privatenames._declared_call` returns `None` for any declaration without a receipt (today it honours every unreceipted non-`read_file` header, which is what lets a model-authored command whose first line is such a header be shown to the model as a different tool call, finding F4). Test: that command stays a shell command in `restore_wire`'s output (fails before, passes after). Cost: histories lowered by earlier releases show their private commands (D2). The first-line survey headers `_SURVEY_HEADERS` have the same text-authority shape (a model command beginning with one is dropped from the model's view); they go in phase 6 with the survey.
+* **Deleted at the end:** nothing in 2a. These two lines die with their routes (R7 in phase 5, R20 in phase 7). The `PATH` hole (F1c) is *not* closed here (needs the §2 composition of the primitives); say so in the commit.
+* **Owner:** anyone; touches no file in the write/read path.
+
+### Phase 3 — foundation: primitives, authentication, ledger; first route `list_dir`
+
+* **New files:** `cria/harnessprims.py` (stub constants equal to primitives §5; `compose(stub, args, payload)`; frame reader with the §4 rules; result types), `cria/callauth.py` (key, nonce/group/id derivation, `verify`, outbound renaming), `cria/ledger.py` (per-session persisted operations store; storage code lifted from `multipart_bridge.Bridge` (`_dirfd`, `_transaction`, atomic save)), `cria/ops.py` (the engine: `Op`, `Step`, `issue`, `on_results`, `project`; hooks at `server.py:1389-1415` where `multipart_bridge.incoming` runs, at `:1907-1915` where it registers/binds, and at `:1799` / `modelview.wire_messages` for projection), config `[harness] safe_path`.
+* **First consumer:** `list_dir` via `ls`, rendered by cria (the smallest route; it exercises ids, ledger, frames, restart and projection end to end). Also resolves refused symlinks (`ELOOP`/`ENOTDIR` → one stat call → resolve → re-guard).
+* **Tests:** the prototype's scratch tests become repo tests on a real temp filesystem: isolation (hostile workspace + planted `python3` + `PYTHONPATH`), containment (final-component and directory-component symlink, `..`, FIFO), write semantics (CAS, splice, wrong `NEW`, mode kept, `mk`), chunk and replay, concurrency (16 writers, one lands), `run` (exit, detached, timeout, big output, child environment), frame integrity (cut, noise before/after, duplicated header, hash mismatch, zlib bomb), authentication (forged id, one-byte-changed command, reused id, model-chosen `ctx_` id renamed, nonce from another call), restart (ledger reload mid-operation). The real sandboxed Codex smoke: `read`, `write`, `run true`, `ls` against a real workspace; **measure the per-round-trip latency** and record it in §5.2; confirm the harness echoes commands byte-exactly (otherwise MACs fail and primitives are unusable on it: stop and report).
+* **Deleted at the end:** `writeproxy._list_command`; `_bounded_tool_stdout` use for listings.
+* **Acceptance:** list_dir results identical in content to the old text except the §9-5 rendering; no old listing program in any outbound body.
+* **Owner:** one implementer; touches `server.py`, `writeproxy.py` (`_lower_synthetic` list branch), new modules.
+
+### Phase 4 — reads: `read_file`, paged reads, read-instead, byte cache
+
+* **Files:** `cria/readops.py` (assembly, range numbering, overflow decision on the first frame, change detection by `fsha`), the byte cache (`cria/filecache.py`), `ops.py` read steps; rewire `filecommands._read_command*`, `_read_in_place_of_write`, unread-hold and held single-target `apply_patch` (`outboundpolicies.unread_replacement`).
+* **Tests:** whole, range, start-only, end-only, inverted, past-EOF, 0-byte, binary, 1 B / 10 KB / 200 KB / over-window file (answered from the first frame, no further pages), change between pages (re-read once, then labelled), change-and-revert, symlink and directory and FIFO and missing, restart mid-read, the existing `tests/read_multipart/` expectations on the *model-visible* text retargeted; pinned Codex reads of the same set.
+* **Deleted at the end:** `multipart.py`, `multipart_bridge.py` (storage already in `ledger.py`), `filecommands`: `_READ_PY`, `_RANGE_PY`, `_TRANSPORT_PY`, `_MULTIPART_PAGE_PY`, `build_multipart_page`, `make_multipart_read_spec`, `MultipartReadSpec`, `_ranged_read`, `_whole_read`, `_read_failure_branches` (refusal text now composed in cria), snapshot directory handling and its retention sweep (`.ctx-mpsnap-`, legacy `.cria-mpsnap-`), `wsview.marks_ride` (reads stop carrying the mark query; the old write programs keep leaving marks, read only by the old gate, until phase 5 deletes them), `resultpacket.ENCODER_PY` and the read-record readers; the `read_multipart` tests that pin deleted structures are replaced, not dropped (principle: preserve incident coverage as behaviour tests).
+* **Owner:** one implementer in `filecommands.py` / `writeproxy.py`.
+
+### Phase 5 — write and edit
+
+* **Files:** `cria/editapply.py` (port of `_EDIT_PY`/`_ECHO_DEF`, pure on bytes), `cria/syntaxcheck.py` (table + `_at`), the `FileGroup` planner in `ops.py` (group by `(ROOT, path)`, one read + one write per turn, per-call outcomes in model order), chunked write (`put` waves + `write ST=1`), lost-reply resolution (§8.5), shrink-protection and candidate-safety on the bytes cria already holds, `editrecovery` fed Python values instead of base64 reports, `denial` facade reading ledger outcomes.
+* **Tests:** the `tests/write_edit/` behaviours as unit tests of `apply_edit` and as scenario tests through the engine with a fake harness that runs the *real stubs* on a temp directory (CRLF-throughout, lone CR, non-UTF-8 byte, flexible match with indentation, multi/near-miss/phantom, would-break, syntax refusal for each of the eight extensions, `.py` etc. in-process and `.rb/.js/.php/.go` through a real `ruby -c`…); **thirty edits in one turn to one file (the phi4 / Java A11 incident) → one read, one write, no empty-`current` failures**; a model shell command changing the file between read and write (→ `stale`, re-plan, correct final file); external writer after cache fill; lost reply after landing (re-issue ⇒ `landed`); killed writer leaving `.ctx*.tmp` (only ledger-derived names removed); **E2BIG class**: payload of 44,999 / 45,000 / 45,001 / 719,999 / 720,001 bytes (single command, chunks, waves) and a hostile oversize argument refused before it is sent; symlink targets (refused, resolved inside, resolved outside → refused); mode kept; pinned Codex: write, edit (cold and warm), batch of 30, 300 KB write, symlink escape attempt (outside file unchanged), restart between steps.
+* **Deleted at the end:** `writeproxy`: `_VALIDATE_FN`, `_UNLANDED_PY`, `_WRITE_PY`, `_EDIT_PY`, `_ECHO_DEF`, `_EDIT_PACK_BLOCK`, `_EDIT_SEQ_BLOCK`, `_PACKED_MARKS`, `_PACKED_SEQUENCE`, `_queued`, `_record_block`, `_write_command`, `_edit_command`, `WriteCommand`, `_edit_sequence`, the write/edit branches of `represent_inbound`; `editsequence.py`, `completionmarks.py`, `ownedfiles.py` (only R10/R20 users remain after phases 4 and 7; if phase 7 has not shipped, `ownedfiles` stays until then and is listed as such in §3); `shrinkprotection.wrap_finding`; `outboundpolicies.candidate_safety`'s program (the `python3 -c` of R7); the old gate's mark query, replaced by one call to the ledger (`unresolved_writes()`) before the old gate script is composed (deleted again in phase 7).
+* **Owner:** one implementer; the largest phase; do not split it between agents.
+
+### Phase 6 — survey, inventory, search, spill, fetch
+
+* **Files:** `wsview` builds its view from typed `ls`/`read` results (`apply_survey` text parser replaced by a typed builder; fold/prune/output-proof rules move into the builder), `initial_inventory` (`ls` + `run ctags`), `cria/searchops.py` (grep/glob: listing reuse, `ignore.generated`, `search` stub), spill and fetch through `write`/`put`, `web_search` parse in cria, stdout measurement in cria.
+* **Tests:** survey completeness semantics (`done:0` ⇒ unknown, not absent; folded dirs; build outputs named; names with newlines and invalid UTF-8; 61-file tree at the old budget), program-presence and outside-path questions, initial inventory on a real tree with and without `ctags`, grep/glob parity with the existing `tests/write_edit/test_write_edit_content_search.py` cases, spill through a `tmp` symlink (refused), a 1 MB fetched document spilled without a cut, search spill.
+* **Deleted at the end:** `wsview._SURVEY_PY`, `_SURVEY_RECORD_PY`, `_SURVEY_PACKED_PY`, `_PACK_EPILOGUE`, `survey_command`, `survey_helper_program`, the text survey parser; `initial_inventory._PROGRAM`, `_INDEX_SETUP`, `_SYMBOLS`, `_SCRATCH_CHECK`, `_PAGE`, `command`, `browse_command`; `contentsearch._PROGRAM`/`_WALK`/`command` and the `inspect.getsource(ignore.generated)` shipping; `writeproxy._STDOUT_SPILL_PY`, `_bounded_tool_stdout`, `_survey_after_first_record`, `_spill_command`'s base64 heredoc, `_search_command`'s program; `SPILL_CONTENT_MAX` cut and `prompts/spill_cut.txt`.
+* **Owner:** one implementer (touches `writeproxy.py`, so after phase 5).
+
+### Phase 7 — completion gate and probes
+
+* **Files:** `probegate` keeps selection, script composition, parsing and the deadline logic; transport becomes `run start/wait` + `read` pages of `<run dir>/out` + `rm t`; `gatecleanup.py`, the helper and its install leg are removed; `repositorychecks` and `loop` issue ledger operations instead of text-marked calls; unresolved writes are resolved from the ledger before launch.
+* **Tests:** the existing gate suites (`tests/gates_completion/`) on the new transport with a fake harness that runs the real `run`/`read`/`rm` stubs: clean, red, timeout (kill at deadline), still-running polls across several requests, cut and noisy pages (refetch ladder), spool larger than 1 MB, lost final page re-read, concurrent gates, cleanup of the run directory, hostile workspace shadowing, the offline leg; pinned Codex: a small project with a failing then passing test; kill/restart of cria mid-gate.
+* **Deleted at the end:** `probegate._helper_*`, `_helper_install_leg`, `_gate_launch_guard`, `HELPER_*`, transport marker constants and `_transport_reader`/`continue_transport_command`'s text protocol, `spool_cleanup_command` and its queue; `gatecleanup.py`; `ownedfiles.py` if not already gone.
+* **Dependency:** needs phase 3 (`run`, `read`) and phase 6's `ls` for the post-check survey; touches `loop.py`, `probegate.py`, `repositorychecks.py`, `proberun.py` (not `writeproxy.py` beyond deleting the survey leg already done in 6). It may run in parallel with phase 6 **only** if its implementer does not touch `writeproxy.py`/`filecommands.py`.
+
+### Phase 8 — remove the text-authority layer; docs; guard rails
+
+* **Files:** delete `toolwire._sentinel*`, `_declaration`, `is_crias_own`, `denial.receipt_for` and the typed-record machinery (`resultpacket`, `resultnotes` record parsing), `privatenames.restore_wire`/`upgrade_names`, the `outboundpolicies._external_refusal` marker exemption and the `# ⟦ctx:…⟧` / `___CTX_GATE_` constants; `represent_inbound` collapses into `ops.project`; add the structure test of §4 (stub bytes equal the doc; no harness-bound program outside `harnessprims.py`; every composed command begins with the two prefixes).
+* **Docs:** update `principles.md` (17: private names now `ctx_` ids and `CTX1` frames; 23c: the conversion paragraph and "worked example"; 24 unchanged), `shephard.md` ("Inbound: recognized statelessly from the sentinel" → ledger), `codex-context-window.md` (gate transport and N1 notes), `heuristic-assists.md` references, and doc-defrag these four against the code.
+* **Tests:** forged-marker, forged-declaration and forged-record regression tests (fail on HEAD, pass after); a replay of a pre-cut-over history behaves as decided in D2; full-session invisibility scan.
+* **Deleted at the end:** everything this list names; grep the repo (`suite/`, `scripts/`, `tests/`) for each symbol before removing.
+
+**Dependency graph:** 2 → (3 → 4 → 5 → 6) and 3 → 7 → 8 after 6. One implementer owns `writeproxy.py`/`filecommands.py` through 3–6.
+
+## 8. Decisions needed from the operator
+
+Each has a recommendation; the design proceeds on the recommendation unless told otherwise.
+
+* **D1 — Send edits as byte splices, or only whole files?** The `write` stub supports both. Splices keep an edit at ≈ 3 KB whatever the file size (median file 7.8 KB, p90 30 KB on this repository); whole-file-only is a simpler stub (about 130 B less) but every edit would re-send the file (≈ 1.33x its size in base64) and the harness counts it. **Recommend splices.**
+* **D2 — Sessions that began before the cut-over.** Calls lowered by earlier releases carry their program text and sentinels; today `privatenames` reconstructs them, which is the forgery path (F4). Options: (a) do not reconstruct: such sessions show their old commands to the model, labelled; campaigns restart (a failed or interrupted run is simply rerun); (b) keep a one-release reconstruction behind a switch. **Recommend (a)**: it is the only way F4 is closed.
+* **D3 — Keep the `search` stub, or use the harness's `grep`?** The stub keeps today's Python-`re` semantics (`\d`, lookahead, flags) and returns only matches. Using `grep -E` removes a program but changes what patterns work (`\d` silently matches nothing in ERE; `-P` is not portable). **Recommend the stub**; it is under 1.7 KB.
+* **D4 — Pre-write syntax checks for `.rb/.js/.php/.go`.** In cria for `.py/.json/.xml/.toml` (project-interpreter fidelity lost for `.py`; the gate's `compileall` still runs it with the project's Python). For the other four the only place the tool exists is the harness: either a `run` with the candidate on stdin (one extra round trip and about the file's size in transcript bytes per write) or skip the pre-write check and rely on the gate's parse floor (loses "refuse before a valid file is replaced by an invalid one" for those four languages). **Recommend the `run` check**: the validator's own comments record that without rows for `.rb/.go/.java/.rs/.js` it let cria replace parsing files with non-parsing ones (a corrupted `pom.xml` went undetected) and that an unreadable Ruby refusal made a coder discard a correct implementation; the battery has Ruby, Go and JS tasks.
+
+Nothing else needs the operator. Choices made inside the design, listed so they can be vetoed: `list_dir` rendered by cria instead of raw `ls -la` (primitives §9-5); whole-file write now preserves mode and owner; no shell or inline fallback when `python3` is missing; ctags run as the real CLI.
