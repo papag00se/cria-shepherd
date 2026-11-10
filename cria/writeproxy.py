@@ -33,7 +33,8 @@ from dataclasses import dataclass, replace
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import bodykeys, callauth, brave, denial, resultpacket, depsurface, dirguard, prompts, webfetch, wsview, toolstages
-from .toolstages import LoweringRequest, MutateIntent, OutboundCall, ReadIntent, ShellCommand, ReturnedResult, ReturnedHistory
+from .toolstages import (AnswerIntent, LoweringRequest, MutateIntent, OutboundCall, ReadIntent, SaveIntent, SearchIntent, ShellCommand,
+                         ReturnedResult, ReturnedHistory)
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
 from .outboundpolicies import _external_refusal
@@ -44,6 +45,7 @@ from . import proberun
 from .privatepaths import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
 from .readops import LedgerRead
+from .answerops import LedgerAnswer
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, patch_paths, tool_path as _tool_path
 from . import filecommands, harnessprims, ops
 # Canonical pure helpers; transport/service composition remains in this facade.
@@ -77,10 +79,11 @@ class ExternalizationOffer:
     lowered_arguments: str | None = None
     lowered_name: str | None = None
     lowered_type: str | None = None
+    lowered_id: str | None = None
     retained: bool = False
 
 
-def _externalize_coder(source: OutboundCall) -> str:
+def _externalize_coder(source: OutboundCall) -> AnswerIntent | None:
     from . import externalization as e
     request, args = source.request, source.arguments
     definition, owner = request.externalization_definition, request.externalization_owner
@@ -95,11 +98,11 @@ def _externalize_coder(source: OutboundCall) -> str:
         prior.delivery.cancel()
         owner.externalization_offers.pop(cid, None)
     # THE SEARCH IS MADE HERE, ONCE, IN-PROCESS (as a fetch is), never by a harness-run curl: cria alone holds the process's wait
-    # state, so a 429 is waited out or reported with the service's own stated wait, and the key never rides in the command.
+    # state, so a 429 is waited out or reported with the service's own stated wait, and the key never rides in a command.
     answer = brave.search(str(args.get('query') or ''), request.brave_key, _SEARCH_MAX_RESULTS) if search else None
-    inline = (_search_command(args, answer) if search else
-              _fetch_command(args, request.session, request.workspace_root))
-    if definition is None:
+    inline = (_search_answer(args, answer) if search else
+              _fetch_answer(args, request.session, request.workspace_root))
+    if definition is None or inline is None:
         return inline
     state = getattr(owner, 'externalization_state', None) if owner is not None else None
     if state is None:
@@ -111,7 +114,7 @@ def _externalize_coder(source: OutboundCall) -> str:
         target = webfetch.search_spill_name(str(args.get('query') or ''))
         program = definition.search_program(content_reduce_mod.INLINE_RESULT_MAX_BYTES)
         detect = lambda: e.SearchOffer(target, program)
-        offer = lambda spill: _search_command(args, answer, search_offer=spill, operation=operation)
+        offer = lambda spill: _search_answer(args, answer, search_offer=spill, operation=operation)
         record = lambda spill: webfetch.note_search_spill(request.session, str(args.get('query') or ''), spill.target)
     else:
         url = str(args.get('url') or '')
@@ -129,8 +132,7 @@ def _externalize_coder(source: OutboundCall) -> str:
         cursor = None if args.get('raw') else args.get('cursor')
         detect = lambda: e.coder_fetch(url, find=args.get('find') or None,
                                       cursor=cursor or None, services=services)
-        offer = lambda spill: _spill_command(spill.target, spill.content, spill.pointer,
-                                             operation=operation)
+        offer = lambda spill: AnswerIntent('web_fetch', url, spill.pointer, denial.RAN, None, SaveIntent(spill.target, spill.content, operation))
         def record(spill):
             webfetch.note_fetch_spill(request.session, url, spill.target,
                                      workspace_root=request.workspace_root)
@@ -151,7 +153,7 @@ def retain_externalizations(owner, completion) -> None:
     for cid, offer in (getattr(owner, 'externalization_offers', None) or {}).items():
         if not isinstance(offer, ExternalizationOffer):
             continue
-        call = calls.get(cid)
+        call = calls.get(offer.lowered_id or cid)
         if (offer.owner is owner and call is not None and offer.lowered_arguments is not None
                 and call.get('type') == offer.lowered_type
                 and (call.get('function') or {}).get('name') == offer.lowered_name
@@ -159,47 +161,30 @@ def retain_externalizations(owner, completion) -> None:
             offer.retained = True
 
 
-def observe_externalization_results(owner, messages) -> None:
-    """Read checked producer facts from raw exact paired transport, before representation."""
+def settle_externalizations(owner, saved) -> None:
+    """Settle the externalization offers whose file the ledger says was saved, or was not: ``saved`` is ``(the model's call id, how the call ended, the
+    offer's operation and the stored fact the ledger computed from the bytes it sent)`` for each finished answer that saved a file
+    (:class:`cria.ops.Incoming`). The facts are the ledger's own; no result text and no record a harness program printed is read."""
     from . import externalization as e
-    calls = {}
     offers = getattr(owner, 'externalization_offers', None) or {}
-    proofs = _frame_proofs(messages)       # the typed first records of the paired lowered calls: the stored fact is a field
-    for message in messages:
-        if message.get('role') == 'assistant':
-            calls.update({str(call.get('id') or ''): call for call in message.get('tool_calls') or []})
-        if message.get('role') != 'tool':
+    for call_id, outcome, ext in saved:
+        offer = offers.get(call_id)
+        if (not isinstance(offer, ExternalizationOffer) or offer.owner is not owner or not offer.retained
+                or offer.operation != ext.get('operation')):
             continue
-        cid = str(message.get('tool_call_id') or '')
-        offer, call = offers.get(cid), calls.get(cid)
-        if (not isinstance(offer, ExternalizationOffer) or offer.owner is not owner or not offer.retained or call is None
-                or call.get('type') != offer.lowered_type
-                or (call.get('function') or {}).get('name') != offer.lowered_name
-                or (call.get('function') or {}).get('arguments') != offer.lowered_arguments):
+        stored, spill = ext.get('stored'), offer.delivery.result.spill
+        if outcome != denial.RAN or not stored or stored['target'] != spill.target:
+            offer.delivery.settle(e.Outcome.UNKNOWN if outcome == denial.UNKNOWN else e.Outcome.FAILED, stored=False)
             continue
-        content = message.get('content')
-        if not isinstance(content, str):
-            continue
-        envelope = exec_envelope(content)
-        if envelope is not None and envelope.exit_code not in (None, 0):
-            offer.delivery.settle(e.Outcome.FAILED, stored=False)
-            continue
-        proof = proofs.get(cid)
-        for fact in ([proof.rep["st"]] if proof is not None and proof.rep and "st" in proof.rep else []):
+        if isinstance(spill, e.Spill):
+            raw = spill.content.encode('utf-8', 'surrogateescape')
+            if stored['byte_count'] != len(raw) or stored['sha256'] != hashlib.sha256(raw).hexdigest():
+                continue
+            offer.delivery.settle(e.Outcome.RETAINED, stored=True)
+        else:
             try:
-                if fact.get('operation') != offer.operation:
-                    continue
-                stored = e.SearchStored(fact['target'], fact['byte_count'], fact['sha256'])
-                spill = offer.delivery.result.spill
-                if isinstance(spill, e.Spill):
-                    body, _note = _spill_body(spill.content)
-                    raw = body.encode('utf-8')
-                    if (stored.target != spill.target or stored.byte_count != len(raw)
-                            or stored.sha256 != hashlib.sha256(raw).hexdigest()):
-                        continue
-                    stored = True
-                offer.delivery.settle(e.Outcome.RETAINED, stored=stored)
-            except (ValueError, TypeError, KeyError):
+                offer.delivery.settle(e.Outcome.RETAINED, stored=e.SearchStored(stored['target'], stored['byte_count'], stored['sha256']))
+            except ValueError:
                 continue
 
 
@@ -346,95 +331,22 @@ def advertise(body: dict, rlog=None, brave_key: str | None = None, *, search_onl
     return injected
 
 
-_STDOUT_SPILL_PY = r'''
-def bounded_stdout(raw, receipt, directory, template, placeholder, limit):
-    import hashlib, json, os, secrets
-    if stdout_size(raw) <= limit:
-        return raw
-    filename = 'stdout-' + hashlib.sha256(raw).hexdigest() + '.txt'
-    target = directory + '/' + filename
-    fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
-    temporary = None
-    try:
-        for part in directory.split('/'):
-            if part in ('', '.'): continue
-            if part == '..': raise OSError('invalid output directory')
-            try: os.mkdir(part, dir_fd=fd)
-            except FileExistsError: pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            os.close(fd)
-            fd = child
-        temporary = '.ctx-stdout-' + secrets.token_hex(16)
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
-        with os.fdopen(descriptor, 'wb') as stored:
-            stored.write(raw)
-        os.replace(temporary, filename, src_dir_fd=fd, dst_dir_fd=fd)
-        temporary = None
-    finally:
-        if temporary is not None:
-            try: os.unlink(temporary, dir_fd=fd)
-            except FileNotFoundError: pass
-        os.close(fd)
-    first, separator, tail = raw.partition(b'\n')
-    prefix = b''
-    if receipt and separator:
-        try:
-            record = json.loads(first)
-            if type(record.get('v')) is int and record['v'] == 1 and record.get('r') == receipt:
-                prefix = first + separator
-        except (ValueError, AttributeError):
-            pass
-    pointer = template.replace(placeholder, target).replace('{{STDOUT_CHARS}}', format(len(raw.decode('utf-8', 'replace')), ',')).encode()
-    if stdout_size(prefix + pointer) > limit or receipt and not prefix:
-        # An untransportable record remains intact in the saved transcript.
-        # The inline refusal grants none of its unavailable reports.
-        prefix = (json.dumps({'v':1, 'r':receipt, 'k':'refused'}, separators=(',', ':')) + '\n').encode() if receipt else b''
-    assert stdout_size(prefix + pointer) <= limit
-    return prefix + pointer
-'''
-
-
-def _stdout_transport(*, search: bool = False, failed: bool = False):
-    """One complete-result measurement and lossless spill program for producers."""
+def _sized_answer(tool: str, label: str, text: str, outcome: str, rep: dict | None = None) -> AnswerIntent:
+    """``text`` as the model is told it: whole when the harness returns it whole, else saved whole at ``<spill dir>/stdout-<sha-256>.txt`` (the one thing
+    cria writes in the workspace, so the model can search it) and the model is given the pointer. The measure is the bytes plus one per line feed, the way
+    a pty returns them (:func:`externalization.stdout_size`)."""
     from . import externalization as e
-    target = webfetch.SPILL_DIR + '/stdout-' + '0' * 64 + '.txt'
-    pointer = prompts.render('content_search_spill_failed' if failed else 'content_search_spill', target=target) if search else webfetch.stdout_spill_pointer(target)
-    arguments = (denial.active_receipt() or '', webfetch.SPILL_DIR, pointer, target, e.STDOUT_MAX_BYTES)
-    return e.STDOUT_SIZE_PY + _STDOUT_SPILL_PY, arguments
+    data = text.encode('utf-8', 'surrogateescape')
+    if e.stdout_size(data) <= e.STDOUT_MAX_BYTES:
+        return AnswerIntent(tool, label, text, outcome, rep)
+    target = f"{webfetch.SPILL_DIR}/stdout-{hashlib.sha256(data).hexdigest()}.txt"
+    return AnswerIntent(tool, label, webfetch.stdout_spill_pointer(target, len(text)), outcome, rep, SaveIntent(target, text))
 
 
-def _bounded_tool_stdout(command: str, expected: str | None = None, *, search: bool = False) -> str:
-    """Bound complete owned stdout, including records and possible PTY CRs.
-
-    The harness runs this adapter; it never reruns the producer. Static results
-    that already fit keep their original command. Oversize output is saved in
-    full, without the argv content cap of a cached-document upload.
-    """
-    from . import externalization as e
-    if expected is not None and e.stdout_size(expected.encode()) <= e.STDOUT_MAX_BYTES:
-        return command
-    program, arguments = _stdout_transport(search=search)
-    failed_arguments = _stdout_transport(search=search, failed=True)[1] if search else arguments
-    failure = prompts.load('stdout_spill_failed')
-    program += ("\nimport json, subprocess, sys\n"
-                "process = subprocess.run(['bash', '-c', sys.argv[1]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n"
-                "arguments = " + repr(arguments) + " if process.returncode == 0 else " + repr(failed_arguments) + "\n"
-                "try:\n"
-                "    sys.stdout.buffer.write(bounded_stdout(process.stdout, *arguments))\n"
-                "except OSError as exc:\n"
-                "    receipt = arguments[0]\n"
-                "    if receipt: print(json.dumps({'v':1, 'r':receipt, 'k':'ran'}, separators=(',', ':')))\n"
-                "    print(" + repr(failure) + " + str(exc))\n"
-                "    sys.exit(2)\n"
-                "sys.exit(process.returncode)\n")
-    return 'python3 -I -c ' + _qbash(program) + ' ' + _qbash(command)
-
-
-def _fetch_command(args: dict, session: str | None = None, workspace_root: str | None = None) -> str | None:
+def _fetch_answer(args: dict, session: str | None = None, workspace_root: str | None = None) -> AnswerIntent | None:
     """cria fetches + reduces the page IN-PROCESS (it runs as a stateful server with a per-URL
-    doc cache) and lowers to a ``printf`` of the ALREADY-REDUCED, bounded result — so the harness
-    records navigable content that PERSISTS in the conversation, instead of running a raw ``curl``
-    whose single-line JSON/YAML it truncates mid-line (the Ada-handle openapi.json incident).
+    doc cache) and answers with the ALREADY-REDUCED, bounded result — so the harness records navigable content that PERSISTS in the
+    conversation, instead of running a raw ``curl`` whose single-line JSON/YAML it truncates mid-line (the Ada-handle openapi.json incident).
     Structural JSON/YAML reduce + ``find``/``cursor`` navigation live in :mod:`cria.webfetch`.
     ``session`` (when known) enables the exact-repeat + stop-guessing gates in webfetch."""
     url = args.get("url")
@@ -450,104 +362,27 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
         # died here before fetch_nav could act on it — and a nulled find also forces the oversized-spill
         # branch below, reproducing the "saved N chars, go grep it" reply that fix set out to kill.
         cursor = None
-    result, refused, status, facts = webfetch.fetch_nav_result(str(url), find=find, cursor=cursor, session=session, raw=raw,
-                                                               workspace_root=workspace_root)
-    # A PLAIN fetch (no find/cursor) of an oversized doc: spill the full doc to ./tmp and hand back a
-    # short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
+    with denial.unframed():       # the answer is cria's words as the model reads them: no record line leads a refusal the gate marked
+        result, refused, status, facts = webfetch.fetch_nav_result(str(url), find=find, cursor=cursor, session=session, raw=raw,
+                                                                   workspace_root=workspace_root)
+    # A PLAIN fetch (no find/cursor) of an oversized doc is spilled by the externalization offer (`_externalize_coder`): the full doc is saved
+    # under ./tmp and the model is handed a short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
     # …but only the FIRST time. Once cria has written the doc to the workspace that file outlives the
     # conversation, so a later plain re-fetch is answered with the file's name (fetch_nav's refusal,
     # already in `result`) instead of copying the same document over itself. Measured (run
     # 0727-104845): a 154KB docs page re-fetched NINETEEN times after the harness compacted the first
     # result away — each one re-spilling and burning a turn.
-    # A repeat-gate REFUSAL comes back from fetch_nav as ordinary text, and this printf gave it
-    # printf's exit 0 — the "a refused call must not report success" contradiction the module header
-    # documents, at the one site that still had it. Which results are refusals is webfetch's own
-    # decision, recorded on the text at the key it rendered (denial), never re-derived from wording:
-    # a real 404 page is a RESULT and still exits 0 here.
+    # A repeat-gate REFUSAL comes back from fetch_nav as ordinary text and is answered as a refusal ("a refused call must not report
+    # success"). Which results are refusals is webfetch's own decision, never re-derived from wording: a real 404 page is a RESULT.
     if refused:                    # the repeat gate's own typed decision — a fetched page quoting the marker is a page
-        return _bounded_tool_stdout(_refusal_command(result), denial.mark(result))
-    # THE FETCH'S OWN FACTS ride as a typed field of the `ran` record (`rep.fx`: url, status, routes, shapes, catalog), computed
+        with denial.unframed():
+            return _sized_answer('web_fetch', str(url), denial.mark(result), denial.REFUSED)
+    # THE FETCH'S OWN FACTS ride as a typed field of the answer (`rep.fx`: url, status, routes, shapes, catalog), computed
     # from the producer's parse of the document — never re-read from the rendered page, whose body may quote any marker.
     # This is also the visibility receipt's complete response contract: every HTTP response has fx,
     # even a 404/empty body. RAN without fx means the attempt returned no HTTP response (status=None),
     # not that it was refused or that a document has since been evicted from the cache.
-    output = denial.frame(denial.RAN, rep={'fx': facts} if facts else None) + result
-    return _bounded_tool_stdout(f"printf %s {_qbash(output)}", output)
-
-
-
-# What one composed command can carry. The harness runs `bash -lc "<command>"`, so the whole command
-# is ONE argv string, and Linux caps a single argument at MAX_ARG_STRLEN = 32 pages = 128 KiB. Nothing
-# inside the command can get around that — a heredoc, chunked printfs, base64: they are all still
-# bytes in that one string. Codex reports the overrun as "Argument list too long (os error 7)" and
-# the whole exec fails, so the doc never lands at all.
-# MEASURED, NOT DERIVED FROM THE KERNEL CAP. `MAX_ARG_STRLEN` is 128 KiB, and 120 KiB left headroom
-# on paper — but the harness wraps what cria composes in `/bin/bash -lc "<command>"`, so the shell
-# quoting, the ⟦ctx:tool⟧ sentinel and the harness's own framing all ride on top, and its effective
-# limit is lower than the kernel's. Across the captured rollouts: seven spill execs were REFUSED, the
-# smallest at 123,848 bytes on the wire.
-#
-# THE COST IS ASYMMETRIC, so the budget is. Overshooting does not merely fail: the harness echoes the
-# WHOLE refused command back as the tool result, so ~10 KB of raw base64 lands in the model's context
-# per attempt. Walked on handles-cli-node x nemotron-elastic 1787273429 — the spill was refused, cria
-# recorded it as written anyway, the model re-fetched seven times chasing the phantom file, and by the
-# final compaction that base64 was 68% of a 92,261-character prompt. The context floor could drop
-# nothing (two composed messages), the model server answered HTTP 400, and the run ended early.
-#
-# Undershooting costs a disclosed cut (see SPILL_CONTENT_MAX and prompts/spill_cut.txt). Half the
-# kernel cap sits far below every observed refusal and still carries a substantial spec.
-COMMAND_ARG_BUDGET = content_reduce_mod.COMMAND_ARG_BUDGET
-# base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
-# needs room too.
-SPILL_CONTENT_MAX = content_reduce_mod.SPILL_CONTENT_MAX
-
-
-def _spill_command(target: str, content: str, msg: str, *, operation=None) -> str:
-    """Land ``content`` at ``target`` (in the workspace spill dir), then print the model-facing pointer
-    message — the harness runs this and records the message as the tool result. The sentinel
-    re-presents the whole command as web_fetch, so the model never sees the plumbing.
-
-    THE DOC TRAVELS IN THE COMMAND. It used to be staged in cria's OWN directory and lowered as a
-    small ``cp``, to keep a large spec out of the argv. That works only while cria and the harness
-    share a filesystem: off a shared box the ``cp`` copies a file that is not there, the exec
-    "succeeds", and the spill silently produces an empty doc — then cria tells the model to go read
-    it. An empty doc under a pointer is worse than no doc at all.
-
-    A doc past what one command can carry is CUT, and the cut is stated — in the file and in the
-    pointer message. cria does not truncate what the model reads without saying so (#5b), and it has
-    no way to deliver more than this in one turn: it cannot write to the harness's disk except
-    through a command, and a command is one argv string."""
-    tdir = os.path.dirname(target) or "."
-    body, note = _spill_body(content)
-    # THE STORED FACT IS A TYPED FIELD of the `ran` record printed once the file has landed (the `then` branch): the producer
-    # declares it, so no reader looks for a marker line in a tail a page could end with.
-    stored = None
-    if operation is not None:
-        raw = body.encode('utf-8')
-        stored = dict(operation=operation, target=target, byte_count=len(raw), sha256=hashlib.sha256(raw).hexdigest())
-    command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CTX_SPILL__'\n"
-               f"{_b64_wrapped(body)}\n__CTX_SPILL__\n"
-               f"then printf %s {_qbash(denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else ''))}")
-    output = denial.frame(denial.RAN, rep={'st': stored} if stored else None) + msg + (chr(10) + note if note else '')
-    return _bounded_tool_stdout(command + '; else exit 1; fi', output)
-
-
-def _spill_body(content: str) -> tuple[str, str]:
-    """Existing labelled command-budget extent, shared by producer and observation."""
-    body, note = content, ''
-    if len(content.encode('utf-8', 'replace')) > SPILL_CONTENT_MAX:
-        body = content.encode('utf-8', 'replace')[:SPILL_CONTENT_MAX].decode('utf-8', 'ignore')
-        note = prompts.fill(prompts.load('spill_cut'), kept=f'{len(body):,}', total=f'{len(content):,}')
-        body += '\n\n' + note
-    return body, note
-
-
-def _b64_wrapped(s: str, width: int = 76) -> str:
-    """base64 of ``s``, line-wrapped. `base64 -d` accepts one long line on GNU coreutils and rejects
-    it on some BSD builds; wrapping is what every base64 encoder emits by default and works on
-    both."""
-    raw = _b64(s)
-    return "\n".join(raw[i:i + width] for i in range(0, len(raw), width))
+    return _sized_answer('web_fetch', str(url), result, denial.RAN, {'fx': facts} if facts else None)
 
 
 def _under_spill_dir(path: str) -> bool:
@@ -587,18 +422,6 @@ def _respill_command(command: str) -> str:
 _API_NAME_SHAPE = r"`[^`]+`|\w+::\w+|(?<![\w#])#\w+|\w+\.\w+[?!(]|\w+[?!]\(|\w+\(\)"
 
 
-def _pyq(s: str) -> str:
-    """A Python string literal safe to embed inside the single-quoted `python3 -c '...'` body.
-
-    json.dumps handles the Python side — backslashes, newlines, double quotes. It does NOT escape an
-    APOSTROPHE, and an apostrophe is the one character that ends the shell's quoting: a note reading
-    "each page\u0027s description" closed the `-c '` early and bash died on the rest of the line. So
-    every `\u0027` is re-encoded as a unicode escape, which Python decodes back to an apostrophe and
-    the shell never sees at all."""
-    import json as _json
-    return _json.dumps(s).replace("'", "\\u0027")
-
-
 def _search_refusal(refused: int, wait_ms: int) -> str:
     """The result of a search the service refused: its own stated wait (`wait_ms`, from the shared reader), said once."""
     say = prompts.load_map("search_refused")
@@ -606,120 +429,57 @@ def _search_refusal(refused: int, wait_ms: int) -> str:
             else prompts.fill(say["no_wait"], status=refused))
 
 
-def _search_command(args: dict, answer: "brave.Answer", *, search_offer=None, operation=None) -> str:
-    """Brave web search lowered to a parse of the answer cria itself fetched (`brave.search`: the shared endpoint, %-encoded
-    query and headers, through the shared rate-limit opener), printed as compact "title / url / description" lines the model
-    can pair with web_fetch. A refused search (429/503) is lowered to a refusal naming the wait the service stated. Requests
-    Brave's per-request maximum and prints EVERY returned result (no display slice) with a total-count header
-    so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
-    if answer.refused:
-        message = _search_refusal(answer.refused, answer.wait_ms)
-        return _bounded_tool_stdout(_refusal_command(message), denial.mark(message))
+def _search_answer(args: dict, answer: "brave.Answer", *, search_offer=None, operation=None) -> AnswerIntent:
+    """Brave web search answered from the answer cria itself fetched (`brave.search`: the shared endpoint, %-encoded query and headers, through the
+    shared rate-limit opener), as compact "title / url / description" lines the model can pair with web_fetch. A refused search (429/503) is
+    answered with a refusal naming the wait the service stated. Requests Brave's per-request maximum and shows EVERY returned result (no display
+    slice) with a total-count header so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
     query = str(args.get("query") or "")
-    # Composed before the parse below, which needs both: the spill path to write, and the pointer to
-    # print when the brief listing does not fit inline.
-    if search_offer is not None:
-        target, msg = webfetch.search_spill(query)
-    # NAME THE FILE. The note used to end "in the file named above" on the INLINE path, where
-    # nothing above names a file — the filename only appears in the spill branch, which is the
-    # branch not taken. A pointer to a file cria never named is a false fact in cria's own voice
-    # (#5b); seen in three cells of cycle 1. The target is known here, so it goes in the sentence.
-    # THE POINTER MUST CARRY ITS QUERY. cria's read-judge finds the query for a saved result file by
-    # matching this sentence, and the inline branch's version did not contain one — so the judge was
-    # asked to rule on a search whose query it was told was "(none)", and ruled it off-target. Walked
-    # on shipping-rates-rb x nemotron-elastic 1787294328: the deleted file held
-    # `ISO3166::Country#in_eu?`, the exact predicate that task needed, and the run scored 0/5. Both
-    # pointers now say the same sentence, so one regex reads both (#23).
-    inline_note = (prompts.fill(prompts.load("search_inline_note"), target=target, query=query)
-                   if search_offer is not None else '')
-    # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load
-    # succeeds, `.get("web")` is None, and this used to print the literal "no results" — telling the
-    # model the web holds nothing for its query when the API had in fact refused the request, and its
-    # own code/detail was right there in the same body. The model then concludes the source doesn't
-    # exist and starts guessing. Surface the API's own error text instead; only a genuinely empty
-    # result set says "no results".
-    # TITLES AND LINKS ARE THE ANSWER; DESCRIPTIONS ARE THE NOISE. Every search was spilled to disk
-    # whatever its size and the model got a pointer, and the model did not open the file. Measured,
-    # nemotron-elastic/go: the coder said "Ok, I'm stuck. Let's search for a decimal library", the
-    # spill file's fourth line read "decimal package - github.com/shopspring/decimal - Go Packages",
-    # and the go.mod it shipped required `github.com/elliott/decimal v1.6.0`. A package that does not
-    # exist. Zero spill reads across 124 calls in that cell.
+    if answer.refused:
+        with denial.unframed():
+            return _sized_answer('web_search', query, denial.mark(_search_refusal(answer.refused, answer.wait_ms)), denial.REFUSED)
+    # A body that is not the JSON object `brave.search` builds (a transport failure, HTML, an empty body) is answered with the "unreadable" line, never
+    # with a traceback and never as "no results": the cause belongs to the search tool and says nothing about the site the model is working on.
+    try:
+        data = json.loads(answer.body)
+        results = (data.get("web") or {}).get("results") or []
+        error = data.get("error") or data.get("message")
+        parts = [(x.get("title", ""), x.get("url", ""), x.get("description", "")) for x in results]
+    except (ValueError, AttributeError, TypeError):
+        return AnswerIntent('web_search', query, prompts.load("search_unparsable"), denial.RAN)
+    # `error`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON with no `web`, and "no results" would tell the model the web
+    # holds nothing for its query when the API had in fact refused the request, its own code/detail right there in the same body. Surface the API's
+    # own error text; only a genuinely empty result set says "no results".
+    nothing = ("search API error: " + json.dumps(error)) if error else "no results"
+    # TITLES AND LINKS ARE THE ANSWER; DESCRIPTIONS ARE THE NOISE. Every search was spilled to disk whatever its size and the model got a pointer, and
+    # the model did not open the file. Measured, nemotron-elastic/go: the coder said "Ok, I'm stuck. Let's search for a decimal library", the spill
+    # file's fourth line read "decimal package - github.com/shopspring/decimal - Go Packages", and the go.mod it shipped required
+    # `github.com/elliott/decimal v1.6.0`. A package that does not exist. Zero spill reads across 124 calls in that cell.
     #
-    # This function's own comment named the DESCRIPTIONS as the snippet poison, which is true and is
-    # the whole special case: titles and links are short, and they are exactly the fact a model needs
-    # when it is choosing a dependency. So search now obeys the size rule cria already owns for
-    # command output — inline when it fits, spill when it does not — instead of spilling always.
-    # The full results with descriptions are written to the spill file either way, so the grep route
-    # and the ledger entry are unchanged.
+    # So search obeys the size rule cria already owns for command output — inline when it fits, spill when it does not — instead of spilling always.
+    # The full results with descriptions are written to the spill file either way, so the grep route and the ledger entry are unchanged.
     #
-    # …EXCEPT A DESCRIPTION THAT CARRIES AN API NAME, which a title cannot. The poison the drop was
-    # written against was a wrong PACKAGE name — and a title carries the package. A method name, a
-    # predicate or a constant only ever appears in the description.
-    #
-    # Walked on the sub-40 pass, shipping-rates-rb x nemotron-elastic. The model's FIRST search,
-    # ninety seconds into the run, returned the whole task as its first result's description:
-    # `European Union Membership · c.in_eu? #=> false`. cria wrote that to disk, showed the model
-    # twenty titles, and closed with "you do not have to open it". The model then spent fifteen
-    # minutes on nine more searches for a gem whose method name it had already been handed, and
-    # never opened the file — zero tool calls in 89 touched the spill directory, and four of the
-    # nine saved files contain `in_eu?`. Measured over those nine files, the rule below keeps 9 of
-    # 20 descriptions on the search that mattered (3,054 characters) and 250-1,750 on the rest.
-    script = (resultpacket.RECORD_PY.replace("%%RCPT%%", denial.active_receipt()) +
-              'import sys,json,os,re,hashlib\n'
-              'd=json.load(sys.stdin)\nr=(d.get("web") or {}).get("results") or []\n'
-              'e=d.get("error") or d.get("message")\n'
-              'full="\\n".join("%s\\n  %s\\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)\n'
-              'stored=("%d results:\\n"%len(r))+full\n')
+    # …EXCEPT A DESCRIPTION THAT CARRIES AN API NAME, which a title cannot. The poison the drop was written against was a wrong PACKAGE name — and a
+    # title carries the package. A method name, a predicate or a constant only ever appears in the description. Walked on the sub-40 pass,
+    # shipping-rates-rb x nemotron-elastic: the model's FIRST search returned the whole task as its first result's description
+    # (`European Union Membership · c.in_eu? #=> false`); cria wrote that to disk, showed the model twenty titles, and closed with "you do not have
+    # to open it". The model then spent fifteen minutes on nine more searches for a gem whose method name it had already been handed.
+    stored = f"{len(results)} results:\n" + "\n".join("%s\n  %s\n  %s" % part for part in parts)
     if search_offer is None:
-        script += 'print(stored if r else "search API error: "+json.dumps(e) if e else "no results")\n'
-    else:
-        script += ('T=' + repr(search_offer.target) + '\n'
-                   'K=re.compile(' + repr(_API_NAME_SHAPE) + ')\n'
-                   'api=lambda x:("\\n  "+(x.get("description") or "")) if K.search(x.get("description") or "") else str()\n'
-                   'brief=("%d results:\\n"%len(r))+"\\n".join("%s\\n  %s%s"%(x.get("title",""),x.get("url",""),api(x)) for x in r)+"\\n"+' + repr(inline_note) + '\n'
-                   'pointer=' + repr(msg) + '\n'
-                   'os.makedirs(os.path.dirname(T) or ".",exist_ok=True)\n'
-                   'with open(T,"w",encoding="utf-8") as f:\n    f.write(stored)\n'
-                   'raw=stored.encode("utf-8")\n'
-                   # the stored fact is a TYPED field of the program's own first record, printed before the results
-                   'sys.stdout.write(_rec("ran", st={"operation":' + repr(operation) + ',"target":T,"byte_count":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}))\n'
-                   'print(' + search_offer.program.expression + ') if r else print("search API error: "+json.dumps(e) if e else "no results")\n')
-    # Keep the parser as the actual pipeline consumer. Its complete first
-    # record and answer share the same transport check as the other producers.
-    import textwrap
-    transport, transport_arguments = _stdout_transport()
-    if search_offer is None:
-        # This branch's first record remains shell-owned. Charge it to the
-        # same complete-result limit without making the parser emit it twice.
-        from . import externalization as e
-        transport_arguments = ('', *transport_arguments[1:-1],
-                               e.STDOUT_MAX_BYTES - e.stdout_size(denial.frame(denial.RAN).encode()))
-    script = (transport + '\nimport io, sys\ndef _produce():\n' + textwrap.indent(script, '    ')
-              + "\nbuffer = io.StringIO()\noriginal_stdout = sys.stdout\n"
-              + "try:\n    sys.stdout = buffer\n    _produce()\nfinally:\n    sys.stdout = original_stdout\n"
-              + "sys.stdout.write(bounded_stdout(buffer.getvalue().encode(), *" + repr(transport_arguments) + ").decode())\n")
-    parse = 'python3 -I -c ' + _qbash(script)
-    # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
-    # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
-    # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
-    # NO `rm -f` and NO `chmod 444`: the harness sandbox (Codex) HARD-REJECTS `rm -f` ("rm -f style
-    # commands are not permitted"), which broke EVERY web_search — the model read the refusal as "the
-    # API has permission issues" and hallucinated an endpoint instead. The `rm -f` only existed to clear
-    # a prior read-only spill file so the rewrite could land; `>` already truncates a WRITABLE file, so
-    # dropping the 444 removes the need for it. The spill dir stays protected from edits by the dirguard
-    # (_under_spill_dir / spill_edit_refusal), not the FS bit.
-    # `|| printf <fallback>`: a rate-limited/HTML/empty body makes the parse (json.load) raise → the
-    # pipeline exits non-zero → without this the harness would record the raw PYTHON TRACEBACK as the
-    # model's web_search result (which it then reads as an API-permissions problem and hallucinates an
-    # endpoint). The `||` hands it a clean, model-facing "unparseable/transient — retry" line instead.
-    fallback = prompts.load("search_unparsable")
-    # The parse writes the spill file itself now (it decides what to print based on size), so this is
-    # a plain pipeline rather than a redirect-then-announce.
-    # With a search offer the PROGRAM prints the first record (it carries the stored fact); otherwise the shell does.
-    lead = "" if search_offer is not None else denial.ran_command()
-    command = (f"{lead}printf %s {_qbash(answer.body)} | {parse} "
-               f"|| printf %s {_qbash(denial.frame(denial.RAN) + fallback if search_offer is not None else fallback)}")
-    return command
+        return _sized_answer('web_search', query, (stored if results else nothing) + "\n", denial.RAN)
+    # NAME THE FILE. The note ends "in the file named above" on the INLINE path, where nothing above names a file, so the target is named in the
+    # sentence. THE POINTER MUST CARRY ITS QUERY: cria's read-judge finds the query for a saved result file by matching this sentence, and both
+    # pointers say the same sentence, so one regex reads both (#23).
+    target, pointer = webfetch.search_spill(query)
+    note = prompts.fill(prompts.load("search_inline_note"), target=target, query=query)
+    callable_ = re.compile(_API_NAME_SHAPE)
+    brief = (f"{len(results)} results:\n" + "\n".join(
+        "%s\n  %s%s" % (title, url, ("\n  " + (description or "")) if callable_.search(description or "") else "")
+        for title, url, description in parts) + "\n" + note)
+    shown = search_offer.program.show(brief, pointer) if results else nothing
+    # The file is written whether or not there were results (the model is told where to look only when there is a file to look in): a no-result
+    # search used to remember a spill path and write nothing, and the coder read a phantom three times (cart-billing-go).
+    return AnswerIntent('web_search', query, shown + "\n", denial.RAN, None, SaveIntent(search_offer.target, stored, operation))
 
 
 
@@ -742,7 +502,7 @@ def _first_sight_of_rejection(sess_key: str, tc: dict) -> bool:
     return True
 
 
-def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
+def _lower_synthetic(source: OutboundCall) -> ShellCommand | AnswerIntent | SearchIntent | MutateIntent | ReadIntent | dict | None:
     """Required harness adapters, independent of optional steering selection.
 
     Validating mutation arguments and preserving execution/correlation are not
@@ -779,20 +539,20 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
                 source.log.emit('ops.unavailable', level='error', error=str(exc))
             return ShellCommand(_refusal_command(prompts.load('ops_unavailable')))
     elif name in _SEARCH_FILE_NAMES and name in request.injected:
-        from . import contentsearch
-        command = _bounded_tool_stdout(denial.ran_command() + contentsearch.command(name, args, request.workspace_root, request.external_dir_permission, request.declared_roots), search=True)
+        return SearchIntent() if request.issue_search is not None else None
     elif name in _FETCH_NAMES and name in request.injected:
-        command = _externalize_coder(source)
+        if request.issue_answer is None:
+            return None
+        return _externalize_coder(source)
     elif name == 'web_search':
         if name in request.injected and request.brave_key:
-            command = _externalize_coder(source)
+            return _externalize_coder(source) if request.issue_answer is not None else None
         elif request.native_search and request.native_search != name:
             return {**source.call, 'function': {**source.function, 'name': request.native_search}}
         else:
             return None
     else:
         return None
-    return ShellCommand(command) if command is not None else None
 
 
 class WriteFact(NamedTuple):
@@ -838,7 +598,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
                        observe_externalization=None, only_injected: bool = False, issue_list_dir=None,
-                       issue_read=None, issue_mutations=None, safe_path: str = harnessprims.SAFE_PATH) -> dict:
+                       issue_read=None, issue_mutations=None, issue_answer=None, issue_search=None,
+                       safe_path: str = harnessprims.SAFE_PATH) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -855,7 +616,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
         externalization_owner, assistruntime.current().externalization, observe_externalization,
         (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path, issue_read,
-        issue_mutations)
+        issue_mutations, issue_answer, issue_search)
 
     for choice in completion.get("choices", []):
         tool_calls = (choice.get("message") or {}).get("tool_calls")
@@ -919,6 +680,30 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 notes.append((len(rebuilt) - 1, tc, issued or tc, None))
                 if issued is not None and rlog is not None:
                     rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "", detail="")
+                continue
+            if isinstance(effect, (AnswerIntent, SearchIntent)):
+                # An answer cria composed (a fetch, a search) or a search it will walk and run: carried out through the harness primitives, in cria's words.
+                try:
+                    issued = (issue_answer(tc, args, effect) if isinstance(effect, AnswerIntent) else issue_search(tc, args))
+                except ops.OpsUnavailable as exc:
+                    if rlog is not None:
+                        rlog.emit('ops.unavailable', level='error', error=str(exc))
+                    issued = _shell_call(tc.get('id'), shell_tool, _refusal_command(prompts.load('ops_unavailable')), 0)
+                    offers = getattr(externalization_owner, 'externalization_offers', None) or {}
+                    if (stale := offers.pop(str(tc.get('id') or ''), None)) is not None:
+                        stale.delivery.cancel()
+                rebuilt.append(issued)
+                pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
+                if pending is not None:
+                    pending.lowered_arguments = issued['function']['arguments']
+                    pending.lowered_name = issued['function']['name']
+                    pending.lowered_type = issued.get('type')
+                    pending.lowered_id = issued.get('id')
+                    if observe_externalization is not None:
+                        observe_externalization(tc, issued, pending)
+                notes.append((len(rebuilt) - 1, tc, issued, None))
+                if rlog is not None:
+                    rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "", detail=str(args.get("query") or args.get("url") or args.get("pattern") or ""))
                 continue
             if isinstance(effect, MutateIntent):
                 # A file mutation cleared by every guard: carried out through the harness primitives, the calls of one file together.
@@ -1212,7 +997,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None, ledger_outcomes=None, ledger_reads=None, ledger_writes=None, ledger_surveys=None) -> list[dict]:
+                      ask=None, ledger_outcomes=None, ledger_reads=None, ledger_writes=None, ledger_surveys=None, ledger_answers=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1235,6 +1020,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     ``ledger_writes`` maps a tool call id to the ``writeops.LedgerWrite`` of a file mutation cria carried out that way: the model's own
     call, how it ended (landed, refused, did not apply, uncertain), the text the coder is shown and, for an edit that did not apply, the
     facts of the miss. The typed outcome is the ledger's; nothing is read out of result text.
+    ``ledger_answers`` maps a tool call id to the ``answerops.LedgerAnswer`` of an answer cria composed and carried out (a fetch, a search, a grep, a
+    glob): the model's own call, how it ended, the text it is told and the typed facts (a fetch's, a saved file's) its readers ask for.
     ``ledger_surveys`` maps the id of a tool result (None: the start of the history) to the ``wsview.Survey`` objects cria asked for on its
     own after it, in order: each is applied to the workspace view at that position, as the survey that rode with a result used to be."""
     # Retired client-supplied hint spellings are never provenance, regardless
@@ -1257,11 +1044,12 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # its payload, its envelope handling, the file fact it would cache) only when the id names exactly one call and
     # one result after it (`denial.paired_results`). An ambiguous result keeps its actual bytes and teaches nothing.
     paired = set(denial.paired_results(messages))
-    ledger_reads, ledger_writes = ledger_reads or {}, ledger_writes or {}
+    ledger_reads, ledger_writes, ledger_answers = ledger_reads or {}, ledger_writes or {}, ledger_answers or {}
     proofs = {**_frame_proofs(messages),
               **{tid: _Proof(r.kind, r.pre + r.text, r.text, True, None, r.observe, r.pre)
                  for tid, r in ledger_reads.items() if r.text is not None},
-              **{tid: _Proof(w.kind, w.text, None, False, w.rep or None) for tid, w in ledger_writes.items()}}
+              **{tid: _Proof(w.kind, w.text, None, False, w.rep or None) for tid, w in ledger_writes.items()},
+              **{tid: _Proof(a.kind, a.text, None, False, a.rep) for tid, a in ledger_answers.items()}}
     outcomes = {tid: p.kind for tid, p in proofs.items() if p.kind in (denial.REFUSED, denial.UNAPPLIED)}
     outcomes |= {tid: kind for tid, kind in (ledger_outcomes or {}).items() if kind in (denial.REFUSED, denial.UNAPPLIED)}
     landed_ids = {tid for tid, p in proofs.items() if p.kind == denial.LANDED}   # cria's own program reported the mutation landed
@@ -1292,7 +1080,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     pending_mutations = set()
     read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
     def may_mutate(tc):
-        if tc.get('id') in ledger_reads:
+        if tc.get('id') in ledger_reads or tc.get('id') in ledger_answers:
             return False
         if tc.get('id') in ledger_writes:
             return tc.get("id") not in failed_ids
@@ -1328,7 +1116,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             for tc in m["tool_calls"]:
                 fn = tc.get("function") or {}
                 name = fn.get("name")
-                led = ledger_reads.get(tc.get("id")) or ledger_writes.get(tc.get("id"))
+                led = ledger_reads.get(tc.get("id")) or ledger_writes.get(tc.get("id")) or ledger_answers.get(tc.get("id"))
                 if led is not None or is_shell_tool_name(name):
                     orig = ({"name": led.name, "arguments": led.arguments} if led is not None
                             else _read_sentinel(_command_of(fn.get("arguments")), tc.get("id")))
@@ -1381,7 +1169,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                     rejected_notes_by_id[tc.get("id")] = draft.note
                                 tc = draft.call
                         elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES | _SEARCH_FILE_NAMES):
-                            strip_ids.add(tc.get("id"))
+                            if not isinstance(led, LedgerAnswer):       # cria's own words carry no harness envelope to strip
+                                strip_ids.add(tc.get("id"))
                             if orig["name"] in _SEARCH_FILE_NAMES:
                                 content_search_ids.add(tc.get("id"))
                             if orig["name"] in _READ_NAMES:

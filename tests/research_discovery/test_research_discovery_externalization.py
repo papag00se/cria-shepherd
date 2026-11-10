@@ -52,13 +52,14 @@ def test_search_storage_keeps_full_results_whichever_branch_is_inlined_and_deman
     full = "FULL\nα\nEND"
     assert e.coder_search(target="p", full=full, brief="α\n", pointer="PTR", inline_bytes=3) == e.Spill("p", full, "α\n")
     assert e.coder_search(target="p", full=full, brief="α\n", pointer="PTR", inline_bytes=2) == e.Spill("p", full, "PTR")
+    assert e.search_program(3).show("α\n", "PTR") == "α\n" and e.search_program(2).show("α\n", "PTR") == "PTR"      # the choice is the same one, over the same bytes
     for bad in ((-1, "0" * 64), (True, "0" * 64), (0, "A" * 64), (0, "a" * 63), (0, None)):
         with pytest.raises(ValueError):
             e.SearchStored("./tmp/reference/search-q.txt", *bad)
     with pytest.raises(ValueError):
         e.DEFINITION.search_program(-1)
     offer = e.SearchOffer("./tmp/reference/search-q.txt", e.DEFINITION.search_program(3))   # a foreign target never settles a search
-    delivery = e.selected_externalization(e.DEFINITION, e.Input("sc", "inline", e.Services(lambda: offer, lambda o: o.program.expression, lambda o: None)), e.State())
+    delivery = e.selected_externalization(e.DEFINITION, e.Input("sc", "inline", e.Services(lambda: offer, lambda o: o.program.show('brief', 'pointer'), lambda o: None)), e.State())
     good = e.SearchStored(offer.target, 11, "0" * 64)
     assert not delivery.settle(e.Outcome.RETAINED, stored=e.SearchStored("foreign", 11, "0" * 64)) and delivery.settle(e.Outcome.RETAINED, stored=good)
 

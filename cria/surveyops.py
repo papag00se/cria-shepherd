@@ -117,10 +117,13 @@ class _Tree:
     ``paging`` asks for the next page of a directory a frame did not hold (a listing without a fold bound is whole or it is paged),
     ``walk_skipped`` walks a directory ``ls`` reported and did not enter when nothing proves it a build output (the survey does; the
     inventory never enters what it excludes), ``strict_names`` leaves out what is not one line of UTF-8 (the survey's rule; the inventory
-    carries every name as the JSON records give it)."""
+    carries every name as the JSON records give it). ``start`` is the directory the walk begins in (the workspace for a survey; the path a search
+    was asked about), ``prune(dir)`` says that nothing below a listed directory is to be listed (a directory the search proves generated)."""
 
-    def __init__(self, steps: list, what: str = 'vls', paging: bool = False, walk_skipped: bool = True, strict_names: bool = True):
+    def __init__(self, steps: list, what: str = 'vls', paging: bool = False, walk_skipped: bool = True, strict_names: bool = True,
+                 start: str = '', prune=None):
         self.what, self.paging, self.walk_skipped, self.strict_names = what, paging, walk_skipped, strict_names
+        self.start, self.prune = start, prune
         self.more: dict = {}            # directory -> the name its next page starts after
         self.records: dict = {}         # path -> ls record
         self.listed: set = set()        # directories whose entries are all in `records`
@@ -185,8 +188,8 @@ class _Tree:
         """The directories nobody has listed yet, as ``(dir, mode)``, in the order the walk meets them (breadth first). A directory
         reached by a whole-tree call is listed; one reached by a directory-by-directory call is listed by a call of its own."""
         out = []
-        if ('', 'tree') not in self.tried:
-            return [('', 'tree')]
+        if (self.start, 'tree') not in self.tried:
+            return [(self.start, 'tree')]
         for d in sorted(self.failed_tree, key=lambda x: (x.count('/') if x else -1, x)):
             if (d, 'level') not in self.tried:
                 out.append((d, 'level'))
@@ -201,6 +204,8 @@ class _Tree:
             parent = p.rpartition('/')[0]
             if parent not in self.listed and parent not in self.partial:
                 continue                                    # its parent is not listed yet: nothing named it
+            if self.prune is not None and self.prune(parent):
+                continue                                    # its parent is a directory nothing below which is wanted
             if self._skipped(r):
                 if not self.walk_skipped or p.rpartition('/')[2] in wsview.PRUNE_DIRS or self.output_proof(r):
                     continue                                # reported, never entered

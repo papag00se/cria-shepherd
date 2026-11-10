@@ -1,15 +1,12 @@
 """Shared fixtures for the loop_main shard: a bound workspace view, a recording log, scripted model boundaries,
 and a fetch result built the way the real producer prints it. Only the model server and the HTTP GET are faked."""
 import json
-import os
-import subprocess
-import sys
-import tempfile
 from unittest import mock
 
 import pytest
 
 from cria import fetchfacts, wsview, writeproxy
+from cria.answerops import LedgerAnswer
 from cria.loop import Loop, LoopContext, LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
 
@@ -109,29 +106,30 @@ _FETCHES = [0]
 
 
 def fetch_pair(url, *, status=200, routes=(), shapes=(), content="page"):
-    """``[assistant web_fetch call, tool result]`` as the harness delivers it: the REAL lowering composes the
-    program, it is really run, and the real inbound pass lifts its typed record. Only the HTTP fetch is replaced."""
+    """``[assistant web_fetch call, tool result]`` as the history readers get them: the REAL lowering composes the answer (what the model is told and the
+    typed facts of the fetch), the engine's final for it is what that answer is (:class:`answerops.LedgerAnswer`), and the real inbound pass lifts the typed
+    fact. Only the HTTP fetch is replaced."""
     _FETCHES[0] += 1
     cid = f"fetch-{_FETCHES[0]}"
     facts = {"url": url, "status": f"HTTP {status}", "routes": list(routes),
              "shapes": [fetchfacts.report(s) for s in shapes], "catalog": [], "observed": ""}
-    comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {
-        "name": "web_fetch", "arguments": json.dumps({"url": url})}}]}}]}
+    arguments = json.dumps({"url": url})
+    comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {"name": "web_fetch", "arguments": arguments}}]}}]}
+    told = []
+
+    def issue_answer(call, args, answer):
+        told.append(answer)
+        return {"id": "ctx_x", "type": "function", "function": {"name": "exec_command", "arguments": json.dumps({"cmd": "true"})}}
     with mock.patch.object(writeproxy.webfetch, "fetch_nav_result", return_value=(content, False, status, facts)):
         writeproxy.translate_outbound(comp, {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}},
-                                      injected={"web_fetch"}, workspace_root="/w")
-    tc = comp["choices"][0]["message"]["tool_calls"][0]
-    py = os.path.join(tempfile.mkdtemp(prefix="harness-bin-"), "python3")      # the harness has python3 and coreutils only
-    os.symlink(os.path.realpath(sys.executable), py)
-    with tempfile.TemporaryDirectory() as cwd:
-        env = {"PATH": f"{os.path.dirname(py)}:/usr/bin:/bin", "HOME": cwd, "TMPDIR": cwd, "LC_ALL": "C"}
-        run = subprocess.run(["bash", "-c", json.loads(tc["function"]["arguments"])["cmd"]], cwd=cwd, env=env,
-                             capture_output=True, text=True)
-        raw = "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n" + run.stdout + run.stderr
-        token = wsview.bind(wsview.View(cwd, "uv"))
-        try:
-            return writeproxy.represent_inbound(
-                [{"role": "assistant", "tool_calls": [tc]}, {"role": "tool", "tool_call_id": cid, "content": raw}],
-                workspace_root=cwd)
-        finally:
-            wsview.unbind(token)
+                                      injected={"web_fetch"}, workspace_root="/w", issue_answer=issue_answer)
+    answer = told[0]
+    token = wsview.bind(wsview.View("/w", "uv"))
+    try:
+        return writeproxy.represent_inbound(
+            [{"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {"name": "web_fetch", "arguments": arguments}}]},
+             {"role": "tool", "tool_call_id": cid, "content": answer.text}],
+            workspace_root="/w", ledger_outcomes={cid: answer.outcome},
+            ledger_answers={cid: LedgerAnswer("web_fetch", arguments, answer.outcome, answer.text, answer.rep)})
+    finally:
+        wsview.unbind(token)

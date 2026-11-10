@@ -106,20 +106,6 @@ def test_the_dependency_surface_note_is_grounded_on_the_declared_version_stable_
     assert "v1.5.0 DECLARED IN go.mod" in bumped and "v1.4.0" not in bumped
 
 
-def test_a_spill_lands_a_whole_document_exactly_and_cuts_an_oversize_one_while_saying_so(tmp_path):
-    """handles-cli-node / nemotron-elastic: a 122 KB spill command was refused by the harness yet cria told the model for 26 turns the file was on disk.
-    The command is budgeted on its ENCODED size (base64 + wrapping), so a max document fits and lands byte for byte; a bigger one is cut with a disclosure
-    that says what is missing — never silently."""
-    for name, size, whole in (("doc.txt", writeproxy.SPILL_CONTENT_MAX, True), ("big.txt", writeproxy.SPILL_CONTENT_MAX * 3, False)):
-        doc = "y" * size
-        command = writeproxy._spill_command(f"./tmp/read-only/{name}", doc, "saved it")
-        assert len(command) <= writeproxy.COMMAND_ARG_BUDGET
-        done = subprocess.run(["bash", "-c", command], cwd=tmp_path, env=harness_env(tmp_path), capture_output=True, text=True)
-        saved = (tmp_path / "tmp/read-only" / name).read_text()
-        assert done.returncode == 0 and (saved == doc) is whole
-        assert whole or ("could not be delivered" in saved and "first" in saved and "y" * 1000 in saved and len(saved) < size)
-
-
 def test_a_spilled_document_is_claimed_to_exist_only_while_the_workspace_listing_says_so():
     """The claim 'its full text is on disk at ...' was recorded at compose time, before the exec ran. Unknown (no listing yet), a listing that omits
     the file, and another workspace all withdraw it; a listing that names it keeps it."""

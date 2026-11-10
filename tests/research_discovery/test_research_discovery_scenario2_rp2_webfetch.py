@@ -197,7 +197,6 @@ def test_a_swagger2_spec_yields_base_pathed_shapes_with_optional_marks_and_discl
 
 
 def test_the_spill_helpers_tell_the_coder_what_is_on_disk_and_never_guess(base, monkeypatch):
-    monkeypatch.setattr(wf, "SPILL_CONTENT_MAX", 5000)
     for path in ("/long.txt", "/data.json", "/min.html"):
         wf.fetch_nav(f"{base}{path}")
     wf._cache_put("https://x.org/m.js", 200, "application/javascript", "function a(){var s='it\\'s };';return 1;}" * 400, None, False)
@@ -218,11 +217,12 @@ def test_the_spill_helpers_tell_the_coder_what_is_on_disk_and_never_guess(base, 
     outline = wf.outline_for_spill_path("tmp/reference/" + wf._spill_name(f"{base}/data.json").rsplit("/", 1)[1])
     assert outline.startswith("[top-level keys (2): items, meta]") and wf.outline_for_spill_path(wf._spill_name("https://x.org/m.js")) == ""
     hint = wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 2000)
-    assert hint.startswith("It is 454 lines — read_file with start_line=1 end_line=") and wf.spill_reading_hint("./tmp/reference/none.txt", 2000) == ""
+    # the file holds the whole document: the hint's line count is the file's own
+    assert hint.startswith(f"It is {js[2].count(chr(10)) + 1:,} lines — read_file with start_line=1 end_line=") and wf.spill_reading_hint("./tmp/reference/none.txt", 2000) == ""
     assert wf.spill_reading_hint(wf._spill_name("https://x.org/oneline"), 2000) == "" and wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 5) == ""
     assert wf.spill_reading_hint(wf._spill_name("https://x.org/m.js"), 10**7) == ""
     assert wf.spill_extent_of("https://nowhere/x").startswith("there (the file's own last line says")
-    assert wf.spill_extent_of("https://x.org/m.js") == wf.spill_extent_of(f"{base}/data.json") == "as much of it as one step can carry (the file itself says where it stops)"
+    assert wf.spill_extent_of("https://x.org/m.js") == wf.spill_extent_of(f"{base}/data.json") == "IN FULL"
     assert wf.outline_for_url("https://nowhere/x") == "" and wf.stdout_spill_pointer("./tmp/x", 5000).count("5,000 chars") == 1
     target, pointer = wf.search_spill("a b c")
     assert target.startswith("./tmp/reference/search-a_b_c-") and target in pointer and wf.search_spill_name("a b c" + "x" * 80) != wf.search_spill_name("a b c" + "x" * 81)

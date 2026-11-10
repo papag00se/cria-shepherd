@@ -17,15 +17,18 @@ import errno as errno_
 import hashlib
 import json
 import os
+import shlex
 import threading
 from dataclasses import dataclass, field
 
-from . import callauth, denial, externalization, harnessprims, inventoryops, prompts, readops, surveyops, writeops, wsview
+from . import answerops, callauth, denial, externalization, harnessprims, inventoryops, prompts, readops, searchops, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
 from .opspath import OpsUnavailable, split
-from .opsteps import Final, Issue, Wait
+from .opsteps import Final, Issue, Wait, reason as _reason
+from .answerops import ANSWER, AnswerOps, LedgerAnswer
+from .searchops import SEARCH, SearchOps
 from .inventoryops import InventoryOps
 from .readops import LedgerRead, ReadFact, ReadOps
 from .surveyops import SurveyAsk, SurveyOps
@@ -52,11 +55,8 @@ class Incoming:
     facts: tuple = ()                               # ReadFact of each verified read the model's wire has not yet accepted
     writes: dict = field(default_factory=dict)      # original call id -> LedgerWrite, for each finished file mutation
     surveys: dict = field(default_factory=dict)     # id of the model's tool result a survey follows (None: the start) -> [wsview.Survey], in order
-
-
-def _reason(header: dict) -> str:
-    code = header.get('errno')
-    return os.strerror(code) if isinstance(code, int) and code else str(header.get('err') or 'unknown error')
+    answers: dict = field(default_factory=dict)     # original call id -> LedgerAnswer, for each finished answer cria composed (a fetch, a search, a grep, a glob)
+    externalized: tuple = ()                        # (original call id, outcome, what the offer settles on) of each finished answer that saved a file
 
 
 def _entry(record: list, shown: str | None = None) -> str:
@@ -99,7 +99,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
+class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -157,6 +157,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
             return surveyops.command(op, ctx, s, what, args, blobs or {})
         if what in inventoryops.WHATS:
             return inventoryops.command(op, ctx, s, what, args, blobs or {})
+        if what in searchops.WHATS:
+            return searchops.command(op, ctx, s, what, args, blobs or {})
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what in writeops.WHATS:
             return writeops.command(op, ctx, s, what, args, blobs or {})
@@ -169,7 +171,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
             words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]', ''], None, label
             what = 'ls'
         elif what == 'say':
-            return _refusal_command(args['text'])
+            return f"printf %s {shlex.quote(args['text'])}" if args.get('ok') else _refusal_command(args['text'])
         elif what == 'put':
             data = blobs[args['blob']].encode('utf-8', 'surrogateescape')[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
             words, payload, comment = [args['root'], args['rel'], callauth.group(op), args['off'], 1], data, label
@@ -334,6 +336,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
             return self._v_after(op, steps)
         if op.kind == inventoryops.INVENTORY:
             return self._i_after(op, steps)
+        if op.kind == SEARCH:
+            return self._s_after(op, wave, steps)
         table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
                  else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
         return table[wave[0].what](op, wave, steps)
@@ -423,17 +427,34 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
         return prompts.load('cria_home_refusal') if _targets_cria_home(path) else None
 
     def _spill(self, op: Op, steps: list, text: str, done: bool, count: int):
-        """A listing over the inline limit is saved whole beside the workspace's other reference files, not shortened. One
-        command carries CHUNK_BYTES of it; a larger listing is staged as parallel `put` calls and landed by one `write`."""
+        """A listing over the inline limit is saved whole beside the workspace's other reference files, not shortened."""
         from . import webfetch
+        digest = hashlib.sha256(text.encode('utf-8', 'surrogateescape')).hexdigest()
+        return self._spill_steps(op, steps, text, webfetch.SPILL_DIR.removeprefix('./') + '/stdout-' + digest + '.txt', {'done': done, 'count': count})
+
+    def _spill_issue(self, op: Op, steps: list, text: str, pointer: str, rel: str):
+        """An answer over the harness's bound is saved whole at ``rel`` (under the workspace's reference directory) and the model is given ``pointer``."""
+        ans = hashlib.sha256(pointer.encode('utf-8', 'surrogateescape')).hexdigest()
+        return self._spill_steps(op, steps, text, rel, {'ans': ans}, {ans: pointer})
+
+    def _spill_steps(self, op: Op, steps: list, text: str, rel: str, extra: dict, blobs: dict | None = None):
+        """One command carries CHUNK_BYTES of the text; a larger text is staged as parallel `put` calls and landed by one `write`."""
         data = text.encode('utf-8', 'surrogateescape')
         digest = hashlib.sha256(data).hexdigest()
-        rel = webfetch.SPILL_DIR.removeprefix('./') + '/stdout-' + digest + '.txt'
-        args = {'root': op.ctx['ws'], 'rel': rel, 'blob': digest, 'try': 0, 'done': done, 'count': count}
+        args = {'root': op.ctx['ws'], 'rel': rel, 'blob': digest, 'try': 0, **extra}
         if len(data) <= harnessprims.CHUNK_BYTES:
-            return Issue(self._next(steps, 'write', args), {digest: text})
+            return Issue(self._next(steps, 'write', args), {digest: text, **(blobs or {})})
         offsets = range(0, len(data), harnessprims.CHUNK_BYTES)
-        return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE])), {digest: text})
+        return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE])), {digest: text, **(blobs or {})})
+
+    def _spill_final(self, op: Op, how: str, st):
+        """How an operation that is not a listing ended once its file was (or was not) saved: the answer's words for an answer, the search's for a
+        search. ``how``: ``landed``, ``unknown`` (no confirmation) or ``failed`` (the harness refused: the step's frame says why)."""
+        if op.kind == SEARCH:
+            return self._search_final(op, how, st)
+        if how == 'landed' and st.frame['hdr'].get('sha') != op.ctx['save']['sha']:
+            how = 'failed'
+        return self._answer_final(op, how, st.frame['hdr'])
 
     def _after_put(self, op: Op, wave: list, steps: list):
         bad = next((st for st in wave if st.frame['hdr'].get('ok') != 1), None)
@@ -446,6 +467,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
             if more:
                 return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in more)))
             return Issue(self._next(steps, 'write', {**args, 'staged': True}))
+        if op.kind != LIST_DIR:
+            return self._spill_final(op, 'unknown' if bad.frame['hdr'].get('ok') == -1 else 'failed', bad)
         if bad.frame['hdr'].get('ok') == -1:
             return Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
         return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(bad.frame['hdr']))
@@ -453,6 +476,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
     def _after_write(self, op: Op, wave: list, steps: list):
         from . import webfetch
         st, header = wave[0], wave[0].frame['hdr']
+        if op.kind != LIST_DIR and (header.get('ok') in (0, 1) or st.args['try'] >= 1):
+            return self._spill_final(op, 'landed' if header.get('ok') == 1 else 'unknown' if header.get('ok') == -1 else 'failed', st)
         if header.get('ok') == 1:
             target = webfetch.SPILL_DIR + '/' + st.args['rel'].rsplit('/', 1)[-1]
             if st.args.get('done', True):
@@ -468,7 +493,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
     def _project(self, session: str, messages: list, verified: dict, calls: list, log) -> Incoming:
         ops = self.ledger.ops(session)
         finished = {cid: (op, s) for cid, (op, s) in verified.items() if ops[op].final is not None}
-        outcomes, reads, writes, facts, out, emitted = {}, {}, {}, [], [], set()
+        outcomes, reads, writes, told, facts, out, emitted = {}, {}, {}, {}, [], [], set()
         anchors, last_tool = {}, [None]      # survey operation -> the id of the kept tool result it follows
 
         def answers(cid):
@@ -506,7 +531,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
                 for i in ([here] if here is not None else range(len(ops[op].calls))):
                     if (op, i) not in emitted:
                         emitted.add((op, i))
-                        out.append(self._model_result(ops[op], outcomes, reads, facts, writes, i))
+                        out.append(self._model_result(ops[op], outcomes, reads, facts, writes, told, i))
                         last_tool[0] = out[-1]['tool_call_id']
             else:
                 out.append(m)
@@ -519,9 +544,11 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
         for op, anchor in anchors.items():
             if (found := self.survey_of(ops[op])) is not None:
                 surveys.setdefault(anchor, []).append(found)
-        return Incoming(out, calls, outcomes, reads, tuple(facts), writes, surveys)
+        saved = tuple((op.call['id'], op.final['outcome'], op.final['ext']) for op in (ops[o] for o, _ in finished.values())
+                      if op.kind == ANSWER and op.final.get('ext'))
+        return Incoming(out, calls, outcomes, reads, tuple(facts), writes, surveys, told, saved)
 
-    def _model_result(self, op: Op, outcomes: dict, reads: dict, facts: list, writes: dict, i: int = 0) -> dict:
+    def _model_result(self, op: Op, outcomes: dict, reads: dict, facts: list, writes: dict, answers: dict, i: int = 0) -> dict:
         """The tool result the model is shown for one call of a finished operation, and what the wire and the history readers are
         told about it: the outcome, and for a read the verified body, for a file mutation the typed result."""
         from . import resultnotes
@@ -532,6 +559,10 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
             writes[original['id']] = LedgerWrite(original['name'], original['arguments'], r['o'], r.get('text', ''),
                                                  {'ef': r['ef']} if r.get('ef') else {})
             return {'role': 'tool', 'tool_call_id': original['id'], 'content': r.get('text', '')}
+        if op.kind in (ANSWER, SEARCH):
+            outcomes[original['id']] = final['outcome']
+            answers[original['id']] = LedgerAnswer(original['name'], original['arguments'], final['outcome'], final['text'], final.get('rep') or None)
+            return {'role': 'tool', 'tool_call_id': original['id'], 'content': final['text']}
         text, note, outcome = final['text'], final.get('note'), final['outcome']
         body = final.get('src') is not None and op.withheld is None
         if op.kind == readops.READ and op.withheld:

@@ -16,7 +16,7 @@ from typing import Iterable, Literal
 # Compatibility surface: the canonical records live below execution/default assembly.
 from .toolcontracts import (EventLog, _PolicyLog, policy_log, CompletionTransform, CompletionRepair,
     CompletionDefinition, ShrinkFinding, ShrinkCheck, LoweringRequest,
-    OutboundCall, RewrittenCall, ReadIntent, ShellCommand, OutboundEffect, OutboundDefinition,
+    OutboundCall, RewrittenCall, ReadIntent, ShellCommand, OutboundEffect, OutboundDefinition, AnswerIntent, SaveIntent, SearchIntent,
     MutationDefinition, MutationPlan, MutateIntent, ReviewTerms, ReturnedResult, ReturnedDefinition, ReturnedHistory,
     HistoryDefinition, RejectedDraft, DraftDefinition, ToolDefinition, ShrinkServices)
 

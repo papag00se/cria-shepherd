@@ -4,6 +4,9 @@ Transport, shared extent/format facts, guarded storage and final context fitting
 remain outside this optional policy. Services are captured per operation: replacing
 selection while a harness result is outstanding cannot replace its settlement owner.
 No executor, filesystem, clock, response parser or process-global ledger lives here.
+
+Settlement comes from the operation ledger (cria.answerops, cria.writeproxy.settle_externalizations): a spill is stored when the harness confirmed the
+bytes cria sent through ``write``, never from a record a harness program printed.
 """
 from dataclasses import dataclass, field
 from enum import Enum
@@ -15,15 +18,12 @@ from . import prompts
 from .assistcontract import Policy, Reference
 
 
-# Complete producer stdout, before any harness envelope. A PTY can add one CR
-# per LF. Embed the same byte measurement in harness-side producers.
+# Complete result text, before any harness envelope. A PTY can add one CR per LF, so each line feed counts twice.
 STDOUT_MAX_BYTES = 10_000
-STDOUT_SIZE_PY = '''def stdout_size(raw):
-    return len(raw) + raw.count(b'\\n')
-'''
-_stdout_namespace: dict = {}
-exec(STDOUT_SIZE_PY, _stdout_namespace)
-stdout_size = _stdout_namespace['stdout_size']
+
+
+def stdout_size(raw: bytes) -> int:
+    return len(raw) + raw.count(b'\n')
 
 
 @dataclass(frozen=True)
@@ -35,12 +35,11 @@ class Spill:
 
 @dataclass(frozen=True)
 class SearchProgram:
-    """Source choice embedded unchanged where actual parser locals exist.
+    """The existing inclusive UTF-8 choice between a search's brief listing and its pointer, over the budget the caller owns."""
+    inline_bytes: int
 
-    ``brief`` and ``pointer`` are parser-local strings. Provider text is data,
-    never interpolated into this expression. This is code, not document content.
-    """
-    expression: str
+    def show(self, brief: str, pointer: str) -> str:
+        return brief if len(brief.encode("utf-8")) <= self.inline_bytes else pointer
 
 
 @dataclass(frozen=True)
@@ -203,16 +202,15 @@ def coder_fetch(url: str, *, find: str | None, cursor: int | None,
 
 
 def search_program(inline_bytes: int) -> SearchProgram:
-    """Own the existing inclusive UTF-8 choice inside the harness parser.
+    """Own the existing inclusive UTF-8 choice between a search's brief and its pointer.
 
-    Root supplies its existing budget, embeds this exact returned program, and
-    retires its old conditional. Required response parsing/error/empty handling,
-    checked storage and fact framing remain Root-owned. Absence has NO program:
+    Root supplies its existing budget and applies the returned choice. Required response parsing/error/empty
+    handling and checked storage remain Root-owned. Absence has NO program:
     Root returns the complete count-header + full representation, without a spill.
     """
     if type(inline_bytes) is not int or inline_bytes < 0:
         raise ValueError("Search inline byte budget must be a nonnegative integer")
-    return SearchProgram(f'brief if len(brief.encode("utf-8")) <= {inline_bytes} else pointer')
+    return SearchProgram(inline_bytes)
 
 
 def coder_search(*, target: str, full: str, brief: str, pointer: str,
@@ -221,12 +219,12 @@ def coder_search(*, target: str, full: str, brief: str, pointer: str,
 
     Select the existing parser's representations without re-parsing responses.
 
-    The coder search parser owns API errors, empty results, API-name projection
-    and raw provider bytes. It writes its full representation in BOTH branches;
-    this policy only chooses what is printed, with the existing UTF-8 byte bound.
+    The coder search answer owns API errors, empty results, API-name projection
+    and raw provider bytes. It saves its full representation in BOTH branches;
+    this policy only chooses what is shown, with the existing UTF-8 byte bound.
     The caller must handle API errors/empty results before this result choice.
     """
-    return Spill(target, full, brief if len(brief.encode()) <= inline_bytes else pointer)
+    return Spill(target, full, search_program(inline_bytes).show(brief, pointer))
 
 
 @dataclass(frozen=True)
@@ -327,7 +325,7 @@ def selected_externalization(definition: Definition | None, source: Input, state
 
 DEFINITION = Definition(Policy(
     "research-spill-admission", "research-externalization", 0, family_id="F63",
-    prompts=("planner_steers", "webfetch_guards", "spill_cut", "search_inline_note"),
+    prompts=("planner_steers", "webfetch_guards", "search_inline_note"),
     state="session/task operations; reset invalidates pending delivery; exact owner settlement",
     services=("cached-document-facts", "guarded-spill-transport", "retained-delivery-observation"),
     hooks=(Reference("cria/externalization.py", "externalize"),),

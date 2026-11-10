@@ -41,7 +41,7 @@ from typing import Any, Optional
 
 from . import apidiscovery, brave, denial, fetchfacts, httpread, prompts, ratelimit
 from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
-                             SPILL_CONTENT_MAX, clip, est_tokens, html_to_text)
+                             clip, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
 from . import researchpolicies
 from . import content_reduce
@@ -571,16 +571,9 @@ def spill_reading_hint(path: str, limit: int) -> str:
     for url, cached in _DOC_CACHE.items():
         if os.path.basename(_spill_name(url)) != os.path.basename(os.path.normpath((path or "").strip())):
             continue
-        # MEASURE THE ARTIFACT THE SENTENCE IS ABOUT. The cached body is the WHOLE document; the file
-        # this sentence names is the spill, which stops at SPILL_CONTENT_MAX. Counting the first and
-        # naming the second told a coder "It is 2,414 lines" about a 1,656-line file and invited it to
-        # page past the end (cart-billing-go x nemotron-elastic 1787434778). The docstring above says
-        # nothing is measured on the filesystem, which is exactly why it has to measure the bytes that
-        # were WRITTEN rather than the ones that were fetched (#5b, #11b).
+        # MEASURE THE ARTIFACT THE SENTENCE IS ABOUT: the spill holds the whole document in its greppable form (nothing is cut: `answerops` writes it
+        # through `put` waves), so the lines counted are the lines of that file (#5b, #11b).
         body = _greppable(cached[2], cached[3], cached[1])
-        raw = body.encode("utf-8", "replace")
-        if len(raw) > SPILL_CONTENT_MAX:
-            body = raw[:SPILL_CONTENT_MAX].decode("utf-8", "ignore")
         lines = body.count("\n") + 1
         if lines < 2 or not body:
             return ""
@@ -692,10 +685,7 @@ def render_cached_spill(url: str, cached, *, _guidance=None) -> tuple:
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
     fmt = _doc_format(content)
-    # SAY WHAT ACTUALLY LANDS. `writeproxy._spill_command` cuts anything past SPILL_CONTENT_MAX and
-    # appends its own honest note — so this message claiming "saved IN FULL" put a flat
-    # contradiction in the same tool result. The composer holds both numbers; it picks the sentence.
-    whole = len(content.encode("utf-8", "replace")) <= SPILL_CONTENT_MAX
+    # The spill holds the WHOLE document (nothing is cut: `answerops` writes it through `put` waves), and the sentence says so.
     fmt_clause = f" It is {fmt}." if fmt else ""
     if html_page_about_a_file(url, content):
         # SAY WHAT WAS SAVED. The next message tells the reader to grep this file; without this it
@@ -703,7 +693,7 @@ def render_cached_spill(url: str, cached, *, _guidance=None) -> tuple:
         fmt_clause += " " + _guard_msg("spill_is_the_page_not_the_file")
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
                      chars=f"{len(content):,}", target=target,
-                     extent=_guard_msg("spill_extent_full" if whole else "spill_extent_cut"),
+                     extent=_guard_msg("spill_extent_full"),
                      format=fmt_clause,
                      outline=_spill_outline(parsed, target, _guidance=_guidance))
     return status, target, content, msg
@@ -720,11 +710,7 @@ def spill_extent_of(url: str) -> str:
     14% of its document. The coder then grepped the part cria kept and read the absence as the
     library's, not the file's (#5b)."""
     cached = _DOC_CACHE.get(url)
-    if cached is None:
-        return _guard_msg("spill_extent_unknown")
-    content = _greppable(cached[2], cached[3], cached[1])
-    whole = len(content.encode("utf-8", "replace")) <= SPILL_CONTENT_MAX
-    return _guard_msg("spill_extent_full" if whole else "spill_extent_cut")
+    return _guard_msg("spill_extent_unknown" if cached is None else "spill_extent_full")
 
 
 def _ref_map(parsed: Any) -> dict:

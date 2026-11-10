@@ -7,9 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from cria import assistruntime, loop, webfetch as wf, writeproxy, wsview
+from cria import assistruntime, brave, loop, webfetch as wf, writeproxy, wsview
 from cria.loop import LoopStore
+from cria.ops import Ops
 from research_discovery_helpers import surveyed
+from survey_fixtures import SHELL as ENGINE_SHELL, harness_env
 
 URL = "https://docs.example.com/big"
 SHELL = {"name": "shell", "parameters": {}}
@@ -23,53 +25,65 @@ def clean(monkeypatch):
     wf.clear_cache()
 
 class Harness:
-    """Lower web_fetch through the real writeproxy and run the command in a real shell inside a workspace."""
+    """Lower web_fetch through the real writeproxy into the real engine and run the engine's calls with the real stubs, with bash, in a real workspace;
+    the offers settle from the ledger the way the server does it."""
     def __init__(self, tmp_path, doc):
         self.ws, self.session = str(tmp_path), "sp-" + uuid4().hex
         self.store = LoopStore()
         self.owner = self.store.get_guard(self.session, create=True)
+        self.ops, self.intents = Ops(), []
         self.patch = mock.patch.object(wf, "fetch", lambda u, ua=None: wf.FetchResult(200, u, "application/json", doc, False))
+
+    def issue_answer(self, call, args, answer):
+        self.intents.append(answer)
+        return self.ops.issue_answer(self.session, ENGINE_SHELL, call, answer, workspace_root=self.ws, level="write")
+
     def lower(self, cid="t1", **kw):
         comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {
             "name": "web_fetch", "arguments": json.dumps({"url": URL, **kw})}}]}}]}
-        writeproxy.translate_outbound(comp, SHELL, injected={"web_fetch"}, session=self.session, workspace_root=self.ws,
-                                      externalization_owner=self.owner)
+        writeproxy.translate_outbound(comp, ENGINE_SHELL, injected={"web_fetch"}, session=self.session, workspace_root=self.ws,
+                                      externalization_owner=self.owner, issue_answer=self.issue_answer)
         return comp, comp["choices"][0]["message"]["tool_calls"][0]
+
     def deliver(self, cid="t1"):
+        """The whole round: lower, hand the completion back (the call is retained), run every call the engine asks for, settle. Returns what the model
+        is told, the file saved and the engine's final record."""
         comp, call = self.lower(cid)
-        command = writeproxy._command_of(call["function"]["arguments"])
         writeproxy.retain_externalizations(self.owner, comp)
-        done = subprocess.run(["bash", "-c", command], cwd=self.ws, capture_output=True, text=True)
-        assert done.returncode == 0, done.stderr
-        history = [{"role": "assistant", "tool_calls": [call]},
-                   {"role": "tool", "tool_call_id": call["id"], "content": f"Process exited with code 0\nOutput:\n{done.stdout}"}]
-        writeproxy.observe_externalization_results(self.store.get_guard(self.session), history)
-        return done.stdout, open(os.path.join(self.ws, "tmp/reference/docs.example.com_big.txt")).read()
+        history, calls = [], [call]
+        while calls:
+            history.append({"role": "assistant", "tool_calls": calls})
+            for tc in calls:
+                done = subprocess.run(["bash", "-c", json.loads(tc["function"]["arguments"])["cmd"]], cwd=self.ws, env=harness_env(self.ws),
+                                      capture_output=True, text=True, timeout=60)
+                history.append({"role": "tool", "tool_call_id": tc["id"], "content": done.stdout + done.stderr})
+            taken = self.ops.incoming(self.session, history)
+            calls = taken.calls
+        writeproxy.settle_externalizations(self.owner, taken.externalized)
+        told = next(m["content"] for m in taken.messages if m.get("role") == "tool")
+        final = next(o.final for o in self.ops.ledger.ops(self.session).values() if o.call.get("id") == cid)
+        return told, open(os.path.join(self.ws, "tmp/reference/docs.example.com_big.txt")).read(), final
 
 def doc_of(chars):
     n = chars // 230
     return json.dumps({"paths": {f"/p{i}": {"get": {"summary": "x" * 200}} for i in range(n)}})
 
-def test_a_spill_holds_the_whole_document_or_says_exactly_where_it_stops(tmp_path):
-    """A doc that fits one command is saved byte-for-byte 'IN FULL'; a bigger one is cut, and the file AND the pointer state the counts."""
-    small = doc_of(30_000)
-    h = Harness(tmp_path / "a", small)
-    (tmp_path / "a").mkdir()
-    with h.patch:
-        wf.fetch_nav(URL)
-        out, saved = h.deliver()
-    full = wf.spill_content(*wf.reduce_for_cache(small, "application/json", URL), "application/json")
-    assert saved == full and "IN FULL" in out and "API endpoints" in out
-    big = doc_of(100_000)
-    (tmp_path / "b").mkdir()
-    h = Harness(tmp_path / "b", big)
-    with h.patch:
-        wf.fetch_nav(URL)
-        out, saved = h.deliver()
-    whole = wf.spill_content(*wf.reduce_for_cache(big, "application/json", URL), "application/json")
-    assert saved.startswith(whole[:wf.SPILL_CONTENT_MAX - 200]) and f"first {wf.SPILL_CONTENT_MAX:,}" in saved and f"{len(whole):,}-character" in saved
-    assert "IN FULL" not in out and "the file itself says where it stops" in out
-    assert json.loads(out.splitlines()[0])["rep"]["st"]["byte_count"] == len(saved.encode())   # the stored fact is typed and true
+def test_a_spill_holds_the_whole_document_at_any_size_and_its_stored_fact_is_the_ledgers(tmp_path):
+    """A doc is saved byte-for-byte 'IN FULL' however large (no command's size cuts it any more); the pointer says so; the stored fact is typed and true,
+    computed from the bytes cria sent and confirmed by the harness, and it is what settles the offer."""
+    for name, chars in (("a", 30_000), ("b", 100_000), ("c", 250_000)):
+        doc = doc_of(chars)
+        (tmp_path / name).mkdir()
+        h = Harness(tmp_path / name, doc)
+        with h.patch:
+            wf.fetch_nav(URL)
+            out, saved, final = h.deliver()
+        full = wf.spill_content(*wf.reduce_for_cache(doc, "application/json", URL), "application/json")
+        assert saved == full and "IN FULL" in out and "API endpoints" in out and "the file itself says where it stops" not in out
+        assert final["rep"]["st"]["byte_count"] == len(saved.encode()) and final["ext"]["stored"] == final["rep"]["st"]       # the stored fact is typed and true
+        assert wf.already_spilled(h.session, URL, h.ws)                                                                     # the offer settled on it
+        wf.clear_cache()
+
 
 def test_a_spilled_doc_is_not_refetched_after_compaction_but_a_targeted_read_is_answered(tmp_path):
     """live 0727-104845: the harness compacted the spilled result away and the coder re-fetched the SAME url 19 times."""
@@ -77,11 +91,11 @@ def test_a_spilled_doc_is_not_refetched_after_compaction_but_a_targeted_read_is_
     with h.patch, mock.patch("urllib.request.urlopen", side_effect=AssertionError("no network")):
         h.deliver()
         wf.set_visible(h.session, [], [])
-        _, again = h.lower("t2")
-        text = writeproxy._command_of(again["function"]["arguments"])
-        assert wf._spill_name(URL) in text and "base64 -d" not in text   # re-pointed at the file, not written over itself
-        _, nav = h.lower("t3", find="/p42")
-        assert wf._spill_name(URL) not in writeproxy._command_of(nav["function"]["arguments"])   # navigation is not a re-fetch
+        h.lower("t2")
+        again = h.intents[-1]
+        assert wf._spill_name(URL) in again.text and again.save is None   # re-pointed at the file, not written over itself
+        h.lower("t3", find="/p42")
+        assert wf._spill_name(URL) not in h.intents[-1].text and h.intents[-1].save is None   # navigation is not a re-fetch
 
 def test_the_spill_refusal_answers_with_the_outline_it_holds_and_invents_none(tmp_path):
     """ada-handles pon_1785721353: every route to the spec was refused and 'grep it' had no operand (47% of refusals carried no outline)."""
@@ -179,7 +193,7 @@ def test_the_window_a_spill_names_is_measured_and_honoured_by_the_ranged_read():
     assert "fits in one read" in hint and numbered(end) <= 9000
 
 def test_what_a_spill_says_about_the_file_is_about_the_file():
-    """A page about a file is not the file; a cut copy is never called whole; the line count is the file's own."""
+    """A page about a file is not the file; the line count is the file's own."""
     blob, raw = "https://github.com/shopspring/decimal/blob/master/decimal.go", "https://raw.githubusercontent.com/shopspring/decimal/master/decimal.go"
     page = "<!doctype html>" + '<link rel="stylesheet" href="a.css">' * 40
     assert wf.html_page_about_a_file(blob, page) and not wf.html_page_about_a_file("https://example.com/docs", page)
@@ -190,26 +204,31 @@ def test_what_a_spill_says_about_the_file_is_about_the_file():
     u = "https://raw.githubusercontent.com/x/y/master/big.txt"
     whole = "\n".join(f"line {i} " + "z" * 60 for i in range(4_000))
     wf._DOC_CACHE[u] = (200, "text/plain", whole, None, False)
-    on_disk = whole.encode()[:wf.SPILL_CONTENT_MAX].decode("utf-8", "ignore")   # cart-billing-go: 'saved IN FULL' beside '2,414 lines' of a 1,656-line file
-    assert "IN FULL" not in wf.spill_extent_of(u) and f"{on_disk.count(chr(10)) + 1:,} lines" in wf.spill_reading_hint(wf._spill_name(u), 4_000)
+    # cart-billing-go: 'saved IN FULL' beside '2,414 lines' of a 1,656-line file. The spill holds the whole document now, so both say the file's own: IN FULL, and its lines.
+    assert wf.spill_extent_of(u) == "IN FULL" and f"{whole.count(chr(10)) + 1:,} lines" in wf.spill_reading_hint(wf._spill_name(u), 4_000)
 
 @pytest.mark.parametrize("payload,start,descr", [({"web": {"results": []}}, "0 results:", None),
                                                  ({"web": {"results": [{"title": "t", "url": "u", "description": "Arbitrary-precision decimals"}]}}, "1 results:", "Arbitrary-precision")])
 def test_a_search_always_leaves_the_file_it_promised_with_the_full_descriptions(tmp_path, payload, start, descr):
     """cart-billing-go: a no-result search remembered a spill path and wrote nothing; the coder read a phantom 3 times."""
     query, session = f"go decimal {start}", "sid:search-" + uuid4().hex
-    store = LoopStore()
+    store, ops = LoopStore(), Ops()
     owner = store.get_guard(session, create=True)
     comp = {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "c", "type": "function", "function": {
         "name": "web_search", "arguments": json.dumps({"query": query})}}]}}]}
-    shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
-    with assistruntime.bound(assistruntime.AssistRuntime.select(level=2)):
-        lowered = writeproxy.translate_outbound(comp, shell, injected={"web_search"}, brave_key="k", session=session, externalization_owner=owner)
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=2)), mock.patch.object(brave, "search", return_value=brave.Answer(body=json.dumps(payload))):
+        lowered = writeproxy.translate_outbound(comp, ENGINE_SHELL, injected={"web_search"}, brave_key="k", session=session, externalization_owner=owner,
+                                                issue_answer=lambda call, args, answer: ops.issue_answer(session, ENGINE_SHELL, call, answer, workspace_root=str(tmp_path), level="write"))
         writeproxy.retain_externalizations(owner, lowered)
-        command = json.loads(lowered["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
-        parser = command.partition(" | ")[2].rpartition(" || printf")[0]
-        done = subprocess.run(["bash", "-c", parser], input=json.dumps(payload), capture_output=True, text=True, cwd=tmp_path)
-        writeproxy.observe_externalization_results(owner, [lowered["choices"][0]["message"], {"role": "tool", "tool_call_id": "c", "content": done.stdout}])
+    history, calls = [], lowered["choices"][0]["message"]["tool_calls"]
+    while calls:
+        history.append({"role": "assistant", "tool_calls": calls})
+        for tc in calls:
+            done = subprocess.run(["bash", "-c", json.loads(tc["function"]["arguments"])["cmd"]], cwd=tmp_path, env=harness_env(tmp_path), capture_output=True, text=True, timeout=60)
+            history.append({"role": "tool", "tool_call_id": tc["id"], "content": done.stdout + done.stderr})
+        taken = ops.incoming(session, history)
+        calls = taken.calls
+    writeproxy.settle_externalizations(owner, taken.externalized)
     spill = tmp_path / wf.search_spill_name(query)
-    assert done.returncode == 0 and spill.is_file() and spill.read_text().startswith(start)
+    assert spill.is_file() and spill.read_text().startswith(start)
     assert wf.spilled_path(session, query) == wf.search_spill_name(query) and (descr is None or descr in spill.read_text())

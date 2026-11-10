@@ -1,0 +1,1 @@
+The pattern and path of this search are too long to carry in one call (the limit is {{LIMIT}} bytes together). Use a shorter pattern.

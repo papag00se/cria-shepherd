@@ -1,0 +1,1 @@
+The result could not be confirmed saved to {{TARGET}}: the harness's reply did not come back intact, so that file may be missing or incomplete. Do not rely on it; ask again.

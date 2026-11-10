@@ -77,7 +77,7 @@ from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow
 from . import wsview, generation
 from .writeproxy import (advertise, native_search_name, needs_translation, redact_secrets,
                          represent_inbound, translate_outbound, retain_externalizations,
-                         observe_externalization_results)
+                         settle_externalizations)
 
 
 def _error_sse(message: str | dict) -> bytes:
@@ -1402,7 +1402,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                                          survey=self._survey_ask(body, sess_key, before))
         body['messages'] = taken.messages
         self._ops_outcomes, self._ops_reads, self._ops_writes, self._read_facts = taken.outcomes, taken.reads, taken.writes, taken.facts
-        self._ops_surveys = taken.surveys
+        self._ops_surveys, self._ops_answers = taken.surveys, taken.answers
+        if taken.externalized and (owner := self.server.loop_store.get_guard(sess_key)) is not None:
+            settle_externalizations(owner, taken.externalized)      # the ledger says which saved files landed: the offers settle on that, nothing else
         if not taken.calls:
             return False
         completion = {'id': 'ops_' + uuid.uuid4().hex, 'object': 'chat.completion',
@@ -1448,7 +1450,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             return None
         again['messages'] = taken.messages
         self._ops_outcomes, self._ops_reads, self._ops_writes, self._read_facts = taken.outcomes, taken.reads, taken.writes, taken.facts
-        self._ops_surveys = taken.surveys
+        self._ops_surveys, self._ops_answers = taken.surveys, taken.answers
         self._strip_and_reframe_inbound(again, sess_key, rlog)
         self._setup_translation(again, sess_key, rlog)
         return again
@@ -1714,9 +1716,6 @@ class CriaHandler(BaseHTTPRequestHandler):
         checks under another. On the Responses path the reader key is ``sid:<sess>`` (from the body's
         cache key), NOT ``session_key(headers, messages)`` — so passing the caller's sess_key here is
         what lets the 'you already fetched this' refusal fire (it re-fetched openapi.json 10+ times)."""
-        owner = self.server.loop_store.get_guard(sess_key)
-        if owner is not None:
-            observe_externalization_results(owner, body.get('messages') or [])
         self._shell_tool = None
         self._synthetic: set[str] = set()
         self._native_search = None
@@ -1760,7 +1759,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                               ledger_outcomes=getattr(self, '_ops_outcomes', None),
                               ledger_reads=getattr(self, '_ops_reads', None),
                               ledger_writes=getattr(self, '_ops_writes', None),
-                              ledger_surveys=getattr(self, '_ops_surveys', None)),
+                              ledger_surveys=getattr(self, '_ops_surveys', None),
+                              ledger_answers=getattr(self, '_ops_answers', None)),
             self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness
@@ -1886,6 +1886,12 @@ class CriaHandler(BaseHTTPRequestHandler):
                                issue_mutations=lambda requests: self.server.ops.issue_mutations(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, requests, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ()), log=rlog),
+                               issue_answer=lambda call, args, answer: self.server.ops.issue_answer(
+                                   getattr(self, '_ops_session', sess_key), self._shell_tool, call, answer, workspace_root=getattr(self, "_workspace_root", None),
+                                   level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())),
+                               issue_search=lambda call, args: self.server.ops.issue_search(
+                                   getattr(self, '_ops_session', sess_key), self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),
+                                   level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())),
                                issue_list_dir=lambda call, args: self.server.ops.issue_list_dir(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())))

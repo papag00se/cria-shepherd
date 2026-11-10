@@ -71,6 +71,8 @@ class LoweringRequest:
     safe_path: str = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'   # [harness] safe_path: where `python3` is looked up
     issue_read: Callable[[dict, dict, dict | None], dict | None] | None = None   # (call, arguments, held-write facts) -> the harness call
     issue_mutations: Callable[[list], list] | None = None   # ([MutationRequest]) -> one harness call each, in order (cria.ops)
+    issue_answer: Callable[[dict, dict, object], dict] | None = None   # (call, arguments, AnswerIntent) -> the harness call (cria.answerops)
+    issue_search: Callable[[dict, dict], dict] | None = None   # (call, arguments) -> the harness call (cria.searchops)
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,34 @@ class ReadIntent:
 
 
 @dataclass(frozen=True)
+class SaveIntent:
+    """A file cria saves where the model can read and search it (the workspace's reference directory) before the answer is true: ``target`` is the
+    workspace-relative path (``./tmp/reference/...``), ``content`` the whole text, ``operation`` the externalization offer it settles."""
+    target: str
+    content: str
+    operation: str | None = None
+
+
+@dataclass(frozen=True)
+class AnswerIntent:
+    """The call is answered with text cria already holds (a fetched page, a search's results): cria carries it out through the harness primitives
+    (cria.answerops), saving ``save`` first when there is one. ``text`` is what the model is told once that is done, ``outcome`` how the call ended,
+    ``rep`` the typed facts the readers of the history ask for (a fetch's facts), ``label`` what the harness transcript names the call."""
+    tool: str
+    label: str
+    text: str
+    outcome: str
+    rep: dict | None = None
+    save: SaveIntent | None = None
+
+
+@dataclass(frozen=True)
+class SearchIntent:
+    """The call is a ``grep`` or a ``glob``: cria walks the tree with the harness's ``ls``, decides what is searched, searches with ``search`` and
+    answers in its own words (cria.searchops)."""
+
+
+@dataclass(frozen=True)
 class ReviewTerms:
     """The candidate-safety policy is selected: every complete candidate is reviewed under these terms before it lands."""
     permission: str
@@ -133,7 +163,7 @@ class MutateIntent:
 
 
 # None means not applicable, RewrittenCall continues, ShellCommand and ReadIntent terminate.
-OutboundEffect = RewrittenCall | ShellCommand | ReadIntent | None
+OutboundEffect = RewrittenCall | ShellCommand | ReadIntent | None   # an AnswerIntent or SearchIntent comes from the lowering of the research and search tools
 
 
 @dataclass(frozen=True)

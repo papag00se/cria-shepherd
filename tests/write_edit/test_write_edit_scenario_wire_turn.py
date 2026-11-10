@@ -14,31 +14,12 @@ KEY = "brv-secret-key-123456"
 BRAVE = '{"web":{"results":[{"title":"Walrus op","url":"https://x.test/w","description":"The := operator"}]}}'
 
 
-def test_a_search_call_runs_spills_its_descriptions_and_the_model_sees_the_tool_it_called_without_the_key(tmp_path):
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    sent = []
-
-    def urlopen(req, timeout=None):
-        sent.append(req.get_header("X-subscription-token"))
-        reply = io.BytesIO(BRAVE.encode())
-        reply.status, reply.headers = 200, {}
-        return reply
-    with mock.patch("urllib.request.urlopen", urlopen):
-        tc = lower([call("web_search", {"query": "python walrus"}, "q1")], injected=("web_search",), brave_key=KEY, session="s")[0]
-    assert tc["function"]["name"] == "exec_command" and sent == [KEY] and KEY not in command_of(tc)     # cria's own request carries the key; the harness's command never does
-    done = subprocess.run(["bash", "-c", command_of(tc)], cwd=ws, env=harness_env(ws), capture_output=True, text=True, timeout=30)
-    spill = next((ws / "tmp/reference").glob("search-python_walrus-*.txt"))
-    assert done.returncode == 0 and "The := operator" in spill.read_text()
-    echoed = {"role": "tool", "tool_call_id": "q1", "content": ENVELOPE.format(rc=0) + done.stdout + "\ncurl -H 'X-Subscription-Token: " + KEY + "'"}
+def test_the_search_key_reaches_only_cria_own_request_and_every_secret_is_redacted_from_the_history(tmp_path):
+    """cria's own request carries the key; no harness command ever does (the answer, the saved file and the call the model sees are checked in
+    tests/harness_primitives/test_answer_ops.py through a real server); and the last-resort backstop redacts a secret that reaches the history any other way."""
+    tc = {"id": "q1", "type": "function", "function": {"name": "web_search", "arguments": json.dumps({"query": "python walrus"})}}
+    echoed = {"role": "tool", "tool_call_id": "q1", "content": ENVELOPE.format(rc=0) + "1 results:\nWalrus op\n\ncurl -H 'X-Subscription-Token: " + KEY + "'"}
     history = [{"role": "assistant", "tool_calls": [tc]}, echoed]
-    token = wsview.bind(wsview.View(str(ws), "we"))
-    try:
-        shown = writeproxy.represent_inbound(history, workspace_root=str(ws))
-    finally:
-        wsview.unbind(token)
-    assert json.loads(shown[0]["tool_calls"][0]["function"]["arguments"]) == {"query": "python walrus"} and shown[0]["tool_calls"][0]["function"]["name"] == "web_search"
-    assert "1 results:\nWalrus op\n  https://x.test/w" in shown[1]["content"] and spill.name in shown[1]["content"]
     safe = writeproxy.redact_secrets([{"role": "assistant", "tool_calls": [tc]}, {**echoed, "output": KEY}, {"role": "user", "content": [{"type": "text", "text": KEY}, "x"]}, "raw"],
                                      [KEY, "short"])
     assert KEY not in json.dumps(safe) and "X-Subscription-Token: ***" in safe[1]["content"] and safe[3] == "raw"

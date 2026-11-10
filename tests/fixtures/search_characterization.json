@@ -1063,6 +1063,31 @@
    "w.txt:2:b\r\r\n"
   ]
  },
+ "g_empty_matches_at_eof": {
+  "command_bytes": 16236,
+  "disk": {
+   "a.txt": {
+    "mode": "0o744",
+    "size": 5,
+    "text": "x\n\ny\n"
+   },
+   "b.txt": {
+    "mode": "0o744",
+    "size": 2,
+    "text": "z\n"
+   },
+   "c.txt": {
+    "mode": "0o744",
+    "size": 3,
+    "text": "q\n\n"
+   }
+  },
+  "harness_calls": 1,
+  "requests": 2,
+  "results": [
+   "a.txt:2:\r\nc.txt:2:\r\n"
+  ]
+ },
  "g_empty_pattern": {
   "command_bytes": 16208,
   "disk": {
@@ -2246,6 +2271,1056 @@
    "d00/f0.txt:1:needle\r\nd00/f1.txt:1:needle\r\nd00/f2.txt:1:needle\r\nd00/f3.txt:1:needle\r\nd01/f0.txt:1:needle\r\nd01/f1.txt:1:needle\r\nd01/f2.txt:1:needle\r\nd01/f3.txt:1:needle\r\nd02/f0.txt:1:needle\r\nd02/f1.txt:1:needle\r\nd02/f2.txt:1:needle\r\nd02/f3.txt:1:needle\r\nd03/f0.txt:1:needle\r\nd03/f1.txt:1:needle\r\nd03/f2.txt:1:needle\r\nd03/f3.txt:1:needle\r\nd04/f0.txt:1:needle\r\nd04/f1.txt:1:needle\r\nd04/f2.txt:1:needle\r\nd04/f3.txt:1:needle\r\nd05/f0.txt:1:needle\r\nd05/f1.txt:1:needle\r\nd05/f2.txt:1:needle\r\nd05/f3.txt:1:needle\r\nd06/f0.txt:1:needle\r\nd06/f1.txt:1:needle\r\nd06/f2.txt:1:needle\r\nd06/f3.txt:1:needle\r\nd07/f0.txt:1:needle\r\nd07/f1.txt:1:needle\r\nd07/f2.txt:1:needle\r\nd07/f3.txt:1:needle\r\nd08/f0.txt:1:needle\r\nd08/f1.txt:1:needle\r\nd08/f2.txt:1:needle\r\nd08/f3.txt:1:needle\r\nd09/f0.txt:1:needle\r\nd09/f1.txt:1:needle\r\nd09/f2.txt:1:needle\r\nd09/f3.txt:1:needle\r\nd10/f0.txt:1:needle\r\nd10/f1.txt:1:needle\r\nd10/f2.txt:1:needle\r\nd10/f3.txt:1:needle\r\nd11/f0.txt:1:needle\r\nd11/f1.txt:1:needle\r\nd11/f2.txt:1:needle\r\nd11/f3.txt:1:needle\r\nd12/f0.txt:1:needle\r\nd12/f1.txt:1:needle\r\nd12/f2.txt:1:needle\r\nd12/f3.txt:1:needle\r\nd13/f0.txt:1:needle\r\nd13/f1.txt:1:needle\r\nd13/f2.txt:1:needle\r\nd13/f3.txt:1:needle\r\nd14/f0.txt:1:needle\r\nd14/f1.txt:1:needle\r\nd14/f2.txt:1:needle\r\nd14/f3.txt:1:needle\r\nd15/f0.txt:1:needle\r\nd15/f1.txt:1:needle\r\nd15/f2.txt:1:needle\r\nd15/f3.txt:1:needle\r\nd16/f0.txt:1:needle\r\nd16/f1.txt:1:needle\r\nd16/f2.txt:1:needle\r\nd16/f3.txt:1:needle\r\nd17/f0.txt:1:needle\r\nd17/f1.txt:1:needle\r\nd17/f2.txt:1:needle\r\nd17/f3.txt:1:needle\r\nd18/f0.txt:1:needle\r\nd18/f1.txt:1:needle\r\nd18/f2.txt:1:needle\r\nd18/f3.txt:1:needle\r\nd19/f0.txt:1:needle\r\nd19/f1.txt:1:needle\r\nd19/f2.txt:1:needle\r\nd19/f3.txt:1:needle\r\nd20/f0.txt:1:needle\r\nd20/f1.txt:1:needle\r\nd20/f2.txt:1:needle\r\nd20/f3.txt:1:needle\r\nd21/f0.txt:1:needle\r\nd21/f1.txt:1:needle\r\nd21/f2.txt:1:needle\r\nd21/f3.txt:1:needle\r\nd22/f0.txt:1:needle\r\nd22/f1.txt:1:needle\r\nd22/f2.txt:1:needle\r\nd22/f3.txt:1:needle\r\nd23/f0.txt:1:needle\r\nd23/f1.txt:1:needle\r\nd23/f2.txt:1:needle\r\nd23/f3.txt:1:needle\r\nd24/f0.txt:1:needle\r\nd24/f1.txt:1:needle\r\nd24/f2.txt:1:needle\r\nd24/f3.txt:1:needle\r\nd25/f0.txt:1:needle\r\nd25/f1.txt:1:needle\r\nd25/f2.txt:1:needle\r\nd25/f3.txt:1:needle\r\nd26/f0.txt:1:needle\r\nd26/f1.txt:1:needle\r\nd26/f2.txt:1:needle\r\nd26/f3.txt:1:needle\r\nd27/f0.txt:1:needle\r\nd27/f1.txt:1:needle\r\nd27/f2.txt:1:needle\r\nd27/f3.txt:1:needle\r\nd28/f0.txt:1:needle\r\nd28/f1.txt:1:needle\r\nd28/f2.txt:1:needle\r\nd28/f3.txt:1:needle\r\nd29/f0.txt:1:needle\r\nd29/f1.txt:1:needle\r\nd29/f2.txt:1:needle\r\nd29/f3.txt:1:needle\r\n"
   ]
  },
+ "g_matches_everywhere_200_files": {
+  "command_bytes": 16228,
+  "disk": {
+   "d0/": {
+    "mode": "0o755"
+   },
+   "d0/f000.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 0\nline two of 0\n"
+   },
+   "d0/f009.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 9\nline two of 9\n"
+   },
+   "d0/f018.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 18\nline two of 18\n"
+   },
+   "d0/f027.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 27\nline two of 27\n"
+   },
+   "d0/f036.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 36\nline two of 36\n"
+   },
+   "d0/f045.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 45\nline two of 45\n"
+   },
+   "d0/f054.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 54\nline two of 54\n"
+   },
+   "d0/f063.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 63\nline two of 63\n"
+   },
+   "d0/f072.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 72\nline two of 72\n"
+   },
+   "d0/f081.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 81\nline two of 81\n"
+   },
+   "d0/f090.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 90\nline two of 90\n"
+   },
+   "d0/f099.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 99\nline two of 99\n"
+   },
+   "d0/f108.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 108\nline two of 108\n"
+   },
+   "d0/f117.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 117\nline two of 117\n"
+   },
+   "d0/f126.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 126\nline two of 126\n"
+   },
+   "d0/f135.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 135\nline two of 135\n"
+   },
+   "d0/f144.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 144\nline two of 144\n"
+   },
+   "d0/f153.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 153\nline two of 153\n"
+   },
+   "d0/f162.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 162\nline two of 162\n"
+   },
+   "d0/f171.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 171\nline two of 171\n"
+   },
+   "d0/f180.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 180\nline two of 180\n"
+   },
+   "d0/f189.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 189\nline two of 189\n"
+   },
+   "d0/f198.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 198\nline two of 198\n"
+   },
+   "d1/": {
+    "mode": "0o755"
+   },
+   "d1/f001.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 1\nline two of 1\n"
+   },
+   "d1/f010.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 10\nline two of 10\n"
+   },
+   "d1/f019.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 19\nline two of 19\n"
+   },
+   "d1/f028.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 28\nline two of 28\n"
+   },
+   "d1/f037.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 37\nline two of 37\n"
+   },
+   "d1/f046.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 46\nline two of 46\n"
+   },
+   "d1/f055.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 55\nline two of 55\n"
+   },
+   "d1/f064.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 64\nline two of 64\n"
+   },
+   "d1/f073.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 73\nline two of 73\n"
+   },
+   "d1/f082.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 82\nline two of 82\n"
+   },
+   "d1/f091.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 91\nline two of 91\n"
+   },
+   "d1/f100.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 100\nline two of 100\n"
+   },
+   "d1/f109.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 109\nline two of 109\n"
+   },
+   "d1/f118.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 118\nline two of 118\n"
+   },
+   "d1/f127.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 127\nline two of 127\n"
+   },
+   "d1/f136.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 136\nline two of 136\n"
+   },
+   "d1/f145.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 145\nline two of 145\n"
+   },
+   "d1/f154.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 154\nline two of 154\n"
+   },
+   "d1/f163.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 163\nline two of 163\n"
+   },
+   "d1/f172.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 172\nline two of 172\n"
+   },
+   "d1/f181.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 181\nline two of 181\n"
+   },
+   "d1/f190.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 190\nline two of 190\n"
+   },
+   "d1/f199.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 199\nline two of 199\n"
+   },
+   "d2/": {
+    "mode": "0o755"
+   },
+   "d2/f002.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 2\nline two of 2\n"
+   },
+   "d2/f011.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 11\nline two of 11\n"
+   },
+   "d2/f020.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 20\nline two of 20\n"
+   },
+   "d2/f029.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 29\nline two of 29\n"
+   },
+   "d2/f038.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 38\nline two of 38\n"
+   },
+   "d2/f047.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 47\nline two of 47\n"
+   },
+   "d2/f056.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 56\nline two of 56\n"
+   },
+   "d2/f065.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 65\nline two of 65\n"
+   },
+   "d2/f074.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 74\nline two of 74\n"
+   },
+   "d2/f083.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 83\nline two of 83\n"
+   },
+   "d2/f092.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 92\nline two of 92\n"
+   },
+   "d2/f101.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 101\nline two of 101\n"
+   },
+   "d2/f110.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 110\nline two of 110\n"
+   },
+   "d2/f119.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 119\nline two of 119\n"
+   },
+   "d2/f128.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 128\nline two of 128\n"
+   },
+   "d2/f137.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 137\nline two of 137\n"
+   },
+   "d2/f146.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 146\nline two of 146\n"
+   },
+   "d2/f155.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 155\nline two of 155\n"
+   },
+   "d2/f164.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 164\nline two of 164\n"
+   },
+   "d2/f173.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 173\nline two of 173\n"
+   },
+   "d2/f182.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 182\nline two of 182\n"
+   },
+   "d2/f191.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 191\nline two of 191\n"
+   },
+   "d3/": {
+    "mode": "0o755"
+   },
+   "d3/f003.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 3\nline two of 3\n"
+   },
+   "d3/f012.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 12\nline two of 12\n"
+   },
+   "d3/f021.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 21\nline two of 21\n"
+   },
+   "d3/f030.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 30\nline two of 30\n"
+   },
+   "d3/f039.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 39\nline two of 39\n"
+   },
+   "d3/f048.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 48\nline two of 48\n"
+   },
+   "d3/f057.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 57\nline two of 57\n"
+   },
+   "d3/f066.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 66\nline two of 66\n"
+   },
+   "d3/f075.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 75\nline two of 75\n"
+   },
+   "d3/f084.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 84\nline two of 84\n"
+   },
+   "d3/f093.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 93\nline two of 93\n"
+   },
+   "d3/f102.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 102\nline two of 102\n"
+   },
+   "d3/f111.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 111\nline two of 111\n"
+   },
+   "d3/f120.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 120\nline two of 120\n"
+   },
+   "d3/f129.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 129\nline two of 129\n"
+   },
+   "d3/f138.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 138\nline two of 138\n"
+   },
+   "d3/f147.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 147\nline two of 147\n"
+   },
+   "d3/f156.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 156\nline two of 156\n"
+   },
+   "d3/f165.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 165\nline two of 165\n"
+   },
+   "d3/f174.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 174\nline two of 174\n"
+   },
+   "d3/f183.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 183\nline two of 183\n"
+   },
+   "d3/f192.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 192\nline two of 192\n"
+   },
+   "d4/": {
+    "mode": "0o755"
+   },
+   "d4/f004.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 4\nline two of 4\n"
+   },
+   "d4/f013.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 13\nline two of 13\n"
+   },
+   "d4/f022.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 22\nline two of 22\n"
+   },
+   "d4/f031.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 31\nline two of 31\n"
+   },
+   "d4/f040.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 40\nline two of 40\n"
+   },
+   "d4/f049.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 49\nline two of 49\n"
+   },
+   "d4/f058.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 58\nline two of 58\n"
+   },
+   "d4/f067.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 67\nline two of 67\n"
+   },
+   "d4/f076.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 76\nline two of 76\n"
+   },
+   "d4/f085.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 85\nline two of 85\n"
+   },
+   "d4/f094.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 94\nline two of 94\n"
+   },
+   "d4/f103.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 103\nline two of 103\n"
+   },
+   "d4/f112.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 112\nline two of 112\n"
+   },
+   "d4/f121.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 121\nline two of 121\n"
+   },
+   "d4/f130.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 130\nline two of 130\n"
+   },
+   "d4/f139.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 139\nline two of 139\n"
+   },
+   "d4/f148.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 148\nline two of 148\n"
+   },
+   "d4/f157.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 157\nline two of 157\n"
+   },
+   "d4/f166.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 166\nline two of 166\n"
+   },
+   "d4/f175.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 175\nline two of 175\n"
+   },
+   "d4/f184.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 184\nline two of 184\n"
+   },
+   "d4/f193.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 193\nline two of 193\n"
+   },
+   "d5/": {
+    "mode": "0o755"
+   },
+   "d5/f005.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 5\nline two of 5\n"
+   },
+   "d5/f014.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 14\nline two of 14\n"
+   },
+   "d5/f023.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 23\nline two of 23\n"
+   },
+   "d5/f032.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 32\nline two of 32\n"
+   },
+   "d5/f041.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 41\nline two of 41\n"
+   },
+   "d5/f050.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 50\nline two of 50\n"
+   },
+   "d5/f059.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 59\nline two of 59\n"
+   },
+   "d5/f068.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 68\nline two of 68\n"
+   },
+   "d5/f077.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 77\nline two of 77\n"
+   },
+   "d5/f086.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 86\nline two of 86\n"
+   },
+   "d5/f095.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 95\nline two of 95\n"
+   },
+   "d5/f104.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 104\nline two of 104\n"
+   },
+   "d5/f113.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 113\nline two of 113\n"
+   },
+   "d5/f122.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 122\nline two of 122\n"
+   },
+   "d5/f131.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 131\nline two of 131\n"
+   },
+   "d5/f140.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 140\nline two of 140\n"
+   },
+   "d5/f149.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 149\nline two of 149\n"
+   },
+   "d5/f158.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 158\nline two of 158\n"
+   },
+   "d5/f167.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 167\nline two of 167\n"
+   },
+   "d5/f176.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 176\nline two of 176\n"
+   },
+   "d5/f185.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 185\nline two of 185\n"
+   },
+   "d5/f194.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 194\nline two of 194\n"
+   },
+   "d6/": {
+    "mode": "0o755"
+   },
+   "d6/f006.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 6\nline two of 6\n"
+   },
+   "d6/f015.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 15\nline two of 15\n"
+   },
+   "d6/f024.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 24\nline two of 24\n"
+   },
+   "d6/f033.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 33\nline two of 33\n"
+   },
+   "d6/f042.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 42\nline two of 42\n"
+   },
+   "d6/f051.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 51\nline two of 51\n"
+   },
+   "d6/f060.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 60\nline two of 60\n"
+   },
+   "d6/f069.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 69\nline two of 69\n"
+   },
+   "d6/f078.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 78\nline two of 78\n"
+   },
+   "d6/f087.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 87\nline two of 87\n"
+   },
+   "d6/f096.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 96\nline two of 96\n"
+   },
+   "d6/f105.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 105\nline two of 105\n"
+   },
+   "d6/f114.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 114\nline two of 114\n"
+   },
+   "d6/f123.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 123\nline two of 123\n"
+   },
+   "d6/f132.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 132\nline two of 132\n"
+   },
+   "d6/f141.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 141\nline two of 141\n"
+   },
+   "d6/f150.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 150\nline two of 150\n"
+   },
+   "d6/f159.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 159\nline two of 159\n"
+   },
+   "d6/f168.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 168\nline two of 168\n"
+   },
+   "d6/f177.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 177\nline two of 177\n"
+   },
+   "d6/f186.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 186\nline two of 186\n"
+   },
+   "d6/f195.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 195\nline two of 195\n"
+   },
+   "d7/": {
+    "mode": "0o755"
+   },
+   "d7/f007.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 7\nline two of 7\n"
+   },
+   "d7/f016.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 16\nline two of 16\n"
+   },
+   "d7/f025.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 25\nline two of 25\n"
+   },
+   "d7/f034.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 34\nline two of 34\n"
+   },
+   "d7/f043.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 43\nline two of 43\n"
+   },
+   "d7/f052.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 52\nline two of 52\n"
+   },
+   "d7/f061.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 61\nline two of 61\n"
+   },
+   "d7/f070.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 70\nline two of 70\n"
+   },
+   "d7/f079.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 79\nline two of 79\n"
+   },
+   "d7/f088.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 88\nline two of 88\n"
+   },
+   "d7/f097.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 97\nline two of 97\n"
+   },
+   "d7/f106.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 106\nline two of 106\n"
+   },
+   "d7/f115.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 115\nline two of 115\n"
+   },
+   "d7/f124.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 124\nline two of 124\n"
+   },
+   "d7/f133.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 133\nline two of 133\n"
+   },
+   "d7/f142.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 142\nline two of 142\n"
+   },
+   "d7/f151.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 151\nline two of 151\n"
+   },
+   "d7/f160.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 160\nline two of 160\n"
+   },
+   "d7/f169.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 169\nline two of 169\n"
+   },
+   "d7/f178.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 178\nline two of 178\n"
+   },
+   "d7/f187.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 187\nline two of 187\n"
+   },
+   "d7/f196.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 196\nline two of 196\n"
+   },
+   "d8/": {
+    "mode": "0o755"
+   },
+   "d8/f008.txt": {
+    "mode": "0o744",
+    "size": 28,
+    "text": "line one of 8\nline two of 8\n"
+   },
+   "d8/f017.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 17\nline two of 17\n"
+   },
+   "d8/f026.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 26\nline two of 26\n"
+   },
+   "d8/f035.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 35\nline two of 35\n"
+   },
+   "d8/f044.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 44\nline two of 44\n"
+   },
+   "d8/f053.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 53\nline two of 53\n"
+   },
+   "d8/f062.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 62\nline two of 62\n"
+   },
+   "d8/f071.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 71\nline two of 71\n"
+   },
+   "d8/f080.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 80\nline two of 80\n"
+   },
+   "d8/f089.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 89\nline two of 89\n"
+   },
+   "d8/f098.txt": {
+    "mode": "0o744",
+    "size": 30,
+    "text": "line one of 98\nline two of 98\n"
+   },
+   "d8/f107.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 107\nline two of 107\n"
+   },
+   "d8/f116.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 116\nline two of 116\n"
+   },
+   "d8/f125.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 125\nline two of 125\n"
+   },
+   "d8/f134.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 134\nline two of 134\n"
+   },
+   "d8/f143.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 143\nline two of 143\n"
+   },
+   "d8/f152.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 152\nline two of 152\n"
+   },
+   "d8/f161.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 161\nline two of 161\n"
+   },
+   "d8/f170.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 170\nline two of 170\n"
+   },
+   "d8/f179.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 179\nline two of 179\n"
+   },
+   "d8/f188.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 188\nline two of 188\n"
+   },
+   "d8/f197.txt": {
+    "mode": "0o744",
+    "size": 32,
+    "text": "line one of 197\nline two of 197\n"
+   },
+   "tmp/": {
+    "mode": "0o755"
+   },
+   "tmp/reference/": {
+    "mode": "0o755"
+   },
+   "tmp/reference/stdout-6cb389285bba44377ed73567d896d7f04c2658acadbcc5d4ea07cdc26d8adb96.txt": {
+    "head": "{\"v\":1,\"r\":\"c5bdf3dad7dd8479\",\"k\":\"ran\"}\nd0/f000.txt:1:line one of 0\nd0/f000.txt:2:line two of 0\nd0/f009.txt:1:line one of 9\nd0/f009.txt:2:line two of 9\nd0/f018.txt:1:line one of 18\nd0/f018.txt:2:line",
+    "mode": "0o700",
+    "sha": "6cb389285bba44377ed73567d896d7f04c2658acadbcc5d4ea07cdc26d8adb96",
+    "size": 11821,
+    "tail": "t:2:line two of 170\nd8/f179.txt:1:line one of 179\nd8/f179.txt:2:line two of 179\nd8/f188.txt:1:line one of 188\nd8/f188.txt:2:line two of 188\nd8/f197.txt:1:line one of 197\nd8/f197.txt:2:line two of 197\n"
+   }
+  },
+  "harness_calls": 1,
+  "requests": 2,
+  "results": [
+   "The search result exceeds the transport output limit. No partial result is shown inline. The complete result was saved without truncation to ./tmp/reference/stdout-6cb389285bba44377ed73567d896d7f04c2658acadbcc5d4ea07cdc26d8adb96.txt. Read or search that file using the tools available to you."
+  ]
+ },
  "g_matches_in_a_big_file": {
   "command_bytes": 16220,
   "disk": {
@@ -2274,6 +3349,73 @@
   "requests": 2,
   "results": [
    "The search result exceeds the transport output limit. No partial result is shown inline. The complete result was saved without truncation to ./tmp/reference/stdout-6dc83b527bf2b2084bb6e96facccc84d29c981f8d323ce07a081b78ff3e2bc50.txt. Read or search that file using the tools available to you."
+  ]
+ },
+ "g_matches_in_a_big_file_1500": {
+  "command_bytes": 16236,
+  "disk": {
+   "rows.txt": {
+    "head": "row 0\nrow 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\nrow 15\nrow 16\nrow 17\nrow 18\nrow 19\nrow 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\n",
+    "mode": "0o744",
+    "sha": "522152068ece7ab9b1de5b738cb558be45900650cbb9b5c968889dd34e23ab59",
+    "size": 12390,
+    "tail": "7\nrow 1478\nrow 1479\nrow 1480\nrow 1481\nrow 1482\nrow 1483\nrow 1484\nrow 1485\nrow 1486\nrow 1487\nrow 1488\nrow 1489\nrow 1490\nrow 1491\nrow 1492\nrow 1493\nrow 1494\nrow 1495\nrow 1496\nrow 1497\nrow 1498\nrow 1499\n"
+   },
+   "tmp/": {
+    "mode": "0o755"
+   },
+   "tmp/reference/": {
+    "mode": "0o755"
+   },
+   "tmp/reference/stdout-71da92e4a0fbd7fc0233914715448369254cfaa697050a1954f4920278418738.txt": {
+    "head": "{\"v\":1,\"r\":\"c0a77689aab823fc\",\"k\":\"ran\"}\nrows.txt:1:row 0\nrows.txt:2:row 1\nrows.txt:3:row 2\nrows.txt:4:row 3\nrows.txt:5:row 4\nrows.txt:6:row 5\nrows.txt:7:row 6\nrows.txt:8:row 7\nrows.txt:9:row 8\nrows.t",
+    "mode": "0o700",
+    "sha": "71da92e4a0fbd7fc0233914715448369254cfaa697050a1954f4920278418738",
+    "size": 32324,
+    "tail": "t:1492:row 1491\nrows.txt:1493:row 1492\nrows.txt:1494:row 1493\nrows.txt:1495:row 1494\nrows.txt:1496:row 1495\nrows.txt:1497:row 1496\nrows.txt:1498:row 1497\nrows.txt:1499:row 1498\nrows.txt:1500:row 1499\n"
+   }
+  },
+  "harness_calls": 1,
+  "requests": 2,
+  "results": [
+   "The search result exceeds the transport output limit. No partial result is shown inline. The complete result was saved without truncation to ./tmp/reference/stdout-71da92e4a0fbd7fc0233914715448369254cfaa697050a1954f4920278418738.txt. Read or search that file using the tools available to you."
+  ]
+ },
+ "g_matches_in_two_big_files": {
+  "command_bytes": 16236,
+  "disk": {
+   "a.txt": {
+    "head": "row 0\nrow 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\nrow 15\nrow 16\nrow 17\nrow 18\nrow 19\nrow 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\n",
+    "mode": "0o744",
+    "sha": "42ae55a7765f2d141d9a3361450f6fb5c2c4c3478a51547537800d7d312da74a",
+    "size": 7090,
+    "tail": "row 875\nrow 876\nrow 877\nrow 878\nrow 879\nrow 880\nrow 881\nrow 882\nrow 883\nrow 884\nrow 885\nrow 886\nrow 887\nrow 888\nrow 889\nrow 890\nrow 891\nrow 892\nrow 893\nrow 894\nrow 895\nrow 896\nrow 897\nrow 898\nrow 899\n"
+   },
+   "b.txt": {
+    "head": "row 0\nrow 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\nrow 15\nrow 16\nrow 17\nrow 18\nrow 19\nrow 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\n",
+    "mode": "0o744",
+    "sha": "42ae55a7765f2d141d9a3361450f6fb5c2c4c3478a51547537800d7d312da74a",
+    "size": 7090,
+    "tail": "row 875\nrow 876\nrow 877\nrow 878\nrow 879\nrow 880\nrow 881\nrow 882\nrow 883\nrow 884\nrow 885\nrow 886\nrow 887\nrow 888\nrow 889\nrow 890\nrow 891\nrow 892\nrow 893\nrow 894\nrow 895\nrow 896\nrow 897\nrow 898\nrow 899\n"
+   },
+   "tmp/": {
+    "mode": "0o755"
+   },
+   "tmp/reference/": {
+    "mode": "0o755"
+   },
+   "tmp/reference/stdout-3ad91c9166dea63ef2f352d77a92252623cfdb6124c6f37f1686873f959438e9.txt": {
+    "head": "{\"v\":1,\"r\":\"c0a77689aab823fc\",\"k\":\"ran\"}\na.txt:1:row 0\na.txt:2:row 1\na.txt:3:row 2\na.txt:4:row 3\na.txt:5:row 4\na.txt:6:row 5\na.txt:7:row 6\na.txt:8:row 7\na.txt:9:row 8\na.txt:10:row 9\na.txt:11:row 10\na.",
+    "mode": "0o700",
+    "sha": "3ad91c9166dea63ef2f352d77a92252623cfdb6124c6f37f1686873f959438e9",
+    "size": 32005,
+    "tail": "8\nb.txt:890:row 889\nb.txt:891:row 890\nb.txt:892:row 891\nb.txt:893:row 892\nb.txt:894:row 893\nb.txt:895:row 894\nb.txt:896:row 895\nb.txt:897:row 896\nb.txt:898:row 897\nb.txt:899:row 898\nb.txt:900:row 899\n"
+   }
+  },
+  "harness_calls": 1,
+  "requests": 2,
+  "results": [
+   "The search result exceeds the transport output limit. No partial result is shown inline. The complete result was saved without truncation to ./tmp/reference/stdout-3ad91c9166dea63ef2f352d77a92252623cfdb6124c6f37f1686873f959438e9.txt. Read or search that file using the tools available to you."
   ]
  },
  "g_missing_path": {

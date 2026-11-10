@@ -106,6 +106,10 @@ case('g_two_greps', [[g('needle', include='*.py'), g('needle', path='sub')]], TR
 case('g_empty_workspace', [[g('needle')]], {})
 case('g_many_dirs', [[g('needle')]], {f'd{i:02d}/f{j}.txt': 'needle\n' for i in range(30) for j in range(4)})
 case('g_matches_in_a_big_file', [[g('row')]], {'rows.txt': ''.join(f'row {i}\n' for i in range(2000))})
+case('g_matches_in_a_big_file_1500', [[g('row')]], {'rows.txt': ''.join(f'row {i}\n' for i in range(1500))})
+case('g_matches_in_two_big_files', [[g('row')]], {'a.txt': ''.join(f'row {i}\n' for i in range(900)), 'b.txt': ''.join(f'row {i}\n' for i in range(900))})
+case('g_empty_matches_at_eof', [[g('^$')]], {'a.txt': 'x\n\ny\n', 'b.txt': 'z\n', 'c.txt': 'q\n\n'})
+case('g_matches_everywhere_200_files', [[g('.')]], {f'd{i % 9}/f{i:03d}.txt': f'line one of {i}\nline two of {i}\n' for i in range(200)})
 
 # ------------------------------------------------------------------ glob
 case('gl_py', [[gl('**/*.py')]], TREE)
@@ -216,26 +220,55 @@ class _Net:
         return brave.Answer(refused=found['refused'], wait_ms=found['wait_ms'])
 
 
-def run_case(name, tmp_path, monkeypatch):
-    """Drive one case; returns what the model read, what is on disk and what it cost."""
-    c = CASES[name]
-    c = {**c, 'files': dict(c['files'])}
+class Live:
+    """One driven conversation: what the model read (every tool result of the last request), every request body it was sent, what the harness ran and the
+    workspace it ran in."""
+    def __init__(self, ws, backend, harness, message):
+        self.ws, self.backend, self.harness, self.message = ws, backend, harness, message
+
+    @property
+    def results(self):
+        return [m['content'] for m in self.backend.bodies[-1]['messages'] if m.get('role') == 'tool']
+
+    @property
+    def commands(self):
+        return [command_of(c) for c in self.harness.ran]
+
+    @property
+    def command_bytes(self):
+        return sum(len(c.encode()) for c in self.commands)
+
+
+def drive(tmp_path, monkeypatch, turns, files=None, *, level=None, setup=None, docs=None, brave_answers=None, api='chat', stream=False, harness=None,
+          engagement=5, brave_key='k', fake_brave=True, before=None):
+    """Run a scripted model through a real CriaServer with a harness that runs cria's calls with real bash on a real pty in a real workspace."""
+    c = dict(turns=turns, files=dict(files or {}), level=level, setup=setup, docs=docs or {}, brave=brave_answers or {})
     ws = build(c, tmp_path)
     home = tmp_path / 'home'
     subst = lambda v: json.loads(json.dumps(v).replace('$WS', str(ws)).replace('$HOME', str(home)))
-    turns = [[(tool, subst(args)) for tool, args in turn] for turn in c['turns']]
+    turns = [[(tool, subst(args)) for tool, args in turn] for turn in turns]
     net = _Net(c)
     monkeypatch.setattr(webfetch, 'fetch', net.fetch)
-    monkeypatch.setattr(brave, 'search', net.search)
-    monkeypatch.setattr(brave, 'api_key', lambda: 'k')
+    if fake_brave:
+        monkeypatch.setattr(brave, 'search', net.search)
+    monkeypatch.setattr(brave, 'api_key', lambda: brave_key)
     webfetch.clear_cache()
+    if before:
+        before()
     backend = TurnBackend(*turns)
-    wire = Wire(tmp_path, backend, engagement=5, level=c['level'])
-    harness = E2bigHarness(ws)
+    wire = Wire(tmp_path, backend, api, stream, engagement=engagement, level=level)
+    harness = harness(ws) if harness else E2bigHarness(ws)
     with start_in(wire, ws) as live:
-        message, carriers = live.drive(harness)
+        message, _ = live.drive(harness)
         assert 'seen' in message['content'], message
-    shown = [m['content'] for m in backend.bodies[-1]['messages'] if m.get('role') == 'tool']
+    return Live(ws, backend, harness, message)
+
+
+def run_case(name, tmp_path, monkeypatch):
+    """Drive one case; returns what the model read, what is on disk and what it cost."""
+    c = CASES[name]
+    live = drive(tmp_path, monkeypatch, c['turns'], c['files'], level=c['level'], setup=c['setup'], docs=c['docs'], brave_answers=c['brave'])
+    ws, home = live.ws, tmp_path / 'home'
     text = lambda s: s.replace(str(ws), '$WS').replace(str(home), '$HOME')
     for base, dirs, files in os.walk(ws):          # a case may have made something unreadable: readable again, so the snapshot (and the cleanup) can see it
         for n in dirs + files:
@@ -246,6 +279,5 @@ def run_case(name, tmp_path, monkeypatch):
     for rel in list(disk):
         if disk[rel].get('link'):
             disk[rel]['link'] = text(disk[rel]['link'])
-    commands = [command_of(call) for call in harness.ran]
-    return {'results': [text(s) for s in shown], 'disk': {k: v for k, v in disk.items() if not k.startswith('shellhome')},
-            'harness_calls': len(commands), 'command_bytes': sum(len(x.encode()) for x in commands), 'requests': len(backend.bodies)}
+    return {'results': [text(s) for s in live.results], 'disk': {k: v for k, v in disk.items() if not k.startswith('shellhome')},
+            'harness_calls': len(live.commands), 'command_bytes': live.command_bytes, 'requests': len(live.backend.bodies)}

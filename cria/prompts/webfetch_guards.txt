@@ -34,14 +34,10 @@ search_repeat_inline = You already ran web_search "{{PRIOR}}", which is near-ide
 # (webfetch.spill_reading_hint); with no cached doc there is no sentence.
 spill_extent = It is {{LINES}} lines — read_file with start_line=1 end_line={{FITS}} fits in one read, and you can page on from there.
 
-# WHAT ACTUALLY LANDED ON DISK. One command can only carry so much, so a big enough document is
-# cut — and the message used to say "saved IN FULL" regardless, in the same tool result where the
-# cut note said it held the first 45,056 characters of 186,444. The composer knows which case it
-# is and picks the clause (#5b).
+# WHAT ACTUALLY LANDED ON DISK. A spill is written whole (through `put` waves; no command's size cuts it), so the clause is IN FULL.
 spill_extent_full = IN FULL
-spill_extent_cut = as much of it as one step can carry (the file itself says where it stops)
-# …and when cria no longer holds the document it cannot say which of the two happened. The file's
-# own footer can, so the sentence points there instead of picking one (#5b).
+# …except for a file an EARLIER release saved: those were cut at one command's size, with a footer saying so, and when cria no longer holds the document
+# it cannot say which happened. The file's own footer can, so the sentence points there instead of picking one (#5b).
 spill_extent_unknown = there (the file's own last line says how much of the document reached it)
 # The url named a source file and the server answered with a web page, so the spill holds the
 # PAGE's markup and not the file's text. Saying so is what stops the reader grepping stylesheets
