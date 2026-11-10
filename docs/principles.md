@@ -18,6 +18,8 @@ A weak model cannot tell cria's injections from its own reasoning, so every inje
 ### 2. Interventions are additive, regression-only, and cria never AUTHORS work
 Intervene only to keep existing progress from regressing; deletion, redirection and blocking a first attempt can trap loops. Additive is not safe by itself: cria never writes plans, actions or code for the coder. Everything injected stays open to re-derivation, never an immutable mandate. Surface facts and steer; let the coder act.
 
+**Explicit operator exception — unread existing files.** The operator deliberately chose a process gate: hold a write to an existing non-blank unread file, exempt missing and empty/whitespace-only files, and hide write tools for one coder request after a hold. This is a decision, not an efficacy claim; it is scoped to L5 and the routes and unknown-state limitations in [the mechanism and evidence record](heuristic-assists.md#operator-selected-unread-file-process-gate). Other process gates are not authorized by this exception.
+
 ### 3. Silence over noise
 Inject only high-confidence, actionable information. Nothing on a passing check, no speculative warnings on green results. State a fact or stay silent.
 
