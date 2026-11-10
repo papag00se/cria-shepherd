@@ -113,6 +113,80 @@ def test_a_ctags_that_is_not_universal_or_fails_is_one_uniform_error_never_run_a
         assert data['symbol_indexer_error'] == ('indexer not found' if name == 'exuberant' else 'indexer failed: OSError')
 
 
+XML_FAMILY = {
+    'pom.xml': '<project xmlns="http://maven.apache.org/POM/4.0.0"><groupId>g</groupId><artifactId>a</artifactId></project>\n',
+    'build.xml': '<project name="p" default="d"><target name="d"/></project>\n',
+    'dbus.xml': '<node><interface name="org.x.Y"><method name="m"/></interface></node>\n',
+    'plain.xml': '<root><item id="i"/></root>\n',
+    'logo.svg': '<svg xmlns="http://www.w3.org/2000/svg" id="x"><g id="a"/></svg>\n',
+    'a.plist': '<plist version="1.0"><dict><key>k</key><string>v</string></dict></plist>\n',
+    'a.glade': '<interface><object class="GtkWindow" id="w"/></interface>\n',
+    'a.xrc': '<resource xmlns="http://www.wxwindows.org/wxxrc"><object class="wxFrame" name="f"/></resource>\n',
+    'a.rng': '<grammar xmlns="http://relaxng.org/ns/structure/1.0"><define name="d"/></grammar>\n',
+    'a.xsl': '<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template name="t" match="/"/></xsl:stylesheet>\n',
+}
+
+
+def fake_ctags(tmp_path, body):
+    """A ``Universal Ctags`` that logs each indexing run's temporary directory and arguments (not ``--version``) to ``log`` and then does ``body``; core dumps are
+    switched off first so a test that kills it never leaves a dump on the machine."""
+    fake, log = tmp_path.parent / (tmp_path.name + '.ctags'), tmp_path.parent / (tmp_path.name + '.log')
+    fake.write_text('#!/bin/sh\nulimit -c 0\nif [ "$1" = --version ]; then echo "Universal Ctags 6.2.1"; exit 0; fi\n'
+                    f'echo "$TMPDIR $*" >> {log}\n' + body + '\n')
+    fake.chmod(0o755)
+    return fake, log
+
+
+FAKE_TAGS = 'while read n; do printf \'{"_type":"tag","name":"sym_%s","path":"%s","kind":"function"}\\n\' "$n" "$n"; done'
+
+
+@needs_ctags
+def test_xml_family_files_are_never_handed_to_the_indexer_and_the_sources_beside_them_are_indexed(tmp_path):
+    """Universal Ctags's libxml2 parsers die of SIGSYS under its sandbox mode (docs/harness-programs.md, ctags): a tree with a pom.xml must
+    index every other file, and its XML files must be left out of the indexer, not indexed with generated names."""
+    for name, text in XML_FAMILY.items():
+        (tmp_path / name).write_text(text)
+    (tmp_path / 'thing.py').write_text('def pinned_symbol_thing(): pass\n')
+    (tmp_path / 'Thing.java').write_text('class PinnedJavaThing {}\n')
+    data = inventory_of_disk(tmp_path)
+    files = {item['path']: item['symbols'] for item in data['files']}
+    assert set(files) == set(XML_FAMILY) | {'thing.py', 'Thing.java'}
+    assert files['thing.py'][0]['name'] == 'pinned_symbol_thing' and files['Thing.java'][0]['name'] == 'PinnedJavaThing'
+    assert [name for name in XML_FAMILY if files[name]] == [] and data['symbol_indexer_error'] is None
+
+
+def test_the_indexer_is_never_run_in_its_sandbox_mode_and_never_asked_for_an_xml_parser(tmp_path, monkeypatch):
+    (tmp_path / 'file.py').write_text('def example(): pass\n')
+    fake, log = fake_ctags(tmp_path, FAKE_TAGS)
+    monkeypatch.setattr(inventoryops, 'SAFE_CTAGS', (str(fake),))
+    data = inventory_of_disk(tmp_path)
+    assert data['files'][0]['symbols'] == [{'name': 'sym_file.py', 'kind': 'function'}]
+    (argv,) = log.read_text().splitlines()
+    tmpdir, argv = argv.split(' ', 1)
+    assert os.path.basename(tmpdir).startswith('.ctx-run-')      # a sandboxed harness's /tmp is read-only and `-f -` still makes a temporary file
+    assert '_interactive' not in argv
+    excluded = next(a for a in argv.split() if a.startswith('--languages=')).removeprefix('--languages=').split(',')
+    assert sorted(excluded) == sorted('-' + p for p in inventoryops.XML_PARSERS)
+
+
+def test_an_indexer_killed_by_a_signal_is_reported_for_its_files_and_never_run_again(tmp_path, monkeypatch):
+    """A ctags that dies (SIGSYS from its own sandbox, a segfault) is neither 'no symbols' nor retried: one run per chunk, the files of the
+    chunk it died in are 'unavailable' under the uniform disclosure, the other chunks' symbols stand."""
+    names = [f'f{i}.py' for i in range(4)]
+    for name in names:
+        (tmp_path / name).write_text('def example(): pass\n')
+    monkeypatch.setattr(inventoryops, 'CTAGS_NAMES', 14)                  # two names to a run: two runs
+    fake, log = fake_ctags(tmp_path, 'n=$(wc -l < ' + str(tmp_path.parent / (tmp_path.name + '.log')) + ')\n'
+                           'if [ "$n" = 2 ]; then kill -SYS $$; fi\n' + FAKE_TAGS)
+    monkeypatch.setattr(inventoryops, 'SAFE_CTAGS', (str(fake),))
+    data = inventory_of_disk(tmp_path)
+    files = {item['path']: item['symbols'] for item in data['files']}
+    assert len(log.read_text().splitlines()) == 2
+    assert files['f0.py'] and files['f1.py'] and files['f2.py'] is None and files['f3.py'] is None
+    assert data['symbol_indexer_error'] == 'indexer failed: OSError'
+    assert 'Symbol indexer unavailable:\n"indexer failed: OSError"' in initial_inventory.render(data)
+
+
 def test_inventory_workspace_facts_expire_on_writes_and_mutators(tmp_path, no_ctags):
     (tmp_path / 'source').write_text('source')
     (tmp_path / 'blank').write_text(' \n')

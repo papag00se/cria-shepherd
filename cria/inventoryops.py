@@ -35,6 +35,11 @@ CTAGS_WAIT = 8
 CTAGS_WAITS = 40
 SAFE_CTAGS = ('/usr/bin/ctags', '/bin/ctags', '/usr/local/bin/ctags')
 NOT_FOUND = 'indexer not found'
+# Universal Ctags 6.2.1's libxml2/XPath parsers (measured: the only ones of its 164 languages killed by the `--_interactive=sandbox` seccomp
+# filter, SIGSYS, on any input: libxml2 2.15's one-time setup calls getrandom, which the filter does not allow). The indexer is never run in
+# that mode (it takes file contents over a protocol, not a name list), but its XML symbols are also the least useful ones (generated `nsprefix`
+# names, every `id` of an SVG) and parsing untrusted XML is the parsers' attack surface, so they are never asked for.
+XML_PARSERS = ('Ant', 'DBusIntrospect', 'Glade', 'Maven2', 'PlistXML', 'RelaxNG', 'SVG', 'XML', 'XRC', 'XSLT')
 
 
 def skip_names() -> list:
@@ -47,15 +52,19 @@ def _token(op: str, i: int) -> str:
 
 def ctags_script(names: list) -> str:
     """The shell text the ``run`` stub runs to index ``names`` (one per line, relative to the working directory): the real Universal
-    Ctags by absolute path, with no environment and no option file, asked for the names, kinds and scopes of what it finds, in source
-    order. Its first output line says whether it was there (``I\\tok`` / ``I\\tmissing``). Nothing is decided here."""
+    Ctags by absolute path, with no environment but a temporary directory and no option file, without its XML-family parsers
+    (``XML_PARSERS``), asked for the names, kinds and scopes of what it finds, in source order. The temporary directory is this script's
+    own run directory (``${0%/*}``, removed by the ``run`` stub's cleanup): ``-f -`` still makes a temporary file, and ``/tmp`` is read-only
+    in a sandboxed harness (without it the indexer failed in the Codex sandbox). Its first output line says whether it was there
+    (``I\\tok`` / ``I\\tmissing``). Nothing is decided here."""
     found = ' '.join(shlex.quote(c) for c in SAFE_CTAGS)
     terminator = 'CTX_NAMES_' + hashlib.sha256('\n'.join(names).encode('utf-8', 'surrogateescape')).hexdigest()[:12]
     return (f'for c in {found}; do [ -x "$c" ] && b=$c && break; done\n'
             'v=$([ -n "$b" ] && /usr/bin/env -i "$b" --version 2>/dev/null)\n'
             'case $v in "Universal Ctags"*) ;; *) printf \'I\\tmissing\\n\'; exit 0;; esac\n'
             'printf \'I\\tok\\n\'\n'
-            '/usr/bin/env -i "$b" --options=NONE --output-format=json --pattern-length-limit=1 --sort=no -f - -L - '
+            '/usr/bin/env -i "TMPDIR=${0%/*}" "$b" --options=NONE --output-format=json --pattern-length-limit=1 --sort=no '
+            f"--languages={','.join('-' + p for p in XML_PARSERS)} -f - -L - "
             f"<<'{terminator}'\n" + '\n'.join(names) + f'\n{terminator}\n')
 
 

@@ -82,6 +82,34 @@ def test_the_initial_inventory_through_the_pinned_codex(sandbox, tmp_path):
     assert not [n for n in os.listdir(sandbox.scratch) if n.startswith('.ctx-run-')]
 
 
+def test_the_inventory_of_a_tree_with_xml_files_indexes_the_sources_through_the_pinned_codex(sandbox, tmp_path):
+    """The indexer runs in the Codex sandbox (read-only /tmp: it needs the temporary directory it is given) beside a pom.xml and an svg
+    (libxml2 parsers, SIGSYS under ctags's own sandbox mode): the sources are indexed, the XML files are listed without symbols, nothing is left."""
+    ws = sandbox.workspace
+    (ws / 'pom.xml').write_text('<project xmlns="http://maven.apache.org/POM/4.0.0"><groupId>g</groupId><artifactId>a</artifactId></project>\n')
+    (ws / 'logo.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" id="x"/>\n')
+    (ws / 'thing.py').write_text('def pinned_codex_symbol(): pass\n')
+    wire = l5_wire(tmp_path)
+    try:
+        try:
+            sandbox.run(f'http://127.0.0.1:{wire.cria.server_address[1]}/v1', prompt='Implement it', timeout=int(os.environ.get('CODEX_T', '45')))
+        except subprocess.TimeoutExpired:
+            pass
+        coder = [b for _, b in wire.fake.chats if any('Initial harness workspace inventory' in str(m.get('content')) for m in b.get('messages', []))]
+        assert coder, 'the first coder turn did not carry the inventory'
+        text = json.dumps(coder[0]['messages'])
+        from cria import privatepaths
+        records = [json.loads(line) for f in (privatepaths.CRIA_HOME / 'ops').iterdir() for line in f.read_text().splitlines()]
+        op = next(r['op'] for r in records if r['t'] == 'step' and r.get('what') == 'irun')
+        run = next(r for r in records if r['t'] == 'frame' and r['op'] == op and 'exit' in r['hdr'])
+        assert run['hdr']['exit'] == 0 and run['hdr']['removed'] == 1                          # the indexer's run directory (its temporary files) is gone
+        assert 'pinned_codex_symbol' in text and 'nsprefix' not in text and 'Symbol indexer unavailable' not in text
+        assert '"path":"pom.xml","size":' in text.replace('\\"', '"') and '"path":"logo.svg","size":' in text.replace('\\"', '"')
+    finally:
+        wire.close()
+    assert not [p for p in ws.rglob('*') if p.name.startswith(('tags', '.ctx-run-'))]       # no temporary file of the indexer in the workspace
+
+
 def test_a_survey_follows_a_landing_write_through_the_pinned_codex_and_costs_a_round_trip_not_a_program(sandbox, tmp_path):
     from codex_rig import Timeline  # noqa: F401
     from test_codex_write_edit import serve
