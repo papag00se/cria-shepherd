@@ -58,7 +58,7 @@ def test_a_payload_over_one_command_is_staged_out_of_order_and_lands_with_its_ha
     assert (root / 'big.bin').read_bytes() == big and [p.name for p in root.iterdir()] == ['big.bin']
     replay = write(root, 'big.bin', big, '-', staged=True).header                          # the reply was lost: the same call again
     assert replay['err'] == 'FileNotFoundError'                                            # the landed write consumed its staging file ...
-    assert run('read', [root, 'big.bin', 0, 0], cwd=root).header['fsha'] == sha(big)       # ... so cria reads the target's hash: landed
+    assert run('read', [root, 'big.bin', 0, 0, 0], cwd=root).header['fsha'] == sha(big)       # ... so cria reads the target's hash: landed
 
 
 def test_a_stale_stage_never_lands_wrong_bytes(root):
@@ -137,7 +137,7 @@ def test_run_returns_exit_and_output_detached_runs_outlive_the_caller_and_a_dead
     big = run('run', ['start', scratch, 'tokb', 10, 5, root, 0], cwd=root, text='head -c 20000 /dev/zero | tr "\\0" "a"')
     assert big.header['size'] == 20000 and big.header['head'] == 6000 and len(big.data) == 6000 and 'removed' not in big.header
     assert run('run', ['start', scratch, 'tokb', 5, 1, root, 0], cwd=root, text='echo x').header['err'] == 'FileExistsError'   # a retried start never adopts a directory
-    paged = run('read', [scratch / '.ctx-run-tokb', 'out', 0, 100], cwd=root)
+    paged = run('read', [scratch / '.ctx-run-tokb', 'out', 0, 100, 0], cwd=root)
     assert paged.header['fsha'] == big.header['osha']
 
 
@@ -224,3 +224,27 @@ def test_a_non_cooperating_writer_that_replaces_the_target_inside_the_window_is_
     frame = harnessprims.read_frame(done.stdout.decode(), '%032x' % 5)
     assert frame.header['err'] == 'stale' and (root / 'f').read_bytes() == interloper
     assert sorted(p.name for p in root.iterdir()) == ['f']                                    # and no temp file left behind
+
+
+# ---- read SK: start a range at the byte after the SK-th newline --------------------------------------------------------
+
+@pytest.mark.parametrize('raw,sk,off,ln,expected_off,expected_ln', [
+    (b'a\nbb\nccc\n', 0, 0, 100, 0, 3), (b'a\nbb\nccc\n', 1, 0, 100, 2, 3), (b'a\nbb\nccc\n', 2, 0, 100, 5, 3),
+    (b'a\nbb\nccc\n', 3, 0, 100, 9, 3),                              # SK = number of lines: starts at EOF, empty
+    (b'a\nbb\nccc\n', 4, 0, 100, None, 3),                           # beyond EOF: no start, nothing returned
+    (b'a\r\nbb\r\nccc', 1, 0, 100, 3, 3), (b'a\r\nbb\r\nccc', 2, 0, 100, 7, 3),   # CRLF, and a final line without a newline
+    (b'a\nbb\nccc', 3, 0, 100, None, 3), (b'', 1, 0, 10, None, 0), (b'x', 0, 0, 10, 0, 1),
+    (b'a\nbb\nccc\n', 1, 1, 100, 3, 3)])                             # OFF pages within the window
+def test_read_sk_starts_at_the_byte_after_the_sk_th_newline_and_counts_the_lines_in_the_same_pass(root, raw, sk, off, ln, expected_off, expected_ln):
+    (root / 'f').write_bytes(raw)
+    done = run('read', [root, 'f', off, ln, sk], cwd=root)
+    assert done.header['off'] == expected_off and done.header['ln'] == expected_ln and done.header['fsha'] == sha(raw)
+    assert done.data == (raw[expected_off:expected_off + ln] if expected_off is not None else b'')
+
+
+def test_read_sk_crosses_chunk_boundaries_and_keeps_the_whole_file_hash_size_and_a_bounded_window(root):
+    raw = b''.join(b'line %d\n' % i for i in range(400_000))              # ~3.4 MB: several 1 MiB chunks
+    (root / 'f').write_bytes(raw)
+    done = run('read', [root, 'f', 0, 40, 399_990], cwd=root)
+    assert done.data == raw[raw.index(b'line 399990\n'):][:40] and done.header['ln'] == 400_000
+    assert done.header['size'] == done.header['fsize'] == len(raw) and done.header['fsha'] == sha(raw)

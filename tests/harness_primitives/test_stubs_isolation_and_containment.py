@@ -48,7 +48,7 @@ def test_the_isolation_control_the_plain_forms_do_run_the_workspaces_code(hostil
 
 def test_every_stub_ignores_a_workspace_that_shadows_the_stdlib_and_plants_python3(hostile):
     r, o, s, e = hostile.root, hostile.outside, hostile.scratch, hostile.env
-    assert run('read', [r, 'src/a.py', 0, 100], cwd=r, env=e).data == b'x = 1\r\nprint(\xff)\n'
+    assert run('read', [r, 'src/a.py', 0, 100, 0], cwd=r, env=e).data == b'x = 1\r\nprint(\xff)\n'
     assert write(r, 'f.txt', b'hi', '-', cwd=r, env=e).header['landed'] == 1 and (r / 'f.txt').read_bytes() == b'hi'
     assert write(r, 'big.bin', b'0123456789', '-', staged=True, cwd=r, env=e).header['err'] == 'FileNotFoundError'
     assert run('put', [r, 'big.bin', GROUP, 0, 1], b'0123456789', cwd=r, env=e).header['ok'] == 1
@@ -87,17 +87,17 @@ def tree(tmp_path):
 
 @pytest.mark.parametrize('rel,errno', [('link.txt', 40), ('linkdir/secret.txt', 20), ('inlink.py', 40), ('../x', 22), ('src/../src/a.py', 22), ('nope', 2)])
 def test_read_never_follows_a_link_below_root_and_refuses_dotdot(tree, rel, errno):
-    done = run('read', [tree.root, rel, 0, 100], cwd=tree.root)
+    done = run('read', [tree.root, rel, 0, 100, 0], cwd=tree.root)
     assert done.header['ok'] == 0 and done.header['errno'] == errno, done.header
     assert (tree.outside / 'secret.txt').read_text() == 'TOP SECRET'
 
 
 def test_read_refuses_a_directory_and_a_fifo_without_blocking_and_reports_the_files_identity(tree):
-    assert run('read', [tree.root, 'src', 0, 10], cwd=tree.root).header['err'] == 'notfile'
-    assert run('read', [tree.root, 'fifo', 0, 10], cwd=tree.root).header['err'] == 'notfile'
-    done = run('read', [tree.root, 'src/a.py', 3, 3], cwd=tree.root)
+    assert run('read', [tree.root, 'src', 0, 10, 0], cwd=tree.root).header['err'] == 'notfile'
+    assert run('read', [tree.root, 'fifo', 0, 10, 0], cwd=tree.root).header['err'] == 'notfile'
+    done = run('read', [tree.root, 'src/a.py', 3, 3, 0], cwd=tree.root)
     assert done.data == b' 1\r' and done.header['fsha'] == sha(b'x = 1\r\n') and done.header['size'] == 7 == done.header['fsize']
-    assert run('read', [tree.root, 'src/a.py', 0, 0], cwd=tree.root).data == b''         # LEN=0: identity only
+    assert run('read', [tree.root, 'src/a.py', 0, 0, 0], cwd=tree.root).data == b''         # LEN=0: identity only
 
 
 @pytest.mark.parametrize('rel,errno', [('link.txt', 40), ('linkdir/new.txt', 20)])

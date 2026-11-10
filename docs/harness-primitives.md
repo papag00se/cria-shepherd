@@ -88,7 +88,7 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 
 | Stub | Verb | Sent size | Arguments after the nonce |
 |---|---|---|---|
-| `read` | return a byte range of a file and its identity | 1,486 B | `ROOT REL OFF LEN` |
+| `read` | return a byte range of a file and its identity | 1,803 B | `ROOT REL OFF LEN SK` |
 | `write` | replace or create a file atomically, compare-and-swap | 2,675 B | `ROOT REL EX SP NEW ST MK G` + stdin |
 | `put` | stage one chunk of a payload too big for one command | 1,256 B | `ROOT REL G OFF MK` + stdin |
 | `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
@@ -96,7 +96,7 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | `run` | run a command with a timeout, detached, output to a file | 2,371 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
 | `search` | regex search over a file list cria chose | 1,692 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
 
-Total 13,311 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 13,628 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -128,21 +128,29 @@ def at(r,p,mk=0):
 
 ### 5.1 `read`
 
-`read N ROOT REL OFF LEN` returns bytes `[OFF, OFF+LEN)` and, always, the identity of the file as read: `size` (bytes actually streamed), `fsize` (size at open; a difference means the file changed while it was read, and cria re-reads), `fsha` (sha-256 of the **whole** file, streamed), `mtime` (ns), `ino`, `dev`, `mode`. `LEN=0` returns the identity only (a stat plus hash). Refuses non-regular files (`err:notfile`, with `mode`) without blocking on them (`O_NONBLOCK`; a FIFO answers instantly).
+`read N ROOT REL OFF LEN SK` returns bytes `[A, A+LEN)` where `A = OFF` when `SK` is 0, and otherwise `A = OFF` plus the byte just after the `SK`-th newline of the file (so `SK = S-1` and `OFF = 0` start at line `S`; `OFF` then pages within that window). The header says where it started (`off` = `A`, null when the file has fewer than `SK` newlines) and how many lines the file has (`ln`: newline count, plus one when the file does not end in a newline), counted in the same pass that streams the file for its hash. It also returns, always, the identity of the file as read: `size` (bytes actually streamed), `fsize` (size at open; a difference means the file changed while it was read, and cria re-reads), `fsha` (sha-256 of the **whole** file, streamed), `mtime` (ns), `ino`, `dev`, `mode`. `LEN=0` returns the identity only (a stat plus hash). Refuses non-regular files (`err:notfile`, with `mode`) without blocking on them (`O_NONBLOCK`; a FIFO answers instantly).
 
 ```python
 import stat
 try:
-    fd,nm=at(sys.argv[2],sys.argv[3]);o=int(sys.argv[4]);l=int(sys.argv[5])
+    fd,nm=at(sys.argv[2],sys.argv[3]);o=int(sys.argv[4]);l=int(sys.argv[5]);k=int(sys.argv[6])
     f=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(f)
     if not stat.S_ISREG(s.st_mode):out(dict(ok=0,err="notfile",mode=s.st_mode))
-    h=hashlib.sha256();b=b"";p=0
+    h=hashlib.sha256();b=b"";p=t=0;e=b"";a=None if k>0 else o
     with os.fdopen(f,"rb") as g:
         for c in iter(lambda:g.read(1<<20),b""):
-            h.update(c);lo=max(o,p);hi=min(o+l,p+len(c))
-            if hi>lo:b+=c[lo-p:hi-p]
+            h.update(c);q=0
+            while a is None:
+                i=c.find(b"\n",q)
+                if i<0:break
+                q=i+1;k-=1
+                if not k:a=p+q+o
+            t+=c.count(b"\n");e=c[-1:]
+            if a is not None:
+                lo=max(a,p);hi=min(a+l,p+len(c))
+                if hi>lo:b+=c[lo-p:hi-p]
             p+=len(c)
-    out(dict(ok=1,size=p,fsize=s.st_size,fsha=h.hexdigest(),mtime=s.st_mtime_ns,ino=s.st_ino,dev=s.st_dev,mode=s.st_mode,off=o),b)
+    out(dict(ok=1,size=p,fsize=s.st_size,fsha=h.hexdigest(),mtime=s.st_mtime_ns,ino=s.st_ino,dev=s.st_dev,mode=s.st_mode,off=a,ln=t+(p>0 and e!=b"\n")),b)
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 ```
 
@@ -450,7 +458,7 @@ A frame is ≤ 10,000 bytes, as today's pages. The harness keeps every frame in 
 * **Fits in one page:** done. cria hashes the bytes itself and compares with `fsha`.
 * **Needs more pages:** the remaining ranges go out in one reply, at most 8 per reply (a window deep in a file doubles its reach each reply). Every frame carries `fsha` and `fsize`; the assembly is accepted only if all `fsha` agree, `size == fsize` in every frame and the assembled bytes hash to `fsha`. A change between pages is detected; the read starts again once, and a second change is reported to the model (`⟦ctx:read-source-changed⟧`, no read credit). **There is no snapshot**: equal hashes are one file state. A frame the harness cut is asked again at half the size.
 * **Too big for the model's window:** a whole read whose chars/4 estimate exceeds the measured window (no frame, no safety factor: a strict lower bound) is answered from the first frame without transporting the file, unless that first page holds no newline (it may be one enormous line, whose measured shape the note needs from the whole file). Borderline files are fetched and decided at the wire as before: `ReadFitOverflow` withholds the verified read in the ledger (`withhold`) and the model is told. No new threshold, except that cria never transports a file larger than it will hold (16 MiB, `filecache.CAP_BYTES`), which is answered the same way.
-* **Range reads** (`start_line`/`end_line`): cria pages from offset 0 until it has the lines, numbers them `N: text` itself and applies the "past end of file" and inverted-range answers. A warm cache sends one `LEN=0` call and serves the bytes only when `fsha` and `size` equal the cached ones. **Known cost** (measured, harness-programs.md §7 "Phase 4 result"): a cold window deep into a large file costs the file's prefix; the proposed remedy is a `SK` (lines to skip) argument of `read`, which needs this file's sign-off.
+* **Range reads** (`start_line`/`end_line`): cria asks for the window with `SK`, numbers the lines `N: text` itself and applies the "past end of file" and inverted-range answers. A warm cache sends one `LEN=0` call and serves the bytes only when `fsha` and `size` equal the cached ones. With `SK` (operator-approved after the phase 4 measurement) a window is asked with `SK = start - 1` and is one or two frames wherever it sits; the prefix is never transported for a window.
 * The model-visible text of every read result is produced by cria and is the same text the model got before, except the wording changes listed in harness-programs.md §7 (nothing private is in its context, so the sentences about omitted transport pages are gone).
 
 ### 8.8 Oversize output (stdout spill)

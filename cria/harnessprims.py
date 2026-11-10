@@ -55,16 +55,24 @@ _PATH = r'''def at(r,p,mk=0):
 
 _READ = r'''import stat
 try:
-    fd,nm=at(sys.argv[2],sys.argv[3]);o=int(sys.argv[4]);l=int(sys.argv[5])
+    fd,nm=at(sys.argv[2],sys.argv[3]);o=int(sys.argv[4]);l=int(sys.argv[5]);k=int(sys.argv[6])
     f=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(f)
     if not stat.S_ISREG(s.st_mode):out(dict(ok=0,err="notfile",mode=s.st_mode))
-    h=hashlib.sha256();b=b"";p=0
+    h=hashlib.sha256();b=b"";p=t=0;e=b"";a=None if k>0 else o
     with os.fdopen(f,"rb") as g:
         for c in iter(lambda:g.read(1<<20),b""):
-            h.update(c);lo=max(o,p);hi=min(o+l,p+len(c))
-            if hi>lo:b+=c[lo-p:hi-p]
+            h.update(c);q=0
+            while a is None:
+                i=c.find(b"\n",q)
+                if i<0:break
+                q=i+1;k-=1
+                if not k:a=p+q+o
+            t+=c.count(b"\n");e=c[-1:]
+            if a is not None:
+                lo=max(a,p);hi=min(a+l,p+len(c))
+                if hi>lo:b+=c[lo-p:hi-p]
             p+=len(c)
-    out(dict(ok=1,size=p,fsize=s.st_size,fsha=h.hexdigest(),mtime=s.st_mtime_ns,ino=s.st_ino,dev=s.st_dev,mode=s.st_mode,off=o),b)
+    out(dict(ok=1,size=p,fsize=s.st_size,fsha=h.hexdigest(),mtime=s.st_mtime_ns,ino=s.st_ino,dev=s.st_dev,mode=s.st_mode,off=a,ln=t+(p>0 and e!=b"\n")),b)
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 '''
 

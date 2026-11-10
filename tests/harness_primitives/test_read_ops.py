@@ -145,7 +145,7 @@ def test_a_file_larger_than_the_models_measured_window_is_answered_from_its_firs
     monkeypatch.setattr(cls, '_read_room', lambda self, rlog: 1_000)            # a 1,000-token window
     results, _, harness, ws = read_all(tmp_path, {'big.txt': HEX}, [{'path': 'big.txt'}])
     text = contents(results)[0]
-    assert all(re.search(r' big\.txt 0 \d+$', command_of(c)) for c in harness.ran) and len(harness.ran) <= 2   # only the first page, asked again once if the harness cut it
+    assert all(re.search(r' big\.txt 0 \d+ 0$', command_of(c)) for c in harness.ran) and len(harness.ran) <= 2   # only the first page, asked again once if the harness cut it
     assert f'({len(HEX)} bytes)' in text and 'did not fit the context window' in text and HEX[:40] not in text
     assert denial.proof(next(iter(results.values()))) == denial.UNKNOWN
 
@@ -246,6 +246,54 @@ def test_a_second_read_of_an_unchanged_file_costs_a_stat_and_a_hash_not_the_file
     lines = HEX.split('\n')
     assert tool() == [HEX, HEX, f'10: {lines[9]}\n11: {lines[10]}\n']
     commands = [command_of(c) for c in harness.ran]
-    stat_only = [i for i, c in enumerate(commands) if re.search(r' big\.txt 0 0$', c)]
+    stat_only = [i for i, c in enumerate(commands) if re.search(r' big\.txt 0 0 0$', c)]
     assert len(stat_only) == 2 and len(harness.ran) - len(stat_only) >= 2          # the whole-file repeat and the window each asked the harness only for identity
     assert all(len(commands[i].encode()) < 2_800 for i in stat_only)                 # no file bytes in the transcript for the repeats
+
+
+BIG = ''.join(f'    value_{i} = compute(arg_{i}, {i * 7919 % 100003})\n' for i in range(30000))
+
+
+@pytest.mark.parametrize('start,end', [(29_990, 29_995), (15_000, 15_005), (100, 105), (1, 3), (29_998, 30_000), (29_999, None)])
+def test_a_window_anywhere_in_a_large_file_is_one_or_two_frames_not_the_prefix(tmp_path, start, end):
+    results, _, harness, ws = read_all(tmp_path, {'big.py': BIG}, [{'path': 'big.py', 'start_line': start, **({'end_line': end} if end else {})}])
+    rows = BIG.split('\n')
+    last = end or 30_000
+    assert contents(results) == [''.join(f'{n}: {rows[n - 1]}\n' for n in range(start, last + 1))]
+    assert len(harness.ran) <= 2 and all(len(command_of(c).encode()) < 2_800 for c in harness.ran)
+
+
+def test_windows_over_crlf_a_final_line_without_a_newline_and_past_the_end(tmp_path):
+    crlf, bare = 'one\r\ntwo\r\nthree\r\nfour', 'a\nb\nlast'
+    results, *_ = read_all(tmp_path, {'c.txt': crlf.encode(), 'b.txt': bare.encode()}, [
+        {'path': 'c.txt', 'start_line': 2, 'end_line': 3}, {'path': 'c.txt', 'start_line': 4}, {'path': 'b.txt', 'start_line': 3},
+        {'path': 'b.txt', 'start_line': 4}, {'path': 'c.txt', 'start_line': 9, 'end_line': 12}, {'path': 'b.txt', 'start_line': 1, 'end_line': 2}])
+    one, last_crlf, last_bare, past_bare, past_crlf, head = contents(results)
+    assert one == '2: two\r\n3: three\r\n' and last_crlf == '4: four\n' and last_bare == '3: last\n' and head == '1: a\n2: b\n'
+    assert 'has 3 lines; line 4 is past the end of the file' in past_bare and 'has 4 lines; line 9 is past the end of the file' in past_crlf
+
+
+def test_a_window_longer_than_one_frame_continues_with_the_same_start_line(tmp_path):
+    lines = [f'{i}:' + 'x' * 400 for i in range(200)]                       # 80 KB of lines, 400 bytes each
+    results, _, harness, _ = read_all(tmp_path, {'w.txt': '\n'.join(lines) + '\n'}, [{'path': 'w.txt', 'start_line': 50, 'end_line': 150}])
+    assert contents(results) == [''.join(f'{n}: {lines[n - 1]}\n' for n in range(50, 151))] and len(harness.ran) >= 2
+
+
+def test_a_file_that_changes_between_the_frames_of_a_window_is_read_again(tmp_path):
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    lines = [f'{i}:' + 'x' * 400 for i in range(200)]
+    (ws / 'w.txt').write_text('\n'.join(lines) + '\n')
+    newer = '\n'.join(['changed'] + lines[1:]) + '\n'
+
+    class Moving(Harness):
+        def __call__(self, call):
+            out = super().__call__(call)
+            if len(self.ran) == 1:
+                (ws / 'w.txt').write_text(newer)
+            return out
+    backend = TurnBackend([('read_file', {'path': str(ws / 'w.txt'), 'start_line': 1, 'end_line': 150})])
+    with start_in(Wire(tmp_path, backend), ws) as w:
+        w.drive(Moving(ws))
+    shown = [m['content'] for m in backend.bodies[-1]['messages'] if m.get('role') == 'tool'][0]
+    assert shown.startswith('1: changed\n') and shown.count('\n') == 150

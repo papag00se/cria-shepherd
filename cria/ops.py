@@ -149,7 +149,7 @@ class Ops(ReadOps):
             # AFTER travels as the hex of the name's bytes: a name that is not UTF-8 (a lone surrogate here) must not enter a command
             words, payload, comment = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', os.fsencode(args.get('after', '')).hex()], None, label
         elif what == readops.READ:
-            words, payload, comment = [args['root'], args['rel'], args['off'], args['len']], None, label
+            words, payload, comment = [args['root'], args['rel'], args['off'], args['len'], args.get('sk', 0)], None, label
         elif what == 'stat':
             words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]', ''], None, label
             what = 'ls'

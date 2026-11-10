@@ -33,7 +33,7 @@ def test_stub_sizes_stay_within_the_registry_budgets_and_hold_no_quote():
     for name, source in harnessprims.STUBS.items():
         assert "'" not in source and len(source.encode()) <= budgets[name], (name, len(source.encode()), budgets[name])
     stated = int(re.search(r'Total ([\d,]+) B\.', (DOCS / 'harness-primitives.md').read_text()).group(1).replace(',', ''))
-    assert sum(len(s.encode()) for s in harnessprims.STUBS.values()) == stated <= 13_600
+    assert sum(len(s.encode()) for s in harnessprims.STUBS.values()) == stated <= 13_900
 
 
 def test_compose_is_a_pure_function_with_the_documented_prefix_and_a_display_comment_that_carries_no_line_break():

@@ -81,7 +81,7 @@ def test_every_stub_runs_under_the_sandbox_the_command_is_echoed_byte_for_byte_a
     assert len(big) == 45_000
     huge = bytes(range(256)) * 430                                        # 110,080 raw bytes: past MAX_ARG_STRLEN as base64
     commands = [
-        harnessprims.compose('read', nonces[0], [ws, 'src/a.py', 0, 100], comment='read src/a.py'),
+        harnessprims.compose('read', nonces[0], [ws, 'src/a.py', 0, 100, 0], comment='read src/a.py'),
         harnessprims.compose('write', nonces[1], [ws, 'out/new.txt', '-', '-', sha(new), 0, 1, GROUP], new),
         harnessprims.compose('ls', nonces[2], [ws, '', 0, 100, 0, '[]', '']),
         harnessprims.compose('run', nonces[3], ['start', scratch, 'tok1', 20, 10, ws, 0], text='true'),
@@ -191,8 +191,8 @@ def test_read_round_trip_latency_through_the_sandboxed_harness(sandbox):
     ws = str(sandbox.workspace)
     (sandbox.workspace / 'small.py').write_text('x = 1\n' * 200)
     (sandbox.workspace / 'page.txt').write_text(''.join('%08x\n' % (i * 2654435761 % 2**32) for i in range(2000)))
-    commands = [harnessprims.compose('read', '%032x' % (200 + i), [ws, 'small.py', 0, 16000], comment='read_file small.py') for i in range(20)]
-    commands += [harnessprims.compose('read', '%032x' % (300 + i), [ws, 'page.txt', 0, 8000], comment='read_file page.txt') for i in range(20)]
+    commands = [harnessprims.compose('read', '%032x' % (200 + i), [ws, 'small.py', 0, 16000, 0], comment='read_file small.py') for i in range(20)]
+    commands += [harnessprims.compose('read', '%032x' % (300 + i), [ws, 'page.txt', 0, 8000, 0], comment='read_file page.txt') for i in range(20)]
     with Scripted(commands) as server:
         done = sandbox.run(server.url)
         assert done.returncode == 0, done.stderr[-2000:]
@@ -218,8 +218,11 @@ def test_read_file_through_the_pinned_codex_and_a_real_cria_server(sandbox, tmp_
     (ws / 'lines.txt').write_text(''.join(f'line {i}\n' for i in range(1, 51)))
     (ws / 'big.txt').write_text(hexed)
     (ws / 'out').symlink_to('/etc/hostname')
+    deep = ''.join(f'    value_{i} = compute(arg_{i}, {i * 7919 % 100003})\n' for i in range(30000))
+    (ws / 'deep.py').write_text(deep)
     backend = TurnBackend([('read_file', {'path': 'small.py'}), ('read_file', {'path': 'lines.txt', 'start_line': 5, 'end_line': 6}),
-                           ('read_file', {'path': 'big.txt'}), ('read_file', {'path': 'nope.txt'}), ('read_file', {'path': 'out'})])
+                           ('read_file', {'path': 'big.txt'}), ('read_file', {'path': 'nope.txt'}), ('read_file', {'path': 'out'}),
+                           ('read_file', {'path': 'deep.py', 'start_line': 29990, 'end_line': 29992})])
     cfg = Config(server=ServerConfig(host='127.0.0.1', port=0), logging=LoggingConfig(dir=str(tmp_path / 'logs'), console=False),
                  indicators=IndicatorsConfig(enabled=False), routing=RoutingConfig(engagement_level=2))
     log = EventLog(dir=cfg.logging.dir, console=False)
@@ -234,6 +237,8 @@ def test_read_file_through_the_pinned_codex_and_a_real_cria_server(sandbox, tmp_
         log.close()
     results = {m['tool_call_id']: m['content'] for m in backend.bodies[-1]['messages'] if m.get('role') == 'tool'}
     assert [results[f'model_call_0_{i}'] for i in range(3)] == ['a = 1\r\nb = "caf\u00e9"\n', '5: line 5\n6: line 6\n', hexed]
+    rows = deep.split('\n')
+    assert results['model_call_0_5'] == ''.join(f'{n}: {rows[n - 1]}\n' for n in (29990, 29991, 29992))        # one frame, wherever it sits
     assert 'nope.txt is not there' in results['model_call_0_3'] and 'is outside the project directory' in results['model_call_0_4']
     seen = json.dumps(backend.bodies[-1]['messages'])
     assert not [p for p in ('CTX1', 'ctx_', 'python3', '-I -S', 'harness-call', 'CTX_EOF') if p in seen]

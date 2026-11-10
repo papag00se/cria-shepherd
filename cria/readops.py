@@ -148,6 +148,12 @@ class ReadOps:
         """Raw bytes the next frames are asked to carry, at ``rung`` halvings."""
         return max(LEN_FLOOR, min(MAX_PAGE_LEN, int(ROOM_CHARS / self._rate)) >> rung)
 
+    def _first_len(self, ctx: dict) -> int:
+        """The first frame: a page, or for a window that names its end a few lines' worth (more follow if the lines are longer)."""
+        if ctx['start'] and ctx['end']:
+            return min(self._length(), max(2_000, 200 * (ctx['end'] - ctx['start'] + 1)))
+        return self._length()
+
     def _learn(self, header: dict, frame: dict) -> None:
         """The compression a sizable frame showed sets the size of the next ones (conservatively: a page of the same file that
         compresses worse than its neighbour is a cut frame asked again, never a wrong answer)."""
@@ -196,7 +202,7 @@ class ReadOps:
                     end=shown(end) or 'the requested end'))
             warm = self.cache.get(root, rel) is not None
             step = self._step(op, ctx, 0, READ, {'wave': 0, 'root': root, 'rel': rel, 'off': 0, 'hop': 0, 'rung': 0, 'round': 1,
-                                                  'len': 0 if warm else self._length()})
+                                                  'sk': 0 if warm else max(start - 1, 0), 'len': 0 if warm else self._first_len(ctx)})
             if len(step[1].encode()) > self.command_budget:
                 return self._say(session, record, op, ctx, prompts.render(
                     'read_path_too_long', size=len(path.encode('utf-8', 'surrogateescape')), limit=self.command_budget - 3000))
@@ -238,19 +244,64 @@ class ReadOps:
             return self._changed(op, steps, args0)
         for st, header in good:
             self._learn(header, st.frame)
+        if ctx['start']:
+            return self._after_window(op, args0, steps, good, cut, size, sha)
         pieces = [(h['off'], st.frame['text'].encode('utf-8', 'surrogateescape')) for st, h in good]
         held = self.cache.prefix(args0['root'], args0['rel'], sha, size)
         prefix, ranges = merge(pieces + ([(0, held)] if held else []))
         complete = len(prefix) >= size
         if complete and hashlib.sha256(prefix[:size]).hexdigest() != sha:
             return self._changed(op, steps, args0)
-        if complete or (ctx['start'] and ctx['end'] and prefix.count(b'\n') >= ctx['end']):
-            return self._deliver(op, prefix[:size] if complete else prefix, size, sha, complete, args0)
-        if not ctx['start'] and len(good) == 1 and good[0][1].get('off') == 0 and (verdict := self._early(op, prefix, size)) is not None:
+        if complete:
+            return self._deliver(op, prefix[:size], size, sha, True, args0)
+        if len(good) == 1 and good[0][1].get('off') == 0 and (verdict := self._early(op, prefix, size)) is not None:
             return verdict
         if cut:
             return self._ask_smaller(op, steps, args0, size, ranges)
         return self._more(op, steps, {**args0, 'rung': 0}, size, ranges)       # the learned rate already sizes the pages: a cut is what halves them
+
+    def _after_window(self, op, args0: dict, steps: list, good: list, cut: bool, size: int, sha: str):
+        """A window is read by line, where the file is: frames asked with ``SK`` = start - 1 start at the window's first line, so the
+        window is one or two frames whatever its position. A warm cache whole file serves it (identity only was asked)."""
+        ctx = op.ctx
+        held = self.cache.prefix(args0['root'], args0['rel'], sha, size)
+        if held and len(held) >= size and hashlib.sha256(held[:size]).hexdigest() == sha:
+            return self._deliver(op, held[:size], size, sha, True, args0)
+        mine = [(st, h) for st, h in good if st.args['sk'] == ctx['start'] - 1]
+        if not mine:                                       # only identity so far (the cache was not there to serve): ask for the window
+            return Issue(self._next(steps, READ, {**args0, 'sk': ctx['start'] - 1, 'off': 0, 'len': self._first_len(ctx), 'rung': 0}))
+        lines = mine[0][1]['ln']
+        shown = display_path(ctx['path'])
+        if ctx['start'] > lines:
+            head, _, tail = (_PAST % (shown, ctx['start'])).rpartition('%N%')
+            return Final(denial.RAN, head + str(lines) + tail, {'observe': '', 'hold': ctx['instead']})
+        base = {h['off'] - st.args['off'] for st, h in mine}
+        if len(base) != 1:
+            return self._changed(op, steps, args0)
+        base = base.pop()
+        prefix, ranges = merge([(h['off'] - base, st.frame['text'].encode('utf-8', 'surrogateescape')) for st, h in mine])
+        total = size - base
+        count = ctx['end'] - ctx['start'] + 1 if ctx['end'] else 0
+        eof = len(prefix) >= total
+        if eof or (count and prefix.count(b'\n') >= count):
+            return self._deliver_window(op, prefix, count, eof, size, sha)
+        if cut:
+            return self._ask_smaller(op, steps, args0, total, ranges)
+        return self._more(op, steps, {**args0, 'rung': 0}, total, ranges)
+
+    def _deliver_window(self, op, data: bytes, count: int, eof: bool, size: int, sha: str) -> Final:
+        """The numbered window cut from the bytes of the frames: ``N: text`` per line, numbered from the window's first line."""
+        ctx = op.ctx
+        rows = data.split(b'\n')
+        if eof and rows and rows[-1] == b'':
+            rows.pop()
+        chosen = rows[:count] if count else rows
+        try:
+            text = b''.join(b'%d: %s\n' % (ctx['start'] + i, row) for i, row in enumerate(chosen)).decode('utf-8', 'strict')
+        except UnicodeDecodeError:
+            return self._not_delivered(op, 'binary', len(data), None)
+        return Final(denial.REFUSED if ctx['instead'] else denial.RAN, ctx['pre'] + text,
+                     {'observe': 'range', 'pre': ctx['pre'], 'src': [size, sha], 'hold': ctx['instead']})
 
     def _early(self, op, prefix: bytes, size: int):
         """A whole read of a file larger than the whole of the model's measured window is not transported. The room is a strict
@@ -294,7 +345,8 @@ class ReadOps:
     def _changed(self, op, steps: list, args: dict):
         """The file changed while it was being read: read it again from the start, once; a second change is reported."""
         if args['round'] < ROUNDS:
-            return Issue(self._next(steps, READ, {**args, 'round': args['round'] + 1, 'off': 0, 'len': self._length(), 'rung': 0}))
+            return Issue(self._next(steps, READ, {**args, 'round': args['round'] + 1, 'off': 0, 'len': self._first_len(op.ctx), 'rung': 0,
+                                                  'sk': max(op.ctx['start'] - 1, 0)}))
         return Final(denial.UNKNOWN, '', {'note': prompts.render('read_changed', path=display_path(op.ctx['path'])),
                                           'hold': op.ctx['instead']})
 
@@ -386,5 +438,5 @@ class ReadOps:
                 return self._refusal(ctx, refusal)
             root, rel = split(resolved, ctx.get('wsroot'))
             return Issue(self._next(steps, READ, {'root': root, 'rel': rel, 'off': 0, 'hop': args['hop'] + 1, 'rung': 0,
-                                                  'round': args['round'], 'len': self._length()}))
+                                                  'round': args['round'], 'len': self._first_len(ctx), 'sk': max(ctx['start'] - 1, 0)}))
         return self._failure(op, 'unreadable')
