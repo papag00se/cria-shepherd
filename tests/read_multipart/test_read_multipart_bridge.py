@@ -1,13 +1,99 @@
 """The multipart bridge: durable, verified, fail-closed paging state behind one logical read."""
 import copy
 import json
+import shutil
 import stat
+from pathlib import Path
+from types import SimpleNamespace
 import pytest
 from cria import denial, multipart, resultpacket, toolwire, wsview, writeproxy
 from cria.multipart_bridge import Bridge, BridgeError
 from read_multipart_helpers import HEX, isolated_home, page_through, run_call, start  # noqa: F401
 
 FAIL7 = 'Wall time: 1 seconds\nProcess exited with code 7\nOutput:\nexact error \x1b[31mred\x1b[0m\n'
+
+@pytest.mark.parametrize('label,seed', [('node', 'handles-cli-node'), ('nemotron', 'handles-cli-node'),
+                                        ('python-direct-replay', 'orders-api-py')])
+def test_incident_mutations_are_held_and_delivered_through_multipart(tmp_path, label, seed):
+    """Campaign first replies (Node and Nemotron), and the separately labelled Python direct replay."""
+    from cria import initial_inventory, loop
+    from read_multipart_helpers import SHELL
+    import subprocess
+    repo = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / 'workspace'
+    shutil.copytree(repo / 'suite' / 'tasks' / seed / 'seed', workspace)
+    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(workspace))],
+                                     capture_output=True, text=True, check=True).stdout)
+    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                       runs_dir='', workspace_root=str(workspace), assists=True), loop.LoopStore())
+    driver._put_session('sid:incident', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+    fixture = json.loads((repo / 'tests' / 'fixtures' / 'unread_write' / (label + '.json')).read_text())
+    assert fixture['calls']
+    for number, original in enumerate(fixture['calls']):
+        call = copy.deepcopy(original)
+        args = json.loads(call['function']['arguments'])
+        path = workspace / args['path']
+        expected = path.read_text()
+        args['path'] = str(path)
+        call['function']['arguments'] = json.dumps(args)
+        name = call['function']['name']
+        view = wsview.View(str(workspace), 'sid:incident')
+        assert view.apply_initial_inventory(data, str(workspace))
+        token = wsview.bind(view)
+        try:
+            bridge = Bridge(str(tmp_path / f'state-{number}'))
+            completion = {'choices': [{'message': {'tool_calls': [call]}}]}
+            writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+                injected={name}, workspace_root=str(workspace),
+                unread_target=driver.unread_target_check('sid:incident', [], str(workspace)),
+                multipart_command=lambda tc, effect, receipt: bridge.register('s', tc, effect, SHELL, receipt))
+            bridge.bind('s', completion)
+            lowered = completion['choices'][0]['message']['tool_calls'][0]
+            assert lowered['id'] == original['id']
+            messages = [{'role': 'assistant', 'tool_calls': [lowered]},
+                        {'role': 'tool', 'tool_call_id': lowered['id'], 'content': run_call(lowered)}]
+            projected, facts = page_through(bridge, messages, restart=lambda: Bridge(str(tmp_path / f'state-{number}')))
+            assert len(facts) == 1 and facts[0].exact_body.decode() == expected
+            shown = writeproxy.represent_inbound(projected, workspace_root=str(workspace))
+            result = next(m for m in shown if m.get('tool_call_id') == original['id'])
+            assert denial.refused(result) and denial.read_payload(result) == expected
+            assert f'This {name} call was not run' in result['content']
+            assert args['path'] in loop._extract_reads(shown)
+            assert path.read_text() == expected
+        finally:
+            wsview.unbind(token)
+
+
+@pytest.mark.parametrize('name', ['edit_file', 'str_replace', 'create_file'])
+def test_unread_mutation_keeps_identity_and_verified_bytes_over_multiple_pages(tmp_path, name):
+    from cria import loop
+    from read_multipart_helpers import SHELL
+    path = tmp_path / 'large.txt'
+    path.write_text(HEX)
+    args = {'path': str(path), **({'content': 'replacement'} if name == 'create_file'
+                                  else {'old_string': HEX[:8], 'new_string': 'replacement'})}
+    original = {'id': 'held', 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(args)}}
+    bridge = Bridge(str(tmp_path / 'state'))
+    completion = {'choices': [{'message': {'tool_calls': [original]}}]}
+    writeproxy.translate_outbound(completion, SHELL, SimpleNamespace(emit=lambda *a, **k: None),
+        injected={name}, workspace_root=str(tmp_path),
+        unread_target=lambda p: 'existing unread target',
+        multipart_command=lambda tc, effect, receipt: bridge.register('s', tc, effect, SHELL, receipt))
+    bridge.bind('s', completion)
+    lowered = completion['choices'][0]['message']['tool_calls'][0]
+    assert lowered['id'] == 'held'
+    messages = [{'role': 'assistant', 'tool_calls': [lowered]},
+                {'role': 'tool', 'tool_call_id': 'held', 'content': run_call(lowered)}]
+    assert len(bridge.incoming('s', messages)[1]) == 1  # a continuation really is required
+    projected, facts = page_through(bridge, messages, restart=lambda: Bridge(str(tmp_path / 'state')))
+    assert len(facts) == 1 and facts[0].exact_body.decode() == HEX
+    rendered = writeproxy.represent_inbound(projected, workspace_root=str(tmp_path))
+    result = next(m for m in rendered if m.get('tool_call_id') == 'held')
+    assert denial.refused(result) and denial.read_payload(result) == HEX
+    assert f'This {name} call was not run' in result['content']
+    assert str(path) in loop._extract_reads(rendered)
+    assert path.read_text() == HEX
+
 
 def test_paged_read_is_idempotent_survives_restart_and_ends_in_exact_verified_bytes(tmp_path):
     """A retried request gets the identical private continuation; a restarted bridge replays validated pages and ends with the exact file."""

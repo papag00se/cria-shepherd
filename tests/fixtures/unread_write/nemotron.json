@@ -1,0 +1,13 @@
+{
+  "source": "/home/jesse/.cria/test-runs/calls/3090x4-nemotron-elastic-L5-1794082938/20261107T124754-01a1b7c4-8e9a-75d2-b27c-e41edfbae5e9/0002-coder-s1.response.json",
+  "calls": [
+    {
+      "id": "4bVO58bJwDjPk4dR39Ws751Efigk5F1R",
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "arguments": "{\"path\": \"package.json\", \"content\": \"{\\n  \\\"name\\\": \\\"ada-handle-resolver\\\",\\n  \\\"version\\\": \\\"1.0.0\\\",\\n  \\\"description\\\": \\\"CLI tool to resolve Ada handles\\\",\\n  \\\"bin\\\": {\\n    \\\"ada-handle\\\": \\\"./index.js\\\"\\n  }\\n}\"}"
+      }
+    }
+  ]
+}

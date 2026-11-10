@@ -2,5 +2,5 @@
 # call is answered with the file itself. `read` = the file's own bytes follow, as the harness read them;
 # `not_read` = the read could not be returned whole (the refusal that follows says why). A fact, never an
 # instruction. The marker line is the record that this result IS a read of the path (loop._extract_reads).
-read = {{FACT}} This write_file call was not run; the file is unchanged. Its current content follows.\n⟦ctx:read-instead⟧\n
-not_read = {{FACT}} This write_file call was not run; the file is unchanged.\n
+read = {{FACT}} This {{TOOL}} call was not run; the file is unchanged. Its current content follows.\n⟦ctx:read-instead⟧\n
+not_read = {{FACT}} This {{TOOL}} call was not run; the file is unchanged.\n

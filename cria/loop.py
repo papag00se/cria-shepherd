@@ -9287,7 +9287,7 @@ def _read_results_ordered(messages: list[dict]):
                 p = _path_of_args(fn.get("arguments") or "")
                 if p:
                     calls[tc["id"]] = (p, args.get("start_line"), args.get("end_line"))
-            elif fn.get("name") in writeproxy_names and tc.get("id") \
+            elif fn.get("name") in (writeproxy_names | writeproxy._EDIT_NAMES) and tc.get("id") \
                     and (p := _path_of_args(fn.get("arguments") or "")):
                 calls.setdefault(tc["id"], (p, None, None))   # only a read-instead result counts (below)
                 answered_by_read.add(tc["id"])

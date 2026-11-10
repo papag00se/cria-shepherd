@@ -447,7 +447,7 @@ class Bridge:
         call_id = original['id']
         token = uuid.uuid4().hex
         read_instead = effect.multipart_kind == 'read-instead'
-        pre, not_read = filecommands.read_instead_prose(effect.multipart_fact) if read_instead else ('', '')
+        pre, not_read = filecommands.read_instead_prose(effect.multipart_fact, fn['name']) if read_instead else ('', '')
         spec = filecommands.make_multipart_read_spec(call_id, fn['name'], fn['arguments'], token,
                                                       pre=pre, not_read=not_read, read_instead=read_instead)
         if spec.receipt != receipt:

@@ -1528,7 +1528,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             if only_injected and name not in injected:
                 rebuilt.append(tc)
                 continue
-            direct_synthetic_read = name in _READ_NAMES or name in _WRITE_NAMES
+            direct_synthetic_read = name in _READ_NAMES | _WRITE_NAMES | _EDIT_NAMES
             call_request = request
             from .multipartcontext import take
             alias = take(tc)

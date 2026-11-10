@@ -349,7 +349,7 @@ def _read_command_body(args: dict) -> str | None:
     return f"{_read_failure_branches(q, str(path))}{_whole_read(q)}"
 
 
-def _read_in_place_of_write(path: str, fact: str) -> str:
+def _read_in_place_of_write(path: str, fact: str, tool: str = 'write_file') -> str:
     """Return the unread file with a refused-write receipt and verified read payload."""
     q = _qbash(path)
     labels = prompts.load_map("write_unread_target")
@@ -363,10 +363,10 @@ def _read_in_place_of_write(path: str, fact: str) -> str:
     # FILE (`_extract_reads`, `represent_inbound`) ask `denial.read_payload`: the extent frame this branch prints
     # before `cat` is the only thing that says where the file's bytes begin.
     with denial.unframed():      # the prose is the record's `pre` field and the answer runs inside a branch that already printed its own record
-        read = denial.mark(prompts.fill(labels["read"], fact=fact))
+        read = denial.mark(prompts.fill(labels["read"], fact=fact, tool=tool))
     with denial.unframed():
-        no_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
-    not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
+        no_read = denial.mark(prompts.fill(labels["not_read"], fact=fact, tool=tool))
+    not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact, tool=tool))
     with denial.unframed():
         answer = _read_command({'path': path})
     # THE FILE'S BYTES RIDE INSIDE THE RECORD (a `refused` record whose `pre` is the prose and whose body is the file):
@@ -631,12 +631,12 @@ snapshot_release(snapshot['mode'] == 'snapshot' and offset + best >= len(stream)
 '''
 
 
-def read_instead_prose(fact: str) -> tuple[str, str]:
+def read_instead_prose(fact: str, tool: str = 'write_file') -> tuple[str, str]:
     """Render multipart read-instead wording without discarding its fact."""
     labels = prompts.load_map('write_unread_target')
     with denial.unframed():
-        return (denial.mark(prompts.fill(labels['read'], fact=fact)),
-                denial.mark(prompts.fill(labels['not_read'], fact=fact)))
+        return (denial.mark(prompts.fill(labels['read'], fact=fact, tool=tool)),
+                denial.mark(prompts.fill(labels['not_read'], fact=fact, tool=tool)))
 
 
 def make_multipart_read_spec(call_id, name, arguments, token, *, pre='', not_read='', read_instead=False):
@@ -644,7 +644,7 @@ def make_multipart_read_spec(call_id, name, arguments, token, *, pre='', not_rea
 
     The caller owns authorization and stores this object privately, paired to the call.
     """
-    if name not in (('write_file', 'create_file') if read_instead else ('read_file',)):
+    if name not in ((_WRITE_NAMES | _EDIT_NAMES) if read_instead else _READ_NAMES):
         raise ValueError('unsupported original tool')
     args = _parse_tool_args(arguments)
     path = _tool_path(args)
