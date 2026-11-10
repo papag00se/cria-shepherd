@@ -21,7 +21,7 @@ import shlex
 import threading
 from dataclasses import dataclass, field
 
-from . import callauth, denial, externalization, harnessprims, inventoryops, probeops, prompts, readops, searchops, surveyops, writeops, wsview
+from . import bodykeys, callauth, denial, externalization, gateops, harnessprims, inventoryops, probeops, prompts, readops, searchops, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
@@ -30,6 +30,7 @@ from .opsteps import Final, Issue, Wait, reason as _reason
 from .answerops import ANSWER, AnswerOps, LedgerAnswer
 from .probeops import PROBE, ProbeOps
 from .searchops import SEARCH, SearchOps
+from .gateops import GateOps
 from .inventoryops import InventoryOps
 from .readops import LedgerRead, ReadFact, ReadOps
 from .surveyops import SurveyAsk, SurveyOps
@@ -100,7 +101,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, ProbeOps):
+class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, ProbeOps, GateOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -112,6 +113,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         self._carry: dict = {}      # (operation, sha-256) -> the bytes a planned write will leave, for the cache once it lands
         self._surveys: dict = {}    # survey operation -> its wsview.Survey (process memory: recomputed from the ledger's frames)
         self._inventories: dict = {}    # inventory operation -> its listing (process memory: recomputed from the ledger's frames)
+        self._gates: dict = {}          # gate operation -> its gateops.GateResult (process memory: recomputed from the ledger's frames)
         self._rlog = None
         self._lock = threading.RLock()      # the ledger's folded state is shared: one request at a time advances operations
 
@@ -162,6 +164,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return searchops.command(op, ctx, s, what, args, blobs or {})
         if what in probeops.WHATS:
             return probeops.command(op, ctx, s, what, args, blobs or {})
+        if what in gateops.WHATS:
+            return gateops.command(op, ctx, s, what, args, blobs or {})
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what in writeops.WHATS:
             return writeops.command(op, ctx, s, what, args, blobs or {})
@@ -298,7 +302,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         try:
             frame = harnessprims.read_frame(text, nonce)
         except harnessprims.FrameUnknown as exc:
-            return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc)}, 'text': '', 'wire': len(text)}
+            said = gateops.refusal_reason(text)          # the harness's own words when it declined the call (a sandbox refusal prints no frame)
+            return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc), **({'said': said} if said else {})}, 'text': '', 'wire': len(text)}
         return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
                 'wire': len(text)}
 
@@ -339,6 +344,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return self._v_after(op, steps)
         if op.kind == inventoryops.INVENTORY:
             return self._i_after(op, steps)
+        if op.kind == gateops.GATE:
+            return self._g_after(op, wave, steps)
         if op.kind == SEARCH:
             return self._s_after(op, wave, steps)
         if op.kind == PROBE:
@@ -527,7 +534,10 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
                 if len(kept) == len(m['tool_calls']) and kept == m['tool_calls']:
                     out.append(m)
                 elif kept or m.get('content'):
-                    out.append({**{k: v for k, v in m.items() if k != 'tool_calls'}, **({'tool_calls': kept} if kept else {})})
+                    gate = {c['id'] for c in kept if any(o.kind == gateops.GATE and o.calls and o.calls[0]['id'] == c['id'] for o in ops.values())}
+                    out.append({**{k: v for k, v in m.items() if k != 'tool_calls'}, **({'tool_calls': kept} if kept else {}),
+                                # the checks cria ran on its own and the model may see: an in-process fact (a JSON string cannot acquire it)
+                                **({bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK} if gate and len(gate) == len(kept) else {})})
             elif role == 'tool' and m.get('tool_call_id') in finished:
                 op, _ = finished[m['tool_call_id']]
                 here = answers(m['tool_call_id'])
@@ -558,6 +568,10 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         told about it: the outcome, and for a read the verified body, for a file mutation the typed result."""
         from . import resultnotes
         final, original = op.final, op.calls[i]
+        if op.kind == gateops.GATE:
+            outcomes[original['id']] = final['outcome']
+            return {'role': 'tool', 'tool_call_id': original['id'], 'content': '', bodykeys.GATE_RESULT: self._gate_cached(op),
+                    bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.AUTOMATIC_CHECK}
         if op.kind == writeops.MUTATE:
             r = final['results'][i]
             outcomes[original['id']] = r['o']

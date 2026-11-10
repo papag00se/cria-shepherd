@@ -13,7 +13,7 @@ BENIGN_SLICES = {  # (file, expression): display tables, ids, parsing, both halv
     ("retention.py", "name[:20]"), ("retention.py", "r[:6]"), ("livingplan.py", "cleaned[i][:160]"),
     ("completionconfirmation.py", "cleaned.strip().splitlines()[1:]"), ("loop.py", "_task_key(task)[:8]"),
     ("loop.py", "d[1:]"), ("plan.py", "lines[i + 1:]"), ("planner.py", "key[:8]"), ("externalization.py", "ln[:2]"),
-    ("probegate.py", "ran[:-1]"), ("probegate.py", "text[max(0, i - 80):i + 160]"), ("probeparse.py", "toks[2:]"),
+    ("probegate.py", "ran[:-1]"), ("probegate.py", "text[max(0, i - 80):i + 160]"), ("gateops.py", "text[max(0, i - 80):i + 160]"), ("probeparse.py", "toks[2:]"),
     ("proberun.py", "lines[:i]"), ("proberun.py", "lines[i + 1:]"), ("responses.py", "uuid.uuid4().hex[:24]"),
     ("webfetch.py", "d[:DESCRIPTION_CHARS - 1]"), ("webfetch.py", "s[:keep]"), ("webfetch.py", "s[-4:]"),
     ("dedup.py", "us[cur:]"), ("dedup.py", "us[cur:a]"), ("callliterals.py", "lines[:cut]"),

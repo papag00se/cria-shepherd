@@ -80,6 +80,18 @@ def _mac(*parts: str, create: bool = True) -> bytes:
     return hmac.new(_key(create), '|'.join(parts).encode(), hashlib.sha256).digest()
 
 
+def op_of(cid) -> str | None:
+    """The operation a verified-shaped id belongs to (its shape only: nothing is verified here)."""
+    match = ID.match(cid) if isinstance(cid, str) else None
+    return match.group(1) if match else None
+
+
+def display_id(op: str) -> str:
+    """The id the model's history shows for a call cria made on its own that the model is allowed to see (the gate's checks): derived from the
+    operation alone, neutral (no ``ctx_``), the same after a restart."""
+    return 'call_' + hashlib.sha256(('display|' + op).encode()).hexdigest()[:16]
+
+
 def new_op() -> str:
     return secrets.token_hex(6)
 

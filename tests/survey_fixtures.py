@@ -75,13 +75,39 @@ def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, sessi
     return data
 
 
+def gate_of_disk(root, candidates=None, *, script=None, sections=None, timeout=60.0, deadline=90.0, wait=2.0, scope=None, env=None, ran=None,
+                 alter=None, restart=False, session="gt", rounds=None, cwd=None, shell=None, workspace=None, step=None, probe_timeout=240.0, skip=()):
+    """The real gate over the real directory ``root``: the checks (composed by `gatescript.compose` from ``candidates``, or a hand-written ``script`` with
+    its ``sections``) are issued as a gate operation and every primitive call is run with bash where the files are, until it is done.
+    Returns the `gateops.GateResult` (None while it is not done). ``step(calls, ops)`` may stop the drive early by returning True."""
+    from cria import gatescript
+    from cria.probediscovery import ProbeKind  # noqa: F401
+    root = str(root)
+    scope = (root,) if scope is None else tuple(scope)
+    if script is None:
+        script, sections = gatescript.compose(list(candidates or []), root if workspace is None else workspace, probe_timeout, scope)
+    facts = tuple(_fact(c) for c in candidates or [])
+    holder = {}
+
+    def issue(ops):
+        holder["op"], calls = ops.issue_gate(session, shell or SHELL, root=root, script=script, sections=list(sections), timeout=timeout, deadline=deadline,
+                                             wait=wait, facts=facts, shown="", scope=scope)
+        return calls
+    return _drive(issue, cwd or root, session, env, ran, alter, restart, rounds, lambda ops: ops.gate_of(session, holder["op"]), step=step, skip=skip)
+
+
+def _fact(c):
+    from cria.gateops import SectionFact
+    return SectionFact(c.kind, bool(getattr(c, "composed_by_cria", False)), tuple(c.command))
+
+
 def probe_of_disk(root, rel, session="pr", env=None, ran=None, alter=None, restart=False, rounds=None, cwd=None):
     """What the file ``rel`` says when the unread-write rule asks it, through the real engine and the real stubs: the facts the probe learned."""
     return _drive(lambda ops: [ops.issue_probe(session, SHELL, rel, [], workspace_root=str(root), level="write")], cwd or root, session, env, ran, alter,
                   restart, rounds, lambda ops: next(o.final["facts"] for o in ops.ledger.ops(session).values() if o.kind == "probe"))
 
 
-def _drive(issue, root, session, env, ran, alter, restart, rounds, result):
+def _drive(issue, root, session, env, ran, alter, restart, rounds, result, step=None, skip=()):
     home = tempfile.mkdtemp(prefix="survey-home-")
     saved = privatepaths.CRIA_HOME
     privatepaths.CRIA_HOME = type(saved)(home) / ".cria"
@@ -89,20 +115,27 @@ def _drive(issue, root, session, env, ran, alter, restart, rounds, result):
         ops = Ops()
         calls = issue(ops)
         messages = []
+        index = -1
         while calls:
             if rounds is not None:
                 rounds.append(len(calls))
             messages.append({"role": "assistant", "tool_calls": calls})
             for tc in calls:
+                index += 1
                 command = json.loads(tc["function"]["arguments"])["cmd"]
                 if ran is not None:
                     ran.append(command)
+                if index in skip:           # the harness never ran it and answered nothing: a lost call
+                    messages.append({"role": "tool", "tool_call_id": tc["id"], "content": ""})
+                    continue
                 done = subprocess.run(["/bin/bash", "-c", command], cwd=str(root), env={**harness_env(root), **(env or {})},
                                       capture_output=True, text=True, timeout=300)
                 text = done.stdout + done.stderr
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": alter(command, text) if alter else text})
             ops = Ops() if restart else ops
             calls = ops.incoming(session, messages).calls
+            if step is not None and step(calls, ops):
+                break
         return result(ops)
     finally:
         privatepaths.CRIA_HOME = saved
