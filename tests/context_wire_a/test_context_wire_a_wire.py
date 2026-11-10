@@ -152,7 +152,7 @@ def test_final_wire_carries_whole_historical_result_with_its_call_when_it_fits()
 def test_only_replayed_handoff_text_is_cut_and_only_after_a_proven_overflow():
     """A user-role message over the window used to end the session with a stop message. Text cria authored (typed handoff provenance) loses its OLDEST part, labelled, once a measurement or backend rejection (`_reduce_user`) proved the overflow; a person's message is sent whole (principle 5) and the unfittable case is a structured event, never a stop message."""
     body = "Summarise this:\n" + "".join(f"record {i:05d} " + "x" * 40 + "\n" for i in range(400))
-    handoff = {"role": "user", "content": body, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff()}
+    handoff = {"role": "user", "content": body, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff(True)}
     kw = dict(window=1000, safety=1, **{bodykeys.OUTPUT_RESERVE: 1})
     rlog = Rlog()
     sent = prep([handoff], rlog=rlog, reduce_user=True, **kw)["messages"]

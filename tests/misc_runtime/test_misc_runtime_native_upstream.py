@@ -35,7 +35,7 @@ def test_native_sizing_sends_the_whole_input_or_cuts_a_replayed_handoff_oldest_p
         {"role": "user", "content": "Perform the original task."},
         {"role": "assistant", "content": "⟦ctx:briefing⟧ Original evidence\r\nwith its role and β bytes intact."},
         {"role": "user", "content": "A later amendment: preserve preceding instructions."}]}
-    body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff()
+    body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff(True)
     original = deepcopy(body)
     log = type("Log", (), {"emit": lambda *a, **k: None})()
     up.chat(body, log)

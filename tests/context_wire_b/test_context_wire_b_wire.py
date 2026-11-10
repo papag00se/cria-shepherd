@@ -101,7 +101,7 @@ def test_only_replayed_handoff_text_is_cut_and_only_when_overflow_is_proven(toke
     up = upstream(4096)
     server, body = Server(up, lambda text: tokens(text) if callable(tokens) else tokens), native_request()
     if handoff:
-        body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff()
+        body["messages"][0][bodykeys.HARNESS_HANDOFF] = bodykeys.HarnessHandoff(True)
     if no_render:
         up._render_prompt = lambda body: None
     original = deepcopy(body)

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from cria import bodykeys, contextfloor, indicators, responses, server
-from cria.loop import reframe_compaction
+from cria.loop import _COMPACTION_BOUNDARY, _HandoffOrigin, reframe_compaction
 from cria.upstream import Upstream
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "handoff_overflow" / "inbound-08730a48-responses.json.gz"
@@ -31,13 +31,17 @@ class Rlog:
         return [f for k, f in self.events if k == kind]
 
 
-def incident_body():
+def incident_body(authenticated=True):
+    """The real inbound request as the server prepares it. ``authenticated`` True = cria had recorded the identity of the handoff
+    it produced (the replayed text matches a `_HandoffOrigin`); False = what the incident actually had (no origin recorded)."""
     body = responses.to_chat_body(json.loads(gzip.decompress(FIXTURE.read_bytes())))
-    messages, _ = indicators.strip_history(body["messages"])
-    before = messages
-    messages, reframed = reframe_compaction(before)       # what the server did first: loop.compaction_reframed
+    before, _ = indicators.strip_history(body["messages"])
+    summary = before[-1]["content"].split(_COMPACTION_BOUNDARY, 1)[1].lstrip("\n")
+    origin = _HandoffOrigin(summary, "", False) if authenticated else None
+    messages, reframed = reframe_compaction(before, origin=origin)   # what the server did first: loop.compaction_reframed
     assert reframed
-    messages = server._mark_replayed_handoffs(before, messages, None)   # ...and the typed provenance it stamps on what it rewrote
+    messages = server._mark_replayed_handoffs(before, messages, origin)   # ...and the typed provenance it stamps on what it rewrote
+    assert messages[-1][bodykeys.HARNESS_HANDOFF].authenticated is authenticated
     return {**body, "messages": messages, bodykeys.OUTPUT_RESERVE: 16384, "stream": False}
 
 
@@ -55,7 +59,7 @@ def serve(up, posts):
     up._ordinary_open, up._open = metadata, generate
 
 
-def test_the_incident_request_is_reduced_labelled_and_sent_never_answered_with_a_stop_message():
+def test_an_authenticated_incident_handoff_is_reduced_labelled_and_sent_never_answered_with_a_stop_message():
     body, posts, rlog = incident_body(), [], Rlog()
     up = Upstream("http://inprocess.invalid", context_window=WINDOW, capture_dir=None, capture_rendered=False,
                   engagement_level=5)
@@ -121,7 +125,7 @@ def test_a_persons_oversized_message_is_never_cut_unless_the_operator_switch_is_
 
 def test_an_estimate_alone_never_cuts_and_a_backend_rejection_does():
     """No measurement possible (no template/tokenizer): the oversized-by-estimate body is sent whole; only the backend's capacity rejection authorizes the last lever."""
-    handoff = {"role": "user", "content": "⟦ctx:continuation⟧ handoff\n" + HUMAN, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff()}
+    handoff = {"role": "user", "content": "⟦ctx:continuation⟧ handoff\n" + HUMAN, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff(True)}
     up = Upstream("http://inprocess.invalid", context_window=WINDOW, capture_dir=None, capture_rendered=False, engagement_level=5)
     up._render_prompt = lambda body: None                                     # nothing can measure
     rlog = Rlog()
@@ -134,6 +138,16 @@ def test_an_estimate_alone_never_cuts_and_a_backend_rejection_does():
     assert "⟦ctx:reduced⟧" in json.loads(wire)["messages"][0]["content"] and rlog.named("context.overflow_reduced")
 
 
+def test_an_unauthenticated_stamp_never_authorizes_a_cut():
+    """`bodykeys.HarnessHandoff(False)` (the harness opening only) is not cria's own text: lever 8 skips it even when overflow is proven."""
+    handoff = {"role": "user", "content": "⟦ctx:continuation⟧ handoff\n" + HUMAN, bodykeys.HARNESS_HANDOFF: bodykeys.HarnessHandoff(False)}
+    up = Upstream("http://inprocess.invalid", context_window=WINDOW, capture_dir=None, capture_rendered=False, engagement_level=5)
+    up._render_prompt = lambda body: None
+    wire, _, _ = up._prep({"model": "m", bodykeys.OUTPUT_RESERVE: 16384, "messages": [handoff]}, False, Rlog(),
+                          safety_override=2.0, _reduce_user=True)
+    assert json.loads(wire)["messages"][0]["content"] == handoff["content"]
+
+
 def test_only_a_handoff_the_server_rewrote_is_stamped():
     """`_mark_replayed_handoffs` stamps what `reframe_compaction` produced here, never an inbound message that merely opens with the marker."""
     lookalike = {"role": "user", "content": "⟦ctx:continuation⟧ typed by a person"}
@@ -141,3 +155,33 @@ def test_only_a_handoff_the_server_rewrote_is_stamped():
     out = server._mark_replayed_handoffs([lookalike], [lookalike, rewritten], None)
     assert bodykeys.HARNESS_HANDOFF not in out[0] and isinstance(out[1][bodykeys.HARNESS_HANDOFF], bodykeys.HarnessHandoff)
     assert out[1][bodykeys.HARNESS_HANDOFF].authenticated is False
+
+
+def test_the_incident_as_it_happened_has_no_authenticated_origin_so_nothing_is_cut():
+    """The fifth handoff's identity was never recorded: the replay carries only the structural harness opening, which a person can type, so the backstop must NOT cut it (the packet bound at production is what keeps the replayed packet small)."""
+    body, posts, rlog = incident_body(authenticated=False), [], Rlog()
+    up = Upstream("http://inprocess.invalid", context_window=WINDOW, capture_dir=None, capture_rendered=False, engagement_level=5)
+    up._props, up._props_seen = {"chat_template": "served"}, True
+    serve(up, posts)
+    up.chat(body, rlog)
+    assert "⟦ctx:reduced⟧" not in posts[0]["messages"][-1]["content"] and not rlog.named("context.overflow_reduced")
+    assert rlog.named("context.overflow_unfittable")
+
+
+CRITICAL = "CRITICAL TASK: never delete the production database; add the express rate and the zone_for lookup."
+LOOKALIKE = ("Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state "
+             "of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating "
+             "work. Here is the summary produced by the other language model, use the information in this summary to assist with your own "
+             "analysis:\n" + CRITICAL + "\n" + "".join(f"note {i:05d} " + "x" * 60 + "\n" for i in range(2500)))
+
+
+def test_a_person_typing_the_harness_opening_never_loses_the_task():
+    """A human message that opens with the harness's compaction sentence, carries a critical task and a long body, goes through reframe_compaction, the server stamp and the floor: it is recognised structurally (stamped, unauthenticated) but never cut, so the task survives whole."""
+    before = [{"role": "user", "content": LOOKALIKE}]
+    messages, reframed = reframe_compaction(before, origin=None)
+    assert reframed
+    messages = server._mark_replayed_handoffs(before, messages, None)
+    assert messages[0][bodykeys.HARNESS_HANDOFF].authenticated is False
+    posts, rlog = run(messages)
+    assert CRITICAL in posts[0]["messages"][0]["content"] and "⟦ctx:reduced⟧" not in posts[0]["messages"][0]["content"]
+    assert rlog.named("context.overflow_unfittable") and not rlog.named("context.overflow_reduced")

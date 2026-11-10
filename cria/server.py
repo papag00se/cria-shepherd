@@ -853,9 +853,10 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         # the stored reply: `_finalize` appends the turn-stats footer to this text answer, and comparing
         # the decorated copy recorded no producer for any decorated drop (ornith1.5_9b / Java run 4,
         # 0042: the coder then read cria's own ledger framed as an ungrounded handoff).
+        live = _handoff_session(server, sk)
         if owner is None:
             why = "no_session"
-        elif _handoff_session(server, sk) is not owner:
+        elif live is not owner:
             why = "session_replaced"
         elif as_stored(_completion_text(retained)) != origin.reply:
             why = "reply_changed_in_finalization"
@@ -866,7 +867,9 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             return
         # The identity a later continuation is matched against was NOT recorded: that continuation will stay an
         # unexpanded, unreducible user message. Say which input differed (2026-11-10 phi4: the fifth handoff).
-        rlog.emit("handoff.origin_unrecorded", level="warn", why=why, reply_chars=len(origin.reply))
+        rlog.emit("handoff.origin_unrecorded", level="warn", why=why, reply_chars=len(origin.reply),
+                  owner_at_start=type(owner).__name__, owner_now=type(live).__name__,
+                  guard_now=type(server.loop_store.get_guard(sk)).__name__ if getattr(server, "loop_store", None) else "none")
     if _defer_commit is None:
         commit(result.completion)  # compatibility caller receives this exact returned result
     else:

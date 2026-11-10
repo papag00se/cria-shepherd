@@ -68,8 +68,8 @@ _REDUCED_MARK = "⟦ctx:reduced⟧"
 # the same reason as _PROTECT_MARKERS: contextfloor imports no sibling; a test asserts it is in sync).
 _RESTORED_HINT = "cria_restored_files"
 # THE OPERATOR SWITCH for lever 8 on a person's own message. OFF: principles.md section 5 treats disclosed clipping as
-# truncation, so until the operator decides, the lever cuts only text cria itself authored or framed (a message carrying the
-# typed ``bodykeys.HarnessHandoff`` provenance). ``fit(cut_human_input=...)`` overrides it per call.
+# truncation, so until the operator decides, the lever cuts only text cria itself produced and can authenticate (a message
+# carrying the typed ``bodykeys.HarnessHandoff`` provenance with ``authenticated`` True). ``fit(cut_human_input=...)`` overrides it per call.
 CUT_HUMAN_INPUT = False
 # The stand-in note retains whole historical turns or paired exchanges within this shared allowance;
 # anything else is disclosed as omitted. The drop loops measure the entire note, including labels.
@@ -680,12 +680,14 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
 
 def _cuttable_user_text(message: dict, cut_human_input: bool) -> bool:
-    """May lever 8 cut this user-role message? Text cria itself authored or framed: yes, decided by PRODUCER PROVENANCE (the
-    typed ``bodykeys.HarnessHandoff`` the inbound edge sets on a handoff it rewrote; a JSON string cannot carry it), never by
-    reading the text. A person's own message: only behind the operator switch (:data:`CUT_HUMAN_INPUT`), and then never
-    cria's own anchors."""
-    if isinstance(message.get(bodykeys.HARNESS_HANDOFF), bodykeys.HarnessHandoff):
-        return True
+    """May lever 8 cut this user-role message? Only text cria itself PRODUCED and can authenticate: the typed
+    ``bodykeys.HarnessHandoff`` provenance with ``authenticated`` True (the replayed text matched the identity cria recorded
+    when it produced it; a JSON string cannot carry it). A handoff recognised only by the harness's compaction opening
+    (``authenticated`` False) is indistinguishable from a person typing that opening and is NOT cut. A person's message: only
+    behind the operator switch (:data:`CUT_HUMAN_INPUT`), and then never cria's own anchors."""
+    handoff = message.get(bodykeys.HARNESS_HANDOFF)
+    if isinstance(handoff, bodykeys.HarnessHandoff):
+        return handoff.authenticated
     return cut_human_input and not _has_protect_marker(message)
 
 
@@ -701,7 +703,7 @@ def _reduce_user_input(messages: list[dict], tools, *, window: int, reserve: int
     The last lever, for text no other lever may touch. Handing the session back with a stop message is forbidden
     (principle 14), and the remedy for too much of text cria itself authored (a handoff packet a harness replays as a
     user-role message) is to carry its newest part. Which messages are cuttable is :func:`_cuttable_user_text`: the typed
-    ``HarnessHandoff`` provenance, or any user message only when the operator switch ``cut_human_input`` is ON.
+    authenticated ``HarnessHandoff`` provenance, or any user message only when the operator switch ``cut_human_input`` is ON.
     The message keeps its opening line (at most :data:`_USER_HEAD_CHARS` characters), then a label stating how many
     characters, lines and tokens were omitted and how many of the newest characters follow; the tail begins at a line
     boundary when one is near. The kept tail is the LARGEST that fits (a search on the floor's own estimate). A message with
