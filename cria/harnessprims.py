@@ -98,7 +98,12 @@ try:
     if hashlib.sha256(new).hexdigest()!=nw:out(dict(ok=0,err="newsha"))
     try:os.unlink(tf,dir_fd=fd)
     except FileNotFoundError:pass
-    t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);os.write(t,new);os.fsync(t)
+    t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);v=memoryview(new)
+    while v:
+        w=os.write(t,v)
+        if w<1:raise OSError(5,"short write")
+        v=v[w:]
+    os.fsync(t)
     if s:
         try:os.fchown(t,s.st_uid,s.st_gid)
         except OSError:pass
@@ -122,7 +127,12 @@ try:
     rt,rel,gr,off,mk=sys.argv[2:7];fd,nm=at(rt,rel,mk=="1")
     g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
     if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
-    os.pwrite(g,base64.b64decode(sys.stdin.read()),int(off));out(dict(ok=1,staged=os.fstat(g).st_size))
+    v=memoryview(base64.b64decode(sys.stdin.read()));o=int(off)
+    while v:
+        w=os.pwrite(g,v,o)
+        if w<1:raise OSError(5,"short write")
+        v=v[w:];o+=w
+    out(dict(ok=1,staged=os.fstat(g).st_size))
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 '''
 

@@ -89,14 +89,14 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | Stub | Verb | Sent size | Arguments after the nonce |
 |---|---|---|---|
 | `read` | return a byte range of a file and its identity | 1,803 B | `ROOT REL OFF LEN SK` |
-| `write` | replace or create a file atomically, compare-and-swap | 2,675 B | `ROOT REL EX SP NEW ST MK G` + stdin |
-| `put` | stage one chunk of a payload too big for one command | 1,256 B | `ROOT REL G OFF MK` + stdin |
+| `write` | replace or create a file atomically, compare-and-swap | 2,780 B | `ROOT REL EX SP NEW ST MK G` + stdin |
+| `put` | stage one chunk of a payload too big for one command | 1,370 B | `ROOT REL G OFF MK` + stdin |
 | `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
 | `rm` | delete a file, an empty directory or an owned tree | 1,709 B | `ROOT REL MODE EX` |
 | `run` | run a command with a timeout, detached, output to a file | 2,371 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
 | `search` | regex search over a file list cria chose | 1,692 B | `ROOT PATTERN FLAGS MAX MAXFILE` + stdin |
 
-Total 13,628 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 13,847 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -164,7 +164,7 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 * `ST=1` takes the payload from the staging file written by `put` calls with the same `G` (a 32-hex per-operation token) instead of stdin.
 * `MK=1` creates missing parent directories.
 
-Steps: walk to the parent with no-follow opens → `flock` the parent directory (serialises cooperating cria writers) → read the target through its descriptor → check `EX` (else `err:stale` with the current `sha`, nothing written) → build and verify the result → write it to a sibling temp file `.ctx<nonce16>.tmp` (`O_EXCL`; a stale file of the same name from a killed run is unlinked first), `fsync` → copy mode and owner of the old file → re-`stat` the target and refuse (`stale`) if its inode, size or mtime moved since it was read → `rename` over the target, or `link`+`unlink` for `EX=-` (an atomic no-replace create) → `fsync` the directory → remove the staging file. Any error removes the temp file. A filesystem without hard links answers the `link` with an error (`EPERM`/`ENOTSUP`) and nothing is written; cria reports it, and may retry with `EX=*` only after a fresh stat showed the path absent (a decision made in cria, not a fallback in the stub).
+Steps: walk to the parent with no-follow opens → `flock` the parent directory (serialises cooperating cria writers) → read the target through its descriptor → check `EX` (else `err:stale` with the current `sha`, nothing written) → build and verify the result → write it to a sibling temp file `.ctx<nonce16>.tmp` (`O_EXCL`; a stale file of the same name from a killed run is unlinked first) **in a loop until every byte is written** (one `write(2)` may take fewer bytes than asked: a full disk, a quota, a file-size limit; a call that takes none, or fails, fails the whole call with the temp file removed and the target untouched, so a truncated file is never renamed into place), `fsync` → copy mode and owner of the old file → re-`stat` the target and refuse (`stale`) if its inode, size or mtime moved since it was read → `rename` over the target, or `link`+`unlink` for `EX=-` (an atomic no-replace create) → `fsync` the directory → remove the staging file. Any error removes the temp file. A filesystem without hard links answers the `link` with an error (`EPERM`/`ENOTSUP`) and nothing is written; cria reports it, and may retry with `EX=*` only after a fresh stat showed the path absent (a decision made in cria, not a fallback in the stub).
 
 Properties cria relies on: a write is **idempotent** (re-issuing the same call after it landed answers `stale` with `sha == NEW`, which cria reads as "landed"); a payload cannot land unless it hashes to `NEW`; replacing a file keeps its mode and owner (a change from today's whole-file write, which reset mode to `0666 & ~umask`).
 
@@ -191,7 +191,12 @@ try:
     if hashlib.sha256(new).hexdigest()!=nw:out(dict(ok=0,err="newsha"))
     try:os.unlink(tf,dir_fd=fd)
     except FileNotFoundError:pass
-    t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);os.write(t,new);os.fsync(t)
+    t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);v=memoryview(new)
+    while v:
+        w=os.write(t,v)
+        if w<1:raise OSError(5,"short write")
+        v=v[w:]
+    os.fsync(t)
     if s:
         try:os.fchown(t,s.st_uid,s.st_gid)
         except OSError:pass
@@ -212,7 +217,7 @@ finally:
 
 ### 5.3 `put`
 
-`put N ROOT REL G OFF MK` writes one chunk at byte offset `OFF` of the staging file `.ctx<G16>.part` (mode 0600, no-follow) in the target's directory and answers its current size. Chunks may arrive in any order and in parallel (disjoint ranges); re-sending a chunk is harmless. The final `write ... ST=1` verifies the assembled bytes against `NEW` before anything lands.
+`put N ROOT REL G OFF MK` writes one chunk at byte offset `OFF` of the staging file `.ctx<G16>.part` (mode 0600, no-follow) in the target's directory and answers its current size. Chunks may arrive in any order and in parallel (disjoint ranges); re-sending a chunk is harmless. A chunk is written in a loop until every byte is down (`pwrite` loop, as in `write`); a short write fails the call (`ok:0`), it never answers a size that is not the chunk's end. The final `write ... ST=1` verifies the assembled bytes against `NEW` before anything lands.
 
 ```python
 import stat
@@ -220,7 +225,12 @@ try:
     rt,rel,gr,off,mk=sys.argv[2:7];fd,nm=at(rt,rel,mk=="1")
     g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
     if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
-    os.pwrite(g,base64.b64decode(sys.stdin.read()),int(off));out(dict(ok=1,staged=os.fstat(g).st_size))
+    v=memoryview(base64.b64decode(sys.stdin.read()));o=int(off)
+    while v:
+        w=os.pwrite(g,v,o)
+        if w<1:raise OSError(5,"short write")
+        v=v[w:];o+=w
+    out(dict(ok=1,staged=os.fstat(g).st_size))
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 ```
 

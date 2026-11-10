@@ -1,6 +1,7 @@
 """Shared fixtures for the write/edit shard: lower a call the production way, RUN the program in bash, read it back."""
 import json
 import os
+import resource
 import subprocess
 import sys
 
@@ -78,7 +79,7 @@ def represented(messages, **kw):
 DROP = object()
 
 
-def settle(messages, cwd, fault=None, ran=None, env=None, survey=False):
+def settle(messages, cwd, fault=None, ran=None, env=None, survey=False, fsize=None):
     """The harness side of cria's own operations: answer each primitive call the engine asks for, in the workspace, until it asks no
     more; returns what `represent_inbound` shows the model, given what the ledger recorded.
 
@@ -96,7 +97,7 @@ def settle(messages, cwd, fault=None, ran=None, env=None, survey=False):
             mode = fault(tc) if fault else None
             if mode == "never-ran":
                 continue
-            done = run(tc, cwd, env=env)
+            done = run(tc, cwd, env=env, fsize=fsize)
             if ran is not None:
                 ran.append(command_of(tc))
             if mode == "drop-reply":
@@ -111,11 +112,12 @@ def command_of(tc):
     return json.loads(tc["function"]["arguments"])["cmd"]
 
 
-def run(tc, cwd, timeout=30, env=None):
+def run(tc, cwd, timeout=30, env=None, fsize=None):
     """Execute the lowered command in ``cwd`` as a harness would; returns the CompletedProcess."""
     cwd = str(cwd)
+    limit = (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))) if fsize else None    # a full disk or a quota: no file grows past it
     return subprocess.run(["bash", "-c", command_of(tc)], cwd=cwd, env={**harness_env(cwd), **(env or {})},
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout, preexec_fn=limit)
 
 
 def first_record(stdout):

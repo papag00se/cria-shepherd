@@ -39,6 +39,23 @@ def test_a_payload_is_one_command_up_to_45_000_bytes_then_staged_by_put_and_comm
     assert not [n for n in os.listdir(tmp_path) if n.startswith('.ctx')]                           # the staging file went with the landing
 
 
+@pytest.mark.parametrize('size,limit', [(20_000, 10_000), (100_000, 40_000)], ids=['one command', 'staged by put'])
+def test_a_disk_that_takes_only_part_of_a_write_is_never_reported_as_a_landing_and_the_users_file_is_untouched(tmp_path, size, limit):
+    """The harness's disk is full (a file-size limit stands in): the stub's write returned short, and the file it had cut was renamed over the
+    user's and answered `landed`. The model is now told the truth (not written, and why), the file is what the user had, nothing is left
+    beside it (the temp file, and for a staged payload the staging file) and cria does not remember bytes that never landed."""
+    (tmp_path / 'f.txt').write_text('ORIGINAL\n')
+    content = body(size).decode()
+    tc = lower([call('write_file', {'path': 'f.txt', 'content': content}, 'w')], root=str(tmp_path))[0]
+    first = run(tc, tmp_path, fsize=limit)
+    msgs = [{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first.stdout}]
+    shown = settle(msgs, tmp_path, fsize=limit)
+    assert denial.unlanded(shown[1]) and 'f.txt' in shown[1]['content'] and 'File too large' in shown[1]['content']
+    assert (tmp_path / 'f.txt').read_text() == 'ORIGINAL\n' and os.listdir(tmp_path) == ['f.txt']
+    held = _ENGINE['ops'].cache.get(str(tmp_path), 'f.txt')
+    assert held is None or held[2] != content.encode()
+
+
 def test_a_path_too_long_to_carry_is_refused_before_anything_is_sent(tmp_path):
     long = 'd/' * 40_000 + 'x.txt'
     tc, done, shown = do('write_file', {'path': long, 'content': 'x'}, tmp_path)

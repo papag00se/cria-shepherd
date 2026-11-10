@@ -30,7 +30,7 @@ def test_write_splices_only_the_changed_bytes_and_refuses_a_result_that_does_not
     (root / 'f').write_bytes(b'x = 2\n')
     splice = json.dumps([[4, 5, 1]])
     done = write(root, 'f', b'x = 3\n', sha(b'x = 2\n'), sp=splice, payload=b'3')
-    assert done.header['landed'] == 1 and (root / 'f').read_bytes() == b'x = 3\n' and len(done.command) < 3200
+    assert done.header['landed'] == 1 and (root / 'f').read_bytes() == b'x = 3\n' and len(done.command) < 3300
     bad = run('write', [root, 'f', sha(b'x = 3\n'), splice, sha(b'nope'), 0, 1, GROUP], b'9', cwd=root)
     assert bad.header['err'] == 'newsha' and (root / 'f').read_bytes() == b'x = 3\n'
     assert [p.name for p in root.iterdir()] == ['f']                                       # no temp file left behind
@@ -163,6 +163,27 @@ def test_put_never_writes_through_a_hard_link_to_a_file_outside(root, tmp_path):
     os.link(victim, root / ('.ctx' + GROUP[:16] + '.part'))
     done = run('put', [root, 'f', GROUP, 0, 1], b'OVERWRITTEN', cwd=root)
     assert done.header['ok'] == 0 and victim.read_text() == 'PRECIOUS'
+
+
+@pytest.mark.parametrize('existing', [True, False])
+def test_a_write_that_the_disk_takes_only_part_of_fails_and_leaves_the_target_and_the_directory_as_they_were(root, existing):
+    """A full disk, a quota or a file-size limit makes write(2) take fewer bytes than asked. The stub used to fsync and rename the cut file in
+    place of the user's and answer `landed` with the hash of bytes that were never all written; now every byte is written or the call fails."""
+    if existing:
+        (root / 'f.txt').write_bytes(b'ORIGINAL\n')
+    data = b'x' * 20_000 + b'\n'
+    ex = sha(b'ORIGINAL\n') if existing else '-'
+    done = write(root, 'f.txt', data, ex, fsize=10_000)
+    assert done.header['ok'] == 0 and 'landed' not in done.header and done.header['err'] == 'OSError' and done.header['errno']
+    assert sorted(p.name for p in root.iterdir()) == (['f.txt'] if existing else [])
+    assert not existing or (root / 'f.txt').read_bytes() == b'ORIGINAL\n'
+    assert write(root, 'f.txt', data, ex).header['landed'] == 1 and (root / 'f.txt').read_bytes() == data    # with room, the same call lands
+
+
+def test_a_chunk_the_disk_takes_only_part_of_is_never_answered_as_staged(root):
+    done = run('put', [root, 'big.bin', GROUP, 0, 1], b'y' * 20_000, cwd=root, fsize=10_000)
+    assert done.header['ok'] == 0 and 'staged' not in done.header
+    assert run('put', [root, 'big.bin', GROUP, 0, 1], b'y' * 20_000, cwd=root).header['staged'] == 20_000
 
 
 def test_write_keeps_setuid_and_setgid_bits_not_only_the_permission_bits(root):

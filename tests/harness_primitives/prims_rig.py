@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import resource
 import secrets
 import subprocess
 from dataclasses import dataclass
@@ -36,10 +37,12 @@ class Ran:
 BASH = __import__('shutil').which('bash')       # the harness starts its shell by absolute path; a workspace `bash` on the PATH is not it
 
 
-def run(stub, args, payload=None, *, cwd, env=None, text=None, safe_path=harnessprims.SAFE_PATH, login=True, nonce=None):
+def run(stub, args, payload=None, *, cwd, env=None, text=None, safe_path=harnessprims.SAFE_PATH, login=True, nonce=None, fsize=None):
     nonce = nonce or secrets.token_hex(16)
     command = harnessprims.compose(stub, nonce, args, payload, text=text, safe_path=safe_path)
-    done = subprocess.run([BASH, '-lc' if login else '-c', command], cwd=str(cwd), env=env, capture_output=True, timeout=60)
+    # `fsize` stands in for a full disk or a quota: no file the command writes may grow past that many bytes (a write returns short, then fails)
+    limit = (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))) if fsize else None
+    done = subprocess.run([BASH, '-lc' if login else '-c', command], cwd=str(cwd), env=env, capture_output=True, timeout=60, preexec_fn=limit)
     try:
         frame = harnessprims.read_frame(done.stdout.decode('utf-8', 'surrogateescape'), nonce)
     except harnessprims.FrameUnknown:
@@ -47,9 +50,9 @@ def run(stub, args, payload=None, *, cwd, env=None, text=None, safe_path=harness
     return Ran(frame, done, command)
 
 
-def write(root, rel, new, ex, *, sp='-', payload=None, staged=False, mk=1, cwd=None, env=None, group=GROUP):
+def write(root, rel, new, ex, *, sp='-', payload=None, staged=False, mk=1, cwd=None, env=None, group=GROUP, fsize=None):
     args = [root, rel, ex, sp, sha(new), 1 if staged else 0, mk, group]
-    return run('write', args, None if staged else (new if payload is None else payload), cwd=cwd or root, env=env)
+    return run('write', args, None if staged else (new if payload is None else payload), cwd=cwd or root, env=env, fsize=fsize)
 
 
 def ls(root, rel='', depth=0, mx=1000, fold=0, skip=(), after='', *, cwd=None, env=None, **more):
