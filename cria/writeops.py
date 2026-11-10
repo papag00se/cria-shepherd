@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Callable
 from pathlib import PurePosixPath
 
-from . import callauth, denial, editapply, harnessprims, mutplan, prompts, readops, syntaxcheck
+from . import callauth, denial, editapply, harnessprims, mutplan, prompts, readops, stagesweep, syntaxcheck
 from .callliterals import _repair_double_escaped
 from .filecommands import _WRITE_NAMES, _prepare_file_mutation
 from .ledger import LedgerError
@@ -38,7 +38,7 @@ from .opsteps import Final, Issue
 from .toolargs import parse_args as _parse
 
 MUTATE = 'mutate'
-WHATS = ('mwrite', 'mput', 'check', 'cread', 'mclean', 'noop', 'mrm')
+WHATS = ('mwrite', 'mput', 'check', 'cread', 'mclean', 'noop', 'mrm', 'msweep', 'msrm')
 REPLAN_MAX = 3          # times the file changed under one group (stale) before the group says so
 LOST_MAX = 2            # times one write is sent again after its reply was lost, before its fate is declared unconfirmed
 CHECK_WAIT = 8          # seconds the harness waits for a checker before it answers "running" (under the harness's own yield)
@@ -106,13 +106,18 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
     if what == 'mwrite':
         staged = bool(args.get('staged'))
         sp = '-' if args['sp'] is None else json.dumps(args['sp'], separators=(',', ':'))
-        words = [args['root'], args['rel'], args['ex'], sp, args['nw'], 1 if staged else 0, args['mk'], callauth.group(op)]
+        words = [args['root'], args['rel'], args['ex'], sp, args['nw'], 1 if staged else 0, args['mk'], callauth.group(op), ctx['ws']]
         return harnessprims.compose('write', nonce, words, None if staged else _bytes(blobs, args['blob']),
                                     comment=ctx['label'], safe_path=ctx['safe'])
     if what == 'mput':
-        words = [args['root'], args['rel'], callauth.group(op), args['off'], args['mk']]
         data = _bytes(blobs, args['blob'])[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
-        return harnessprims.compose('put', nonce, words, data, comment=ctx['label'], safe_path=ctx['safe'])
+        return harnessprims.compose('put', nonce, [ctx['ws'], callauth.group(op), args['off']], data, comment=ctx['label'], safe_path=ctx['safe'])
+    if what == 'msweep':      # the folder the staging files are in, listed in the wave of the first chunks
+        return harnessprims.compose('ls', nonce, [ctx['ws'], stagesweep.DIR, 1, stagesweep.LIST_MAX, 0, '[]', ''],
+                                    comment='staging folder ' + stagesweep.DIR, safe_path=ctx['safe'])
+    if what == 'msrm':        # one stale staging file of an earlier operation of cria's own
+        return harnessprims.compose('rm', nonce, [ctx['ws'], f"{stagesweep.DIR}/{args['name']}", 'f', '*'],
+                                    comment='stale staging file ' + args['name'], safe_path=ctx['safe'])
     if what == 'mrm':
         return harnessprims.compose('rm', nonce, [args['root'], args['rel'], 'f', '*'], comment=ctx['label'], safe_path=ctx['safe'])
     if what == 'cread':       # the rest of a checker's output, a page of `<run dir>/out`: the run directory is named by the token cria derived
@@ -137,6 +142,7 @@ class WriteOps:
         operation; their first step is a read, a checker, or the landing write itself (when cria already holds what it needs)."""
         with self._lock:
             self._rlog = log
+            self._staging_closed = stagesweep.closed_names(self.ledger.ops(session))
             groups: dict = {}
             for i, req in enumerate(requests):
                 groups.setdefault(split(req.path, workspace_root), []).append(i)
@@ -235,7 +241,8 @@ class WriteOps:
         self._carry[(op.op, nw)] = final
         if len(payload) > harnessprims.CHUNK_BYTES:
             offsets = range(0, len(payload), harnessprims.CHUNK_BYTES)
-            return _Plan([('mput', {**args, 'off': off}) for off in offsets[:harnessprims.PUT_WAVE]], {digest: text})
+            return _Plan([('mput', {**args, 'off': off}) for off in offsets[:harnessprims.PUT_WAVE]]
+                         + [('msweep', {'closed': self._staging_closed, 'own': stagesweep.name_of(op.op)})], {digest: text})
         blobs = {digest: text}
         return _Plan([('mwrite', args)], blobs)
 
@@ -310,11 +317,9 @@ class WriteOps:
 
     def _cleaned(self, op, args: dict, steps: list, results: list):
         self._carry.pop((op.op, args['nw']), None)
-        rel = args.get('rel0') or args['rel']
-        parent, part = rel.rpartition('/')[0], f".ctx{callauth.group(op.op)[:16]}.part"
-        where = f'{parent}/{part}' if parent else part
-        if any(st.what == 'mput' for st in steps) and not any(st.what == 'mrm' and (st.args['root'], st.args['rel']) == (args['root'], where) for st in steps):
-            return Issue(self._next(steps, 'mrm', {'root': args['root'], 'rel': where, 'results': results}))
+        ws, where = op.ctx['ws'], stagesweep.rel_of(op.op)
+        if any(st.what == 'mput' for st in steps) and not any(st.what == 'mrm' and (st.args['root'], st.args['rel']) == (ws, where) for st in steps):
+            return Issue(self._next(steps, 'mrm', {'root': ws, 'rel': where, 'results': results}))
         return self._m_finish(op, results)
 
     # ---------------------------------------------------------------- the decisions, after each wave
@@ -547,13 +552,10 @@ class WriteOps:
 
     # the landing -----------------------------------------------------
     def _m_staged(self, op, wave: list, steps: list):
-        wave = [st for st in wave if st.what == 'mput']              # (a removal of a staging file that was left behind rode with them)
+        wave = [st for st in wave if st.what == 'mput']              # (the listing of the staging folder rode with them)
         args = wave[0].args
         bad = next((st for st in wave if st.frame['hdr'].get('ok') != 1), None)
         if bad is not None:
-            code = bad.frame['hdr'].get('errno')
-            if bad.frame['hdr'].get('ok') == 0 and code in (errno_.ELOOP, errno_.ENOTDIR) and args['rel']:
-                return self._m_walk(op, args, steps, code)           # a link in the path: `put` follows none; cria resolves it, then stages there
             tries = sum(1 for st in steps if st.what == 'mput' and st.args['off'] == bad.args['off'])
             if bad.frame['hdr'].get('ok') == -1 and tries < 2:
                 return Issue(self._next(steps, 'mput', *({**st.args} for st in wave if st.frame['hdr'].get('ok') != 1)))
@@ -565,8 +567,8 @@ class WriteOps:
         more = [off for off in range(0, size, harnessprims.CHUNK_BYTES) if off not in staged][:harnessprims.PUT_WAVE]
         base = {k: v for k, v in args.items() if k != 'off'}
         if more:
-            return Issue(self._next(steps, 'mput', *({**base, 'off': off} for off in more)))
-        return Issue(self._next(steps, 'mwrite', {**base, 'staged': True}))
+            return Issue(stagesweep.with_sweep(op.op, steps, self._next(steps, 'mput', *({**base, 'off': off} for off in more)), 'msweep', 'msrm'))
+        return Issue(stagesweep.with_sweep(op.op, steps, self._next(steps, 'mwrite', {**base, 'staged': True}), 'msweep', 'msrm'))
 
     def _m_wrote(self, op, st, steps: list):
         header, args = st.frame['hdr'], st.args
@@ -600,25 +602,6 @@ class WriteOps:
             prefixes.append(prefix)
         return Issue(self._next(steps, 'stat', *({**args, 'rel': p, 'errno': code or 0, 'at': i, 'full': args['rel'], 'stage': 'write',
                                                    'rel0': args['rel']} for i, p in enumerate(prefixes))))
-
-    def _m_restaged(self, op, args: dict, steps: list, root: str, rel: str, hop: int):
-        """A payload staged (or about to be) beside a target that turned out to be a link, now resolved to ``root``/``rel``. Where the staging
-        file already is the target's directory the write is simply sent again; otherwise the payload is staged in the target's directory and
-        the staging file left in the link's is removed (a link is not one directory's business: the model is not asked to write again)."""
-        here = os.path.normpath(os.path.join(args['root'], args['rel0'].rpartition('/')[0]))
-        there = os.path.normpath(os.path.join(root, rel.rpartition('/')[0]))
-        base = {k: v for k, v in args.items() if k not in ('errno', 'at', 'full', 'stage', 'rel0', 'wave', 'off', 'staged')}
-        base = {**base, 'root': root, 'rel': rel, 'hop': hop, 'lost': 0}
-        if args.get('staged') and here == there:
-            return Issue(self._next(steps, 'mwrite', {**base, 'staged': True}))
-        size = len(_bytes(op.blobs, args['blob']))
-        puts = [{**base, 'off': off} for off in range(0, size, harnessprims.CHUNK_BYTES)[:harnessprims.PUT_WAVE]]
-        stale = []
-        if args.get('staged'):
-            parent, part = args['rel0'].rpartition('/')[0], f".ctx{callauth.group(op.op)[:16]}.part"
-            stale = [{'root': args['root'], 'rel': f'{parent}/{part}' if parent else part, 'results': args['results']}]
-        return Issue((*self._next(steps, 'mput', *puts), *((steps[-1].s + 1 + len(puts) + i, 'mrm', {**a, 'wave': steps[-1].args['wave'] + 1})
-                                                            for i, a in enumerate(stale))))
 
     def _garbled(self, op, args: dict) -> list:
         results = []
@@ -672,7 +655,7 @@ class WriteOps:
         wh = write.frame['hdr'] if write.frame else {'ok': -1}
         if wh.get('ok') == 0:                                       # the stub said it could not: nothing changed
             code = wh.get('errno')
-            return self._unwritable(op, args, os.strerror(code) if isinstance(code, int) and code else str(wh.get('err') or 'unknown error'), steps)
+            return self._unwritable(op, args, _why(code, wh.get('err')), steps)
         if args['lost'] < LOST_MAX:
             # A reply that never came: the write is idempotent, so the same write goes out again (a new step: the id and nonce are one
             # call's). The attempt that was lost may have died holding a temporary name beside the target, which only its own nonce
@@ -710,8 +693,6 @@ class WriteOps:
                 return Issue(self._next(steps, readops.READ, {'root': new_root, 'rel': new_rel, 'off': 0, 'len': self._first_len(ctx), 'sk': 0,
                                                                'hop': hop, 'rung': 0, 'round': args['round'] + 1, 'for': 'base',
                                                                'replans': args.get('replans', 0)}))
-            if args.get('staged') or 'off' in args:
-                return self._m_restaged(op, args, steps, new_root, new_rel, hop)
             moved = {k: v for k, v in args.items() if k not in ('errno', 'at', 'full', 'stage', 'rel0', 'wave')}
             return Issue(self._next(steps, 'mwrite', {**moved, 'root': new_root, 'rel': new_rel, 'hop': hop, 'lost': 0}))
         return self._m_stat_failed(op, wave[0], steps)
@@ -772,8 +753,15 @@ def _block_named(path: str, root: str, rel: str, wsroot: str | None) -> str:
 
 
 def readops_reason(header: dict) -> str:
-    code = header.get('errno')
-    return os.strerror(code) if isinstance(code, int) and code else str(header.get('err') or 'unknown error')
+    return _why(header.get('errno'), header.get('err'))
+
+
+def _why(code, err=None) -> str:
+    """The reason a write could not land, in words: the kernel's for its errno, and for a destination on another filesystem than the staging
+    folder (``errno.EXDEV``: the staged file cannot be renamed onto it) a plain statement that nothing was written."""
+    if code == errno_.EXDEV:
+        return prompts.load('write_cross_device').strip()
+    return os.strerror(code) if isinstance(code, int) and code else str(err or 'unknown error')
 
 
 def _terms(review):

@@ -89,14 +89,14 @@ The program sent is the **prelude** `A`, then (for every stub except `run`) the 
 | Stub | Verb | Sent size | Arguments after the nonce |
 |---|---|---|---|
 | `read` | return a byte range of a file and its identity | 1,803 B | `ROOT REL OFF LEN SK` |
-| `write` | replace or create a file atomically, compare-and-swap | 2,780 B | `ROOT REL EX SP NEW ST MK G` + stdin |
-| `put` | stage one chunk of a payload too big for one command | 1,370 B | `ROOT REL G OFF MK` + stdin |
+| `write` | replace or create a file atomically, compare-and-swap | 3,112 B | `ROOT REL EX SP NEW ST MK G WS` + stdin |
+| `put` | stage one chunk of a payload too big for one command | 1,370 B | `WS G OFF` + stdin |
 | `ls` | stat a path, or list a tree, without following links | 2,122 B | `ROOT REL DEPTH MAX FOLD SKIP AFTER` |
 | `rm` | delete a file, an empty directory or an owned tree | 1,709 B | `ROOT REL MODE EX` |
 | `run` | run a command with a timeout, detached, output to a file | 2,371 B | `MODE TMP TOK TIMEOUT WAIT CWD KEEP` + stdin |
 | `search` | regex search over a file list cria chose | 1,752 B | `ROOT PATTERN FLAGS MAX MAXFILE SKIP` + stdin |
 
-Total 13,907 B. `search` is conditional on decision D3 in `harness-programs.md`.
+Total 14,239 B. `search` is conditional on decision D3 in `harness-programs.md`.
 
 ### 5.0 Prelude `A` (all stubs) and path helper `B` (all but `run`)
 
@@ -161,21 +161,23 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 * `EX` is what must be true of the target when the swap happens: `-` it does not exist; `*` no condition; 64 hex digits, the whole file's current sha-256.
 * `SP` is `-` (the payload is the whole new file) or a JSON list `[[a,b,m],...]` meaning: replace `old[a:b]` with the next `m` payload bytes, ranges ascending and disjoint, applied to the file cria read (so `EX` must be a hash). This is how an edit sends only the changed bytes instead of re-sending the file.
 * `NEW` is the sha-256 of the **result**. The stub builds the result, refuses (`err:newsha`) if it does not hash to `NEW`, and only then writes. A truncated, corrupted or mis-assembled payload can therefore never land.
-* `ST=1` takes the payload from the staging file written by `put` calls with the same `G` (a 32-hex per-operation token) instead of stdin.
+* `ST=1` takes the payload from the staging file written by `put` calls with the same `G` (a 32-hex per-operation token) instead of stdin. The staging file is `WS/tmp/reference/.ctx<G16>.part`: the guarded folder cria already owns, never the destination's directory. `WS` is the workspace root.
 * `MK=1` creates missing parent directories.
 
-Steps: walk to the parent with no-follow opens → `flock` the parent directory (serialises cooperating cria writers) → read the target through its descriptor → check `EX` (else `err:stale` with the current `sha`, nothing written) → build and verify the result → write it to a sibling temp file `.ctx<nonce16>.tmp` (`O_EXCL`; a stale file of the same name from a killed run is unlinked first) **in a loop until every byte is written** (one `write(2)` may take fewer bytes than asked: a full disk, a quota, a file-size limit; a call that takes none, or fails, fails the whole call with the temp file removed and the target untouched, so a truncated file is never renamed into place), `fsync` → copy mode and owner of the old file → re-`stat` the target and refuse (`stale`) if its inode, size or mtime moved since it was read → `rename` over the target, or `link`+`unlink` for `EX=-` (an atomic no-replace create) → `fsync` the directory → remove the staging file. Any error removes the temp file. A filesystem without hard links answers the `link` with an error (`EPERM`/`ENOTSUP`) and nothing is written; cria reports it, and may retry with `EX=*` only after a fresh stat showed the path absent (a decision made in cria, not a fallback in the stub).
+Steps: walk to the parent with no-follow opens → `flock` the parent directory (serialises cooperating cria writers) → read the target through its descriptor → check `EX` (else `err:stale` with the current `sha`, nothing written) → build and verify the result → **a whole staged payload (`ST=1`, `SP=-`) is the file that lands: it must be a regular file with one link, its mode and owner are set, it is `fsync`ed and `rename`d (or `link`ed) from `WS/tmp/reference` onto the target. A target on another filesystem than that folder fails with `EXDEV` and nothing is written, and there is no copy fallback (operator, 2026-11-10). A staged splice (`ST=1`, `SP` a list) and any payload sent on stdin are written** to a sibling temp file `.ctx<nonce16>.tmp` (`O_EXCL`; a stale file of the same name from a killed run is unlinked first) **in a loop until every byte is written** (one `write(2)` may take fewer bytes than asked: a full disk, a quota, a file-size limit; a call that takes none, or fails, fails the whole call with the temp file removed and the target untouched, so a truncated file is never renamed into place), `fsync` → copy mode and owner of the old file → re-`stat` the target and refuse (`stale`) if its inode, size or mtime moved since it was read → `rename` over the target, or `link`+`unlink` for `EX=-` (an atomic no-replace create) → `fsync` the directory → remove the staging file. Any error removes the temp file. A filesystem without hard links answers the `link` with an error (`EPERM`/`ENOTSUP`) and nothing is written; cria reports it, and may retry with `EX=*` only after a fresh stat showed the path absent (a decision made in cria, not a fallback in the stub).
 
 Properties cria relies on: a write is **idempotent** (re-issuing the same call after it landed answers `stale` with `sha == NEW`, which cria reads as "landed"); a payload cannot land unless it hashes to `NEW`; replacing a file keeps its mode and owner (a change from today's whole-file write, which reset mode to `0666 & ~umask`).
 
 ```python
 import stat,fcntl
-rt,rel,ex,sp,nw,st,mk,gr=sys.argv[2:10];pf=".ctx"+gr[:16]+".part";tf=".ctx"+N[:16]+".tmp";fd=t=None
+rt,rel,ex,sp,nw,st,mk,gr,ws=sys.argv[2:11];pn=".ctx"+gr[:16]+".part";tf=".ctx"+N[:16]+".tmp";fd=t=u=sd=None;c=0
 try:
     fd,nm=at(rt,rel,mk=="1");fcntl.flock(fd,fcntl.LOCK_EX)
     if st=="0":b=base64.b64decode(sys.stdin.read())
     else:
-        with os.fdopen(os.open(pf,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd),"rb") as g:b=g.read()
+        sd,_=at(ws,"tmp/reference/"+pn);u=os.open(pn,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=sd);q=os.fstat(u)
+        if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
+        with os.fdopen(os.dup(u),"rb") as g:b=g.read()
     try:
         o=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(o)
         if not stat.S_ISREG(s.st_mode):out(dict(ok=0,err="notfile"))
@@ -189,13 +191,15 @@ try:
         for a,e,m in json.loads(sp):new+=old[p:a]+b[q:q+m];p=e;q+=m
         new+=old[p:]
     if hashlib.sha256(new).hexdigest()!=nw:out(dict(ok=0,err="newsha"))
-    try:os.unlink(tf,dir_fd=fd)
-    except FileNotFoundError:pass
-    t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);v=memoryview(new)
-    while v:
-        w=os.write(t,v)
-        if w<1:raise OSError(5,"short write")
-        v=v[w:]
+    if u is not None and sp=="-":t,sf,sn=u,sd,pn
+    else:
+        try:os.unlink(tf,dir_fd=fd)
+        except FileNotFoundError:pass
+        t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);c=1;v=memoryview(new);sf,sn=fd,tf
+        while v:
+            w=os.write(t,v)
+            if w<1:raise OSError(5,"short write")
+            v=v[w:]
     os.fsync(t)
     if s:
         try:os.fchown(t,s.st_uid,s.st_gid)
@@ -203,27 +207,28 @@ try:
         os.fchmod(t,stat.S_IMODE(s.st_mode))
         n=os.stat(nm,dir_fd=fd,follow_symlinks=False)
         if (n.st_ino,n.st_size,n.st_mtime_ns)!=(s.st_ino,s.st_size,s.st_mtime_ns):out(dict(ok=0,err="stale",sha=None))
-    if ex=="-":os.link(tf,nm,src_dir_fd=fd,dst_dir_fd=fd,follow_symlinks=False);os.unlink(tf,dir_fd=fd)
-    else:os.rename(tf,nm,src_dir_fd=fd,dst_dir_fd=fd)
-    t=None;os.fsync(fd)
-    if st=="1":os.unlink(pf,dir_fd=fd)
+    else:m=os.umask(0);os.umask(m);os.fchmod(t,438&~m)
+    if ex=="-":os.link(sn,nm,src_dir_fd=sf,dst_dir_fd=fd,follow_symlinks=False);os.unlink(sn,dir_fd=sf)
+    else:os.rename(sn,nm,src_dir_fd=sf,dst_dir_fd=fd)
+    c=0;os.fsync(fd)
+    if u is not None and sp!="-":os.unlink(pn,dir_fd=sd)
     out(dict(ok=1,landed=1,size=len(new),sha=nw))
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 finally:
-    if t is not None:
+    if c:
         try:os.unlink(tf,dir_fd=fd)
         except OSError:pass
 ```
 
 ### 5.3 `put`
 
-`put N ROOT REL G OFF MK` writes one chunk at byte offset `OFF` of the staging file `.ctx<G16>.part` (mode 0600, no-follow) in the target's directory and answers its current size. Chunks may arrive in any order and in parallel (disjoint ranges); re-sending a chunk is harmless. A chunk is written in a loop until every byte is down (`pwrite` loop, as in `write`); a short write fails the call (`ok:0`), it never answers a size that is not the chunk's end. The final `write ... ST=1` verifies the assembled bytes against `NEW` before anything lands.
+`put N WS G OFF` writes one chunk at byte offset `OFF` of the staging file `.ctx<G16>.part` (mode 0600, no-follow, one link) in `WS/tmp/reference` (created if missing, no link followed) and answers its current size. It does not know the destination: the target is the `write`'s business. Chunks may arrive in any order and in parallel (disjoint ranges); re-sending a chunk is harmless. A chunk is written in a loop until every byte is down (`pwrite` loop, as in `write`); a short write fails the call (`ok:0`), it never answers a size that is not the chunk's end. The final `write ... ST=1` verifies the assembled bytes against `NEW` before anything lands.
 
 ```python
 import stat
 try:
-    rt,rel,gr,off,mk=sys.argv[2:7];fd,nm=at(rt,rel,mk=="1")
-    g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
+    ws,gr,off=sys.argv[2:5];fd,nm=at(ws,"tmp/reference/.ctx"+gr[:16]+".part",1)
+    g=os.open(nm,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
     if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
     v=memoryview(base64.b64decode(sys.stdin.read()));o=int(off)
     while v:
@@ -398,7 +403,7 @@ Measured at HEAD, not assumed: a lowered command over the kernel limit fails bef
 
 * **One call** carries up to **45,000 raw payload bytes** (60,000 base64 bytes + a 2.6 KB stub + ~0.4 KB arguments ≈ 63 KB). The prototype landed exactly 45,000 random bytes in one 62,905-byte command.
 * **Larger payload** (whole-file writes, fetched documents, spill files): cria cuts the payload into 45,000-byte chunks and issues, in one reply, up to 16 `put` calls (disjoint offsets, any order); when their frames are back it issues the one `write ... ST=1`, which verifies the assembled bytes against `NEW` before it renames. ⌈chunks ÷ 16⌉ + 1 round trips: two for any payload up to 720,000 bytes. A 300,000-byte file was staged out of order and landed with its hash intact in the prototype. This removes today's disclosed cut of fetched documents at 46,080 bytes (`SPILL_CONTENT_MAX`): nothing is truncated.
-* **Retry safety.** `put` is idempotent; the final `write` is idempotent (a reply lost after it landed answers `stale` with `sha == NEW`, a staging file consumed by a landed write answers `FileNotFoundError`, and cria then reads the target's hash). A killed run can leave `.ctx<hex>.part` / `.ctx<hex>.tmp` beside the target: cria recognises only names whose hex it can recompute from its own ledger (`group(op)`, `nonce(op, s)`) and removes exactly those with `rm f`; it never removes a name it did not derive.
+* **Retry safety.** `put` is idempotent; the final `write` is idempotent (a reply lost after it landed answers `stale` with `sha == NEW`, a staging file consumed by a landed write answers `FileNotFoundError`, and cria then reads the target's hash). A killed run can leave `WS/tmp/reference/.ctx<hex>.part` (and `.ctx<hex>.tmp` beside the target): cria removes exactly the names it derives from its own ledger (`group(op)`, `nonce(op, s)`) with `rm f`, and it **sweeps the staging folder** (`cria/stagesweep.py`): with the first chunks of a staged payload it lists `WS/tmp/reference` (`ls`, in the same wave) and, with the next wave, removes with `rm f` each name of exactly the staging shape `.ctx<16 hex>.part` that is not its own and is stale: the staging name of an operation of this session's ledger that has ended, or a name older than 24 hours (another session's, or one whose ledger is gone). It touches nothing else. Nothing about the staging files is hidden or specially named: they are ordinary files in the folder cria owns.
 * **Edits** send only the changed bytes (`SP`), so an edit of one line is ≈ 3 KB whatever the file size. Whole-file `write_file` sends the model's own content once.
 * **Results** are bounded the other way: a frame is ≤ 10,000 bytes, so reads page (§8.7).
 

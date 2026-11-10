@@ -102,12 +102,12 @@ def test_write_round_trip_latency_through_the_sandboxed_harness(sandbox):
     for i in range(20):
         (sandbox.workspace / f'edit{i}.txt').write_bytes(body)
     small, big = b'x' * 1400, HEX.encode()
-    commands = [harnessprims.compose('write', '%032x' % (400 + i), [ws, f's{i}.txt', '*', '-', sha(small), 0, 1, GROUP], small, comment='write_file') for i in range(20)]
-    commands += [harnessprims.compose('write', '%032x' % (500 + i), [ws, f'b{i}.txt', '*', '-', sha(big), 0, 1, GROUP], big, comment='write_file') for i in range(20)]
+    commands = [harnessprims.compose('write', '%032x' % (400 + i), [ws, f's{i}.txt', '*', '-', sha(small), 0, 1, GROUP, ws], small, comment='write_file') for i in range(20)]
+    commands += [harnessprims.compose('write', '%032x' % (500 + i), [ws, f'b{i}.txt', '*', '-', sha(big), 0, 1, GROUP, ws], big, comment='write_file') for i in range(20)]
     start, end, new = body.index(b'line 2500'), body.index(b'line 2500') + 9, b'LINE 2500'
     spliced = body[:start] + new + body[end:]
     for i in range(20):
-        commands.append(harnessprims.compose('write', '%032x' % (600 + i), [ws, f'edit{i}.txt', sha(body), json.dumps([[start, end, len(new)]]), sha(spliced), 0, 0, GROUP], new, comment='edit_file'))
+        commands.append(harnessprims.compose('write', '%032x' % (600 + i), [ws, f'edit{i}.txt', sha(body), json.dumps([[start, end, len(new)]]), sha(spliced), 0, 0, GROUP, ws], new, comment='edit_file'))
     with Scripted(commands) as server:
         done = sandbox.run(server.url)
         assert done.returncode == 0, done.stderr[-2000:]

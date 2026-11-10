@@ -82,7 +82,7 @@ def test_ls_search_and_probe_round_trip_latency_through_the_sandboxed_harness(sa
     commands += [harnessprims.compose('search', '%032x' % (200 + i), [ws, 'needle', 0, 4096, 1 << 25, 0], text=json.dumps(names), comment='grep needle') for i in range(20)]
     commands += [harnessprims.compose('read', '%032x' % (300 + i), [ws, 'f050.txt', 0, 512, 0], comment='unread-write check f050.txt') for i in range(20)]
     page = b'x' * harnessprims.CHUNK_BYTES                                              # one chunk of a saved page: the largest payload one command carries
-    commands += [harnessprims.compose('put', '%032x' % (400 + i), [ws, f'tmp/reference/page{i}.txt', GROUP + str(i), 0, 1], page, comment='web_fetch') for i in range(20)]
+    commands += [harnessprims.compose('put', '%032x' % (400 + i), [ws, '%032x' % (500 + i), 0], page, comment='web_fetch') for i in range(20)]
     with Scripted(commands) as server:
         done = sandbox.run(server.url)
         assert done.returncode == 0, done.stderr[-2000:]

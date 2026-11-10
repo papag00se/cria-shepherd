@@ -77,12 +77,14 @@ except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno"
 '''
 
 _WRITE = r'''import stat,fcntl
-rt,rel,ex,sp,nw,st,mk,gr=sys.argv[2:10];pf=".ctx"+gr[:16]+".part";tf=".ctx"+N[:16]+".tmp";fd=t=None
+rt,rel,ex,sp,nw,st,mk,gr,ws=sys.argv[2:11];pn=".ctx"+gr[:16]+".part";tf=".ctx"+N[:16]+".tmp";fd=t=u=sd=None;c=0
 try:
     fd,nm=at(rt,rel,mk=="1");fcntl.flock(fd,fcntl.LOCK_EX)
     if st=="0":b=base64.b64decode(sys.stdin.read())
     else:
-        with os.fdopen(os.open(pf,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd),"rb") as g:b=g.read()
+        sd,_=at(ws,"tmp/reference/"+pn);u=os.open(pn,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=sd);q=os.fstat(u)
+        if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
+        with os.fdopen(os.dup(u),"rb") as g:b=g.read()
     try:
         o=os.open(nm,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd);s=os.fstat(o)
         if not stat.S_ISREG(s.st_mode):out(dict(ok=0,err="notfile"))
@@ -96,13 +98,15 @@ try:
         for a,e,m in json.loads(sp):new+=old[p:a]+b[q:q+m];p=e;q+=m
         new+=old[p:]
     if hashlib.sha256(new).hexdigest()!=nw:out(dict(ok=0,err="newsha"))
-    try:os.unlink(tf,dir_fd=fd)
-    except FileNotFoundError:pass
-    t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);v=memoryview(new)
-    while v:
-        w=os.write(t,v)
-        if w<1:raise OSError(5,"short write")
-        v=v[w:]
+    if u is not None and sp=="-":t,sf,sn=u,sd,pn
+    else:
+        try:os.unlink(tf,dir_fd=fd)
+        except FileNotFoundError:pass
+        t=os.open(tf,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,438,dir_fd=fd);c=1;v=memoryview(new);sf,sn=fd,tf
+        while v:
+            w=os.write(t,v)
+            if w<1:raise OSError(5,"short write")
+            v=v[w:]
     os.fsync(t)
     if s:
         try:os.fchown(t,s.st_uid,s.st_gid)
@@ -110,22 +114,23 @@ try:
         os.fchmod(t,stat.S_IMODE(s.st_mode))
         n=os.stat(nm,dir_fd=fd,follow_symlinks=False)
         if (n.st_ino,n.st_size,n.st_mtime_ns)!=(s.st_ino,s.st_size,s.st_mtime_ns):out(dict(ok=0,err="stale",sha=None))
-    if ex=="-":os.link(tf,nm,src_dir_fd=fd,dst_dir_fd=fd,follow_symlinks=False);os.unlink(tf,dir_fd=fd)
-    else:os.rename(tf,nm,src_dir_fd=fd,dst_dir_fd=fd)
-    t=None;os.fsync(fd)
-    if st=="1":os.unlink(pf,dir_fd=fd)
+    else:m=os.umask(0);os.umask(m);os.fchmod(t,438&~m)
+    if ex=="-":os.link(sn,nm,src_dir_fd=sf,dst_dir_fd=fd,follow_symlinks=False);os.unlink(sn,dir_fd=sf)
+    else:os.rename(sn,nm,src_dir_fd=sf,dst_dir_fd=fd)
+    c=0;os.fsync(fd)
+    if u is not None and sp!="-":os.unlink(pn,dir_fd=sd)
     out(dict(ok=1,landed=1,size=len(new),sha=nw))
 except Exception as e:out(dict(ok=0,err=type(e).__name__,errno=getattr(e,"errno",None)))
 finally:
-    if t is not None:
+    if c:
         try:os.unlink(tf,dir_fd=fd)
         except OSError:pass
 '''
 
 _PUT = r'''import stat
 try:
-    rt,rel,gr,off,mk=sys.argv[2:7];fd,nm=at(rt,rel,mk=="1")
-    g=os.open(".ctx"+gr[:16]+".part",os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
+    ws,gr,off=sys.argv[2:5];fd,nm=at(ws,"tmp/reference/.ctx"+gr[:16]+".part",1)
+    g=os.open(nm,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,384,dir_fd=fd);q=os.fstat(g)
     if not stat.S_ISREG(q.st_mode) or q.st_nlink!=1:raise OSError(22,"bad staging file")
     v=memoryview(base64.b64decode(sys.stdin.read()));o=int(off)
     while v:

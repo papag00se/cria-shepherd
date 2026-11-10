@@ -14,16 +14,16 @@ TRICKY = "line1\n\ttabbed 'q' \"dq\" $VAR `bt` \\n \u2603\r\nend-without-newline
 
 
 def test_a_write_and_an_edit_send_the_fixed_stub_and_only_their_own_bytes(tmp_path):
-    """The harness is shown a short constant program and the bytes that change: a 2 KB write is about 5.6 KB of command, and an edit of a
-    file of 300 KB (read once, so cria holds it) is about 3 KB however large the file is."""
+    """The harness is shown a short constant program and the bytes that change: a 2 KB write is about 6.0 KB of command, and an edit of a
+    file of 300 KB (read once, so cria holds it) is about 3.8 KB however large the file is."""
     big = "".join(f"line {i} of a large file\n" for i in range(12_000))
     (tmp_path / "big.txt").write_text(big)
     tc, done, msgs = do("write_file", {"path": "new.txt", "content": "x" * 2000}, tmp_path)
-    assert done.returncode == 0 and denial.landed(msgs[1]) and len(command_of(tc).encode()) < 6_000
+    assert done.returncode == 0 and denial.landed(msgs[1]) and len(command_of(tc).encode()) < 6_400
     do("read_file", {"path": "big.txt"}, tmp_path, cid="r", injected=("read_file",))
     tc, done, msgs = do("edit_file", {"path": "big.txt", "old_string": "line 6000 of", "new_string": "LINE 6000 of"}, tmp_path, cid="e")
     assert denial.landed(msgs[1]) and (tmp_path / "big.txt").read_text() == big.replace("line 6000 of", "LINE 6000 of")
-    assert len(command_of(tc).encode()) < 3_400, len(command_of(tc).encode())
+    assert len(command_of(tc).encode()) < 3_900, len(command_of(tc).encode())
 
 
 def test_large_write_payload_is_carried_once_and_round_trips(tmp_path):

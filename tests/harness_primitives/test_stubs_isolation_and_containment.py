@@ -51,7 +51,7 @@ def test_every_stub_ignores_a_workspace_that_shadows_the_stdlib_and_plants_pytho
     assert run('read', [r, 'src/a.py', 0, 100, 0], cwd=r, env=e).data == b'x = 1\r\nprint(\xff)\n'
     assert write(r, 'f.txt', b'hi', '-', cwd=r, env=e).header['landed'] == 1 and (r / 'f.txt').read_bytes() == b'hi'
     assert write(r, 'big.bin', b'0123456789', '-', staged=True, cwd=r, env=e).header['err'] == 'FileNotFoundError'
-    assert run('put', [r, 'big.bin', GROUP, 0, 1], b'0123456789', cwd=r, env=e).header['ok'] == 1
+    assert run('put', [r, GROUP, 0], b'0123456789', cwd=r, env=e).header['ok'] == 1
     assert ls(r, '', 1, cwd=r, env=e).header['ok'] == 1
     assert run('search', [r, 'x', 0, 10, 1 << 20, 0], text='["src/a.py"]', cwd=r, env=e).header['ok'] == 1
     done = run('run', ['start', s, 'tok1', 10, 5, r, 0], cwd=r, env=e, text='echo ran-ok')

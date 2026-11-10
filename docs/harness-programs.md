@@ -107,13 +107,13 @@ Seven stubs, literal source and tests in [`harness-primitives.md`](harness-primi
 | Stub | Why it must run where the files are | Sent size | Budget |
 |---|---|---|---|
 | `read` | Only the harness can open the file; no-follow open, whole-file hash and byte range in one pass | 1,803 B | 1.9 KB |
-| `write` | Atomic same-directory replace, compare-and-swap and a no-follow walk are only meaningful at the file | 2,780 B | 2.8 KB |
-| `put` | Chunks of a payload larger than one command must be staged beside the target | 1,370 B | 1.4 KB |
+| `write` | Atomic replace (a staged payload is renamed from the guarded `./tmp/reference/`; there is no cross-device fallback), compare-and-swap and a no-follow walk are only meaningful at the file | 3,112 B | 3.2 KB |
+| `put` | Chunks of a payload larger than one command must be staged in the guarded `./tmp/reference/` of the workspace | 1,370 B | 1.4 KB |
 | `ls` | A recursive tree walk cannot be done in one round trip per directory; no-follow `lstat` records | 2,122 B | 2.2 KB |
 | `rm` | Unlink / rmdir / tree removal without following links | 1,709 B | 1.8 KB |
 | `run` | Run a command where the project is, outlive a harness exec that yields after ~10 s, kill the process group at a deadline, capture output to a file | 2,371 B | 2.4 KB |
 | `search` (D3) | Searching a tree is bounded by bytes, not round trips; reading every file to cria to grep it would put the repository in the transcript | 1,752 B | 1.8 KB |
-| **Total** | | **13,907 B** | **14.0 KB** |
+| **Total** | | **14,239 B** | **14.4 KB** |
 
 Allowed alongside (shell text, not programs; each under 1 KB plus data): probe scripts (R21, R24, R25), syntax-check scripts (a single tool line fed the candidate text), `command -v`, `ls -1 $PATH`, the `ctags` invocation, answer/refusal `printf` (R26).
 
@@ -373,6 +373,8 @@ Phases are ordered so each is shippable and testable on its own, leaves nothing 
 
   *Guard rail.* `tests/structure/test_harness_program_registry.py` scans every string constant in `cria/*.py` for the shapes of a harness-side program (a Python launch, a heredoc, an `import` or `def` line, shell control flow, `trap`, `exit 127`, `command -p`, `unshare`) and fails on any module that is not in the registry of §9, or whose program text grew past its budget, or that §9 does not name.
 
+* **Staging moved out of the user's tree (operator, 2026-11-10; finding N6).** A payload past one command used to be staged as `.ctx<g>.part` **beside the destination**. It is now staged in the workspace's guarded `./tmp/reference/` (`WS/tmp/reference/.ctx<g16>.part`, the folder cria already owns for spills): `put` takes `WS G OFF` (it no longer knows the destination) and the landing `write` takes a ninth word `WS`; a whole staged payload is the file that lands (verified regular, one link, `fsync`ed, mode and owner set, `rename`d or `link`ed onto the destination), so **a destination on another filesystem fails with `EXDEV`, nothing is written, and there is no copy fallback**; cria says so in plain words (`write_cross_device.txt`: "the content is staged in the project's tmp/reference folder, which is on a different filesystem from this file, so it cannot be moved into place", then "Nothing was changed"). A staged *splice* (an edit) and any payload on stdin still go through the sibling `.ctx<nonce16>.tmp` of the destination, so they cannot meet `EXDEV`. The link-resolution walk for a `put` (a link in the target's path) is gone: staging no longer touches the target's path. **The sweep** (`cria/stagesweep.py`): with the first chunks of a staged payload cria lists `./tmp/reference/` (`ls`, same wave: no extra round trip) and, with the next wave, removes with `rm f` each name of exactly the shape `.ctx<16 hex>.part` that is not its own and is stale: the staging name of an operation of this session's ledger that has ended, or a name older than 24 h (another session's, or one whose ledger is gone). It touches nothing else. Nothing is hidden or specially named. **Stub sizes: `write` 2,780 → 3,112 B (+332), `put` 1,370 B (unchanged), total 13,907 → 14,239 B; budgets `write` 2.8 → 3.2 KB, total 14.0 → 14.4 KB.** An edit's command grew from about 3.1 KB to 3.8 KB, a whole staged write by the same 332 B. Tests: `tests/write_edit/test_write_edit_staging.py` (staged in the folder and renamed, never beside the destination; the mode of a replaced file kept; EXDEV through the engine in plain words with nothing written and nothing left; the sweep removes an ended operation's name and one past its age and nothing else; an open operation's own file is never swept), `test_answer_ops.py` (the same sweep for a staged save), `test_stubs_semantics.py` (the rename, EXDEV at the stub, the staging file's checks under the new folder).
+
 **Dependency graph:** 2 → (3 → 4 → 5 → 6) and 3 → 7 → 8 after 6. One implementer owns `writeproxy.py`/`filecommands.py` through 3–6.
 
 ## 8. Decisions needed from the operator
@@ -393,7 +395,7 @@ What cria composes for the harness to run, after phases 7 and 8. Anything else i
 
 | Module | What it is | Why it cannot live in cria | Size |
 |---|---|---|---|
-| `harnessprims.py` | **The seven stubs**: `read`, `write`, `put`, `ls`, `rm`, `run`, `search` | Only the harness can open, replace, list, remove, run in and search the files (§4) | 13,907 B sent; 9,658 B in program-text constants; budget 10,000 B |
+| `harnessprims.py` | **The seven stubs**: `read`, `write`, `put`, `ls`, `rm`, `run`, `search` | Only the harness can open, replace, list, remove, run in and search the files (§4) | 14,239 B sent; 9,990 B in program-text constants; budget 10,400 B |
 | `gatescript.py` | **The gate supervisor**: the shell text `run` executes for the project's own checks: each check under `timeout -k` with its output and exit status in files of the run's private directory, the identity of its workspace before and after, the offline `unshare` leg | The project's own checks must run where the project is, with a timeout, detached, with output to a file; everything else (discovery, deciding, paging, parsing, hashing, retry, cleanup) is cria's (`gateops.py`) | 405 B + 153 B per check, +637 B offline; budget 400 B of constants |
 | `inventoryops.py` | **The ctags shell text** (`ctags_script`) | ctags must run where the files are | 507 B + the names; budget 400 B |
 | `syntaxcheck.py` | **The checker shell text** (`script`): the candidate as base64 on one line, the checker's own command line on it | The language's own checker must parse the candidate where it is installed | one line per check; budget 150 B |

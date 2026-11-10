@@ -16,7 +16,7 @@ Nothing is cut: the file holds the whole text (the 46,080-byte cut of the shell-
 import hashlib
 from dataclasses import dataclass
 
-from . import denial, harnessprims, prompts
+from . import denial, harnessprims, prompts, stagesweep
 from .ledger import LedgerError
 from .opsteps import Final, reason as _reason
 from .toolwire import _shell_call
@@ -65,6 +65,8 @@ class AnswerOps:
                     offsets = range(0, len(data), harnessprims.CHUNK_BYTES)
                     steps = [self._step(op, ctx, i, 'put', {'wave': 0, **args, 'off': off}, {digest: save.content})
                              for i, off in enumerate(offsets[:harnessprims.PUT_WAVE])]
+                    self._staging_closed = stagesweep.closed_names(self.ledger.ops(session))
+                    steps.append(self._step(op, ctx, len(steps), 'sweep', {'wave': 0, 'closed': self._staging_closed, 'own': stagesweep.name_of(op)}, {digest: save.content}))
                 self.ledger.append(session, record, {'t': 'blob', 'op': op, 'h': digest, 'text': save.content}, *(s[0] for s in steps))
             except (LedgerError, callauth.KeyUnavailable) as exc:
                 raise OpsUnavailable(str(exc)) from exc

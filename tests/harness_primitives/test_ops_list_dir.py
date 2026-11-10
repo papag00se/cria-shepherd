@@ -139,7 +139,7 @@ def test_a_listing_whose_text_needs_more_than_one_command_is_staged_in_chunks_an
 def _asked(harness):
     """(records asked for, AFTER) of each `ls` call the harness ran, in order."""
     return [(int(m.group(1)), os.fsdecode(bytes.fromhex(m.group(2).strip("'")))) for c in harness.ran
-            if (m := re.search(r" (\d+) 0 '\[\]' (\S*)$", command_of(c)))]
+            if (m := re.search(r" (\d+) 0 '\[\]' (\S*)$", command_of(c))) and ' tmp/reference 1 200 ' not in command_of(c)]     # (not the staging folder's listing)
 
 
 def test_a_directory_one_frame_cannot_hold_is_paged_one_call_per_frame_and_comes_back_complete(tmp_path):

@@ -30,8 +30,8 @@ def test_write_splices_only_the_changed_bytes_and_refuses_a_result_that_does_not
     (root / 'f').write_bytes(b'x = 2\n')
     splice = json.dumps([[4, 5, 1]])
     done = write(root, 'f', b'x = 3\n', sha(b'x = 2\n'), sp=splice, payload=b'3')
-    assert done.header['landed'] == 1 and (root / 'f').read_bytes() == b'x = 3\n' and len(done.command) < 3300
-    bad = run('write', [root, 'f', sha(b'x = 3\n'), splice, sha(b'nope'), 0, 1, GROUP], b'9', cwd=root)
+    assert done.header['landed'] == 1 and (root / 'f').read_bytes() == b'x = 3\n' and len(done.command) < 3800
+    bad = run('write', [root, 'f', sha(b'x = 3\n'), splice, sha(b'nope'), 0, 1, GROUP, root], b'9', cwd=root)
     assert bad.header['err'] == 'newsha' and (root / 'f').read_bytes() == b'x = 3\n'
     assert [p.name for p in root.iterdir()] == ['f']                                       # no temp file left behind
 
@@ -52,17 +52,18 @@ def test_a_payload_over_one_command_is_staged_out_of_order_and_lands_with_its_ha
     big = os.urandom(300_000)
     parts = [(i, big[i:i + 45_000]) for i in range(0, len(big), 45_000)]
     for off, chunk in reversed(parts):
-        assert run('put', [root, 'big.bin', GROUP, off, 1], chunk, cwd=root).header['ok'] == 1
-    assert run('put', [root, 'big.bin', GROUP, parts[0][0], 1], parts[0][1], cwd=root).header['staged'] == len(big)    # a re-sent chunk
+        assert run('put', [root, GROUP, off], chunk, cwd=root).header['ok'] == 1
+    assert run('put', [root, GROUP, parts[0][0]], parts[0][1], cwd=root).header['staged'] == len(big)    # a re-sent chunk
     assert write(root, 'big.bin', big, '-', staged=True).header['landed'] == 1
-    assert (root / 'big.bin').read_bytes() == big and [p.name for p in root.iterdir()] == ['big.bin']
+    assert (root / 'big.bin').read_bytes() == big and sorted(p.name for p in root.iterdir()) == ['big.bin', 'tmp']
+    assert os.listdir(root / 'tmp/reference') == []                                        # the staging file was renamed onto the target: none is left, and none was ever beside it
     replay = write(root, 'big.bin', big, '-', staged=True).header                          # the reply was lost: the same call again
     assert replay['err'] == 'FileNotFoundError'                                            # the landed write consumed its staging file ...
     assert run('read', [root, 'big.bin', 0, 0, 0], cwd=root).header['fsha'] == sha(big)       # ... so cria reads the target's hash: landed
 
 
 def test_a_stale_stage_never_lands_wrong_bytes(root):
-    run('put', [root, 'big.bin', GROUP, 0, 1], b'half', cwd=root)
+    run('put', [root, GROUP, 0], b'half', cwd=root)
     assert write(root, 'big.bin', b'the whole thing', '-', staged=True).header['err'] == 'newsha'
     assert not (root / 'big.bin').exists()
 
@@ -148,9 +149,10 @@ def test_a_fifo_is_refused_without_hanging_and_without_holding_the_directory_loc
     started = time.monotonic()
     assert write(root, 'pipe', b'x', '*').header['err'] == 'notfile'
     assert write(root, 'pipe', b'x', sha(b'x'), sp=json.dumps([[0, 0, 1]]), payload=b'x').header['ok'] == 0
-    os.mkfifo(root / ('.ctx' + GROUP[:16] + '.part'))
+    (root / 'tmp/reference').mkdir(parents=True)
+    os.mkfifo(root / 'tmp/reference' / ('.ctx' + GROUP[:16] + '.part'))
     assert write(root, 'g.txt', b'x', '-', staged=True).header['ok'] == 0              # an empty (non-regular) staging file never lands anything
-    assert run('put', [root, 'other', GROUP, 0, 1], b'x', cwd=root).header['ok'] == 0   # put onto a FIFO staging name: refused, not blocked
+    assert run('put', [root, GROUP, 0], b'x', cwd=root).header['ok'] == 0   # put onto a FIFO staging name: refused, not blocked
     os.mkfifo(root / 'p2')
     assert run('rm', [root, 'p2', 'f', sha(b'x')], cwd=root).header['ok'] == 0
     assert write(root, 'after.txt', b'ok', '-').header['landed'] == 1                    # no flock was left held by the stuck calls
@@ -160,8 +162,9 @@ def test_a_fifo_is_refused_without_hanging_and_without_holding_the_directory_loc
 def test_put_never_writes_through_a_hard_link_to_a_file_outside(root, tmp_path):
     victim = tmp_path / 'victim.txt'
     victim.write_text('PRECIOUS')
-    os.link(victim, root / ('.ctx' + GROUP[:16] + '.part'))
-    done = run('put', [root, 'f', GROUP, 0, 1], b'OVERWRITTEN', cwd=root)
+    (root / 'tmp/reference').mkdir(parents=True)
+    os.link(victim, root / 'tmp/reference' / ('.ctx' + GROUP[:16] + '.part'))
+    done = run('put', [root, GROUP, 0], b'OVERWRITTEN', cwd=root)
     assert done.header['ok'] == 0 and victim.read_text() == 'PRECIOUS'
 
 
@@ -181,9 +184,9 @@ def test_a_write_that_the_disk_takes_only_part_of_fails_and_leaves_the_target_an
 
 
 def test_a_chunk_the_disk_takes_only_part_of_is_never_answered_as_staged(root):
-    done = run('put', [root, 'big.bin', GROUP, 0, 1], b'y' * 20_000, cwd=root, fsize=10_000)
+    done = run('put', [root, GROUP, 0], b'y' * 20_000, cwd=root, fsize=10_000)
     assert done.header['ok'] == 0 and 'staged' not in done.header
-    assert run('put', [root, 'big.bin', GROUP, 0, 1], b'y' * 20_000, cwd=root).header['staged'] == 20_000
+    assert run('put', [root, GROUP, 0], b'y' * 20_000, cwd=root).header['staged'] == 20_000
 
 
 def test_write_keeps_setuid_and_setgid_bits_not_only_the_permission_bits(root):
@@ -280,7 +283,7 @@ def test_a_non_cooperating_writer_that_replaces_the_target_inside_the_window_is_
         f'        os.rename({str(root / "other")!r},{str(root / "f")!r})',
         '    real(fd)',
         'os.fsync=fs',
-        f'sys.argv=["stub",{"%032x" % 5!r},{str(root)!r},"f",{sha(b"base")!r},"-",{sha(b"new")!r},"0","1",{GROUP!r}]',
+        f'sys.argv=["stub",{"%032x" % 5!r},{str(root)!r},"f",{sha(b"base")!r},"-",{sha(b"new")!r},"0","1",{GROUP!r},{str(root)!r}]',
         f'exec(compile({harnessprims.STUBS["write"]!r},"stub","exec"))'])
     done = subprocess.run(['python3', '-I', '-S', '-c', program], input=__import__('base64').b64encode(b'new'), capture_output=True, timeout=30)
     frame = harnessprims.read_frame(done.stdout.decode(), '%032x' % 5)
@@ -310,3 +313,21 @@ def test_read_sk_crosses_chunk_boundaries_and_keeps_the_whole_file_hash_size_and
     done = run('read', [root, 'f', 0, 40, 399_990], cwd=root)
     assert done.data == raw[raw.index(b'line 399990\n'):][:40] and done.header['ln'] == 400_000
     assert done.header['size'] == done.header['fsize'] == len(raw) and done.header['fsha'] == sha(raw)
+
+
+def test_a_staged_write_renames_the_staged_file_and_onto_another_filesystem_fails_with_exdev_writing_nothing(root, tmp_path):
+    """The landing of a staged payload is a rename of the staged file out of WS/tmp/reference (no copy): onto a filesystem it cannot rename
+    onto it fails with EXDEV, the destination is not touched, and no temporary file is made there."""
+    shm = '/dev/shm'
+    if not os.path.isdir(shm) or os.stat(shm).st_dev == os.stat(root).st_dev:
+        pytest.skip('no second filesystem')
+    big = os.urandom(60_000)
+    assert run('put', [root, GROUP, 0], big, cwd=root).header['ok'] == 1
+    away = __import__('pathlib').Path(shm) / ('cria-exdev-' + tmp_path.name)
+    away.mkdir()
+    try:
+        done = write(away, 'big.bin', big, '-', staged=True, ws=root, cwd=root).header
+        assert done['ok'] == 0 and done['errno'] == 18 and 'landed' not in done
+        assert os.listdir(away) == [] and os.listdir(root / 'tmp/reference') == ['.ctx' + GROUP[:16] + '.part']   # nothing written; the staged file is still there (cria removes it)
+    finally:
+        __import__('shutil').rmtree(away, ignore_errors=True)

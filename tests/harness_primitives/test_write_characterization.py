@@ -35,8 +35,20 @@ def landed_big(got):
     assert on_disk['size'] >= 100_000 and 'text' in on_disk or on_disk['size'] > 60_000
 
 
+def staged_in_reference(name):
+    """What the old route wrote, plus the empty folders the staged payload passed through (./tmp/reference, where it is staged: never beside the file)."""
+    def check(got):
+        want = json.loads(FIXTURE.read_text())[name]
+        assert [norm(t) for t in got['results']] == [norm(t) for t in want['results']]
+        disk = {k: v for k, v in got['disk'].items() if k not in ('tmp/', 'tmp/reference/')}
+        assert disk == want['disk'] and set(got['disk']) - set(disk) == {'tmp/', 'tmp/reference/'} and got['outside'] == want['outside']
+    return check
+
+
 # name -> (what changed, what the model reads / what is on disk now)
 INTENDED = {
+    'e_large_replacement': ('a replacement past one command is staged in ./tmp/reference (two empty folders remain there), no longer beside the file',
+                            staged_in_reference('e_large_replacement')),
     'e_missing_file': ('a traceback became an answer in cria\'s words', refused('`nope.py` is not there — nothing was changed')),
     'e_dir_target': ('a traceback became an answer in cria\'s words', refused('`d` is a DIRECTORY, not a file — nothing was changed')),
     'w_symlink_outside': ('a link to a file outside the workspace is refused, not written through', refused('outside the project directory')),

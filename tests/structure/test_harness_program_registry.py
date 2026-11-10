@@ -17,7 +17,7 @@ DOC = (ROOT / 'docs' / 'harness-programs.md').read_text()
 
 # module -> (what it is, byte budget of its program-text constants). Every row is in docs/harness-programs.md §9.
 REGISTRY = {
-    'harnessprims.py': ('the seven stubs: read, write, put, ls, rm, run, search', 10_000),
+    'harnessprims.py': ('the seven stubs: read, write, put, ls, rm, run, search', 10_400),
     'gatescript.py': ('the gate supervisor: the shell text `run` executes for the project\'s own checks', 400),
     'inventoryops.py': ('the ctags shell text', 400),
     'syntaxcheck.py': ('the checker shell text', 150),
@@ -63,4 +63,4 @@ def test_a_registered_module_stays_within_its_budget_and_is_in_the_docs(module):
 
 def test_the_seven_stubs_are_exactly_the_registered_ones():
     assert sorted(harnessprims.STUBS) == ['ls', 'put', 'read', 'rm', 'run', 'search', 'write']
-    assert sum(len(text) for text in harnessprims.STUBS.values()) <= 14_000
+    assert sum(len(text) for text in harnessprims.STUBS.values()) <= 14_400

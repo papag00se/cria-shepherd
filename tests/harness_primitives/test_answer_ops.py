@@ -44,7 +44,7 @@ def test_a_document_of_any_size_lands_byte_for_byte_and_the_pointer_is_true_only
     assert final['ext']['stored'] == final['rep']['st']
     assert all(len(c.encode()) <= COMMAND_ARG_BUDGET for c in ran)             # no command the kernel would refuse (E2BIG)
     chunks = -(-len(raw) // harnessprims.CHUNK_BYTES)
-    assert rounds == ([1] if chunks == 1 else [1, min(chunks - 1, harnessprims.PUT_WAVE - 1), 1] if chunks <= 17 else rounds)
+    assert rounds == ([1] if chunks == 1 else [1, min(chunks - 1, harnessprims.PUT_WAVE - 1) + 1, 1] if chunks <= 17 else rounds)
     assert [p.name for p in (tmp_path / 'tmp/reference').iterdir()] == ['docs.txt']       # no staging file left behind
 
 
@@ -169,3 +169,22 @@ def test_the_search_key_reaches_only_crias_own_request_never_a_harness_command(t
     assert sent == [key] and not [c for c in live.commands if key in c] and key not in json.dumps(live.backend.bodies)
     assert live.results[0].startswith('1 results:\nWalrus op\n  https://x.test/w')
     assert 'The := operator' in next((live.ws / 'tmp/reference').glob('search-python_walrus-*.txt')).read_text()
+
+
+def test_a_staged_save_sweeps_the_staging_files_an_earlier_operation_left_in_the_reference_folder_and_only_those(tmp_path):
+    """The staging folder is the saved page's own folder: a staged save lists it with its first chunks and removes a staging name past its age,
+    and leaves a young name nobody owns, a name of another shape and any other file (cria/stagesweep.py)."""
+    import time
+    from cria import stagesweep
+    folder = tmp_path / stagesweep.DIR
+    folder.mkdir(parents=True)
+    old, young, notes = '.ctx' + 'a' * 16 + '.part', '.ctx' + 'b' * 16 + '.part', 'earlier-page.txt'
+    for name in (old, young, notes):
+        (folder / name).write_text('left\n')
+    long_ago = time.time() - stagesweep.MAX_AGE_S - 60
+    os.utime(folder / old, (long_ago, long_ago))
+    text = 'x' * (2 * harnessprims.CHUNK_BYTES)
+    intent = AnswerIntent('web_fetch', URL, 'POINTER', denial.RAN, None, SaveIntent('./tmp/reference/docs.txt', text, 'op1'))
+    final, ran = answer_of_disk(tmp_path, intent)
+    assert final['outcome'] == denial.RAN and (folder / 'docs.txt').read_text() == text
+    assert sorted(p.name for p in folder.iterdir()) == sorted([young, notes, 'docs.txt'])

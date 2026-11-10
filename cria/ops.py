@@ -21,7 +21,7 @@ import shlex
 import threading
 from dataclasses import dataclass, field
 
-from . import bodykeys, callauth, denial, externalization, gateops, harnessprims, inventoryops, probeops, prompts, readops, searchops, surveyops, writeops, wsview
+from . import bodykeys, callauth, denial, externalization, gateops, harnessprims, inventoryops, probeops, prompts, readops, searchops, stagesweep, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
@@ -113,6 +113,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         self._carry: dict = {}      # (operation, sha-256) -> the bytes a planned write will leave, for the cache once it lands
         self._surveys: dict = {}    # survey operation -> its wsview.Survey (process memory: recomputed from the ledger's frames)
         self._inventories: dict = {}    # inventory operation -> its listing (process memory: recomputed from the ledger's frames)
+        self._staging_closed: list = []     # the staging names of this session's ended operations, as of the last operation that looked (cria/stagesweep.py)
         self._gates: dict = {}          # gate operation -> its gateops.GateResult (process memory: recomputed from the ledger's frames)
         self._rlog = None
         self._lock = threading.RLock()      # the ledger's folded state is shared: one request at a time advances operations
@@ -181,11 +182,15 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return f"printf %s {shlex.quote(args['text'])}" if args.get('ok') else _refusal_command(args['text'])
         elif what == 'put':
             data = blobs[args['blob']].encode('utf-8', 'surrogateescape')[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
-            words, payload, comment = [args['root'], args['rel'], callauth.group(op), args['off'], 1], data, label
+            words, payload, comment = [ctx['ws'], callauth.group(op), args['off']], data, label
+        elif what == 'sweep':     # the folder the staging files are in, listed in the wave of the first chunks (cria/stagesweep.py)
+            words, payload, comment, what = [ctx['ws'], stagesweep.DIR, 1, stagesweep.LIST_MAX, 0, '[]', ''], None, 'staging folder ' + stagesweep.DIR, 'ls'
+        elif what == 'srm':       # one stale staging file of an earlier operation of cria's own
+            words, payload, comment, what = [ctx['ws'], f"{stagesweep.DIR}/{args['name']}", 'f', '*'], None, 'stale staging file ' + args['name'], 'rm'
         else:
             data = blobs[args['blob']].encode('utf-8', 'surrogateescape')
             staged = args.get('staged', False)
-            words = [args['root'], args['rel'], '*', '-', hashlib.sha256(data).hexdigest(), 1 if staged else 0, 1, callauth.group(op)]
+            words = [args['root'], args['rel'], '*', '-', hashlib.sha256(data).hexdigest(), 1 if staged else 0, 1, callauth.group(op), ctx['ws']]
             payload, comment, what = None if staged else data, label, 'write'
         return harnessprims.compose(what, nonce, words, payload, comment=comment, safe_path=ctx['safe'])
 
@@ -311,6 +316,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         """Decide each operation's next step from the ledger alone. Returns the primitive calls the harness has not seen:
         a step just issued, or one an earlier request issued whose reply never reached the harness."""
         calls = []
+        self._staging_closed = stagesweep.closed_names(self.ledger.ops(session))
         for op_id in sorted(op_ids):
             op = self.ledger.ops(session).get(op_id)
             if op is None or op.final is not None:
@@ -359,7 +365,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             return self._p_after(op, wave, steps)
         table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
                  else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
-        return table[wave[0].what](op, wave, steps)
+        return table['put' if any(st.what == 'put' for st in wave) else wave[0].what](op, wave, steps)
 
     @staticmethod
     def _next(steps: list, what: str, *args: dict) -> tuple:
@@ -464,7 +470,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         if len(data) <= harnessprims.CHUNK_BYTES:
             return Issue(self._next(steps, 'write', args), {digest: text, **(blobs or {})})
         offsets = range(0, len(data), harnessprims.CHUNK_BYTES)
-        return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE])), {digest: text, **(blobs or {})})
+        first = self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE]))
+        return Issue((*first, *stagesweep.sweep_step(op.op, first, self._staging_closed, 'sweep')), {digest: text, **(blobs or {})})
 
     def _spill_final(self, op: Op, how: str, st):
         """How an operation that is not a listing ended once its file was (or was not) saved: the answer's words for an answer, the search's for a
@@ -476,6 +483,7 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
         return self._answer_final(op, how, st.frame['hdr'])
 
     def _after_put(self, op: Op, wave: list, steps: list):
+        wave = [st for st in wave if st.what == 'put']              # (the listing of the staging folder rode with them)
         bad = next((st for st in wave if st.frame['hdr'].get('ok') != 1), None)
         if bad is None:
             # At most PUT_WAVE chunks go out in one reply (docs/harness-primitives.md section 7): the rest follow, then the landing write.
@@ -484,8 +492,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, Prob
             staged = {st.args['off'] for st in steps if st.what == 'put'}
             more = [off for off in range(0, size, harnessprims.CHUNK_BYTES) if off not in staged][:harnessprims.PUT_WAVE]
             if more:
-                return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in more)))
-            return Issue(self._next(steps, 'write', {**args, 'staged': True}))
+                return Issue(stagesweep.with_sweep(op.op, steps, self._next(steps, 'put', *({**args, 'off': off} for off in more)), 'sweep', 'srm'))
+            return Issue(stagesweep.with_sweep(op.op, steps, self._next(steps, 'write', {**args, 'staged': True}), 'sweep', 'srm'))
         if op.kind != LIST_DIR:
             return self._spill_final(op, 'unknown' if bad.frame['hdr'].get('ok') == -1 else 'failed', bad)
         if bad.frame['hdr'].get('ok') == -1:

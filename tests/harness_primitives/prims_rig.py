@@ -50,8 +50,9 @@ def run(stub, args, payload=None, *, cwd, env=None, text=None, safe_path=harness
     return Ran(frame, done, command)
 
 
-def write(root, rel, new, ex, *, sp='-', payload=None, staged=False, mk=1, cwd=None, env=None, group=GROUP, fsize=None):
-    args = [root, rel, ex, sp, sha(new), 1 if staged else 0, mk, group]
+def write(root, rel, new, ex, *, sp='-', payload=None, staged=False, mk=1, cwd=None, env=None, group=GROUP, fsize=None, ws=None):
+    """``ws``: the workspace whose ./tmp/reference holds the staged payload (default: ``root``)."""
+    args = [root, rel, ex, sp, sha(new), 1 if staged else 0, mk, group, ws or root]
     return run('write', args, None if staged else (new if payload is None else payload), cwd=cwd or root, env=env, fsize=fsize)
 
 

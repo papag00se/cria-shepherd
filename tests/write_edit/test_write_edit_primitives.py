@@ -53,7 +53,8 @@ def test_a_disk_that_takes_only_part_of_a_write_is_never_reported_as_a_landing_a
     msgs = [{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': first.stdout}]
     shown = settle(msgs, tmp_path, fsize=limit)
     assert denial.unlanded(shown[1]) and 'f.txt' in shown[1]['content'] and 'File too large' in shown[1]['content']
-    assert (tmp_path / 'f.txt').read_text() == 'ORIGINAL\n' and os.listdir(tmp_path) == ['f.txt']
+    assert (tmp_path / 'f.txt').read_text() == 'ORIGINAL\n' and [n for n in os.listdir(tmp_path) if n != 'tmp'] == ['f.txt']
+    assert not [p for p in (tmp_path / 'tmp').rglob('*') if p.is_file()]          # the staging file (in ./tmp/reference, never beside the file) was removed too
     held = _ENGINE['ops'].cache.get(str(tmp_path), 'f.txt')
     assert held is None or held[2] != content.encode()
 
@@ -157,8 +158,8 @@ def _links(ws, outside):
 def test_a_payload_over_one_command_through_a_link_inside_the_workspace_lands_at_the_links_target_and_leaves_nothing_behind(tmp_path, path, landed_in):
     """A whole write over 45,000 bytes is staged beside its target by `put`, which follows no link. It was refused with words that were
     false (`Not a directory` through a directory link; a link "to another directory" for a link beside its target) and the model was
-    sent to write 100 KB again. cria resolves the link itself, stages where the target is and lands the write; the staging file left
-    in the link's directory (when that is another) is removed; the link is still a link."""
+    sent to write 100 KB again. cria resolves the link itself and lands the write there; the payload is staged in ./tmp/reference whatever the
+    link is, so no staging file is ever in a link's directory; the link is still a link."""
     ws, outside = tmp_path / 'ws', tmp_path / 'outside'
     ws.mkdir(), outside.mkdir()
     _links(ws, outside)
