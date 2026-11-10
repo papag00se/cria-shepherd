@@ -84,9 +84,10 @@ def test_candidate_safety_stale_check_does_not_import_workspace_modules(tmp_path
 
 def test_candidate_safety_check_does_not_resolve_python3_through_a_planted_path_entry(tmp_path):
     workspace = _hostile_workspace(tmp_path)
-    planted = workspace / 'bin' / 'python3'
-    planted.write_text("#!/bin/sh\necho planted >> POISONED\nexec %s \"$@\"\n" % os.path.realpath(sys.executable))
-    planted.chmod(planted.stat().st_mode | stat.S_IXUSR)
+    for tool, real in (('python3', os.path.realpath(sys.executable)), ('env', '/usr/bin/env')):     # the interpreter and `env` itself
+        planted = workspace / 'bin' / tool
+        planted.write_text("#!/bin/sh\necho planted-%s >> POISONED\nexec %s \"$@\"\n" % (tool, real))
+        planted.chmod(planted.stat().st_mode | stat.S_IXUSR)
     tc, _ = _unsafe_edit_command(workspace)
     shim = pathlib.Path(harness_env(workspace)['PATH'].split(':')[0])
     run(tc, workspace, env={'PATH': f'{workspace / "bin"}:{shim}:/usr/bin:/bin'})

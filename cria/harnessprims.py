@@ -16,6 +16,8 @@ import shlex
 import zlib
 from dataclasses import dataclass
 
+# `env` is called by absolute path: found through the harness `PATH` it could be a workspace entry (an activated `.venv/bin`).
+ENV = '/usr/bin/env'
 # What `python3` is looked up through: system directories only, never a relative entry. `[harness] safe_path` overrides it.
 SAFE_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
 # One frame is read whole before it is decoded; nothing larger is accepted (docs/harness-primitives.md section 4).
@@ -236,7 +238,7 @@ def compose(stub: str, nonce: str, args=(), payload: bytes | None = None, *, com
     if safe_path != safe_path.strip() or not safe_path or any(not p.startswith('/') for p in safe_path.split(':')):
         raise ValueError('safe_path must be absolute system directories')
     head = shlex.quote(safe_path)
-    prefix = f'env CTX_PATH="$PATH" PATH={head}' if stub == 'run' else f'env -i PATH={head}'
+    prefix = f'{ENV} CTX_PATH="$PATH" PATH={head}' if stub == 'run' else f'{ENV} -i PATH={head}'
     words = ' '.join(shlex.quote(str(a)) for a in (nonce, *args))
     command = f"{prefix} \\\n  python3 -I -S -c '{STUBS[stub]}' {words}"
     if payload is not None:

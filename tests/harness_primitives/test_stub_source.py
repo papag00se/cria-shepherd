@@ -40,10 +40,10 @@ def test_compose_is_a_pure_function_with_the_documented_prefix_and_a_display_com
     one = harnessprims.compose('ls', 'ab' * 16, args, comment='list_dir x\nINJECTED\x07 line')
     assert one == harnessprims.compose('ls', 'ab' * 16, args, comment='list_dir x\nINJECTED\x07 line')
     first, second = one.split('\n')[:2]
-    assert first == '# list_dir x' and second.startswith('env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \\')
+    assert first == '# list_dir x' and second.startswith('/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \\')
     assert "'src/a b.py'" in one and one.endswith("' /w 'src/a b.py' '*'") is False and one.rstrip().endswith("'*'")
     run = harnessprims.compose('run', 'cd' * 16, ['start'], text='CTX_EOF\n')
-    assert run.startswith('env CTX_PATH="$PATH" PATH=/usr/bin') and "<<'CTX_EOF_" in run       # the script holds the terminator: a derived one is used
+    assert run.startswith('/usr/bin/env CTX_PATH="$PATH" PATH=/usr/bin') and "<<'CTX_EOF_" in run       # the script holds the terminator: a derived one is used
     import pytest
     with pytest.raises(ValueError):
         harnessprims.compose('ls', 'zz', [])

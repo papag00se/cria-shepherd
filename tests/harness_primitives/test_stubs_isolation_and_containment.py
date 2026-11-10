@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from prims_rig import GROUP, ls, run, sha, write
+from prims_rig import BASH, GROUP, ls, run, sha, write
 
 SHADOWED = ('hashlib', 'base64', 'json', 'zlib', 'os', 'sys', 'subprocess', 'fcntl', 'stat', 'time', 'encodings', 're', 'io', 'codecs',
             'shutil', 'sitecustomize', 'usercustomize')
@@ -21,9 +21,10 @@ def hostile(tmp_path):
         d.mkdir(exist_ok=True)
     for name in SHADOWED:
         (root / f'{name}.py').write_text(f"open({str(outside / ('PWNED_' + name))!r}, 'w').write('x')\n")
-    planted = root / 'bin' / 'python3'
-    planted.write_text(f'#!/bin/sh\ntouch {outside}/PWNED_python3\n')
-    planted.chmod(0o755)
+    for tool in ('python3', 'env', 'bash'):         # every program a primitive's command line or supervisor looks up by name
+        planted = root / 'bin' / tool
+        planted.write_text(f'#!/bin/sh\ntouch {outside}/PWNED_{tool}\n')
+        planted.chmod(0o755)
     (root / 'src' / 'a.py').write_bytes(b'x = 1\r\nprint(\xff)\n')
     (outside / 'secret.txt').write_text('TOP SECRET')
     env = {**os.environ, 'PATH': f'{root / "bin"}:{os.environ["PATH"]}', 'PYTHONPATH': str(root), 'PYTHONSTARTUP': str(root / 'sitecustomize.py')}
@@ -33,12 +34,16 @@ def hostile(tmp_path):
 
 def test_the_isolation_control_the_plain_forms_do_run_the_workspaces_code(hostile):
     """Without this the tests below prove nothing: the same hostile tree DOES defeat `python3 -c` and `python3 -I -c` under a planted PATH."""
-    subprocess.run(['bash', '-c', 'python3 -c "import hashlib"'], cwd=hostile.root, env=hostile.env, capture_output=True)
+    subprocess.run([BASH, '-c', 'python3 -c "import hashlib"'], cwd=hostile.root, env=hostile.env, capture_output=True)
     assert 'PWNED_python3' in hostile.pwned()
     for p in hostile.outside.glob('PWNED_*'):
         p.unlink()
-    subprocess.run(['bash', '-c', 'python3 -I -c "import hashlib"'], cwd=hostile.root, env=hostile.env, capture_output=True)
+    subprocess.run([BASH, '-c', 'python3 -I -c "import hashlib"'], cwd=hostile.root, env=hostile.env, capture_output=True)
     assert 'PWNED_python3' in hostile.pwned()            # -I alone does not stop the planted interpreter: env -i PATH= is required
+    for p in hostile.outside.glob('PWNED_*'):
+        p.unlink()
+    subprocess.run([BASH, '-c', 'env -i PATH=/usr/bin:/bin python3 -I -S -c "import hashlib"'], cwd=hostile.root, env=hostile.env, capture_output=True)
+    assert 'PWNED_env' in hostile.pwned()                # and `env` itself, found through the PATH, is the planted one
 
 
 def test_every_stub_ignores_a_workspace_that_shadows_the_stdlib_and_plants_python3(hostile):

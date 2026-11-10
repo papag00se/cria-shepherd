@@ -32,7 +32,7 @@ def lower_list(tmp_path, monkeypatch=None, **kw):
 
 def test_a_listing_lowers_to_one_primitive_call_whose_command_is_the_fixed_stub_and_whose_id_is_a_mac(tmp_path):
     command = json.loads(lower_list(tmp_path)['function']['arguments'])['cmd']
-    assert command.startswith('# list_dir .\nenv -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \\\n  python3 -I -S -c ')
+    assert command.startswith('# list_dir .\n/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \\\n  python3 -I -S -c ')
     assert len(command) < 2300 and 'base64' not in command.split("' ")[-1]
     assert lower_list(tmp_path)['id'].startswith('ctx_')
 
@@ -63,4 +63,4 @@ def test_a_configured_safe_path_is_what_the_composed_command_and_the_candidate_s
     engine = ops.Ops(safe_path='/opt/tools/bin:/usr/bin')
     writeproxy.translate_outbound(completion, SHELL, injected={'list_dir'}, workspace_root='/w',
                                   issue_list_dir=lambda c, a: engine.issue_list_dir('s', SHELL, c, a, workspace_root='/w', level='none'))
-    assert 'env -i PATH=/opt/tools/bin:/usr/bin ' in json.loads(completion['choices'][0]['message']['tool_calls'][0]['function']['arguments'])['cmd']
+    assert '/usr/bin/env -i PATH=/opt/tools/bin:/usr/bin ' in json.loads(completion['choices'][0]['message']['tool_calls'][0]['function']['arguments'])['cmd']

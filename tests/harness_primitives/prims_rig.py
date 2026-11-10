@@ -33,10 +33,13 @@ class Ran:
         return [json.loads(line) for line in self.data.decode('utf-8', 'surrogateescape').split('\n') if line]
 
 
+BASH = __import__('shutil').which('bash')       # the harness starts its shell by absolute path; a workspace `bash` on the PATH is not it
+
+
 def run(stub, args, payload=None, *, cwd, env=None, text=None, safe_path=harnessprims.SAFE_PATH, login=True, nonce=None):
     nonce = nonce or secrets.token_hex(16)
     command = harnessprims.compose(stub, nonce, args, payload, text=text, safe_path=safe_path)
-    done = subprocess.run(['bash', '-lc' if login else '-c', command], cwd=str(cwd), env=env, capture_output=True, timeout=60)
+    done = subprocess.run([BASH, '-lc' if login else '-c', command], cwd=str(cwd), env=env, capture_output=True, timeout=60)
     try:
         frame = harnessprims.read_frame(done.stdout.decode('utf-8', 'surrogateescape'), nonce)
     except harnessprims.FrameUnknown:

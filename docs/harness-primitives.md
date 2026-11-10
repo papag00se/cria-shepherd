@@ -23,7 +23,7 @@ These restate the standing order ("cria's logic stays in cria") as checkable con
 
 ```
 # edit_file src/a.py                                  <- display comment (for the human; never parsed for authority)
-env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \
+/usr/bin/env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin \
   python3 -I -S -c '<STUB SOURCE, §5>' <nonce> <arg>... [<<'CTX_EOF'
 <payload>
 CTX_EOF]
@@ -32,9 +32,10 @@ CTX_EOF]
 `run` is the one exception to `env -i` (it must hand the user's own environment to the project's commands):
 
 ```
-env CTX_PATH="$PATH" PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin python3 -I -S -c '<run stub>' <nonce> start "${TMPDIR:-/tmp}" ...
+/usr/bin/env CTX_PATH="$PATH" PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin python3 -I -S -c '<run stub>' <nonce> start "${TMPDIR:-/tmp}" ...
 ```
 
+* **`/usr/bin/env`, by absolute path.** `env` found through the harness `PATH` could be a workspace entry (an activated `.venv/bin`, `node_modules/.bin`) that receives the nonce in its arguments: the review of phase 3 (B1) showed a planted `bin/env` printing a frame cria accepted. Every composed command, and the candidate-safety check, starts with `/usr/bin/env` (`harnessprims.ENV`); a harness without it answers 127 with no frame and the call is UNKNOWN.
 * **`env -i PATH=<safe>`** clears the environment (`PYTHON*`, `LD_*`, `BASH_ENV`, …) and fixes where `python3` is looked up. The safe path is a config value (`[harness] safe_path`, default as shown); it contains system directories only, never a relative entry. `-I` alone is not enough: with a workspace `bin` first on `PATH`, `python3 -I` still ran the planted interpreter in the prototype control (§10).
 * **`python3 -I -S -c`**: `-I` (isolated) keeps the current directory and script directory out of `sys.path` and ignores `PYTHON*` variables and the user site; `-S` skips `site`, so no `.pth` file or `sitecustomize` runs. The program arrives as an argument, so there is no file in the workspace to plant, replace or hash-pin.
 * **Quoting.** No stub contains a single quote, so each is one `'...'` word. Arguments are quoted with `shlex.quote`. The display comment is written with control characters removed and is cut at the first line break; it is never read back for any purpose.
