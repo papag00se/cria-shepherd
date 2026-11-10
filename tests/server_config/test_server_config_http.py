@@ -283,12 +283,13 @@ def test_a_failing_upstream_is_a_clean_error_never_a_fake_success(wire, stream):
 
 @pytest.mark.parametrize("mode", MODES)
 def test_a_final_input_larger_than_the_window_is_answered_not_a_502(wire, mode):
-    """Measured on the real 49,152-token server: a ~60k-token last user message ended in a bare 502 that pinned Codex retried forever; it is now a 200 assistant message saying nothing was dropped."""
+    """An oversized input gets a notice, without claiming that earlier floor reductions did not happen."""
     status, raw = wire.post(*request(mode, "summarise:\n" + BIG))
     text = reply_text(mode, raw)
     assert status == 200 and wire.fake.chats == []  # nothing was sent upstream
     assert text.startswith("⟦ctx:input-not-delivered⟧") and f"{WINDOW:,}-token context window" in text
-    assert "Nothing was cut, summarised or dropped" in text
+    assert "Nothing was cut, summarised or dropped" not in text
+    assert "not processed by the model" in text
 
 
 def tool_result_request(mode, result, task="count the ERROR lines in logs/app.log", **kw):
