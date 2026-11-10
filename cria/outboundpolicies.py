@@ -5,13 +5,12 @@ from shlex import quote as _qbash
 
 from . import content_reduce as content_reduce_mod, dirguard, harnessprims, prompts, resultpacket, webfetch, wsview
 from .assistcontract import Policy, Reference
-from .toolcontracts import OutboundCall, OutboundDefinition, MutationDefinition, RewrittenCall, ShellCommand
+from .toolcontracts import OutboundCall, OutboundDefinition, MutationDefinition, ReadIntent, RewrittenCall, ShellCommand
 from .shrinkprotection import DEFINITION as SHRINK_PROTECTION
 from .callliterals import _has_tc_debris, _protocol_debris, _repair_double_escaped
 from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _guarded_path, _targets_cria_home,
     _prepare_file_mutation, _under_spill_dir, _spill_relpath, _respill_command,
-    _read_in_place_of_write, _spill_read_command as _format_spill_read,
 )
 from .toolwire import (
     _b64, _refusal_command, _command_of, GATE_SENTINEL, _SENTINEL,
@@ -20,10 +19,6 @@ from .toolwire import (
 from .shelltool import _CMD_FIELDS, is_shell_tool_name
 from .toolargs import PATH_KEYS as _PATH_KEYS, tool_path as _tool_path
 
-
-def _spill_read_command(path: str) -> str:
-    """Format an unrestricted whole read of a spilled document."""
-    return _format_spill_read(path)
 
 def malformed_shell(source: OutboundCall) -> ShellCommand | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
@@ -68,14 +63,13 @@ def private_files(source: OutboundCall) -> ShellCommand | None:
     return None
 
 
-def reference_files(source: OutboundCall) -> ShellCommand | None:
+def reference_files(source: OutboundCall) -> ShellCommand | ReadIntent | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
     injected = source.request.injected
     if name in _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES and name in injected and (sp := _tool_path(args)) and _under_spill_dir(str(sp), webfetch.SPILL_DIR) and (not (name in _READ_NAMES and (args.get('start_line') or args.get('end_line')))):
-        cmd = _spill_read_command(str(sp)) if name in _READ_NAMES else _refusal_command(prompts.render('spill_edit_refusal', path=str(sp)))
         if rlog is not None:
             rlog.emit('writeproxy.spill_read_gated' if name in _READ_NAMES else 'writeproxy.blocked_spill', tool=name, path=str(sp))
-        return ShellCommand(cmd, multipart_kind='read' if name in _READ_NAMES else '')
+        return ReadIntent() if name in _READ_NAMES else ShellCommand(_refusal_command(prompts.render('spill_edit_refusal', path=str(sp))))
     return None
 
 
@@ -124,7 +118,7 @@ def fused_file(source: OutboundCall) -> ShellCommand | None:
     return ShellCommand(_refusal_command(prompts.load('write_fused_content')))
 
 
-def unread_replacement(source: OutboundCall) -> ShellCommand | None:
+def unread_replacement(source: OutboundCall) -> ReadIntent | None:
     request = source.request
     # Selection encloses the callback: a disabled policy cannot gather or mutate its ledger.
     if request.unread_target is None:
@@ -147,8 +141,7 @@ def unread_replacement(source: OutboundCall) -> ShellCommand | None:
         return None
     if source.log is not None:
         source.log.emit('writeproxy.write_unread_target', tool=source.name, path=path)
-    return ShellCommand(_read_in_place_of_write(path, fact, source.name), read_in_place=True,
-                        multipart_kind='read-instead', multipart_fact=fact)
+    return ReadIntent(fact)
 
 
 def candidate_safety(source: OutboundCall, command: str) -> str:

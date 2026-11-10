@@ -49,7 +49,7 @@ from . import groundtruth, participation, probediscovery, probeparse, prompts, p
 _LOC_PREFIX = re.compile(r"^\S.*?:\d+(?::\d+)?:?\s+")
 
 from .proberun import ProbeReport
-from .multipart import STDOUT_LIMIT, room_beside_noise
+from .harnessprims import PAGE_BYTES as STDOUT_LIMIT
 # runner_tally lives in probeparse now (it parses runner OUTPUT, and the tally must be taken at
 # parse time while the raw text still exists). Re-exported so existing callers are unmoved.
 from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: F401
@@ -84,7 +84,21 @@ TRANSPORT_RAW_PAGE_MAX = 65_536
 # middle used to end the whole transport UNKNOWN (the gate was then re-composed, and re-cut, until the run's wall clock ended). Each page
 # says how much noise surrounded it (`_learn_noise`), the next page is asked for at the size that fits beside it, and a page the harness
 # cut anyway is asked for again at the next of TRANSPORT_REFETCH_BUDGETS (never more than three times in a row, then the old UNKNOWN).
-TRANSPORT_RESULT_BYTES = STDOUT_LIMIT      # the harness's own bound, one number with the multipart pages
+TRANSPORT_RESULT_BYTES = STDOUT_LIMIT      # the harness's own bound (harnessprims.PAGE_BYTES)
+
+
+def room_beside_noise(before: int, after: int, cut_side: str | None) -> int:
+    """The bytes one record may occupy on the wire beside what a login shell printed around it (``before`` / ``after``, measured off a
+    result the record survived in). The harness keeps a result whole up to STDOUT_LIMIT, else only its first and last halves: a record
+    fits whole when the result is not cut (the limit less both noises, or a half less either: the larger), in the head (a half less
+    the noise before it) or in the tail (a half less the noise after it). ``cut_side`` is where the record sat relative to the
+    harness's cut marker: ``"head"`` (before it), ``"tail"`` (after it) or None (no cut)."""
+    half = STDOUT_LIMIT // 2
+    if cut_side == 'tail':
+        return half - after
+    if cut_side == 'head':
+        return half - before
+    return max(STDOUT_LIMIT - before - after, half - before, half - after)
 TRANSPORT_REFETCH_BUDGETS = (1_500, 750, 375)
 TRANSPORT_MIN_BUDGET = 128
 TRANSPORT_SAFETY_BYTES = 300       # envelope header, CRLF expansion and anything else the measure cannot see

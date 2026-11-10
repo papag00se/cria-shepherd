@@ -58,7 +58,7 @@ def test_the_ledger_is_private_append_only_first_frame_wins_and_reads_back_after
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700 and [stat.S_IMODE(p.stat().st_mode) for p in directory.iterdir()] == [0o600]
     for fresh in (ledger, Ledger()):                                         # the live object and a restarted process
         op = fresh.ops('s1')['a']
-        assert op.steps[0].frame == {'hdr': {'ok': 1}, 'text': 'first'} and op.final is None and op.call == {'id': 'm1'}
+        assert op.steps[0].frame == {'hdr': {'ok': 1}, 'text': 'first', 'wire': 0} and op.final is None and op.call == {'id': 'm1'}
     assert Ledger().ops('another session') == {}
 
 

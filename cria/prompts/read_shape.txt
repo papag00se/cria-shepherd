@@ -1,5 +1,5 @@
 # The measured shape of a read that was not delivered, and the next step -- generated per request from the tool menu the reader holds.
-# `narrow` is the original wording for a file a line range CAN narrow; it must stay word-for-word what multipart_fit_overflow carried.
+# `narrow` is the original wording for a file a line range CAN narrow; it must stay word-for-word what the overflow note (read_overflow) carries.
 # A route is named ONLY when the menu holds the tool that runs it (`{{SHELL}}` is that tool's name); with no such tool the facts stand alone.
 narrow = Read the file in narrower pieces instead (a line range on a read tool, `sed -n 'START,ENDp'`, `grep -n`, `head` or `tail`) and continue.
 facts_file = Measured: {{PATH}} is {{SIZE}} bytes in {{LINES}} line(s); line {{LONGEST_LINE}}, the longest, is {{LONGEST}} bytes.

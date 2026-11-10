@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from cria import denial, initial_inventory, loop, wsview
-from write_edit_helpers import (call, do, run_batch, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
+from write_edit_helpers import (call, do, represented, run_batch, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
 
 POM = "".join(f"<l{i}>{i}</l{i}>\n" for i in range(29))
 
@@ -398,7 +398,7 @@ def test_own_write_credit_requires_retained_history(tmp_path, retained, mutated,
         raw += [{'role': 'assistant', 'tool_calls': [change]}, result(change, outcome)]
     token = wsview.bind(wsview.View(str(tmp_path), 'sid:own-representation'))
     try:
-        history = writeproxy.represent_inbound(raw, workspace_root=str(tmp_path))
+        history = represented(raw, workspace_root=str(tmp_path))
         assert denial.landed(history[1])
     finally:
         wsview.unbind(token)
@@ -421,7 +421,7 @@ def test_own_write_credit_requires_retained_history(tmp_path, retained, mutated,
         lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'second')],
                         root=str(tmp_path), unread_target=check)[0]
         reply = run(lowered, tmp_path)
-        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
+        shown = represented([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
                                              workspace_root=str(tmp_path))
         assert denial.refused(shown[1]) is held
         assert target.read_text() == (('changed\n' if mutated else 'owned\n') if held else 'candidate\n')
@@ -444,7 +444,7 @@ def test_retained_evidence_requires_matching_current_fingerprint_when_available(
                                'content': ENVELOPE.format(rc=proc.returncode) + proc.stdout}
     token = wsview.bind(wsview.View(str(tmp_path), 'sid:hash-history'))
     try:
-        history = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
+        history = represented([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
                                                workspace_root=str(tmp_path))
     finally:
         wsview.unbind(token)
@@ -474,7 +474,7 @@ def test_retained_evidence_requires_matching_current_fingerprint_when_available(
         lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
                         root=str(tmp_path), unread_target=check)[0]
         reply = run(lowered, tmp_path)
-        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
+        shown = represented([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
                                              workspace_root=str(tmp_path))
         assert denial.refused(shown[1]) is held
         assert any(name == 'loop.unread_target_state' and item['state'] == 'state_unknown'
@@ -498,7 +498,7 @@ def test_wire_confirmed_restoration_overrides_older_read_fingerprint(tmp_path, r
     view = wsview.View(str(tmp_path), 'sid:restore')
     token = wsview.bind(view)
     try:
-        history = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
+        history = represented([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
                                                workspace_root=str(tmp_path))
         assert denial.read_payload(history[1]) == 'old\n'
         run(call('exec_command', {'cmd': "printf 'new\\n' > x.txt"}, 'external'), tmp_path)
@@ -535,7 +535,7 @@ def test_wire_confirmed_restoration_overrides_older_read_fingerprint(tmp_path, r
         lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
                         root=str(tmp_path), unread_target=check)[0]
         reply = run(lowered, tmp_path)
-        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
+        shown = represented([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, reply)],
                                              workspace_root=str(tmp_path))
         assert denial.refused(shown[1]) is held
         assert target.read_text() == ('later\n' if restoration == 'stale' else 'new\n' if held else 'candidate\n')
@@ -556,7 +556,7 @@ def test_dispatch_acceptance_reports_nonatomic_race(tmp_path, tool):
     view = wsview.View(str(tmp_path), 'sid:race')
     token = wsview.bind(view)
     try:
-        history = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
+        history = represented([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
                                                workspace_root=str(tmp_path))
         wsview.unbind(token)
         view = wsview.View(str(tmp_path), 'sid:race-fresh')
@@ -650,7 +650,7 @@ def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch,
     else:
         mutation = call('exec_command', {'cmd': 'cat other.txt'}, 'm')
     read_result = run(read, tmp_path)
-    assert read_result.returncode == 0 and 'old' in read_result.stdout
+    assert read_result.returncode == 0 and 'CTX1' in read_result.stdout
     mutation_result = run(mutation, tmp_path)
     assert mutation_result.returncode == 0
     result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
@@ -661,7 +661,7 @@ def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch,
     view = wsview.View(str(tmp_path), 'sid:batch-unread')
     token = wsview.bind(view)
     try:
-        messages = writeproxy.represent_inbound(raw, workspace_root=str(tmp_path))
+        messages = represented(raw, workspace_root=str(tmp_path))
         wsview.unbind(token)
         view = wsview.View(str(tmp_path), 'sid:batch-unread-fresh')
         token = wsview.bind(view)
@@ -679,7 +679,7 @@ def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch,
         lowered = lower([call('write_file', {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
                         root=str(tmp_path), unread_target=check)[0]
         completed = run(lowered, tmp_path)
-        shown = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, completed)],
+        shown = represented([{'role': 'assistant', 'tool_calls': [lowered]}, result(lowered, completed)],
                                              workspace_root=str(tmp_path))
         assert denial.refused(shown[1]) is held
         assert target.read_text() == ('new\n' if held else 'candidate\n')

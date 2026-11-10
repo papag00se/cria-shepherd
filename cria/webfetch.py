@@ -588,7 +588,7 @@ def spill_reading_hint(path: str, limit: int) -> str:
         # proportional estimate (lines * limit / len(body)) overshot whenever the EARLY lines ran
         # wider than average: walked on feed-pipeline-java x nemotron-elastic 1788232218, where
         # this sentence said "end_line=205 fits in one read" about the spilled opencsv POM — the
-        # one document naming the correct groupId — and `_ranged_read` then refused the coder's
+        # one document naming the correct groupId — and the ranged read then refused the coder's
         # SMALLER 1-200 request, in every prompt of the run, because the promise was made about
         # average bytes and checked against real ones (#12, #5b). cria holds the spilled bytes
         # right here, so it can name the largest prefix that provably fits instead of estimating.
@@ -603,10 +603,10 @@ def spill_reading_hint(path: str, limit: int) -> str:
 
 
 def _numbered_prefix_fits(body: str, limit: int) -> int:
-    """Largest N such that lines 1..N — AS `_ranged_read` RETURNS them, numbered ``n: line\\n`` —
+    """Largest N such that lines 1..N — AS a ranged read returns them, numbered ``n: line\\n`` —
     total at most ``limit`` bytes. 0 when even line 1 alone is over.
 
-    The promise `spill_extent` makes is checked by `_ranged_read` against its NUMBERED output, so
+    The promise `spill_extent` makes is checked by the ranged read against its NUMBERED output, so
     the promise must be computed over the same artifact: line-number digits, the ``: `` separator
     and the newline all count (#12). Per line that is ``len(str(n)) + 2 + len(utf-8 bytes) + 1``."""
     total, fits = 0, 0

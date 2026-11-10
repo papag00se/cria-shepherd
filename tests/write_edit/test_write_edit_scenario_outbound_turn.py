@@ -22,11 +22,12 @@ def test_a_turn_of_guarded_calls_each_answers_what_it_did_and_the_refusal_carrie
              call("write_file", {"path": "notes.txt", "content": "new\n"}, "u1")]
     tcs = lower(calls, injected=("write_file", "edit_file", "read_file"), root=str(tmp_path), session="s1", external_dir_permission="none", rlog=log,
                 unread_target=lambda p: "notes.txt was never read" if p == "notes.txt" else "")
-    done = {tc["id"]: run(tc, tmp_path) for tc in tcs}
-    shown = {tc["id"]: represent(tc, "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code %d\nOriginal token count: 9\nOutput:\n%s"
-                                 % (done[tc["id"]].returncode, done[tc["id"]].stdout), tmp_path)[1] for tc in tcs}
+    by_model = {c["id"]: tc for c, tc in zip(calls, tcs)}                              # a read, or a write answered with one, is cria's own first primitive call
+    done = {cid: run(tc, tmp_path) for cid, tc in by_model.items()}
+    shown = {cid: represent(tc, "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code %d\nOriginal token count: 9\nOutput:\n%s"
+                            % (done[cid].returncode, done[cid].stdout), tmp_path)[1] for cid, tc in by_model.items()}
     for cid in ("m1", "x1", "u1"):                                                    # typed did-not-run; a failing exit except the read-instead answer
-        assert denial.refused(shown[cid]) and (done[cid].returncode != 0) is (cid != "u1")
+        assert denial.refused(shown[cid]) and (cid == "u1" or done[cid].returncode != 0)
     assert "tool-call" in shown["m1"]["content"].lower() and "echo" not in done["m1"].stdout
     assert "'/etc/hostname' is outside the project directory" in shown["x1"]["content"]
     assert '"k":"survey"' in done["x1"].stdout and '"k":"survey"' not in done["m1"].stdout       # the survey rode the external refusal only

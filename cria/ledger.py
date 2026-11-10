@@ -2,14 +2,18 @@
 
 One append-only JSON-lines file per session under ``~/.cria/ops/`` (a private directory opened without following links, files
 0600, ``flock`` around every append, ``fsync`` before an append returns). Nothing else holds operation state: a restarted
-cria reads the file and is where it was. Five record types, folded in order:
+cria reads the file and is where it was. Seven record types, folded in order:
 
 * ``op``    the model's own call (id, name, arguments), the kind of operation and the guard facts it was issued under;
 * ``step``  one primitive call cria issued: its step number, tool-call id, the sha-256 of its command, what it was and the
             arguments that re-derive it (so a retried request composes the identical command);
 * ``blob``  a text steps refer to by its hash (a spill's whole text), recorded once and not in every step;
-* ``frame`` the authenticated result of a step (header and decoded payload), recorded once, the first one wins;
-* ``final`` the typed outcome and the exact text the model was told.
+* ``frame`` the authenticated result of a step (header and decoded payload, and the size of the result as the harness
+            returned it), recorded once, the first one wins;
+* ``final`` the typed outcome and the exact text the model was told (and, for a read, the facts the wire binds to it: the
+            verified source identity, what the text is, the prose that precedes it, a note that follows it);
+* ``settle`` a read the model's wire accepted: it is an ordinary result from then on, no longer protected;
+* ``withhold`` a read whose delivery the wire measured and refused (``overflow`` or ``unknown``): the model is told so instead.
 
 A request that dies between two appends is repaired by being asked again: every record is a pure function of what came
 before, so the retried request appends what is missing and nothing twice. A torn last line (killed mid-write) is skipped.
@@ -48,6 +52,8 @@ class Op:
     steps: dict = field(default_factory=dict)
     blobs: dict = field(default_factory=dict)
     final: dict | None = None
+    settled: bool = False
+    withheld: str | None = None
 
 
 class Ledger:
@@ -162,8 +168,12 @@ class Ledger:
             elif kind == 'blob' and op in ops:
                 ops[op].blobs.setdefault(r['h'], r['text'])
             elif kind == 'frame' and op in ops and r['s'] in ops[op].steps:
-                ops[op].steps[r['s']].frame = ops[op].steps[r['s']].frame or {'hdr': r['hdr'], 'text': r['text']}
+                ops[op].steps[r['s']].frame = ops[op].steps[r['s']].frame or {'hdr': r['hdr'], 'text': r['text'], 'wire': r.get('wire', 0)}
             elif kind == 'final' and op in ops:
-                ops[op].final = ops[op].final or {'outcome': r['outcome'], 'text': r['text']}
+                ops[op].final = ops[op].final or {k: v for k, v in r.items() if k not in ('t', 'op')}
+            elif kind == 'settle' and op in ops:
+                ops[op].settled = True
+            elif kind == 'withhold' and op in ops and r['kind'] in ('overflow', 'unknown'):
+                ops[op].withheld = ops[op].withheld or r['kind']
         except (ValueError, KeyError, TypeError):
             return

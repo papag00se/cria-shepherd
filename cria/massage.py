@@ -24,7 +24,6 @@ from . import callliterals
 from .shelltool import find_shell_tool, shell_args
 from .toolargs import PATH_KEYS, WHOLE_FILE_WRITES
 from .toolargs import parse_args as _parse_tool_args, parse_args as _args, tool_path as _tool_path
-from .filecommands import _read_command as _wp_read_command
 # Canonical pure helpers; selected recovery orchestration remains above these libraries.
 from .callsyntax import (
     _SHELL_ALIASES, _HERMES, _XML_FN, _GEMMA_TC_OPEN, _GEMMA_TC_CLOSE, _GEMMA_STR,
@@ -41,7 +40,7 @@ from .callsyntax import (
     _gemma_scalar, _alias, _LEAK_MARKERS, _toolcall)
 from .callformats import (
     _edit_to_patch, _SHELL_CMD_ALIASES, _READ_NAMES, _EXEC_NAMES, _BASH_HEADS, _canon_key,
-    _canonical_name_map, _command_string, _alias_command, _read_command, _pure_add_file,
+    _canonical_name_map, _command_string, _alias_command, _pure_add_file,
     _HUNK, _normalize_patch_body, _collapse_wrappers, _strip_ab, _unified_to_native,
     _repair_hunk_headers, _fix_hunk_lines)
 from .callliterals import (

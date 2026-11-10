@@ -8,12 +8,12 @@ import tempfile
 import pytest
 
 from cria import denial, depsurface, events, research, webfetch, writeproxy, wsview
-from write_edit_helpers import call, do, harness_env, surveyed_view, write_edit_workspace_view  # noqa: F401
+from write_edit_helpers import call, do, harness_env, represented, surveyed_view, write_edit_workspace_view  # noqa: F401
 
 
 def shell_result(command, code, output=""):
     raw = f"Chunk ID: 805c35\nWall time: 0.1 seconds\nProcess exited with code {code}\nOriginal token count: 0\nOutput:\n{output}"
-    return writeproxy.represent_inbound([{"role": "assistant", "tool_calls": [call("exec_command", {"command": command})]},
+    return represented([{"role": "assistant", "tool_calls": [call("exec_command", {"command": command})]},
                                          {"role": "tool", "tool_call_id": "c1", "content": raw}])[1]["content"]
 
 
@@ -35,7 +35,7 @@ def test_a_read_that_returned_no_bytes_is_refused_and_never_enters_the_read_ledg
     (tmp_path / "adir").mkdir()
     for path, hint in (("Importer.java", "is not there"), ("adir", "list_dir")):
         _, done, msgs = do("read_file", {"path": path}, tmp_path, injected=("read_file",))
-        assert done.returncode != 0 and denial.refused(msgs[1]) and hint in msgs[1]["content"] and "No such file or directory" not in done.stdout
+        assert denial.refused(msgs[1]) and hint in msgs[1]["content"] and "No such file or directory" not in msgs[1]["content"]
         assert research.files_read(msgs) == []
     _, done, msgs = do("read_file", {"path": "real.txt"}, tmp_path, cid="ok", injected=("read_file",))
     assert msgs[1]["content"] == "actual content\n" and [p for p, _n in research.files_read(msgs)] == ["real.txt"]
@@ -91,7 +91,7 @@ def test_the_dependency_surface_note_is_grounded_on_the_declared_version_stable_
             (d / "d.go").write_text("package d\n\nfunc NewFromString(v string) int {\n\treturn 1\n}\n")
 
     def request(sess="s1"):
-        return writeproxy.represent_inbound([{"role": "tool", "tool_call_id": "c1", "content": "build ok"}], workspace_root=str(ws),
+        return represented([{"role": "tool", "tool_call_id": "c1", "content": "build ok"}], workspace_root=str(ws),
                                             sess_key=sess, tools_present=True)[0]["content"]
     manifest("v1.4.0", cache=False)
     assert request() == "build ok"

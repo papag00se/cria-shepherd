@@ -72,6 +72,7 @@ class LoweringRequest:
     document_guidance: object | None = None
     issue_list_dir: Callable[[dict, dict], dict] | None = None   # (the model's call, its arguments) -> the harness call (cria.ops)
     safe_path: str = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'   # [harness] safe_path: where `python3` is looked up
+    issue_read: Callable[[dict, dict, dict | None], dict | None] | None = None   # (call, arguments, held-write facts) -> the harness call
 
 
 @dataclass(frozen=True)
@@ -101,14 +102,17 @@ class RewrittenCall:
 @dataclass(frozen=True)
 class ShellCommand:
     command: str
-    read_in_place: bool = False
-    # Producer-owned authorization facts; never inferred from shell text.
-    multipart_kind: str = ''
-    multipart_fact: str = ''
 
 
-# None means not applicable, RewrittenCall continues, ShellCommand terminates.
-OutboundEffect = RewrittenCall | ShellCommand | None
+@dataclass(frozen=True)
+class ReadIntent:
+    """The call is answered with a read of its path, carried out through the harness's ``read`` primitive (cria.ops). ``fact`` is
+    set when the call is a write held because its target was never read: the answer is the file, the write does not run."""
+    fact: str | None = None
+
+
+# None means not applicable, RewrittenCall continues, ShellCommand and ReadIntent terminate.
+OutboundEffect = RewrittenCall | ShellCommand | ReadIntent | None
 
 
 @dataclass(frozen=True)

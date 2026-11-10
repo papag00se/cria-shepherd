@@ -447,24 +447,6 @@ atexit.register(_cm_finish)
 '''
 
 
-RIDE = r'''import json,sys
-_ctx=_cm_open_existing(%%CREDENTIAL%%)
-_pm=_cm_observe(_ctx,%%WATCH%%)
-try:
-    if _ctx is not None: _owned_close(_ctx)
-except Exception: pass
-sys.stdout.write(json.dumps({"v":1,"r":%%RECEIPT%%,"k":"survey","rep":{"pm":_pm}},separators=(",",":"))+"\n")
-'''
-
-
-def ride(query: "Query", receipt: str) -> str:
-    """The program a READ-ONLY lowered call carries after its own first record: ONE body-less survey-kind record whose typed
-    report ``pm`` is what the session's unreplied writes' marks say now (see :data:`FUNCTIONS`). Nothing else is printed and nothing
-    is created or removed."""
-    return (directory_program() + RIDE.replace('%%CREDENTIAL%%', repr(query.credential)).replace('%%WATCH%%', repr(list(query.watch)))
-            .replace('%%RECEIPT%%', repr(receipt)))
-
-
 def head(marks: Plan, receipt: str) -> str:
     return (HEAD.replace('%%WATCH%%', repr(list(marks.watch))).replace('%%CREDENTIAL%%', repr(marks.credential))
             .replace('%%OPEN_WAIT%%', repr(OPEN_WAIT_SECONDS)).replace('%%RELEASE%%', repr(list(marks.release)))

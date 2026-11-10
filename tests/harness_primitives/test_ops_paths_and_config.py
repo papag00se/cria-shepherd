@@ -45,6 +45,19 @@ def test_without_a_key_or_a_ledger_a_listing_is_answered_with_a_refusal_never_an
     assert 'list_dir is unavailable' in command and 'python3' not in command.split('\n', 1)[-1] and not tool_call['id'].startswith('ctx_')
 
 
+def test_without_a_key_or_a_ledger_a_read_is_answered_with_a_refusal_never_an_unauthenticated_call(tmp_path):
+    privatepaths.CRIA_HOME.mkdir(parents=True)
+    (privatepaths.CRIA_HOME / 'ops').symlink_to(tmp_path)
+    call = {'id': 'c', 'type': 'function', 'function': {'name': 'read_file', 'arguments': json.dumps({'path': 'a.py'})}}
+    completion = {'choices': [{'message': {'tool_calls': [call]}}]}
+    engine = ops.Ops()
+    writeproxy.translate_outbound(completion, SHELL, injected={'read_file'}, workspace_root='/w', issue_read=lambda c, a, instead: engine.issue_read(
+        's', SHELL, c, a, workspace_root='/w', level='none', instead=instead))
+    tool_call = completion['choices'][0]['message']['tool_calls'][0]
+    command = json.loads(tool_call['function']['arguments'])['cmd']
+    assert 'read_file is unavailable' in command and 'python3' not in command and not tool_call['id'].startswith('ctx_')
+
+
 def test_the_harness_table_takes_only_absolute_system_directories(tmp_path):
     assert HarnessConfig().safe_path == '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
     for bad in ('bin:/usr/bin', '', '/usr/bin:', "/usr/b'in", '/usr/bin :/bin'):

@@ -36,12 +36,11 @@ def _lowered(tool_name, args, tools):
 
 @pytest.mark.parametrize("shell,key,kind,wrap", [("shell", "command", "array", lambda c: ["bash", "-lc", c]), ("bash", "command", "string", lambda c: c), ("exec_command", "cmd", "string", lambda c: c)])
 def test_a_tool_the_harness_does_not_have_is_lowered_to_the_shell_it_does_have_in_that_shells_own_argument_shape(shell, key, kind, wrap):
-    """ls/exec aliases and a read of a file become a command for the offered shell (argv for an array schema, a string otherwise); a call already addressed to the shell is reshaped to its schema, and one the harness runs natively is left alone."""
+    """ls/exec aliases become a command for the offered shell (a read alias becomes cria's own `read_file`) (argv for an array schema, a string otherwise); a call already addressed to the shell is reshaped to its schema, and one the harness runs natively is left alone."""
     tools = [_shell(shell, key, kind)]
     assert _lowered("ls", {"args": "-la"}, tools) == (shell, {key: wrap("ls -la")})
     assert _lowered("exec", {"cmd": "pwd"}, tools) == (shell, {key: wrap("exec")})        # 'exec' is not exec_command: only the name is lowered
     assert _lowered("exec_command", {"command": ["bash", "-lc", "pwd"]}, tools) == (shell, {key: wrap("pwd")})
     name, args = _lowered("cat_file", {"path": "a.py", "start": 2, "end": 9}, tools)
-    command = args[key][2] if kind == "array" else args[key]
-    assert name == shell and "python3 -I - a.py 2 9" in command and "a.py is not there" in command
+    assert (name, args) == ("read_file", {"path": "a.py", "start_line": 2, "end_line": 9})      # an alias the harness lacks becomes cria's own read_file, carried out by cria
     assert _lowered(shell, {key: "echo hi"}, tools) == (shell, {key: wrap("echo hi")})              # a call to the shell itself is reshaped to that schema

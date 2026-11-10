@@ -34,17 +34,17 @@ from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _q
 
 from . import bodykeys, brave, completionmarks, denial, resultpacket, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
 from .editsequence import EDIT_SEQ_DIR, EDIT_SEQ_WAIT_SECONDS, _HD_PY, _seq_release
-from .toolstages import EditSequence, LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
+from .toolstages import EditSequence, LoweringRequest, OutboundCall, ReadIntent, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
-from .outboundpolicies import _external_refusal, _spill_read_command
+from .outboundpolicies import _external_refusal
 from .shrinkprotection import ShrinkServices, wrap_finding
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
 from .privatepaths import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
-from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
+from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, patch_paths, tool_path as _tool_path
 from . import filecommands, harnessprims, ops
 # Canonical pure helpers; transport/service composition remains in this facade.
 from .callliterals import (
@@ -52,8 +52,7 @@ from .callliterals import (
     _TC_DEBRIS, _has_tc_debris, _ESCAPES, _repair_double_escaped, _decode_backslash_escapes)
 from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _SEARCH_FILE_NAMES, _FileMutation, _prepare_file_mutation,
-    _targets_cria_home, _guarded_path, READ_INLINE_MAX, _ranged_read, _read_failure_branches,
-    _read_command, _read_in_place_of_write)
+    _targets_cria_home, _guarded_path, READ_INLINE_MAX)
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
     _sentinel, _sentinel_shared, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
@@ -1469,8 +1468,7 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
                     source.log.emit(event, tool=name, path=str(mutation.path))
         return ShellCommand(command)
     if name in _READ_NAMES and name in request.injected:
-        command = _read_command(args)
-        return ShellCommand(command, multipart_kind='read') if command is not None else None
+        return ReadIntent()
     elif name in _LIST_NAMES and name in request.injected:
         if request.issue_list_dir is None:
             return None
@@ -1504,9 +1502,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        shrink_check=None, pack: bool = False, edit_echo: bool = False,
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
-                       observe_externalization=None, multipart_command=None, multipart_new_id=None,
-                       observe_multipart_fallback=None, only_injected: bool = False, issue_list_dir=None,
-                       safe_path: str = harnessprims.SAFE_PATH) -> dict:
+                       observe_externalization=None, only_injected: bool = False, issue_list_dir=None,
+                       issue_read=None, safe_path: str = harnessprims.SAFE_PATH) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1523,7 +1520,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
     request = LoweringRequest(frozenset(injected), brave_key, native_search, session, workspace_root,
         external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
         externalization_owner, assistruntime.current().externalization, observe_externalization,
-        (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path)
+        (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path, issue_read)
 
     for choice in completion.get("choices", []):
         tool_calls = (choice.get("message") or {}).get("tool_calls")
@@ -1538,28 +1535,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             if only_injected and name not in injected:
                 rebuilt.append(tc)
                 continue
-            direct_synthetic_read = name in _READ_NAMES | _WRITE_NAMES | _EDIT_NAMES | {'apply_patch'}
             call_request = request
-            from .multipartcontext import take
-            alias = take(tc)
-            if alias is not None and is_shell_tool_name(name):
-                # A privately held identity from the normalization producer,
-                # not a declaration guessed out of model-supplied shell text.
-                tc = {**tc, 'function': {'name':'read_file', 'arguments':alias}}
-                fn = tc['function']
-                name = 'read_file'
+            from .readcontext import take
+            if take(tc):
+                # A read alias normalization renamed to `read_file` (the harness advertises no read tool of its own): cria runs it.
                 call_request = replace(request, injected=request.injected | _READ_NAMES)
-                direct_synthetic_read = True
-            # Early normalization may already have lowered a read alias to shell.
-            # Recompile its declared original read with this call's receipt, without
-            # treating ordinary native shell calls as synthetic reads.
-            if is_shell_tool_name(name):
-                original = original_call(_command_of(fn.get("arguments") or ""))
-                if original is not None and original.get("name") in _READ_NAMES:
-                    fn = original
-                    tc = {**tc, "function": fn}
-                    name = fn.get("name")
-                    call_request = replace(request, injected=request.injected | _READ_NAMES)
             args = _parse(fn.get("arguments"))
             # THE CORRELATION TOKEN FOR THIS CALL, derived once and held while its command is composed: every
             # program authored inside prints it in its typed result record, which is the first line of stdout; the
@@ -1580,53 +1560,33 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 if observe_lowering is not None:
                     observe_lowering(tc, effect, None)
                 continue
+            if isinstance(effect, ReadIntent):
+                # A read, or a held write answered with one: carried out through the harness's `read` primitive. A second held
+                # write to one path in a batch is answered with the refusal alone (the first read answers for them all).
+                instead, hold_key = None, None
+                if effect.fact is not None:
+                    path = ((paths[0] if len(paths := patch_paths(tc)) == 1 else None) if name == 'apply_patch'
+                            else _tool_path(args))
+                    if workspace_root and path:
+                        hold_key = os.path.normpath(os.path.join(workspace_root, path))
+                    instead = {'fact': effect.fact, 'again': hold_key in held_reads}
+                try:
+                    issued = issue_read(tc, args, instead) if issue_read is not None else None
+                except ops.OpsUnavailable as exc:
+                    if rlog is not None:
+                        rlog.emit('ops.unavailable', level='error', error=str(exc))
+                    issued = _shell_call(tc.get('id'), shell_tool, _refusal_command(prompts.load('read_unavailable')), 0)
+                rebuilt.append(issued or tc)
+                if issued is not None and hold_key is not None:
+                    held_reads.add(hold_key)
+                if observe_lowering is not None:
+                    observe_lowering(tc, issued or tc, None)
+                if issued is not None and rlog is not None:
+                    rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "", detail="")
+                continue
             cmd = effect.command if effect is not None else None
             proposed_write = cmd if isinstance(cmd, WriteCommand) else None
-            read_in_place = effect.read_in_place if effect is not None else False
-            bridged = False
             if cmd is not None:
-                hold_key = None
-                if effect.multipart_kind == 'read-instead' and workspace_root:
-                    if name == 'apply_patch':
-                        from .toolargs import patch_paths
-                        paths = patch_paths(tc)
-                        path = paths[0] if len(paths) == 1 else None
-                    else:
-                        path = _tool_path(args)
-                    if path:
-                        hold_key = os.path.normpath(os.path.join(workspace_root, path))
-                    if hold_key in held_reads:
-                        labels = prompts.load_map('write_unread_target')
-                        with denial.receipt_scope(receipt, declaration):
-                            cmd = _refusal_command(prompts.fill(labels['not_read'], fact=effect.multipart_fact, tool=name))
-                        effect = replace(effect, multipart_kind=None)
-                if (multipart_command is not None and direct_synthetic_read
-                        and effect.multipart_kind and receipt == denial.receipt_for(tc.get('id'), name, fn.get('arguments'))):
-                    from .multipart import BridgeError
-                    from .filecommands import MultipartCommandTooLarge
-                    original_tc, original_receipt, original_cmd = tc, receipt, cmd
-                    if multipart_new_id is not None:
-                        tc = {**tc, 'id': multipart_new_id()}
-                        receipt = denial.receipt_for(tc.get('id'), name, fn.get('arguments'))
-                    try:
-                        replacement = multipart_command(tc, effect, receipt)
-                    except (BridgeError, MultipartCommandTooLarge) as exc:
-                        tc, receipt = original_tc, original_receipt
-                        replacement = None
-                        if rlog is not None:
-                            rlog.emit('multipart.register_failed', level='warn', error=str(exc))
-                    if replacement is not None:
-                        cmd = replacement
-                        bridged = True
-                        if hold_key is not None:
-                            held_reads.add(hold_key)
-                        if observe_multipart_fallback is not None:
-                            fallback = original_cmd
-                            if ti in edit_seq and EDIT_SEQ_DIR not in fallback:
-                                fallback = _seq_release(edit_seq[ti]) + fallback
-                            fallback_call = _shell_call(original_tc.get('id'), shell_tool,
-                                f"{_sentinel(name, fn.get('arguments'), original_receipt, declaration.survey, declaration.marks)}\n{fallback}", 0)
-                            observe_multipart_fallback(tc.get('id'), fallback_call)
                 # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
                 # workspace a question only by putting a command in the reply it is already
                 # sending. This is that reply. The survey is appended to write/edit/list
@@ -1635,9 +1595,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # output cap would cut the CODER's content to pay for cria's instrumentation.
                 # `represent_inbound` strips it back out, so the model sees its own call's result
                 # and nothing else.
-                # A read answering a write carries no survey: its result is the whole file, and
-                # instrumentation must not add to the coder's output.
-                if name in _SURVEYABLE and not read_in_place and _survey_due(session, name):
+                if name in _SURVEYABLE and _survey_due(session, name):
                     # BUDGETED for this one-result ride-along. The completion gate no longer shares
                     # this arithmetic: it carries the survey and probe evidence in checked pages.
                     # Riding along without one is how cria's instrumentation came to push a result
@@ -1656,20 +1614,13 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
-                elif name in _READ_NAMES and not read_in_place and not bridged and isinstance(cmd, str):
-                    # A READ-ONLY call learns what a lost-reply write did: the session's unreplied writes' completion marks ride
-                    # the survey slot as a body-less record (`wsview.marks_ride`), only when something is outstanding.
-                    with denial.receipt_scope(receipt, declaration):
-                        marks_ride = wsview.marks_ride(completionmarks.query(session, release=False), cd=workspace_root or '')
-                    if marks_ride:
-                        cmd = _survey_after_first_record(cmd, marks_ride, receipt)
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
                     cmd = _seq_release(edit_seq[ti]) + cmd
                 # The original JSON is needed for restart-safe reconstruction. An ordinary
                 # mutation can consume that same copy instead of carrying its text twice.
                 # Refusals, transformed writes and unrecognized programs keep the old form.
                 shared = False
-                if name in (_WRITE_NAMES | _EDIT_NAMES) and not read_in_place and not bridged:
+                if name in (_WRITE_NAMES | _EDIT_NAMES):
                     try:
                         original_args = json.loads(fn.get('arguments'))
                         denial.canonical_arguments(fn.get('arguments')).encode('utf-8')
@@ -1690,7 +1641,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     except (TypeError, ValueError, AttributeError):
                         pass
                 header = (_sentinel_shared if shared else _sentinel)(name, fn.get('arguments'), receipt,
-                    declaration.survey, declaration.marks, read_in_place)
+                    declaration.survey, declaration.marks)
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{header}\n{cmd}", 0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
@@ -1855,12 +1806,11 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
     AUTHORITY IS POSITION AND DECLARATION (`resultpacket`): the first record is the program's own first line: at offset 0 of
     the stdout (after the harness's own envelope), or after whatever a chatty login shell printed first
     (`resultpacket.find_record`: the first occurrence of THIS call's receipt record, never past the harness's cut marker; that
-    noise is dropped from the display as multipart drops it); the second exists only if the sentinel declared a survey and is read only on the
+    noise is dropped from the display); the second exists only if the sentinel declared a survey and is read only on the
     very next line. Nothing is searched for — a file, a page or a native command that quotes records, receipts, markers or
     a valid-looking survey is just the opaque tail and keeps every byte. A valid first record stands when the second is
     missing or cut. No record at offset 0 (a legacy command, a cut, an unlowered shape) means UNKNOWN: untouched."""
     paired = denial.paired_results(messages)
-    from .multipart import UnverifiedCarrier
     out: dict[str, _Proof] = {}
     for m in messages:
         if m.get("role") != "assistant":
@@ -1875,8 +1825,6 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                 continue
             token = str(declaration["rcpt"])
             paired_result = paired[cid]
-            if isinstance(paired_result.get(bodykeys.MULTIPART_UNVERIFIED), UnverifiedCarrier):
-                continue
             content = str(paired_result.get("content") or "")
             off = _payload_offset(content)
             found = resultpacket.find_record(content, off, token)
@@ -1898,7 +1846,7 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                         found = None
             if found is None:
                 continue
-            first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped, as multipart drops it
+            first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped
             _learn_completions(token, first.rep, first.kind == denial.LANDED)
             at, survey, rep = first.end, "", first.rep
             if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
@@ -2004,7 +1952,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None) -> list[dict]:
+                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None, ledger_reads=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -2020,7 +1968,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     ``window`` is the coder's measured window (None = unknown): the dependency-note budgets are shares of it.
     ``ask`` is the one closed-question seat to the reasoner (None = no reasoner), for the history assists that judge.
     ``ledger_outcomes`` maps a tool call id to the typed outcome cria's own ledger recorded for an operation it carried out
-    through the harness primitives (`cria.ops`): the outcome is a field of cria's record, never read out of result text."""
+    through the harness primitives (`cria.ops`): the outcome is a field of cria's record, never read out of result text.
+    ``ledger_reads`` maps a tool call id to the ``readops.LedgerRead`` of a read cria carried out that way: the model's own call (a
+    ``read_file``, or the held write it answered with a read), how it ended and the verified body. Such a call is treated as the
+    lowered call it was; what it proved is the ledger's, not a record parsed out of its result."""
     # Retired client-supplied hint spellings are never provenance, regardless
     # of message role. Only the typed current owner marker can withhold proof.
     messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
@@ -2041,9 +1992,12 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # its payload, its envelope handling, the file fact it would cache) only when the id names exactly one call and
     # one result after it (`denial.paired_results`). An ambiguous result keeps its actual bytes and teaches nothing.
     paired = set(denial.paired_results(messages))
-    from .multipart import UnverifiedCarrier
-    proofs = _frame_proofs(messages)
+    ledger_reads = ledger_reads or {}
+    proofs = {**_frame_proofs(messages),
+              **{tid: _Proof(r.kind, r.pre + r.text, r.text, True, "", None, r.observe, r.pre)
+                 for tid, r in ledger_reads.items() if r.text is not None}}
     outcomes = {tid: p.kind for tid, p in proofs.items() if p.kind in (denial.REFUSED, denial.UNAPPLIED)}
+    outcomes |= {tid: kind for tid, kind in (ledger_outcomes or {}).items() if kind in (denial.REFUSED, denial.UNAPPLIED)}
     landed_ids = {tid for tid, p in proofs.items() if p.kind == denial.LANDED}   # cria's own program reported the mutation landed
     uncertain_ids = {tid for tid, p in proofs.items() if p.kind == denial.UNCERTAIN}
     called_ids = {tc.get("id") for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
@@ -2072,7 +2026,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     pending_mutations = set()
     read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
     def may_mutate(tc):
-        if tc.get('id') in private_readonly_calls:
+        if tc.get('id') in private_readonly_calls or tc.get('id') in ledger_reads:
             return False
         fn = tc.get("function") or {}
         original = (_read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
@@ -2091,8 +2045,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             for tc in m["tool_calls"]:
                 fn = tc.get("function") or {}
                 name = fn.get("name")
-                if is_shell_tool_name(name):
-                    orig = _read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
+                led = ledger_reads.get(tc.get("id"))
+                if led is not None or is_shell_tool_name(name):
+                    orig = ({"name": led.name, "arguments": led.arguments} if led is not None
+                            else _read_sentinel(_command_of(fn.get("arguments")), tc.get("id")))
                     if orig is None:
                         own = _command_of(fn.get("arguments"))
                         own_cmds[tc.get("id")] = own
@@ -2104,8 +2060,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                             mutation_ids.add(tc.get("id"))
                             view.note_possible_effect()
                     if orig is not None:
-                        declaration = _declaration(_command_of(fn.get('arguments')), tc.get('id'))
-                        if declaration and declaration.get('uh') == 1:
+                        if led is not None and led.hold:
                             unread_hold_ids.add(tc.get('id'))
                         lowered_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
@@ -2121,7 +2076,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 preimage = view.capture_edit_preimage(_tool_path(p))
                                 if preimage is not None:
                                     edit_preimages[tc.get("id")] = preimage[0]
-                            if tc.get("id") not in failed_ids:
+                            if tc.get("id") not in failed_ids and led is None:
                                 mutation_ids.add(tc.get("id"))
                                 view.note_a_mutator_ran()
                             write_paths[tc.get("id")] = _tool_path(p) or ""
@@ -2199,12 +2154,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 if proof.rep:
                     m[bodykeys.RESULT_REPORT] = proof.rep
                 survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation
-            elif tid in lowered_ids:
-                m[bodykeys.RESULT_OUTCOME] = denial.UNKNOWN   # cria lowered this call and cannot prove its branch
             elif ledger_outcomes and tid in ledger_outcomes:
                 m[bodykeys.RESULT_OUTCOME] = ledger_outcomes[tid]
-            unverified = isinstance(m.pop(bodykeys.MULTIPART_UNVERIFIED, None), UnverifiedCarrier)
-            if tid in ambiguous and not unverified:
+            elif tid in lowered_ids:
+                m[bodykeys.RESULT_OUTCOME] = denial.UNKNOWN   # cria lowered this call and cannot prove its branch
+            if tid in ambiguous:
                 # AMBIGUOUS: nothing call-attributed is cached, stripped or rendered, and no recovery or
                 # advice is composed from it — it keeps its actual bytes (no frame is trusted, so no survey is
                 # taken either).
@@ -2212,11 +2166,6 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 continue
             # A verified UTF-8 read or authenticated search result contains user file text, not terminal log
             # decoration. Stripping ANSI or binary-looking controls would change the returned text.
-            if unverified:
-                # Keep the complete original carrier, including non-text
-                # content, without attributing any source or write fact.
-                out.append(m)
-                continue
             if (proof is not None and tid in content_search_ids and proof.kind == denial.RAN) or (proof is not None and proof.exact and proof.text is not None and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE)):
                 content = str(m.get('content') or '')
             else:
@@ -2275,7 +2224,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         final_prefix = f"{head.removesuffix(marker)}{note}\n\n{marker}"
                         shown = final_prefix + proof.text
                 if exact and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE):
-                    from .multipartcontext import record_prefix
+                    from .readcontext import record_prefix
                     record_prefix(tid, proof.text, final_prefix)
                 out.append({**m, "content": shown})
                 continue

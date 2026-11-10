@@ -1,0 +1,1 @@
+The path given to the read is {{SIZE}} bytes long; a path past {{LIMIT}} bytes cannot be carried to the harness. Nothing was read. Give a shorter path.

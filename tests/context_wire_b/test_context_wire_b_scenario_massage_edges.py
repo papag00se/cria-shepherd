@@ -36,9 +36,9 @@ def test_multipart_user_turns_merge_as_parts_and_an_incompatible_structured_turn
     assert [m["role"] for m in out] == ["user", "assistant", "user"] and out[1]["content"] == "" and out[2]["content"] == "then this"
     # a private hint rides only if both turns carry the SAME object (merging would otherwise drop one turn's hint): equal-but-distinct is not fused
     hint = ["x"]
-    hinted = {**img, bodykeys.MULTIPART_UNVERIFIED: hint}
-    assert len(massage.merge_for_alternation([hinted, {**note, bodykeys.MULTIPART_UNVERIFIED: hint}])) == 1
-    assert len(massage.merge_for_alternation([hinted, {**note, bodykeys.MULTIPART_UNVERIFIED: ["x"]}])) == 3
+    hinted = {**img, bodykeys.RESTORED_FILES: hint}
+    assert len(massage.merge_for_alternation([hinted, {**note, bodykeys.RESTORED_FILES: hint}])) == 1
+    assert len(massage.merge_for_alternation([hinted, {**note, bodykeys.RESTORED_FILES: ["x"]}])) == 3
 
 
 def test_a_stream_survives_junk_frames_and_flushes_the_held_back_prose_at_the_end():

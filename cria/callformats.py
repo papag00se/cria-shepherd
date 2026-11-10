@@ -5,7 +5,6 @@ import re
 
 from .callsyntax import _SHELL_ALIASES, _tool_names
 from .callliterals import _decode_backslash_escapes
-from .filecommands import _read_command as _wp_read_command
 
 def _edit_to_patch(path: str, old: str, new: str) -> str:
     lines = ["*** Begin Patch", f"*** Update File: {path}"]
@@ -84,11 +83,6 @@ def _normalize_read_args(args: dict) -> dict:
             except (TypeError, ValueError):
                 a.pop(k, None)
     return a
-
-
-def _read_command(args: dict) -> str:
-    """Lower aliases through the guarded filecommands owner."""
-    return _wp_read_command(_normalize_read_args(args)) or ""
 
 
 _NEW_FILE_HUNK = re.compile(r"^@@\s+-0(?:,0)?\s+\+\d+(?:,\d+)?\s+@@\s*$")

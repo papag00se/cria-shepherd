@@ -1,8 +1,9 @@
-"""Request-scoped private associations for multipart synthetic reads."""
+"""Request-scoped private associations for reads: which calls normalization renamed to ``read_file`` (the harness advertises no read
+tool of its own), and the prose that precedes the file in a held write's answer."""
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-_context = ContextVar('multipart_request_associations', default=None)
+_context = ContextVar('read_request_associations', default=None)
 
 
 @contextmanager
@@ -14,19 +15,16 @@ def bound():
         _context.reset(token)
 
 
-def record(call, arguments):
+def record(call):
     context = _context.get()
     if context is not None:
-        context['aliases'][id(call)] = (call, arguments)
+        context['aliases'][id(call)] = call
 
 
-def take(call):
+def take(call) -> bool:
+    """True when ``call`` was renamed by normalization. The entry holds ``call`` itself, so its id cannot be reused while recorded."""
     context = _context.get()
-    if context is None:
-        return None
-    # The entry holds `call` itself, so its id cannot be reused while it is recorded: a hit is always this call.
-    entry = context['aliases'].pop(id(call), None)
-    return entry[1] if entry is not None else None
+    return context is not None and context['aliases'].pop(id(call), None) is not None
 
 
 def record_prefix(call_id, text, prefix):

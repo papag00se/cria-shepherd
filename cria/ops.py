@@ -20,9 +20,13 @@ import os
 import threading
 from dataclasses import dataclass, field
 
-from . import callauth, denial, externalization, harnessprims, prompts
+from . import callauth, denial, externalization, harnessprims, prompts, readops
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
+from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
+from .opspath import OpsUnavailable, split
+from .opsteps import Final, Issue, Wait
+from .readops import LedgerRead, ReadFact, ReadOps
 from .toolwire import _command_of, _refusal_command, _shell_call
 
 LIST_DIR = 'list_dir'
@@ -36,58 +40,13 @@ MAX_HOPS = 8          # symbolic links followed while resolving a path (ELOOP be
 _TYPE = {'f': '-', 'd': 'd', 'l': 'l', 'o': '?'}
 
 
-class OpsUnavailable(RuntimeError):
-    """An operation cannot be recorded or authenticated (no private key or ledger). Nothing is issued."""
-
-
-
 @dataclass
 class Incoming:
     messages: list
     calls: list = field(default_factory=list)       # primitive calls the harness has not seen: answer with these, skip the model
     outcomes: dict = field(default_factory=dict)    # original call id -> denial kind, from the ledger
-
-
-@dataclass(frozen=True)
-class _Issue:
-    steps: tuple
-    blobs: dict = field(default_factory=dict)       # text the steps refer to by hash, recorded once (a spill's whole text)
-
-
-@dataclass(frozen=True)
-class _Final:
-    outcome: str
-    text: str
-
-
-_WAIT = object()
-
-
-def split(path: str, workspace_root: str | None) -> tuple[str, str]:
-    """``(ROOT, REL)`` for a path the guards already approved (docs/harness-primitives.md section 3), lexically. A path inside the
-    workspace is the workspace root and the remainder. Any other absolute path is ``/`` and the rest: the stub follows a symlink in
-    ROOT itself (cria chose it, so it must be a directory cria knows is not a link), and every component below ROOT is opened without
-    following, so a link anywhere in an outside path is refused at the syscall and resolved and re-judged by cria. REL has no empty,
-    ``.`` or ``..`` component. With no known workspace a relative path is relative to the harness's working directory (``.``)."""
-    if workspace_root:
-        root = os.path.normpath(workspace_root)
-        full = os.path.normpath(path if os.path.isabs(path) else os.path.join(root, path))
-        if full == root:
-            return root, ''
-        if full.startswith(root.rstrip('/') + '/'):
-            return root, os.path.relpath(full, root)
-        return '/', full.lstrip('/')
-    full = os.path.normpath(path)
-    if os.path.isabs(full):
-        return '/', full.lstrip('/')
-    lead = 0
-    for part in full.split('/'):
-        if part != '..':
-            break
-        lead += 1
-    root = '/'.join(['..'] * lead) or '.'
-    rest = full.removeprefix(root).lstrip('/') if lead else full
-    return root, '' if rest == '.' else rest
+    reads: dict = field(default_factory=dict)       # original call id -> LedgerRead, for each finished read
+    facts: tuple = ()                               # ReadFact of each verified read the model's wire has not yet accepted
 
 
 def _reason(header: dict) -> str:
@@ -135,10 +94,15 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops:
+class Ops(ReadOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
+        self.cache = FileCache()
+        self.command_budget = COMMAND_ARG_BUDGET
+        self.menu = None            # the harness's tool menu and the room one result may take in the model's measured window,
+        self.room = None            # as of the request being handled (read answers name routes from the menu and decide fit)
+        self._rate = readops.DEFAULT_RATE
         self._lock = threading.RLock()      # the ledger's folded state is shared: one request at a time advances operations
 
     # ---------------------------------------------------------------- issuing
@@ -180,29 +144,33 @@ class Ops:
     @staticmethod
     def _command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict | None = None) -> str:
         nonce = callauth.nonce(op, s)
+        label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what == 'ls':
             # AFTER travels as the hex of the name's bytes: a name that is not UTF-8 (a lone surrogate here) must not enter a command
-            words, payload = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', os.fsencode(args.get('after', '')).hex()], None
-            comment = 'list_dir ' + ctx['path']
+            words, payload, comment = [args['root'], args['rel'], 1, LS_MAX[args['max_i']], 0, '[]', os.fsencode(args.get('after', '')).hex()], None, label
+        elif what == readops.READ:
+            words, payload, comment = [args['root'], args['rel'], args['off'], args['len']], None, label
         elif what == 'stat':
-            words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]', ''], None, 'list_dir ' + ctx['path']
+            words, payload, comment = [args['root'], args['rel'], 1, 1, 0, '[]', ''], None, label
             what = 'ls'
         elif what == 'say':
             return _refusal_command(args['text'])
         elif what == 'put':
             data = blobs[args['blob']].encode('utf-8', 'surrogateescape')[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
-            words, payload, comment = [args['root'], args['rel'], callauth.group(op), args['off'], 1], data, 'list_dir ' + ctx['path']
+            words, payload, comment = [args['root'], args['rel'], callauth.group(op), args['off'], 1], data, label
         else:
             data = blobs[args['blob']].encode('utf-8', 'surrogateescape')
             staged = args.get('staged', False)
             words = [args['root'], args['rel'], '*', '-', hashlib.sha256(data).hexdigest(), 1 if staged else 0, 1, callauth.group(op)]
-            payload, comment, what = None if staged else data, 'list_dir ' + ctx['path'], 'write'
+            payload, comment, what = None if staged else data, label, 'write'
         return harnessprims.compose(what, nonce, words, payload, comment=comment, safe_path=ctx['safe'])
 
     # ---------------------------------------------------------------- every request
-    def incoming(self, session: str, messages: list, log=None) -> Incoming:
-        """Ingest results, advance operations, hand back what the harness has not seen, project the history."""
+    def incoming(self, session: str, messages: list, log=None, *, tools=None, room: int | None = None) -> Incoming:
+        """Ingest results, advance operations, hand back what the harness has not seen, project the history. ``tools`` is the
+        harness's tool menu and ``room`` the tokens one tool result may take in the model's measured window (None: unknown; a callable is asked only when a read's first frame is in hand)."""
         with self._lock:
+            self.menu, self.room = tools, room
             return self._incoming(session, messages, log)
 
     def _incoming(self, session: str, messages: list, log) -> Incoming:
@@ -282,8 +250,9 @@ class Ops:
         try:
             frame = harnessprims.read_frame(text, callauth.nonce(op, s))
         except harnessprims.FrameUnknown as exc:
-            return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc)}, 'text': ''}
-        return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape')}
+            return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc)}, 'text': '', 'wire': len(text)}
+        return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
+                'wire': len(text)}
 
     def _advance(self, session: str, op_ids: set, present: set, log) -> list:
         """Decide each operation's next step from the ledger alone. Returns the primitive calls the harness has not seen:
@@ -294,11 +263,11 @@ class Ops:
             if op is None or op.final is not None:
                 continue
             action = self._plan(op)
-            if isinstance(action, _Final):
-                self.ledger.append(session, {'t': 'final', 'op': op_id, 'outcome': action.outcome, 'text': action.text})
+            if isinstance(action, Final):
+                self.ledger.append(session, {'t': 'final', 'op': op_id, 'outcome': action.outcome, 'text': action.text, **action.extra})
                 if log is not None:
                     log.emit('ops.final', operation=op.kind, outcome=action.outcome, steps=len(op.steps))
-            elif isinstance(action, _Issue):
+            elif isinstance(action, Issue):
                 blobs = {**op.blobs, **action.blobs}
                 records = [self._step(op_id, op.ctx, s, what, args, blobs) for s, what, args in action.steps]
                 self.ledger.append(session, *({'t': 'blob', 'op': op_id, 'h': h, 'text': t} for h, t in action.blobs.items()),
@@ -315,8 +284,10 @@ class Ops:
         steps = sorted(op.steps.values(), key=lambda st: st.s)
         wave = [st for st in steps if st.args['wave'] == steps[-1].args['wave']]
         if any(st.frame is None for st in wave):
-            return _WAIT
-        return {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write}[wave[0].what](op, wave, steps)
+            return Wait
+        table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
+                 else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
+        return table[wave[0].what](op, wave, steps)
 
     @staticmethod
     def _next(steps: list, what: str, *args: dict) -> tuple:
@@ -336,38 +307,38 @@ class Ops:
             if single and records[0][0] == 'l' and op.ctx.get('trail'):
                 # `link/` names what the link points to (as `ls -la link/` did): cria resolves it itself and judges the target.
                 if args['hop'] >= MAX_HOPS:
-                    return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ELOOP)))
+                    return Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ELOOP)))
                 resolved = os.path.normpath(os.path.join(os.path.dirname(os.path.join(args['root'], args['rel'])), records[0][5]))
                 if (refusal := self._reguard(resolved, op.ctx)):
-                    return _Final(denial.REFUSED, denial.mark(refusal))
+                    return Final(denial.REFUSED, denial.mark(refusal))
                 root, rel = split(resolved, op.ctx.get('wsroot'))
-                return _Issue(self._next(steps, 'ls', {**args, 'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1, 'after': ''}))
+                return Issue(self._next(steps, 'ls', {**args, 'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1, 'after': ''}))
             done = header.get('done') == 1
             if not done and records and len(pages) + 1 < LS_MAX_PAGES:
                 # More entries follow this page: ask for those after the last name received, at the size that fitted.
-                return _Issue(self._next(steps, 'ls', {**args, 'after': records[-1][1].rsplit('/', 1)[-1]}))
+                return Issue(self._next(steps, 'ls', {**args, 'after': records[-1][1].rsplit('/', 1)[-1]}))
             records = [json.loads(line) for st2 in pages for line in st2.frame['text'].split('\n') if line] + records
             text = render_listing(records, shown, done, single)
             if externalization.stdout_size(text.encode('utf-8', 'surrogateescape')) <= INLINE_RESULT_MAX_BYTES:
-                return _Final(denial.RAN, text)
+                return Final(denial.RAN, text)
             return self._spill(op, steps, text, done, len(records))
         if header.get('ok') == 0:
             code = header.get('errno')
             parts = [p for p in args['rel'].split('/') if p]
             if code in (errno_.ELOOP, errno_.ENOTDIR) and len(parts) > 1:
                 if args['hop'] >= MAX_HOPS:
-                    return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ELOOP)))
+                    return Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ELOOP)))
                 # Which component is a link is never guessed: stat each directory prefix, all in one reply.
                 prefix, prefixes = '', []
                 for part in parts[:-1]:
                     prefix = f'{prefix}/{part}' if prefix else part
                     prefixes.append(prefix)
-                return _Issue(self._next(steps, 'stat', *({**args, 'rel': p, 'errno': code, 'at': i, 'full': args['rel']}
+                return Issue(self._next(steps, 'stat', *({**args, 'rel': p, 'errno': code, 'at': i, 'full': args['rel']}
                                                           for i, p in enumerate(prefixes))))
-            return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=_reason(header)))
+            return Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=_reason(header)))
         if args['max_i'] + 1 < len(LS_MAX):
-            return _Issue(self._next(steps, 'ls', {**args, 'max_i': args['max_i'] + 1}))
-        return _Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=shown))
+            return Issue(self._next(steps, 'ls', {**args, 'max_i': args['max_i'] + 1}))
+        return Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=shown))
 
     def _after_stat(self, op: Op, wave: list, steps: list):
         shown, ctx = op.ctx['path'], op.ctx
@@ -376,22 +347,22 @@ class Ops:
             if header.get('ok') != 1:
                 text = prompts.render('list_dir_unknown', path=shown) if header.get('ok') == -1 else prompts.render(
                     'list_dir_failed', path=shown, reason=_reason(header))
-                return _Final(denial.UNKNOWN if header.get('ok') == -1 else denial.REFUSED, text)
+                return Final(denial.UNKNOWN if header.get('ok') == -1 else denial.REFUSED, text)
             records = [json.loads(line) for line in st.frame['text'].split('\n') if line]
             if not records or records[0][1] != args['rel']:
                 continue                                                   # a directory: the walk went through it
             kind = records[0][0]
             if kind != 'l':
-                return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ENOTDIR)))
+                return Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(errno_.ENOTDIR)))
             here = os.path.join(args['root'], args['rel'])
             tail = [p for p in args['full'].split('/') if p][args['at'] + 1:]
             resolved = os.path.normpath(os.path.join(os.path.dirname(here), records[0][5], *tail))
             refusal = self._reguard(resolved, ctx)
             if refusal:
-                return _Final(denial.REFUSED, denial.mark(refusal))
+                return Final(denial.REFUSED, denial.mark(refusal))
             root, rel = split(resolved, ctx.get('wsroot'))
-            return _Issue(self._next(steps, 'ls', {'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1, 'after': ''}))
-        return _Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(wave[0].args['errno'])))
+            return Issue(self._next(steps, 'ls', {'root': root, 'rel': rel, 'max_i': 0, 'hop': args['hop'] + 1, 'after': ''}))
+        return Final(denial.REFUSED, prompts.render('list_dir_failed', path=shown, reason=os.strerror(wave[0].args['errno'])))
 
     @staticmethod
     def _reguard(path: str, ctx: dict) -> str | None:
@@ -411,9 +382,9 @@ class Ops:
         rel = webfetch.SPILL_DIR.removeprefix('./') + '/stdout-' + digest + '.txt'
         args = {'root': op.ctx['ws'], 'rel': rel, 'blob': digest, 'try': 0, 'done': done, 'count': count}
         if len(data) <= harnessprims.CHUNK_BYTES:
-            return _Issue(self._next(steps, 'write', args), {digest: text})
+            return Issue(self._next(steps, 'write', args), {digest: text})
         offsets = range(0, len(data), harnessprims.CHUNK_BYTES)
-        return _Issue(self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE])), {digest: text})
+        return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in offsets[:harnessprims.PUT_WAVE])), {digest: text})
 
     def _after_put(self, op: Op, wave: list, steps: list):
         bad = next((st for st in wave if st.frame['hdr'].get('ok') != 1), None)
@@ -424,11 +395,11 @@ class Ops:
             staged = {st.args['off'] for st in steps if st.what == 'put'}
             more = [off for off in range(0, size, harnessprims.CHUNK_BYTES) if off not in staged][:harnessprims.PUT_WAVE]
             if more:
-                return _Issue(self._next(steps, 'put', *({**args, 'off': off} for off in more)))
-            return _Issue(self._next(steps, 'write', {**args, 'staged': True}))
+                return Issue(self._next(steps, 'put', *({**args, 'off': off} for off in more)))
+            return Issue(self._next(steps, 'write', {**args, 'staged': True}))
         if bad.frame['hdr'].get('ok') == -1:
-            return _Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
-        return _Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(bad.frame['hdr']))
+            return Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
+        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(bad.frame['hdr']))
 
     def _after_write(self, op: Op, wave: list, steps: list):
         from . import webfetch
@@ -436,19 +407,19 @@ class Ops:
         if header.get('ok') == 1:
             target = webfetch.SPILL_DIR + '/' + st.args['rel'].rsplit('/', 1)[-1]
             if st.args.get('done', True):
-                return _Final(denial.RAN, webfetch.stdout_spill_pointer(target, listing=True))
-            return _Final(denial.RAN, prompts.render('list_dir_spill_incomplete', target=target, count=st.args['count'], path=op.ctx['path']))
+                return Final(denial.RAN, webfetch.stdout_spill_pointer(target, listing=True))
+            return Final(denial.RAN, prompts.render('list_dir_spill_incomplete', target=target, count=st.args['count'], path=op.ctx['path']))
         if header.get('ok') == -1 and st.args['try'] < 1:
-            return _Issue(self._next(steps, 'write', {**st.args, 'try': st.args['try'] + 1}))
+            return Issue(self._next(steps, 'write', {**st.args, 'try': st.args['try'] + 1}))
         if header.get('ok') == -1:
-            return _Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
-        return _Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(header))
+            return Final(denial.UNKNOWN, prompts.render('list_dir_unknown', path=op.ctx['path']))
+        return Final(denial.REFUSED, prompts.load('stdout_spill_failed') + ' ' + _reason(header))
 
     # ---------------------------------------------------------------- what the model sees
     def _project(self, session: str, messages: list, verified: dict, calls: list, log) -> Incoming:
         ops = self.ledger.ops(session)
         finished = {cid: (op, s) for cid, (op, s) in verified.items() if ops[op].final is not None}
-        outcomes, out = {}, []
+        outcomes, reads, facts, out = {}, {}, [], []
         for m in messages:
             if not isinstance(m, dict):
                 out.append(m)
@@ -471,16 +442,54 @@ class Ops:
             elif role == 'tool' and m.get('tool_call_id') in finished:
                 op, _ = finished[m['tool_call_id']]
                 if ops[op].call['id'] not in outcomes:         # the operation's answer, once: where its first result sits
-                    final = ops[op].final
-                    original = ops[op].call['id']
-                    outcomes[original] = final['outcome']
-                    out.append({'role': 'tool', 'tool_call_id': original, 'content': final['text']})
+                    out.append(self._model_result(ops[op], outcomes, reads, facts))
             else:
                 out.append(m)
         unrecorded = {cid for cid in self._unrecorded(messages, verified)}
         if unrecorded:
             out = self._label(out, unrecorded, log)
-        return Incoming(out, calls, outcomes)
+        return Incoming(out, calls, outcomes, reads, tuple(facts))
+
+    def _model_result(self, op: Op, outcomes: dict, reads: dict, facts: list) -> dict:
+        """The tool result the model is shown for a finished operation, and what the wire and the history readers are told about
+        it: the outcome, and for a read the verified body."""
+        from . import resultnotes
+        final, original = op.final, op.call
+        text, note, outcome = final['text'], final.get('note'), final['outcome']
+        body = final.get('src') is not None and op.withheld is None
+        if op.kind == readops.READ and op.withheld:
+            text, note, outcome, body = '', self.withheld(op), denial.UNKNOWN, False
+        message = {'role': 'tool', 'tool_call_id': original['id'], 'content': text}
+        if note:
+            resultnotes.append_note(message, note)
+        outcomes[original['id']] = outcome
+        if op.kind == readops.READ:
+            pre = final.get('pre', '')
+            shown = text[len(pre):] if body else None
+            reads[original['id']] = LedgerRead(original['name'], original['arguments'], outcome, shown, pre if body else '',
+                                               final.get('observe', '') if body else '', bool(op.ctx.get('instead')))
+            if body and not op.settled:
+                facts.append(ReadFact(original['id'], tuple(final['src']), shown.encode('utf-8'), bool(op.ctx.get('instead')), pre))
+        return message
+
+    def settle(self, session: str, call_ids) -> None:
+        """The model's wire accepted these verified reads: they are ordinary results from now on."""
+        self._note(session, call_ids, lambda op: {'t': 'settle', 'op': op})
+
+    def withhold(self, session: str, call_ids, kind: str) -> None:
+        """The model's wire measured these verified reads and refused them (``overflow``, or ``unknown`` when fit could not be
+        established): the model is told so instead of being given the file."""
+        if kind not in ('overflow', 'unknown'):
+            raise ValueError('invalid fit outcome')
+        self._note(session, call_ids, lambda op: {'t': 'withhold', 'op': op, 'kind': kind})
+
+    def _note(self, session: str, call_ids, record) -> None:
+        with self._lock:
+            ops = self.ledger.ops(session)
+            wanted = set(call_ids)
+            found = [o for o in ops.values() if o.kind == readops.READ and o.final is not None and o.call.get('id') in wanted]
+            if found:
+                self.ledger.append(session, *(record(o.op) for o in found))
 
     @staticmethod
     def _unrecorded(messages: list, verified: dict):

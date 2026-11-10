@@ -1,0 +1,1 @@
+⟦ctx:read-unverified⟧ The complete read could not be verified, so none of it counts as read. Continue using a fresh read or another available inspection tool; do not assume whether a write ran.

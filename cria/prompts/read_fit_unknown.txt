@@ -1,0 +1,1 @@
+⟦ctx:read-not-delivered⟧ The read result was verified, but whether the complete request can fit the context window could not be established. The complete file was not delivered and none of it counts as read. Continue working without treating it as the file.

@@ -1,4 +1,0 @@
-# What the producer's own check of the path found at the last page of the read. The snapshot is the file as of the first page.
-missing = the path no longer holds a file.
-resized = the file on disk is now {{BYTES}} bytes.
-replaced = the file on disk was modified or replaced (same size, different modification time or identity).

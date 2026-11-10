@@ -112,5 +112,5 @@ def binary_note(size: int, path: str, menu) -> str:
         route = ' ' + prompts.fill(routes['binary_shell'], shell=shell['name'], qpath=quoted[1])
     elif menu is not None and shell is None and reads_only_whole_lines(menu):
         route = ' ' + routes['binary_none']
-    return prompts.render('multipart_binary', path=path if quoted is not None else 'the requested path',
+    return prompts.render('read_binary', path=path if quoted is not None else 'the requested path',
                           size=f'{size:,}', route=route)

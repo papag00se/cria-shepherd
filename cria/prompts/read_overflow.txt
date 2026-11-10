@@ -1,0 +1,1 @@
+⟦ctx:read-not-delivered⟧ The read was verified, but the complete file ({{BYTES}} bytes) was not delivered: the measured complete request did not fit the context window, so none of it counts as read. Do not repeat the whole-file read. {{NEXT}}

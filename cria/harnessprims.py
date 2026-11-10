@@ -22,7 +22,7 @@ ENV = '/usr/bin/env'
 SAFE_PATH = '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin'
 # One frame is read whole before it is decoded; nothing larger is accepted (docs/harness-primitives.md section 4).
 FRAME_LIMIT = 1 << 20
-# The harness keeps a result whole up to this many bytes and cuts the middle beyond it (multipart.STDOUT_LIMIT).
+# The harness keeps a result whole up to this many bytes and cuts the middle beyond it (the harness's own result bound).
 PAGE_BYTES = 10_000
 # Largest raw payload one call carries: 60,000 base64 bytes + a 2.6 KB stub stay under COMMAND_ARG_BUDGET (64 KiB).
 CHUNK_BYTES = 45_000

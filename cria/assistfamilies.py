@@ -197,7 +197,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         'One file-read/result contract family: actual bytes/ranges, refusals, cuts and whole-read credit. File conflict explanation is a sibling result policy.',
         ('A59', 'A62', 'A63', 'A64', 'A65', 'A86', 'A87'),
         (
-            SourceOwner('cria/filecommands.py', '_read_command'),
+            SourceOwner('cria/readops.py', 'ReadOps'),
             SourceOwner('cria/writeproxy.py', 'note_harness_cuts'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
             SourceOwner('cria/denial.py', 'read_payload'),
@@ -212,7 +212,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/loop.py', 'Loop.shrinking_write_check'),
             SourceOwner('cria/loop.py', 'Loop.unread_target_check'),
             SourceOwner('cria/shrinkprotection.py', 'check_write'),
-            SourceOwner('cria/filecommands.py', '_read_in_place_of_write'),
+            SourceOwner('cria/readops.py', 'ReadOps.issue_read'),
         ),
     ),
     AssistFamily(

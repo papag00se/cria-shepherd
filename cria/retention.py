@@ -1,6 +1,6 @@
 """Explicit, operator-run cleanup of cria's private retained state.
 
-    python -m cria.retention list  [--home DIR] [--kind multipart|image|snapshot|transient|all] [--tmp DIR] [--json]
+    python -m cria.retention list  [--home DIR] [--kind image|transient|all] [--tmp DIR] [--json]
     python -m cria.retention prune [--home DIR] [--kind ...] [--tmp DIR] [--older-than 14d]
                                    [--session ID] [--apply]
 
@@ -24,16 +24,7 @@ by `--session` with `--apply`, and a failed removal is retryable.
 
 Deletion reuses the owners' machinery instead of a second path: image sessions go
 through `ImageSession.confirm_close` / `cleanup_descriptor` / `ImageStore.release`
-or `retry_closed` (closed-seal marker outside the payload directory, removed last),
-multipart state uses the bridge's own record validation and the bridge's lock file;
-the authoritative session record is deleted first, then its derived call
-associations, so an interrupted run leaves only associations that fail closed.
-
-`--kind snapshot` (never part of `all`: it scans the shared harness temp directory, `--tmp` or $TMPDIR, not cria's home) lists
-and prunes the private source snapshots a multipart read leaves behind when it is abandoned before its last page
-(`.ctx-mpsnap-<token>`, or `.cria-mpsnap-<token>` as earlier releases named it; a completed read removes its own). Only a directory of exactly that name shape, owned by this user,
-mode 0700, holding nothing but `.owner`, `snap` and `meta` (regular files) is ever touched. There is no signal whether such a
-read is still running, so prune needs `--older-than` (or `--session` = the token) and the operator's age is the judgment.
+or `retry_closed` (closed-seal marker outside the payload directory, removed last).
 
 `--kind transient` (also never part of `all`, same temp directory) lists and prunes the credentialed scratch directories the
 lowered write/edit/gate programs leave under the harness temp directory when they were killed or never finished: completion
@@ -41,7 +32,7 @@ marks (`.ctx-done-<credential>`, earlier `.cria-done-`), edit-sequence markers (
 scratch (`.ctx-private-<token>`, earlier `.gate-private-`). Never a prefix sweep: a directory is listed as removable only if it is
 owned by this user, mode 0700, holds a regular `.owner` certificate whose JSON names exactly this directory's prefix, credential and
 inode, and nothing but regular files (the gate's `aux/` may also hold regular files and plain subdirectories). Anything else with the
-prefix is listed refused and never touched. The age is the operator's judgment, as for snapshots.
+prefix is listed refused and never touched. The age is the operator's judgment.
 """
 import argparse
 import hashlib
@@ -57,19 +48,11 @@ import fcntl
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import filecommands, imagepersist, privatepaths
+from . import imagepersist, privatepaths
 from .imagestore import ImageStore
 from .imageprotocol import ImageUnavailable
-from .multipart import InvalidPage, BridgeError, _pairs
-from .multipart_bridge import Bridge
 
 _SHA = r'[0-9a-f]{64}'
-_MP_RECORD = re.compile(_SHA + r'\.json')
-_MP_INDEX = re.compile(r'call-(' + _SHA + r')\.json')
-_MP_TEMP = re.compile(r'\.(?:multipart|index)-[0-9a-f]{32}')
-_SNAP_PREFIXES = (filecommands.MULTIPART_SNAPSHOT_DIR, filecommands.LEGACY_MULTIPART_SNAPSHOT_DIR)
-_SNAP_DIR = re.compile('(?:' + '|'.join(map(re.escape, _SNAP_PREFIXES)) + r')([0-9a-f]{32})')
-_SNAP_FILES = frozenset(('.owner', 'snap', 'meta'))
 _IMG_DIR = re.compile(r'image-session-[A-Za-z0-9_-]+')
 _IMG_MARKER = re.compile(r'(image-session-[A-Za-z0-9_-]+)\.owner\.json')
 _UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
@@ -77,7 +60,7 @@ _UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
 
 @dataclass
 class Entry:
-    kind: str                 # 'multipart' | 'image'
+    kind: str                 # 'image' | 'transient'
     id: str
     label: str = ''           # session identity when it can be read, else ''
     names: list = field(default_factory=list)   # files/dirs relative to the kind's root
@@ -111,9 +94,26 @@ def _size_text(n):
         value /= 1024
 
 
+class RootRefused(OSError):
+    """A retention root that is not a private directory of this user, or has a link in its path."""
+
+
 def _open_root(path):
     """Directory fd for a retention root: no symlink component, owned, private."""
-    return Bridge(str(path))._dirfd()
+    parts = os.path.abspath(path).split(os.sep)[1:]
+    fd = os.open(os.sep, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts:
+            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        st = os.fstat(fd)
+        if st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) & 0o077:
+            raise RootRefused('retention root is not private')
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
 
 
 def _du(dirfd):
@@ -145,100 +145,11 @@ def _read_regular(dirfd, name):
             raise ValueError('not a private regular file owned by this user')
         with os.fdopen(fd, encoding='utf-8') as f:
             fd = None
-            return json.load(f, object_pairs_hook=_pairs), st
+            return json.load(f), st
     finally:
         if fd is not None:
             os.close(fd)
 
-
-# ---------------------------------------------------------------- multipart
-
-def _lock_fd(dirfd, *, create):
-    flags = os.O_RDWR | os.O_NOFOLLOW | (os.O_CREAT if create else 0)
-    try:
-        fd = os.open('.lock', flags, 0o600, dir_fd=dirfd)
-    except FileNotFoundError:
-        return None
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) & 0o077:
-        os.close(fd)
-        raise BridgeError('multipart lock is not private')
-    return fd
-
-
-def _scan_multipart(dirfd, root):
-    entries, ignored = {}, []
-    bridge = Bridge(str(root))
-
-    def entry(sha):
-        return entries.setdefault(sha, Entry('multipart', sha))
-
-    names = sorted(os.listdir(dirfd))
-    for name in names:
-        if name == '.lock':
-            continue
-        record, index, temp = _MP_RECORD.fullmatch(name), _MP_INDEX.fullmatch(name), _MP_TEMP.fullmatch(name)
-        if not (record or index or temp):
-            ignored.append(name)
-            continue
-        st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
-        if temp:
-            e = Entry('multipart', 'tmp-' + name.lstrip('.')[:20], names=[name], size=st.st_size, mtime=st.st_mtime,
-                      state='unknown', detail='leftover temporary file from an interrupted write')
-            e.refused = not stat.S_ISREG(st.st_mode)
-            entries[e.id] = e
-            continue
-        if record:
-            e = entry(name[:-5])
-            e.names.insert(0, name)
-        else:
-            sha = None
-            e = None
-        refused = not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid()
-        try:
-            if refused:
-                raise ValueError('symlink, non-regular or foreign-owned file')
-            obj, _ = _read_regular(dirfd, name)
-            if record:
-                session = obj.get('session') if isinstance(obj, dict) else None
-                if not isinstance(session, str) or hashlib.sha256(session.encode()).hexdigest() + '.json' != name:
-                    raise ValueError('record is not named for its session')
-                bridge._load(session)               # the bridge's own validation
-                e.label = session
-                e.detail = f"{len(obj['entries'])} read(s)"
-            else:
-                if (not isinstance(obj, dict) or set(obj) != {'v', 'call_id', 'session'} or obj['v'] != 1
-                        or not isinstance(obj['call_id'], str) or not isinstance(obj['session'], str)
-                        or bridge._index_name(obj['call_id']) != name):
-                    raise ValueError('invalid call association')
-                e = entry(hashlib.sha256(obj['session'].encode()).hexdigest())
-                e.label = e.label or obj['session']
-                if name not in e.names:
-                    e.names.append(name)
-        except (ValueError, OSError, BridgeError, InvalidPage, UnicodeError, json.JSONDecodeError) as exc:
-            if e is None:
-                e = Entry('multipart', 'corrupt-' + name[:20])
-                entries[e.id] = e
-                e.names.append(name)
-            e.state, e.detail, e.refused = 'corrupt', f'{name[:20]}: {exc}', e.refused or refused
-        e.size += st.st_size
-        e.mtime = max(e.mtime, st.st_mtime)
-    for e in entries.values():
-        if e.state != 'corrupt' and not any(_MP_RECORD.fullmatch(n) for n in e.names) and e.names \
-                and not e.id.startswith('tmp-'):
-            e.detail = 'call associations without a session record'
-    return list(entries.values()), ignored
-
-
-def _delete_multipart(dirfd, entry):
-    """Authoritative record first, then derived associations/temps; fsync between."""
-    ordered = sorted(entry.names, key=lambda n: 0 if _MP_RECORD.fullmatch(n) else 1)
-    for name in ordered:
-        try:
-            os.unlink(name, dir_fd=dirfd)
-        except FileNotFoundError:
-            pass
-        os.fsync(dirfd)
 
 
 # -------------------------------------------------------------------- images
@@ -377,63 +288,6 @@ def _delete_image(root, entry, authority, *, force):
     session.cleanup_descriptor()
     store.release(session)
 
-
-# ------------------------------------------------------------------ snapshots
-
-def _scan_snapshots(tmp):
-    """Abandoned multipart source snapshots under the shared harness temp directory ``tmp`` (an fd): names of exactly cria's shape
-    only; one that is not a private owned directory of known files is listed refused and never touched."""
-    entries, ignored = [], []
-    for name in sorted(os.listdir(tmp)):
-        if not name.startswith(_SNAP_PREFIXES):
-            continue
-        match = _SNAP_DIR.fullmatch(name)
-        if match is None:
-            ignored.append(name)
-            continue
-        entry = Entry('snapshot', match.group(1), state='unknown', detail='private source snapshot of a multipart read (abandoned, or still running: no signal)')
-        entries.append(entry)
-        try:
-            st = os.stat(name, dir_fd=tmp, follow_symlinks=False)
-            if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) & 0o077:
-                raise ValueError('not a private directory owned by this user')
-            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
-            try:
-                held = os.listdir(child)
-                if set(held) - _SNAP_FILES:
-                    raise ValueError('unexpected contents: ' + ', '.join(sorted(set(held) - _SNAP_FILES)))
-                entry.mtime = st.st_mtime
-                for f in held:
-                    fst = os.stat(f, dir_fd=child, follow_symlinks=False)
-                    if not stat.S_ISREG(fst.st_mode):
-                        raise ValueError(f + ' is not a regular file')
-                    entry.size += fst.st_size
-                    entry.mtime = max(entry.mtime, fst.st_mtime)
-                    entry.names.append(name + '/' + f)
-            finally:
-                os.close(child)
-        except (OSError, ValueError) as exc:
-            entry.refused, entry.detail = True, str(exc)
-    return entries, ignored
-
-
-def _delete_snapshot(tmp, entry):
-    def present(name):
-        try:
-            os.stat(name, dir_fd=tmp, follow_symlinks=False)
-            return True
-        except OSError:
-            return False
-    name = next((p + entry.id for p in _SNAP_PREFIXES if present(p + entry.id)), _SNAP_PREFIXES[0] + entry.id)
-    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=tmp)
-    try:
-        for f in os.listdir(child):
-            if f not in _SNAP_FILES or not stat.S_ISREG(os.stat(f, dir_fd=child, follow_symlinks=False).st_mode):
-                raise OSError(f'{f}: not a snapshot file; left in place')
-            os.unlink(f, dir_fd=child)
-    finally:
-        os.close(child)
-    os.rmdir(name, dir_fd=tmp)
 
 
 # ------------------------------------------------------------------ transient scratch
@@ -592,13 +446,8 @@ def _exact_session(entry, wanted):
 
 
 def _matches_session(entry, wanted, prefix=True):
-    digest = hashlib.sha256(wanted.encode()).hexdigest()
     if entry.kind == 'transient':
         return entry.id == wanted
-    if entry.kind == 'snapshot':
-        return entry.id == wanted or (prefix and len(wanted) >= 8 and entry.id.startswith(wanted))
-    if entry.kind == 'multipart':
-        return entry.id == digest or (prefix and len(wanted) >= 8 and entry.id.startswith(wanted)) or entry.label == wanted
     return entry.id == wanted or entry.label == wanted
 
 
@@ -624,24 +473,24 @@ def select(entries, *, older_than, session, now):
 def _roots(home):
     home = Path(home)
     image = privatepaths.IMAGE_HOME if home == privatepaths.CRIA_HOME else home / 'images'
-    return {'multipart': home / 'multipart', 'image': image}
+    return {'image': image}
 
 
 def _tmp_root(tmp):
     return os.path.realpath(tmp or os.environ.get('TMPDIR') or '/tmp')
 
 
-def collect(home, kinds, *, lock_multipart=False, tmp=None, older_than=None, now=None):
+def collect(home, kinds, *, tmp=None, older_than=None, now=None):
     """Return (entries, ignored, held_lock_fd_or_None, notes). Caller closes the fds. ``older_than``/``now``: the age the caller will
     select by, so an image session younger than it is not validated (see `_scan_images`)."""
     entries, ignored, notes, fds = [], [], [], {}
     roots = _roots(home)
     for kind in kinds:
-        if kind in ('snapshot', 'transient'):
+        if kind == 'transient':
             try:
                 dirfd = os.open(_tmp_root(tmp), os.O_RDONLY | os.O_DIRECTORY)
                 try:
-                    found, ign = (_scan_snapshots if kind == 'snapshot' else _scan_transient)(dirfd)
+                    found, ign = _scan_transient(dirfd)
                     entries.extend(found)
                     ignored.extend(f'{kind}/{n}' for n in ign)
                     fds[kind] = os.dup(dirfd)
@@ -655,33 +504,11 @@ def collect(home, kinds, *, lock_multipart=False, tmp=None, older_than=None, now
             continue
         try:
             dirfd = _open_root(root)
-        except (BridgeError, OSError) as exc:
+        except OSError as exc:
             notes.append(f'{kind}: root {root} refused: {exc}')
             continue
         try:
-            if kind == 'multipart':
-                lock = _lock_fd(dirfd, create=lock_multipart)
-                locked = False
-                if lock is not None:
-                    try:
-                        fcntl.flock(lock, (fcntl.LOCK_EX if lock_multipart else fcntl.LOCK_SH) | fcntl.LOCK_NB)
-                        if lock_multipart:
-                            fds['multipart-lock'] = lock
-                        else:
-                            os.close(lock)
-                    except OSError:
-                        os.close(lock)
-                        locked = True
-                if locked and lock_multipart:
-                    notes.append('multipart: state lock is held by a live cria process; skipped (retry later)')
-                    continue
-                found, ign = _scan_multipart(dirfd, root)
-                if locked:
-                    for e in found:
-                        e.state = 'active' if e.state != 'corrupt' else e.state
-                        e.detail = (e.detail + '; ' if e.detail else '') + 'state lock held by a live cria process'
-            else:
-                found, ign = _scan_images(dirfd, str(root), spare_newer_than=older_than, now=now)
+            found, ign = _scan_images(dirfd, str(root), spare_newer_than=older_than, now=now)
             entries.extend(found)
             ignored.extend(f'{kind}/{n}' for n in ign)
             fds[kind] = os.dup(dirfd)
@@ -715,8 +542,8 @@ def _parser():
     for name in ('list', 'prune'):
         p = sub.add_parser(name)
         p.add_argument('--home', default=str(privatepaths.CRIA_HOME), help='cria home (default ~/.cria)')
-        p.add_argument('--kind', choices=('multipart', 'image', 'snapshot', 'transient', 'all'), default='all')
-        p.add_argument('--tmp', help='harness temp directory scanned for --kind snapshot/transient (default $TMPDIR, else /tmp)')
+        p.add_argument('--kind', choices=('image', 'transient', 'all'), default='all')
+        p.add_argument('--tmp', help='harness temp directory scanned for --kind transient (default $TMPDIR, else /tmp)')
         if name == 'list':
             p.add_argument('--json', action='store_true')
         else:
@@ -730,7 +557,7 @@ def main(argv=None, out=None, now=None):
     out = out or sys.stdout
     args = _parser().parse_args(argv)
     now = time.time() if now is None else now
-    kinds = ('multipart', 'image') if args.kind == 'all' else (args.kind,)
+    kinds = ('image',) if args.kind == 'all' else (args.kind,)
     if args.cmd == 'list':
         entries, ignored, fds, notes = collect(args.home, kinds, tmp=args.tmp)
         _close(fds)
@@ -754,7 +581,7 @@ def main(argv=None, out=None, now=None):
     except ValueError as exc:
         out.write(f'refusing: {exc}\n')
         return 2
-    entries, ignored, fds, notes = collect(args.home, kinds, lock_multipart=args.apply, tmp=args.tmp, older_than=older, now=now)
+    entries, ignored, fds, notes = collect(args.home, kinds, tmp=args.tmp, older_than=older, now=now)
     code = 0
     try:
         for n in notes:
@@ -808,34 +635,15 @@ def plan_prune(entries, *, older_than, session, now):
 
 
 def apply_plan(home, plan, fds, *, force, report):
-    """Remove each planned entry through its owner's machinery; `report(entry, None|exception)` per entry.
-    The multipart state lock (taken by `collect(lock_multipart=True)`) is released as soon as the last
-    multipart entry is done, so image removal never holds up a request using multipart state."""
+    """Remove each planned entry through its owner's machinery; `report(entry, None|exception)` per entry."""
     authority = object()
-    pending = sum(e.kind == 'multipart' for e in plan)
-
-    def release_lock():
-        fd = fds.pop('multipart-lock', None)
-        if fd is not None:
-            os.close(fd)
-    if not pending:
-        release_lock()
     for e in plan:
         try:
-            if e.kind == 'multipart':
-                try:
-                    _delete_multipart(fds['multipart'], e)
-                finally:
-                    pending -= 1
-                    if not pending:
-                        release_lock()
-            elif e.kind == 'snapshot':
-                _delete_snapshot(fds['snapshot'], e)
-            elif e.kind == 'transient':
+            if e.kind == 'transient':
                 _delete_transient(fds['transient'], e)
             else:
                 _delete_image(str(_roots(home)['image']), e, authority, force=force)
-        except (OSError, ImageUnavailable, BridgeError, KeyError, TypeError) as exc:
+        except (OSError, ImageUnavailable, KeyError, TypeError) as exc:
             report(e, exc)
         else:
             report(e, None)
@@ -848,16 +656,16 @@ AUTO_MIN_EVERY = _UNITS['m']
 
 
 class AutoPruner:
-    """Prune retained multipart and image state older than `older` seconds, on the OPERATOR's standing
+    """Prune retained image state older than `older` seconds, on the OPERATOR's standing
     instruction (`[retention] auto_prune_after`). It is the CLI's `prune --apply --older-than` with the same
-    `collect` / `plan_prune` / `apply_plan`: symlink and escape refusal, live image holders and a held multipart
-    lock skipped, corrupt entries never removed (only `--session` removes those), sealed cleanups retried.
+    `collect` / `plan_prune` / `apply_plan`: symlink and escape refusal, live image holders
+    skipped, corrupt entries never removed (only `--session` removes those), sealed cleanups retried.
     It never infers closure from anything a request or harness did. `run_once` never raises; `start` runs it
     once immediately and then every `every` seconds on a daemon thread that shares nothing with request handling
     except the filesystem locks the owners already use. One structured event per removal and per skip (a
     skipped entry is announced once per process and again only if the reason changes)."""
 
-    def __init__(self, home, older, every, emit, *, clock=time.time, kinds=('multipart', 'image')):
+    def __init__(self, home, older, every, emit, *, clock=time.time, kinds=('image',)):
         self.home, self.older, self.every, self.emit, self.clock, self.kinds = home, older, every, emit, clock, kinds
         self._announced = {}
         self._stop = threading.Event()
@@ -867,7 +675,7 @@ class AutoPruner:
         removed = skipped = failed = 0
         seen = set()
         try:
-            entries, _ignored, fds, notes = collect(self.home, self.kinds, lock_multipart=True, older_than=self.older, now=self.clock())
+            entries, _ignored, fds, notes = collect(self.home, self.kinds, older_than=self.older, now=self.clock())
             try:
                 for n in notes:
                     seen.add(('note', n))

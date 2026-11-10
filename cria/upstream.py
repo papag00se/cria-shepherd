@@ -1118,7 +1118,7 @@ class Upstream:
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
                                              bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE, bodykeys.ACTION_ORIGIN,
                                              bodykeys.HISTORY_SELECTION, bodykeys.HARNESS_HANDOFF,
-                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.MULTIPART_UNVERIFIED, bodykeys.UNREAD_HOLD,
+                                             bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.UNREAD_HOLD,
                                              *bodykeys.LEGACY_MESSAGE_KEYS)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         # Historical arguments are a final-wire invariant: role merges/folds can

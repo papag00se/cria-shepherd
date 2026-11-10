@@ -2066,24 +2066,6 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
             f"{SURVEY_CMD_CLOSE}")
 
 
-def marks_ride(query, *, cd: str = "") -> str:
-    """The one shell block a READ-ONLY lowered call (a read, a listing) carries after its own first record when the session has
-    write calls whose replies cria never had: the SURVEY-KIND record that follows carries no tree and no body, only the typed report
-    ``pm`` - what each of those writes' completion marks says at this moment (`completionmarks`). It rides exactly where a survey
-    rides (the sentinel declares it; the reader takes it from the very next line), wrapped the same way so the call's exit status is
-    its own, and it is composed only when something is outstanding: otherwise the call is byte-for-byte what it was."""
-    receipt = denial.active_receipt()
-    if query is None or not query.watch or not receipt:
-        return ""
-    denial.declare_survey()
-    prefix = f"cd {_q(cd)} 2>/dev/null; " if cd else ""
-    return (f"{SURVEY_CMD_OPEN}\n"
-            "__ctx_sv_ec=$?\n"
-            f"{{ {prefix}python3 -I - <<'{_HEREDOC}'\n{completionmarks.ride(query, receipt)}\n{_HEREDOC}\n}} 2>/dev/null\n"
-            "( exit $__ctx_sv_ec )\n"
-            f"{SURVEY_CMD_CLOSE}")
-
-
 def _q(s: str) -> str:
     return "'" + str(s).replace("'", "'\\''") + "'"
 

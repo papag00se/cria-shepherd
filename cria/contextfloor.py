@@ -778,7 +778,7 @@ def _withhold_oversized_results(messages: list[dict], tools, *, window: int, res
     removed), so no lossless form of such a result exists; any slice of it would be a half-result the coder could
     mistake for the whole. The note says what was measured (bytes, lines, the window), that none of it counts as
     seen, and the exact command or call that reads THIS result in pieces, built from the call that produced it and
-    its measured size, so the coder goes on in one step — the pattern ``multipart_fit_overflow`` set for a read
+    its measured size, so the coder goes on in one step — the pattern ``read_overflow`` set for a read
     that cannot fit. It is derived from the result and its call alone, so every later request carrying the same
     result (the harness keeps it in its history) is answered the same way — no state.
 

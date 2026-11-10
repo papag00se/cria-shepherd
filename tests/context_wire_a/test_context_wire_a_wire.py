@@ -262,7 +262,7 @@ def test_no_cria_internal_key_is_ever_serialized():
     """Every key in bodykeys.ALL (body- and message-level) is stripped at the one wire; a key added there is
     kept off the API by construction."""
     on_message = {bodykeys.PAYLOAD_BOUNDARY, bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT,
-                  bodykeys.MULTIPART_UNVERIFIED, bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
+                  bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                   *bodykeys.LEGACY_MESSAGE_KEYS}
     # keys whose value must be a typed in-process object (or that select a different pipeline) are not stringly forgeable
     typed = {bodykeys.PROTECTED_READS, bodykeys.READ_FIT_CALLBACKS, bodykeys.CODER_ROUTE, bodykeys.CODER_OBSERVER,

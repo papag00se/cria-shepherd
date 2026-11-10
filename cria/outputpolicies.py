@@ -17,7 +17,7 @@ from .callsyntax import (
 from .callformats import (
     _EXEC_NAMES, _READ_NAMES, _SHELL_CMD_ALIASES, _alias_command, _canon_key,
     _canonical_name_map, _command_string, _edit_to_patch, _normalize_patch_body,
-    _pure_add_file, _read_command, _normalize_read_args,
+    _pure_add_file, _normalize_read_args,
 )
 from .callliterals import _FUSED_SENTINELS, _recover_write_args, recover_fused_call, trim_fused_tail
 from .jsontext import extract_json_object, extract_leading_object
@@ -350,13 +350,14 @@ def normalize_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
             elif name in _SHELL_CMD_ALIASES:
                 _to_shell(fn, shell, _alias_command(name, _args(fn.get("arguments"))), "shell_name", rlog)
             elif name in _READ_NAMES and "read_file" not in names:
-                a = _args(fn.get('arguments'))
-                from .filecommands import canonical_read_args
-                from .multipartcontext import record
-                canonical = canonical_read_args(_normalize_read_args(a))
+                # A read alias the harness does not advertise: the call becomes cria's own `read_file`, which cria carries out.
+                from .readops import canonical_read_args
+                from .readcontext import record
+                canonical = canonical_read_args(_normalize_read_args(_args(fn.get('arguments'))))
                 if canonical is not None:
-                    record(tc, json.dumps(canonical))
-                _to_shell(fn, shell, _read_command(a), "read_lower", rlog)
+                    fn['name'], fn['arguments'] = 'read_file', json.dumps(canonical)
+                    record(tc)
+                    _log(rlog, 'massage.tool_normalized', why='read_lower')
             elif name in _EXEC_NAMES:
                 a = _args(fn.get("arguments"))
                 _to_shell(fn, shell, _command_string(a.get("cmd") if a.get("cmd") is not None else a.get("command")), "exec_command", rlog)

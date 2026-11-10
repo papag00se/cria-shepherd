@@ -184,3 +184,56 @@ def test_sandbox_trust_boundary(sandbox):
     print('SANDBOX', [o.split('Output:')[-1].strip() for o in outs])
     assert int(outs[1].split('visible=')[1].split()[0]) < 20                      # not the host: a namespace of its own
     assert 'child-stdout=1,FORGED,' in outs[2]                                     # a same-call process can write into another's stdout
+
+
+def test_read_round_trip_latency_through_the_sandboxed_harness(sandbox):
+    """What a `read` primitive call costs the real pinned Codex: a small file, and a full 16,000-byte page (a frame near the harness's 10,000-byte cut)."""
+    ws = str(sandbox.workspace)
+    (sandbox.workspace / 'small.py').write_text('x = 1\n' * 200)
+    (sandbox.workspace / 'page.txt').write_text(''.join('%08x\n' % (i * 2654435761 % 2**32) for i in range(2000)))
+    commands = [harnessprims.compose('read', '%032x' % (200 + i), [ws, 'small.py', 0, 16000], comment='read_file small.py') for i in range(20)]
+    commands += [harnessprims.compose('read', '%032x' % (300 + i), [ws, 'page.txt', 0, 8000], comment='read_file page.txt') for i in range(20)]
+    with Scripted(commands) as server:
+        done = sandbox.run(server.url)
+        assert done.returncode == 0, done.stderr[-2000:]
+        seconds = server.timeline.seconds
+    assert len(seconds) >= 39
+    small, page = sorted(seconds[:20]), sorted(seconds[20:40])
+    print('LATENCY read small: median=%.3f p90=%.3f max=%.3f | read 8,000-byte page: median=%.3f p90=%.3f max=%.3f' % (
+        statistics.median(small), small[17], small[-1], statistics.median(page), page[17], page[-1]))
+    assert statistics.median(small) < 5 and statistics.median(page) < 5
+
+
+def test_read_file_through_the_pinned_codex_and_a_real_cria_server(sandbox, tmp_path):
+    """Nothing imitated: scripted model -> real CriaServer -> real pinned Codex in its sandbox -> real `read` stubs. A whole read, a window,
+    a file that needs pages, a missing path and a link out of the workspace; the model reads exactly what it always read."""
+    import sys
+    from cria.config import Config, IndicatorsConfig, LoggingConfig, RoutingConfig, ServerConfig
+    from cria.events import EventLog
+    from cria.server import CriaServer
+    from ops_rig import TurnBackend
+    ws = sandbox.workspace
+    hexed = ''.join('%08x\n' % (i * 2654435761 % 2**32) for i in range(5000))
+    (ws / 'small.py').write_text('a = 1\r\nb = "caf\u00e9"\n')
+    (ws / 'lines.txt').write_text(''.join(f'line {i}\n' for i in range(1, 51)))
+    (ws / 'big.txt').write_text(hexed)
+    (ws / 'out').symlink_to('/etc/hostname')
+    backend = TurnBackend([('read_file', {'path': 'small.py'}), ('read_file', {'path': 'lines.txt', 'start_line': 5, 'end_line': 6}),
+                           ('read_file', {'path': 'big.txt'}), ('read_file', {'path': 'nope.txt'}), ('read_file', {'path': 'out'})])
+    cfg = Config(server=ServerConfig(host='127.0.0.1', port=0), logging=LoggingConfig(dir=str(tmp_path / 'logs'), console=False),
+                 indicators=IndicatorsConfig(enabled=False), routing=RoutingConfig(engagement_level=2))
+    log = EventLog(dir=cfg.logging.dir, console=False)
+    server = CriaServer(cfg, log, backend)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        done = sandbox.run(f'http://127.0.0.1:{server.server_address[1]}/v1')
+        assert done.returncode == 0, done.stderr[-2000:]
+    finally:
+        server.shutdown()
+        server.server_close()
+        log.close()
+    results = {m['tool_call_id']: m['content'] for m in backend.bodies[-1]['messages'] if m.get('role') == 'tool'}
+    assert [results[f'model_call_0_{i}'] for i in range(3)] == ['a = 1\r\nb = "caf\u00e9"\n', '5: line 5\n6: line 6\n', hexed]
+    assert 'nope.txt is not there' in results['model_call_0_3'] and 'is outside the project directory' in results['model_call_0_4']
+    seen = json.dumps(backend.bodies[-1]['messages'])
+    assert not [p for p in ('CTX1', 'ctx_', 'python3', '-I -S', 'harness-call', 'CTX_EOF') if p in seen]

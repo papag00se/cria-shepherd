@@ -658,7 +658,7 @@ class HarnessConfig:
 @dataclass(frozen=True)
 class RetentionConfig:
     """``[retention]`` - the OPERATOR's standing authority to delete cria's retained private state
-    (multipart reads under ~/.cria/multipart, image sessions under XDG state/cria/images). cria has no trusted
+    (image sessions under XDG state/cria/images). cria has no trusted
     harness session-close signal, so it never decides on its own that a conversation is over: unless
     ``auto_prune_after`` is set (the default), cria deletes nothing. Set it (e.g. ``"14d"``) and cria
     removes retained state whose last touch is older than that, once at start and then every

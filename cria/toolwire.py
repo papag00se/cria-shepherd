@@ -96,7 +96,7 @@ _SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ 
 _GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
-def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, marks: str = "", unread_hold: bool = False) -> str:
+def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, marks: str = "") -> str:
     """The leading comment line that lets inbound rebuild the original tool call, statelessly.
 
     It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound) and
@@ -107,8 +107,6 @@ def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, mar
     body = {"name": name, "arguments": args_str}
     if receipt:
         body["rcpt"] = receipt
-        if unread_hold:
-            body["uh"] = 1
         if survey:
             body["sv"] = 1          # the command carries a survey record, on the line after its first record
         if marks:
@@ -117,9 +115,9 @@ def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, mar
     return f"# {_SENTINEL}{payload}"
 
 
-def _sentinel_shared(name: str, arguments, receipt: str, survey: bool = False, marks: str = "", unread_hold: bool = False) -> str:
+def _sentinel_shared(name: str, arguments, receipt: str, survey: bool = False, marks: str = "") -> str:
     """Declare arguments once, in the immediately following exported shell assignment."""
-    ordinary = _sentinel(name, arguments, receipt, survey, marks, unread_hold)
+    ordinary = _sentinel(name, arguments, receipt, survey, marks)
     body = json.loads(base64.b64decode(_SENTINEL_LINE.match(ordinary).group(1)))
     args = body.pop('arguments')
     body['argref'] = 1
@@ -260,19 +258,15 @@ def _declaration(command: str, call_id=None) -> dict | None:
     name and arguments, so a header copied from another call (stale, quoted, replayed) is rejected. The receipt is a
     correlation token, not a secret — this only ties a declaration to the call it was composed for.
 
-    A declaration WITHOUT a receipt is honoured for one name only: ``read_file``, the one lowering cria still composes
-    receipt-less (`filecommands._read_command`, the alias read that grants no proof). Any other unreceipted header is just
-    text a coder's own command carries (a heredoc, an echo, a file it writes), and honouring it re-presented that command as
-    a write/edit/list the coder never made."""
+    A declaration WITHOUT a receipt is never honoured for a given call (nothing composes one any more: the alias reads that did
+    are carried out by cria's own engine): an unreceipted header is just text a coder's own command carries (a heredoc, an echo,
+    a file it writes), and honouring it re-presented that command as a call the coder never made."""
     d = _decode_sentinel(command)
     if d is None:
         return None
     if call_id is not None:
-        if d.get("rcpt"):
-            from . import denial
-            if d["rcpt"] != denial.receipt_for(call_id, d["name"], d.get("arguments") or "{}"):
-                return None
-        elif d["name"] != "read_file":
+        from . import denial
+        if not d.get("rcpt") or d["rcpt"] != denial.receipt_for(call_id, d["name"], d.get("arguments") or "{}"):
             return None
     return d
 

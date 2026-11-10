@@ -347,7 +347,7 @@ class ImageSession:
             return fresh.ref
 
     def acquire(self):
-        """Admission must occur under the shared image/multipart lifecycle fence."""
+        """Admission must occur under the shared image lifecycle fence."""
         with self._lock:
             self._active();token=object();self._leases.add(token)
             return ImageLease(self,token)
