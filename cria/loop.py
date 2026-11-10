@@ -61,6 +61,7 @@ from . import callcapture, dedup, denial, editrecovery, execcheck, fetchfacts, f
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission, initial_inventory, shelltool
 from .opspath import OpsUnavailable
+from .probeops import UnreadProbe
 from .config import CONTEXT_FIXES
 from .admission import has_actionable_tools as _has_actionable_tools
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
@@ -2589,6 +2590,8 @@ class LoopContext:
     # returns ``(operation, its first harness calls)``; ``inventory_result(session, operation)`` is what it learned (None: nothing).
     issue_inventory: object = None
     inventory_result: object = None
+    # the unread-write probe (`cria.probeops`): ``take_released(session)`` is ``(the model's calls an answered probe was holding, the facts it learned)``, once
+    take_released: object = None
     # Focus-trim the OUTBOUND coder view (collapse exact-duplicate tool calls). [context] focus_trim.
     focus_trim: bool = True
     # Roll the OLD middle of a long coder view into a reasoner summary (mid-STEP transcript bloat —
@@ -2929,6 +2932,15 @@ class Loop:
         if rewritten:
             rlog.emit("loop.history_rewritten", live=sess is not None or bootstrap is not None,
                       n_messages=len(messages))
+        if self._ctx.take_released is not None:
+            # An unread-write probe has been answered (`cria.probeops`): the model's calls it was holding go out again, to be lowered with what the
+            # file said in hand. No model call stands behind them: they are the model's own, as it made them.
+            held, learned = self._ctx.take_released(session_key)
+            if held:
+                if sess is not None:
+                    _note_probe_facts(sess, learned)
+                rlog.emit('loop.unread_probe_released', calls=len(held))
+                return _completion_toolcalls(held)
 
         # The PLAN loop can only run a coding task when the harness will RUN tools for it. The shell
         # tool is the primitive it needs — for its plan file, for the ground-truth probe, AND for the
@@ -3372,9 +3384,11 @@ class Loop:
                                   body.get("messages", [])) if path else ""
         return denial.mark(text + (f"\n\n{fact}" if fact else ""))
 
-    def unread_target_check(self, sess_key: str, messages: list[dict], root, rlog=None):
+    def unread_target_check(self, sess_key: str, messages: list[dict], root, rlog=None, *, probes: bool = False):
         """``path -> fact`` for the write lowering, or None when this session does not keep the record
-        (assists off: the read ledger is never filled, so "unread" would be a guess — #11b)."""
+        (assists off: the read ledger is never filled, so "unread" would be a guess — #11b). With ``probes`` the answer may also be an
+        :class:`cria.probeops.UnreadProbe`: nothing known (the credit, the view, the inventory) settles whether the file may be overwritten, so the lowering asks
+        the file and decides again with what it said (never twice: a file asked is known, or known to be unknowable)."""
         if not self._ctx.assists or not root:
             return None
         # LAZY: this is built while the request is being set up, before `drive` has created the session on
@@ -3426,10 +3440,13 @@ class Loop:
                               turn_index=sess.coder_timed_turns, reason='current_bytes_unavailable')
             if blank is True:
                 return admitted('blank')
+            if blank is None and probes and inventory is not None and not inventory.get('probed'):
+                return UnreadProbe(path)
             if blank is None:
                 if rlog is not None:
+                    why = inventory.get('unavailable') if inventory is not None and inventory.get('probed') else None
                     rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
-                              turn_index=sess.coder_timed_turns, reason='blankness_unavailable')
+                              turn_index=sess.coder_timed_turns, reason=f'probe_{why}' if why else 'blankness_unavailable')
                 return admitted('unknown')
             if from_inventory:
                 return prompts.fill(prompts.load_map('unread_target_fact')['sized'], path=rel,
@@ -5741,7 +5758,7 @@ def _session_from_dict(d) -> PlanSession | None:
                         if isinstance(path, str) and isinstance(fact, dict)
                         and (fact.get('blank') is None or type(fact.get('blank')) is bool)
                         and type(fact.get('size')) is int and fact['size'] >= 0
-                        and fact.get('origin') == 'initial_inventory'
+                        and fact.get('origin') in ('initial_inventory', 'probe')
                         and type(fact.get('observed_at')) in (int, float)} if isinstance(observations, dict) else {}
         return PlanSession(plan=plan, summary=str(d.get("summary", "")), content_fingerprints=fingerprints,
                            inventory_root=str(d.get('inventory_root') or ''), inventory_observations=observations,
@@ -11022,6 +11039,27 @@ def _own_file_effects(fn: dict) -> list:
     if _DELETE_NAME_PARTS & set(re.split(r"[_\-. ]+", str(name or '').lower())):
         return [(path, 'delete')]
     return []
+
+
+def _note_probe_facts(sess, learned: list) -> None:
+    """What a file said when the unread-write rule asked it (`cria.probeops`), as the session's note of that file: the inventory knew its name and size, now it
+    knows what the file is (``blank``), its hash, or that it is missing or could not be learned (``unavailable``): such a note is never asked again."""
+    if not sess.inventory_root:
+        return
+    view = wsview.current(sess.inventory_root)
+    for facts in learned:
+        rel = view.rel(facts['rel'])
+        if not rel:
+            continue
+        note = dict(sess.inventory_observations.get(rel) or {'size': facts.get('size') or 0, 'origin': 'probe', 'observed_at': facts['at']})
+        note.update(blank=facts['blank'], digest=facts['digest'], probed=True, observed_at=facts['at'])
+        if facts.get('size') is not None:
+            note['size'] = facts['size']
+        if facts.get('missing'):
+            note['missing'] = True
+        if facts.get('unavailable'):
+            note['unavailable'] = facts['unavailable']
+        sess.inventory_observations[rel] = note
 
 
 def _refresh_inventory_notes(sess, messages, view, rlog=None):

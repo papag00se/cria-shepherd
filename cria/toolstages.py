@@ -16,7 +16,7 @@ from typing import Iterable, Literal
 # Compatibility surface: the canonical records live below execution/default assembly.
 from .toolcontracts import (EventLog, _PolicyLog, policy_log, CompletionTransform, CompletionRepair,
     CompletionDefinition, ShrinkFinding, ShrinkCheck, LoweringRequest,
-    OutboundCall, RewrittenCall, ReadIntent, ShellCommand, OutboundEffect, OutboundDefinition, AnswerIntent, SaveIntent, SearchIntent,
+    OutboundCall, RewrittenCall, ReadIntent, ShellCommand, OutboundEffect, OutboundDefinition, AnswerIntent, ProbeIntent, SaveIntent, SearchIntent,
     MutationDefinition, MutationPlan, MutateIntent, ReviewTerms, ReturnedResult, ReturnedDefinition, ReturnedHistory,
     HistoryDefinition, RejectedDraft, DraftDefinition, ToolDefinition, ShrinkServices)
 
@@ -97,7 +97,7 @@ class ToolStages:
         from .toolargs import parse_args
         for definition in self.outbound:
             result = definition.execute(replace(source, log=policy_log(source.log, definition.policy)))
-            if isinstance(result, (ShellCommand, ReadIntent)):
+            if isinstance(result, (ShellCommand, ReadIntent, ProbeIntent)):
                 return source.call, source.arguments, result
             if isinstance(result, RewrittenCall):
                 arguments = (result.arguments if result.arguments is not None else

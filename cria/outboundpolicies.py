@@ -7,7 +7,8 @@ from .assistcontract import Policy, Reference
 from dataclasses import replace
 
 from .toolcontracts import (OutboundCall, OutboundDefinition, MutationDefinition, MutationPlan, ReadIntent, ReviewTerms, RewrittenCall,
-                            ShellCommand)
+                            ShellCommand, ProbeIntent)
+from .probeops import UnreadProbe
 from .shrinkprotection import DEFINITION as SHRINK_PROTECTION
 from .callliterals import _has_tc_debris, _protocol_debris
 from .filecommands import (
@@ -132,6 +133,9 @@ def unread_replacement(source: OutboundCall) -> ReadIntent | None:
         return None
     if not (fact := request.unread_target(path)):
         return None
+    if isinstance(fact, UnreadProbe):
+        # Nothing known settles whether the file may be overwritten unread: the file is asked (cria.probeops) and the call lowered again with the answer.
+        return ProbeIntent(path) if request.issue_probe is not None else None
     if source.log is not None:
         source.log.emit('writeproxy.write_unread_target', tool=source.name, path=path)
     return ReadIntent(fact)

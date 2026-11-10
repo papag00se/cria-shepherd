@@ -6,18 +6,15 @@ One operation in the ledger that cria asks before the first coder turn and answe
   ``AFTER`` cursor for a directory a frame does not hold). The excluded directories (``groundtruth._INVENTORY_EXCLUDE``) are
   reported by ``ls`` and never entered; a link is a link (listed under ``symlinks``, never followed); anything that is not a regular
   file is not a file; a directory the harness could not read is an ``errors`` entry.
-* what a file is - empty or whitespace-only text (``blank``), or not text at all (``None``) - and its ``digest`` are decided in cria from
-  the bytes ``read`` returns: the first ``FACT_LEN`` bytes decide any file with something in them, a file whose first bytes are only
-  whitespace is read whole. The sha-256 is the harness's own, of the whole file. This is what the unread-write rule stands on (a blank
-  file may be overwritten unread, a file that is not may not), so it is gathered for the first ``FACT_FILES_MAX`` files in path order and
-  is ``None`` for the rest (never guessed).
+* what a file *is* (empty or whitespace-only text, something, or not text) and its hash are NOT gathered here: a file read per file is a call per file
+  in the harness's transcript (a 2,500-file tree was 160 calls, 455 KB of commands, against 43 calls and 60 KB before). The unread-write rule asks the
+  file when a write names it and nothing known settles it (:mod:`cria.probeops`), so every item carries ``blank: None`` here, never guessed.
 * the symbols are the real ``ctags`` run through the ``run`` stub on the files cria chose (shell text, no program): names, kinds and
   scopes, one list per file, ``None`` where the indexer gave nothing, one uniform error where it is missing or failed.
 
 What it learned is the dictionary the loop has always been given (``files``, ``symlinks``, ``errors``, ``excluded_names``,
 ``symbol_indexer_error``), computed from the frames the ledger holds: a pure function of the ledger.
 """
-import codecs
 import hashlib
 import json
 import os
@@ -27,13 +24,10 @@ import time
 from . import callauth, denial, groundtruth, harnessprims
 from .opsteps import Final, Issue
 from .readops import LEN_FLOOR, merge
+from .readfacts import error as _error
 from .surveyops import INVENTORY, LEVEL_MAXES, TREE_MAX, WAVE, _Tree, _clean
 
-WHATS = ('ils', 'iread', 'irun', 'iout', 'irm')
-FACT_LEN = 512            # bytes of a file that decide whether it is text with something in it
-FACT_FULL = 1 << 20       # a file whose first bytes are only whitespace is read this far (whitespace compresses to nothing)
-FACT_FILES_MAX = 100      # files whose blank state and digest are gathered (path order); the rest are unknown, never guessed. Each costs a 2 KB call in the harness transcript, which the harness counts toward its own compaction
-FACT_FLOOR = 64           # a read the harness cut is asked again at half the length, down to this
+WHATS = ('ils', 'irun', 'iout', 'irm')
 MAX_ENTRIES = 20_000      # entries the walk takes before it says it stopped
 CTAGS_NAMES = 20_000      # bytes of file names one ctags run is given
 CTAGS_TIMEOUT = 300       # seconds one ctags run may take
@@ -89,9 +83,6 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
         words = [ctx['root'], args['dir'], 0 if tree else 1, min(TREE_MAX, MAX_ENTRIES) if tree else LEVEL_MAXES[args['rung']], 0,
                  json.dumps(skip_names(), separators=(',', ':')), os.fsencode(args.get('after', '')).hex()]
         return harnessprims.compose('ls', nonce, words, comment='workspace inventory ' + (args['dir'] or '.'), safe_path=safe)
-    if what == 'iread':
-        return harnessprims.compose('read', nonce, [ctx['root'], args['rel'], 0, args['len'], 0],
-                                    comment='workspace inventory ' + args['rel'], safe_path=safe)
     if what == 'iout':
         return harnessprims.compose('read', nonce, [args['dir'], 'out', args['off'], args['len'], 0],
                                     comment='workspace inventory (symbols)', safe_path=safe)
@@ -105,54 +96,6 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
 
 def _bytes(frame: dict) -> bytes:
     return frame['text'].encode('utf-8', 'surrogateescape')
-
-
-def _error(code) -> str:
-    return f'[Errno {code}] {os.strerror(code)}' if isinstance(code, int) and code else 'unreadable'
-
-
-class _Facts:
-    """What the file reads say, folded in step order."""
-
-    def __init__(self, steps: list):
-        self.first: dict = {}       # rel -> (header, bytes) of the first read
-        self.whole: dict = {}       # rel -> (header, bytes) of the whole-file read
-        self.error: dict = {}       # rel -> the header of a read that failed
-        self.cut: dict = {}         # rel -> how many first reads of it the harness cut
-        self.cut_whole: set = set() # files whose whole-file read the harness cut (their blank state stays unknown)
-        for st in sorted((x for x in steps if x.what == 'iread' and x.frame is not None), key=lambda x: x.s):
-            rel, header = st.args['rel'], st.frame['hdr']
-            if header.get('ok') == 1:
-                (self.whole if st.args['len'] > FACT_LEN else self.first)[rel] = (header, _bytes(st.frame))
-            elif header.get('ok') == 0:
-                self.error[rel] = header
-            elif st.args['len'] > FACT_LEN:
-                self.cut_whole.add(rel)
-            else:
-                self.cut[rel] = self.cut.get(rel, 0) + 1
-
-    def of(self, rel: str) -> tuple:
-        """``(blank, digest, error, needs the whole file)`` for a file: blank is True/False for text, None for anything else."""
-        if rel in self.error:
-            header = self.error[rel]
-            return None, None, None if header.get('err') == 'notfile' else _error(header.get('errno')), False
-        got = self.whole.get(rel) or self.first.get(rel)
-        if got is None:
-            return None, None, None, False
-        header, data = got
-        if header['fsize'] != header['size']:
-            return None, None, 'file changed during survey', False
-        complete = len(data) >= header['fsize']
-        if b'\0' in data:
-            return None, None, None, False                                    # binary
-        try:
-            text = codecs.getincrementaldecoder('utf-8')('strict').decode(data, final=complete)
-        except UnicodeError:
-            return None, None, None, False                                    # not UTF-8
-        blank = not text or text.isspace()
-        if blank and not complete:
-            return None, None, None, rel not in self.whole                    # only whitespace so far: the rest decides (once)
-        return blank, header['fsha'], None, False
 
 
 class InventoryOps:
@@ -191,16 +134,6 @@ class InventoryOps:
         if issue:
             return Issue(self._next_many(steps, issue[:WAVE]))
         names = sorted(self._files(tree))
-        # the facts -------------------------------------------------------
-        facts = _Facts(steps)
-        for rel in names[:FACT_FILES_MAX]:
-            if rel in facts.error or rel in facts.whole or rel in facts.cut_whole:
-                continue
-            if rel in facts.first:
-                if facts.of(rel)[3]:
-                    issue.append(('iread', {'rel': rel, 'len': min(FACT_FULL, facts.first[rel][0]['fsize'])}))
-            elif FACT_LEN >> facts.cut.get(rel, 0) >= FACT_FLOOR:
-                issue.append(('iread', {'rel': rel, 'len': FACT_LEN >> facts.cut.get(rel, 0)}))
         # the symbols ----------------------------------------------------------
         runs = {st.args['chunk']: st for st in sorted((x for x in steps if x.what == 'irun'), key=lambda x: x.s)}
         for i, chunk in enumerate(_chunks([rel for rel in names if _indexable(rel)])):
@@ -263,21 +196,8 @@ class InventoryOps:
         if len(tree.records) >= MAX_ENTRIES:
             errors.append({'path': '.', 'error': 'inventory bound reached: the rest is not listed'})
         names = sorted(files)
-        facts = _Facts(steps)
         tags, indexer = self._symbols(steps, [rel for rel in names if _indexable(rel)])
-        items = []
-        for k, rel in enumerate(names):
-            item = {'path': rel, 'size': files[rel], 'symbols': tags.get(rel), 'blank': None, 'observed_at': observed_at}
-            if k < FACT_FILES_MAX:
-                blank, digest, error, _more = facts.of(rel)
-                if error:
-                    errors.append({'path': rel, 'error': error})
-                item['blank'] = blank
-                if blank is not None:
-                    item['digest'] = digest
-                else:
-                    item['symbols'] = None          # not text (or unreadable): never indexed, as before
-            items.append(item)
+        items = [{'path': rel, 'size': files[rel], 'symbols': tags.get(rel), 'blank': None, 'observed_at': observed_at} for rel in names]
         return {'files': items, 'symlinks': links, 'errors': errors,
                 'excluded_names': [n for n in skip_names() if 'cria' not in n.lower()], 'symbol_indexer_error': indexer}
 

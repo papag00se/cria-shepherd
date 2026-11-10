@@ -60,6 +60,7 @@ class _BaseWire:
     def __enter__(self): return self
     def __exit__(self, *exc): self.srv.shutdown(); self.srv.server_close(); self.thread.join(); self.log.close()
     def post(self):
+        self.posts = getattr(self, 'posts', 0) + 1          # round trips: a request carrying the history
         url = f'http://127.0.0.1:{self.srv.server_address[1]}/v1/' + ('chat/completions' if self.api == 'chat' else 'responses')
         headers = {'Content-Type': 'application/json', **({'X-Cria-Session-Id': 'sid'} if self.header else {})}
         if self.api == 'chat': body = {'model': 'test-model', 'tools': MENU, 'messages': self.messages}

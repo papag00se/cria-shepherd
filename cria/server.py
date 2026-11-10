@@ -1060,6 +1060,7 @@ class CriaServer(ThreadingHTTPServer):
                     reasoner_buffered_chat=reasoner_buffered_chat,
                     issue_inventory=lambda session, tool, root: self.ops.issue_inventory(session, tool, root),
                     inventory_result=lambda session, op: self.ops.inventory_of(session, op),
+                    take_released=lambda session: self.ops.release(session),
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,
@@ -1794,7 +1795,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # refuse a whole-file replacement of an existing file it has never seen (None when cria is
             # not engaged enough to keep that record — a guess would be a false fact).
             self._unread_target = (self.server.loop.unread_target_check(
-                sess_key, body.get("messages", []), self._workspace_root, rlog)
+                sess_key, body.get("messages", []), self._workspace_root, rlog, probes=True)
                 if self.server.loop is not None else None)
             self._shrink_services = (self.server.loop.shrinking_write_services(
                 sess_key, body.get("messages", []), self._workspace_root, rlog)
@@ -1886,6 +1887,9 @@ class CriaHandler(BaseHTTPRequestHandler):
                                issue_mutations=lambda requests: self.server.ops.issue_mutations(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, requests, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ()), log=rlog),
+                               issue_probe=lambda path, held: self.server.ops.issue_probe(
+                                   getattr(self, '_ops_session', sess_key), self._shell_tool, path, held, workspace_root=getattr(self, "_workspace_root", None),
+                                   level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())),
                                issue_answer=lambda call, args, answer: self.server.ops.issue_answer(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, call, answer, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())),

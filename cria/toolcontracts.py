@@ -73,6 +73,7 @@ class LoweringRequest:
     issue_mutations: Callable[[list], list] | None = None   # ([MutationRequest]) -> one harness call each, in order (cria.ops)
     issue_answer: Callable[[dict, dict, object], dict] | None = None   # (call, arguments, AnswerIntent) -> the harness call (cria.answerops)
     issue_search: Callable[[dict, dict], dict] | None = None   # (call, arguments) -> the harness call (cria.searchops)
+    issue_probe: Callable[[str, list], dict] | None = None     # (path, the model's calls held until the file has answered) -> the harness call (cria.probeops)
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,13 @@ class AnswerIntent:
     outcome: str
     rep: dict | None = None
     save: SaveIntent | None = None
+
+
+@dataclass(frozen=True)
+class ProbeIntent:
+    """The write or edit names a file nothing known settles whether it may be overwritten unread: cria asks the file first (cria.probeops), holding this call and the
+    ones after it in the reply, and lowers them again with the answer in hand."""
+    path: str
 
 
 @dataclass(frozen=True)

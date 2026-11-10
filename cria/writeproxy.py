@@ -21,19 +21,16 @@ shell it didn't call. `web_search` routes to the harness's own search tool when 
 
 from __future__ import annotations
 
-import base64
 from typing import NamedTuple
 import hashlib
 import uuid
-import zlib
 import json
 import os
 import re
 from dataclasses import dataclass, replace
-from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import bodykeys, callauth, brave, denial, resultpacket, depsurface, dirguard, prompts, webfetch, wsview, toolstages
-from .toolstages import (AnswerIntent, LoweringRequest, MutateIntent, OutboundCall, ReadIntent, SaveIntent, SearchIntent, ShellCommand,
+from .toolstages import (AnswerIntent, LoweringRequest, MutateIntent, OutboundCall, ProbeIntent, ReadIntent, SaveIntent, SearchIntent, ShellCommand,
                          ReturnedResult, ReturnedHistory)
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
@@ -598,7 +595,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
                        observe_lowering=None, externalization_owner=None,
                        observe_externalization=None, only_injected: bool = False, issue_list_dir=None,
-                       issue_read=None, issue_mutations=None, issue_answer=None, issue_search=None,
+                       issue_read=None, issue_mutations=None, issue_answer=None, issue_search=None, issue_probe=None,
                        safe_path: str = harnessprims.SAFE_PATH) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
@@ -616,7 +613,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
         externalization_owner, assistruntime.current().externalization, observe_externalization,
         (assistruntime.current().document_guidance, webfetch.guidance_services()), issue_list_dir, safe_path, issue_read,
-        issue_mutations, issue_answer, issue_search)
+        issue_mutations, issue_answer, issue_search, issue_probe)
 
     for choice in completion.get("choices", []):
         tool_calls = (choice.get("message") or {}).get("tool_calls")
@@ -681,6 +678,19 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 if issued is not None and rlog is not None:
                     rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "", detail="")
                 continue
+            if isinstance(effect, ProbeIntent):
+                # The unread-write rule cannot decide from what it knows: the file is asked, and this call and the ones after it in the reply (nothing may
+                # overtake it) wait in the operation; they are lowered again, with the answer, in the next request. The model never sees the probe.
+                held = [{'id': c.get('id'), 'type': 'function', 'function': dict(c.get('function') or {})} for c in tool_calls[ti:]]
+                try:
+                    rebuilt.append(issue_probe(effect.path, held))
+                except ops.OpsUnavailable as exc:
+                    if rlog is not None:
+                        rlog.emit('ops.unavailable', level='error', error=str(exc))
+                    rebuilt.append(_shell_call(tc.get('id'), shell_tool, _refusal_command(prompts.load('ops_unavailable')), 0))
+                if rlog is not None:
+                    rlog.emit("writeproxy.unread_probe", tool=name, target=effect.path, held=len(held))
+                break
             if isinstance(effect, (AnswerIntent, SearchIntent)):
                 # An answer cria composed (a fetch, a search) or a search it will walk and run: carried out through the harness primitives, in cria's words.
                 try:

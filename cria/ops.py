@@ -21,13 +21,14 @@ import shlex
 import threading
 from dataclasses import dataclass, field
 
-from . import answerops, callauth, denial, externalization, harnessprims, inventoryops, prompts, readops, searchops, surveyops, writeops, wsview
+from . import callauth, denial, externalization, harnessprims, inventoryops, probeops, prompts, readops, searchops, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
 from .opspath import OpsUnavailable, split
 from .opsteps import Final, Issue, Wait, reason as _reason
 from .answerops import ANSWER, AnswerOps, LedgerAnswer
+from .probeops import PROBE, ProbeOps
 from .searchops import SEARCH, SearchOps
 from .inventoryops import InventoryOps
 from .readops import LedgerRead, ReadFact, ReadOps
@@ -99,7 +100,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps):
+class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps, ProbeOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -159,6 +160,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps):
             return inventoryops.command(op, ctx, s, what, args, blobs or {})
         if what in searchops.WHATS:
             return searchops.command(op, ctx, s, what, args, blobs or {})
+        if what in probeops.WHATS:
+            return probeops.command(op, ctx, s, what, args, blobs or {})
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what in writeops.WHATS:
             return writeops.command(op, ctx, s, what, args, blobs or {})
@@ -338,6 +341,8 @@ class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps, AnswerOps, SearchOps):
             return self._i_after(op, steps)
         if op.kind == SEARCH:
             return self._s_after(op, wave, steps)
+        if op.kind == PROBE:
+            return self._p_after(op, wave, steps)
         table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
                  else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
         return table[wave[0].what](op, wave, steps)

@@ -223,8 +223,8 @@ class _Net:
 class Live:
     """One driven conversation: what the model read (every tool result of the last request), every request body it was sent, what the harness ran and the
     workspace it ran in."""
-    def __init__(self, ws, backend, harness, message):
-        self.ws, self.backend, self.harness, self.message = ws, backend, harness, message
+    def __init__(self, ws, backend, harness, message, posts=0):
+        self.ws, self.backend, self.harness, self.message, self.posts = ws, backend, harness, message, posts
 
     @property
     def results(self):
@@ -261,7 +261,7 @@ def drive(tmp_path, monkeypatch, turns, files=None, *, level=None, setup=None, d
     with start_in(wire, ws) as live:
         message, _ = live.drive(harness)
         assert 'seen' in message['content'], message
-    return Live(ws, backend, harness, message)
+    return Live(ws, backend, harness, message, wire.posts)
 
 
 def run_case(name, tmp_path, monkeypatch):

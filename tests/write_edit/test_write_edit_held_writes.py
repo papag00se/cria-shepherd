@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from survey_fixtures import inventory_of_disk
+from survey_fixtures import inventory_of_disk, probe_of_disk
 from cria import denial, loop, wsview
 from write_edit_helpers import (call, do, represented, run_batch, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
 
@@ -74,22 +74,20 @@ def test_the_hold_is_per_path_for_existing_surveyed_files_only(ws):
         wsview.unbind(token)
 
 
+@pytest.mark.parametrize('lazy', [False, True], ids=['inventory-facts', 'asked-when-written'])
 @pytest.mark.parametrize('label,seed', [('ruby', 'shipping-rates-rb'), ('go', 'cart-billing-go')])
-def test_first_campaign_writes_are_answered_with_the_seed_files(tmp_path, label, seed):
+def test_first_campaign_writes_are_answered_with_the_seed_files(tmp_path, label, seed, lazy):
     """Actual Phi4 campaign write calls, with only their workspace roots relocated."""
     repo = Path(__file__).resolve().parents[2]
     shutil.copytree(repo / 'suite' / 'tasks' / seed / 'seed', tmp_path, dirs_exist_ok=True)
-    data = inventory_of_disk(tmp_path)
+    driver = inventory_session(tmp_path, 'sid:incident', facts=not lazy)
     view = wsview.View(str(tmp_path), 'sid:incident')
-    assert view.apply_initial_inventory(data, str(tmp_path))
-    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
-                       runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
-    session = loop._plan_off_session(loop._synthetic_plan('Implement the task'), '')
-    driver._put_session('sid:incident', session)
+    assert view.apply_initial_inventory(inventory_of_disk(tmp_path, facts=not lazy), str(tmp_path))
     fixture = json.loads((repo / 'tests' / 'fixtures' / 'unread_write' / (label + '.json')).read_text())
     token = wsview.bind(view)
     try:
-        check = driver.unread_target_check('sid:incident', [], str(tmp_path))
+        check = driver.unread_target_check('sid:incident', [], str(tmp_path), probes=lazy)
+        check = resolving(driver, 'sid:incident', tmp_path, check) if lazy else check
         assert fixture['calls']
         for tc in fixture['calls']:
             args = json.loads(tc['function']['arguments'])
@@ -127,8 +125,8 @@ def test_listed_blank_files_are_written_and_nonblank_is_read_instead(tmp_path, o
         wsview.unbind(token)
 
 
-def inventory_session(tmp_path, sid):
-    data = inventory_of_disk(tmp_path)
+def inventory_session(tmp_path, sid, facts=True):
+    data = inventory_of_disk(tmp_path, facts=facts)
     driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
         runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
     session = loop._plan_off_session(loop._synthetic_plan('task'), '')
@@ -139,14 +137,30 @@ def inventory_session(tmp_path, sid):
     return driver
 
 
-def test_captured_ruby_batches_hold_only_the_first_unread_readme(tmp_path):
+def resolving(driver, sid, tmp_path, check):
+    """What the server does for a probe, in one call: the file is asked for real (the real engine, the real stubs), the session is told what it said, and the
+    rule is asked again."""
+    from cria import probeops
+    session = driver._store.get(sid)
+
+    def asked(path):
+        got = check(path)
+        if isinstance(got, probeops.UnreadProbe):
+            loop._note_probe_facts(session, [probe_of_disk(tmp_path, got.path)])
+            got = check(path)
+        return got
+    return asked
+
+
+@pytest.mark.parametrize('lazy', [False, True], ids=['inventory-facts', 'asked-when-written'])
+def test_captured_ruby_batches_hold_only_the_first_unread_readme(tmp_path, lazy):
     """Captured 0006 and 0009 calls; recreate the original landed overwrite for the second batch."""
     repo = Path(__file__).resolve().parents[2]
     fixtures = repo / 'tests/fixtures/unread_write'
     shutil.copytree(repo / 'suite/tasks/shipping-rates-rb/seed', tmp_path, dirs_exist_ok=True)
     assert (tmp_path / 'README.md').stat().st_size == 456
     seed = (tmp_path / 'README.md').read_text()
-    driver = inventory_session(tmp_path, 'sid:ruby')
+    driver = inventory_session(tmp_path, 'sid:ruby', facts=not lazy)
     history = json.loads((fixtures / 'ruby-verify-0006.json').read_text())['body']['messages']
     batches = [json.loads((fixtures / f'{n:04d}-coder-s1.response.json').read_text())
                ['choices'][0]['message']['tool_calls'] for n in (6, 9)]
@@ -158,7 +172,8 @@ def test_captured_ruby_batches_hold_only_the_first_unread_readme(tmp_path):
     log = Log()
     token = wsview.bind(wsview.View(str(tmp_path), 'sid:ruby'))
     try:
-        check = driver.unread_target_check('sid:ruby', history, str(tmp_path), log)
+        check = driver.unread_target_check('sid:ruby', history, str(tmp_path), log, probes=lazy)
+        check = resolving(driver, 'sid:ruby', tmp_path, check) if lazy else check
         first = run_batch(batches[0], tmp_path, range(9), root=str(tmp_path), unread_target=check, rlog=log)
         held = [m for m in first[1:] if denial.read_payload(m) is not None]
         assert [m['tool_call_id'] for m in held] == ['gQ4zzOKhnobcUDwnNxASRAB6KWXa5PGR']
@@ -172,7 +187,8 @@ def test_captured_ruby_batches_hold_only_the_first_unread_readme(tmp_path):
         first[0]['tool_calls'] = [own[0]['tool_calls'][0] if tc['id'] == original['id'] else tc
                                   for tc in first[0]['tool_calls']]
         first = [own[1] if m.get('tool_call_id') == original['id'] else m for m in first]
-        check = driver.unread_target_check('sid:ruby', history + first, str(tmp_path), log)
+        check = driver.unread_target_check('sid:ruby', history + first, str(tmp_path), log, probes=lazy)
+        check = resolving(driver, 'sid:ruby', tmp_path, check) if lazy else check
         second = run_batch(batches[1], tmp_path, range(9), root=str(tmp_path), unread_target=check, rlog=log)
         assert not [m for m in second[1:] if denial.read_payload(m) is not None]
         assert [fields['path'] for kind, fields in log.events if kind == 'writeproxy.write_unread_target'] == ['README.md']
@@ -319,14 +335,15 @@ def test_a_coders_own_whole_write_updates_the_note_and_survives_compaction(tmp_p
         wsview.unbind(token)
 
 
-def test_verify3_dependency_attempts_leave_every_seed_known_and_the_readme_write_is_held(tmp_path):
+@pytest.mark.parametrize('lazy', [False, True], ids=['inventory-facts', 'asked-when-written'])
+def test_verify3_dependency_attempts_leave_every_seed_known_and_the_readme_write_is_held(tmp_path, lazy):
     """Captured live Ruby run (request 0012): write_stdin, then bundle add / bundle install / gem ... used to wipe every
     note, so the unread README write was admitted as state_unknown. The recorded notes stay, and the same captured
     write is answered with the file."""
     repo = Path(__file__).resolve().parents[2]
     fixtures = repo / 'tests/fixtures/unread_write'
     shutil.copytree(repo / 'suite/tasks/shipping-rates-rb/seed', tmp_path, dirs_exist_ok=True)
-    driver = inventory_session(tmp_path, 'sid:verify3')
+    driver = inventory_session(tmp_path, 'sid:verify3', facts=not lazy)
     history = json.loads((fixtures / 'ruby-verify3-0012.json').read_text())['body']['messages']
     response = json.loads((fixtures / 'ruby-verify3-0012-response.json').read_text())
     tc = next(c for c in response['choices'][0]['message']['tool_calls'] if c['function']['name'] == 'write_file'
@@ -335,12 +352,13 @@ def test_verify3_dependency_attempts_leave_every_seed_known_and_the_readme_write
     log = Log()
     token = wsview.bind(wsview.View(str(tmp_path), 'sid:verify3'))
     try:
-        check = driver.unread_target_check('sid:verify3', history, str(tmp_path), log)
+        check = driver.unread_target_check('sid:verify3', history, str(tmp_path), log, probes=lazy)
+        check = resolving(driver, 'sid:verify3', tmp_path, check) if lazy else check
         _, _, result = do('write_file', json.loads(tc['function']['arguments']), tmp_path,
                           cid=tc['id'], root=str(tmp_path), unread_target=check)
         assert denial.read_payload(result[1]) == seed and (tmp_path / 'README.md').read_text() == seed
         state = driver._store.get('sid:verify3').inventory_observations
-        assert all(state[p]['blank'] is False for p in ('README.md', 'lib/shipping/rates.rb', 'test/test_rates.rb'))
+        assert all(state[p]['blank'] is False for p in (('README.md',) if lazy else ('README.md', 'lib/shipping/rates.rb', 'test/test_rates.rb')))
         assert not log.states('blankness_unavailable')
         assert check('lib/shipping/rates.rb') == '' and check('test/test_rates.rb') == ''   # their reads are still visible
     finally:
@@ -743,3 +761,48 @@ def test_the_measure_triggers_at_exactly_half_the_lines_removed_and_never_on_sma
         _, _, msgs = shrink(ws, content, current=current, asked=asked)
         assert denial.landed(msgs[1]) and ("removed at least" in msgs[1]["content"]) is facts, content
     assert not asked
+
+
+# ---------------------------------------------------------------- the lazy question: the inventory knows names and sizes, the file is asked when a write names it
+
+@pytest.mark.parametrize('content,says', [('seed content', 'held'), (' \n\t', 'admitted'), (b'\xff\xfe\x00', 'admitted_state_unknown')])
+def test_an_unknown_file_is_asked_once_and_then_decided_on_what_it_said(tmp_path, content, says):
+    from cria import probeops
+    (tmp_path / 'target.txt').write_bytes(content if isinstance(content, bytes) else content.encode())
+    driver = inventory_session(tmp_path, 'sid:lazy', facts=False)
+    session = driver._store.get('sid:lazy')
+    assert session.inventory_observations['target.txt']['blank'] is None                      # the inventory read nothing
+    log = Log()
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:lazy'))
+    try:
+        check = driver.unread_target_check('sid:lazy', [], str(tmp_path), log, probes=True)
+        assert check('target.txt') == probeops.UnreadProbe('target.txt')                        # nothing known settles it: ask the file
+        loop._note_probe_facts(session, [probe_of_disk(tmp_path, 'target.txt')])                # the real probe, the real stubs
+        fact = check('target.txt')
+        assert (bool(fact) and not isinstance(fact, probeops.UnreadProbe)) is (says == 'held')  # a file that has something in it is held (answered with the file)
+        assert not isinstance(fact, probeops.UnreadProbe) and bool(log.states('probe_not_text')) is (says == 'admitted_state_unknown')
+        assert check('target.txt') == fact                                                      # a file asked is not asked again
+    finally:
+        wsview.unbind(token)
+
+
+def test_the_probe_is_asked_only_where_nothing_else_settles_the_write(tmp_path):
+    from cria import probeops
+    for name in ('shown.txt', 'never.txt', 'blank.txt'):
+        (tmp_path / name).write_text('seed' if name != 'blank.txt' else ' \n')
+    driver = inventory_session(tmp_path, 'sid:lazy', facts=False)
+    session = driver._store.get('sid:lazy')
+    log = Log()
+    shown = do('read_file', {'path': 'shown.txt'}, tmp_path, cid='r1', injected=('read_file',))[2]                # the coder was shown this one: credit first
+    token = wsview.bind(wsview.View(str(tmp_path), 'sid:lazy'))
+    try:
+        check = driver.unread_target_check('sid:lazy', shown, str(tmp_path), log, probes=True)
+        assert check('shown.txt') == ''                                                         # credit: not asked
+        assert isinstance(check('never.txt'), probeops.UnreadProbe) and isinstance(check('blank.txt'), probeops.UnreadProbe)
+        assert check('unlisted.txt') == '' and log.states('blankness_unavailable')              # a path the inventory does not list: unknown, admitted, and said
+        plain = driver.unread_target_check('sid:lazy', [], str(tmp_path), log)                  # without an engine to ask (the default): as the rule always was
+        assert plain('never.txt') == ''
+        loop._note_probe_facts(session, [{'rel': 'never.txt', 'path': 'never.txt', 'at': 1.0, 'blank': None, 'digest': None, 'size': None, 'unavailable': 'no_answer'}])
+        assert check('never.txt') == '' and log.states('probe_no_answer')                       # nothing could be learned: admitted, and the event names the fact
+    finally:
+        wsview.unbind(token)

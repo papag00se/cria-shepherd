@@ -141,7 +141,7 @@ def test_bootstrap_adopts_inventory_before_the_coder_turn(tmp_path):
     observed = []
 
     def coder(body, log):
-        observed.append(wsview.current().blank_state('seed'))
+        observed.append(wsview.current().blank_state('seed'))      # the inventory reads no file: what a file is, is asked when a write names it
         return json.dumps({'choices': [{'finish_reason': 'tool_calls', 'message': {
             'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'r', 'type': 'function',
             'function': {'name': 'read_file', 'arguments': '{"path":"seed"}'}}]}}]}).encode()
@@ -154,12 +154,11 @@ def test_bootstrap_adopts_inventory_before_the_coder_turn(tmp_path):
     try:
         log = Log()
         drive_with_ops(driver, request, request['messages'], 'sid:inventory', Classification('task', 'coding', 'test'), log, cwd=tmp_path)
-        assert observed == [False]
+        assert observed == [None]
         session = driver._store.get('sid:inventory')
         facts = session.inventory_observations
-        assert {p: f['blank'] for p, f in facts.items()} == {'seed': False, 'blank': True, 'binary': None}
+        assert {p: (f['blank'], f['digest'], f['size']) for p, f in facts.items()} == {'seed': (None, None, 8), 'blank': (None, None, 2), 'binary': (None, None, 1)}
         assert all(f['origin'] == 'initial_inventory' and f['observed_at'] > 0 for f in facts.values())
-        assert facts['seed']['digest'] == hashlib.sha256(b'nonblank').hexdigest()
         assert session.inventory_root == str(tmp_path)
         restored = loop._session_from_dict(loop._session_to_dict(session))
         assert restored.inventory_observations == facts and restored.inventory_root == str(tmp_path)
@@ -182,7 +181,7 @@ def test_the_indexer_ignores_workspace_configuration_and_cannot_be_given_a_name_
     files = {item['path']: item['symbols'] for item in data['files']}
     assert files['fine name.py'][0]['name'] == 'fine'
     assert files['odd name\n.py'] is None                       # `ctags -L` takes one name per line: a name with a line break is not given
-    assert files['binary.py'] is None and files['invalid.py'] is None and 'link.py' in data['symlinks'] and 'link.py' not in files
+    assert 'link.py' in data['symlinks'] and 'link.py' not in files
     assert not (tmp_path / 'config-executed').exists()
 
 
@@ -248,7 +247,7 @@ def test_nothing_in_the_workspace_runs_during_the_inventory(tmp_path):
     assert not (ws / 'check-ran').exists() and 'ast.py' in {i['path'] for i in data['files']} and not data['errors']
 
 
-def test_a_large_tree_is_walked_in_pages_and_the_facts_are_bounded_not_guessed(tmp_path):
+def test_a_large_tree_is_walked_in_pages_and_no_file_is_read(tmp_path):
     for i in range(2500):
         d = tmp_path / f'd{i % 25:02}'
         d.mkdir(exist_ok=True)
@@ -258,15 +257,13 @@ def test_a_large_tree_is_walked_in_pages_and_the_facts_are_bounded_not_guessed(t
         (tmp_path / 'crowd' / f'c{i:05}.dat').write_text('x')
     (tmp_path / 'test_would_execute.py').write_text("open('check-ran', 'w').write('bad')\n")
     rounds, ran = [], []
-    data = inventory_of_disk(tmp_path, rounds=rounds, ran=ran)
+    data = inventory_of_disk(tmp_path, rounds=rounds, ran=ran, facts=False)
     names = [item['path'] for item in data['files']]
     assert len(names) == 4001 and names == sorted(names) and not data['errors']
     assert len(set(names)) == 4001
-    known = [item for item in data['files'] if item['blank'] is not None]
-    assert len(known) == inventoryops.FACT_FILES_MAX and [i['path'] for i in known] == names[:inventoryops.FACT_FILES_MAX]     # path order; the rest is unknown
-    assert all(item['blank'] is False and len(item['digest']) == 64 for item in known)
+    assert all(item['blank'] is None and 'digest' not in item for item in data['files'])         # never guessed, and asked when a write names the file
     assert not (tmp_path / 'check-ran').exists()
-    assert max(rounds) <= 16 and len(ran) < 1100          # calls of the harness: the walk, 400 reads, the indexer chunks; never one per file
+    assert max(rounds) <= 16 and len(ran) < 250                                                  # calls of the harness: the walk, the indexer chunks; never one per file
 
 
 def test_selection_asks_each_file_and_keeps_unknown_distinct():
@@ -325,16 +322,16 @@ def test_an_inventory_answered_by_a_restarted_cria_is_the_same_inventory_and_a_c
         (tmp_path / f'f{i:02}.txt').write_text(f'text {i}\n')
     (tmp_path / 'sub').mkdir()
     (tmp_path / 'sub' / 'deep.txt').write_text(' ')
-    steady = inventory_of_disk(tmp_path)
-    restarted = inventory_of_disk(tmp_path, restart=True)
+    steady = inventory_of_disk(tmp_path, facts=False)
+    restarted = inventory_of_disk(tmp_path, restart=True, facts=False)
     steady_view = {i['path']: (i['size'], i['blank'], i.get('digest')) for i in steady['files']}
     assert steady_view == {i['path']: (i['size'], i['blank'], i.get('digest')) for i in restarted['files']} and len(steady_view) == 61
     cut = {'n': 0}
 
     def alter(command, text):
-        if 'workspace inventory f07.txt' in command and cut['n'] < 2:
+        if command.startswith('# workspace inventory .\n') and cut['n'] < 2:
             cut['n'] += 1
             return text[:len(text) // 2]
         return text
-    again = inventory_of_disk(tmp_path, alter=alter)
+    again = inventory_of_disk(tmp_path, alter=alter, facts=False)
     assert cut['n'] == 2 and {i['path']: (i['size'], i['blank'], i.get('digest')) for i in again['files']} == steady_view

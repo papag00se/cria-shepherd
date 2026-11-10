@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from . import denial, harnessprims, prompts
 from .ledger import LedgerError
-from .opsteps import Final, Issue, reason as _reason
+from .opsteps import Final, reason as _reason
 from .toolwire import _shell_call
 
 ANSWER = 'answer'

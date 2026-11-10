@@ -57,11 +57,28 @@ def survey_of_disk(root, bodies=(), progs=(), outside=(), session="sv", env=None
                   lambda ops: ops.survey_of(next(o for o in ops.ledger.ops(session).values() if o.kind == "survey")))
 
 
-def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, session="inv", rounds=None, cwd=None):
+def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, session="inv", rounds=None, cwd=None, facts=True):
     """The real initial inventory of the real directory ``root``: the operation is issued and every primitive call it asks for is run with
-    bash where the files are, until it is done. Returns the listing dictionary the loop reads (None when there is none)."""
-    return _drive(lambda ops: ops.issue_inventory(session, SHELL, str(root))[1], cwd or root, session, env, ran, alter, restart, rounds,
+    bash where the files are, until it is done. Returns the listing dictionary the loop reads (None when there is none).
+
+    The inventory is names, sizes and symbols (it reads no file). ``facts`` also asks each file what it is, the way the unread-write rule does when a write names
+    it (`probe_of_disk`), and puts the answer in the item: the listing the loop had when the inventory carried those facts, for the tests of the rule that
+    stand on them. ``facts=False`` is the inventory as it is."""
+    data = _drive(lambda ops: ops.issue_inventory(session, SHELL, str(root))[1], cwd or root, session, env, ran, alter, restart, rounds,
                   lambda ops: next(ops.inventory_of(session, o.op) for o in ops.ledger.ops(session).values() if o.kind == "inventory"))
+    if facts and data:
+        for item in data["files"]:
+            learned = probe_of_disk(root, item["path"], cwd=cwd)
+            item["blank"] = learned["blank"]
+            if learned["blank"] is not None:
+                item["digest"] = learned["digest"]
+    return data
+
+
+def probe_of_disk(root, rel, session="pr", env=None, ran=None, alter=None, restart=False, rounds=None, cwd=None):
+    """What the file ``rel`` says when the unread-write rule asks it, through the real engine and the real stubs: the facts the probe learned."""
+    return _drive(lambda ops: [ops.issue_probe(session, SHELL, rel, [], workspace_root=str(root), level="write")], cwd or root, session, env, ran, alter,
+                  restart, rounds, lambda ops: next(o.final["facts"] for o in ops.ledger.ops(session).values() if o.kind == "probe"))
 
 
 def _drive(issue, root, session, env, ran, alter, restart, rounds, result):
