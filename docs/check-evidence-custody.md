@@ -81,101 +81,40 @@ Live coverage is `tests/write_edit/test_write_edit_recovery.py` and `test_write_
 ### Overwrite evidence: which writes have an attributable completion
 
 The earlier overwrite candidates were rejected for lacking "trustworthy invocation-correlated executor completion". For every call cria
-LOWERS (write, edit, read, fetch) that fact already exists: the program cria composed prints, at stdout offset 0 and after the mutation,
-a typed record bound to the call's receipt: `landed` (this invocation completed and changed the file), `unapplied` / `refused` (it did
-not run), `uncertain` (it may have changed it). It is producer-issued and position-declared, exactly like the multipart bridge's
-call-bound records. The consumers (`denial.landed_call_ids`, `focustrim._terminal_positions`, the read/write ledger, completion
-measurement, check supersession) already read only those records. `tests/write_edit/test_write_edit_over_completion_marks.py` and `test_write_edit_held_writes.py` run the real programs (the original is archived as `tests-before-reset-20261031:tests/test_overwrite_evidence_attribution.py`).
+CARRIES OUT through the harness primitives (write, edit, read, list; Phases 3-5 of the migration) that fact is a field of cria's own operation
+ledger: `landed` (the harness confirmed the write, or the file's hash is the result's), `unapplied` / `refused` (it did not run), `uncertain` (it
+may have changed the file), set only for a call id cria derived from its key and a result frame carrying that call's nonce
+([`harness-primitives.md`](harness-primitives.md) section 6). For the calls cria still lowers to a program (fetch, search, grep/glob and their
+refusals; Phase 6 removes the rest) the typed record at stdout offset 0 still carries it. The consumers (`denial.landed_call_ids`,
+`focustrim._terminal_positions`, the read/write ledger, completion measurement, check supersession) read only those typed outcomes.
+`tests/write_edit/test_write_edit_lost_replies.py` and `test_write_edit_held_writes.py` run the real stubs.
 
 (a) Already handled. A reply that never arrived, arrived cut, or says "still running" proves no write and orders nothing; a check whose
 evidence predates a pending, late-settling or overlapping write is withdrawn (`tests/gates_completion/test_gates_completion_staleness.py`, and the lost-reply case in `test_gates_completion_over_lost_reply_write.py`);
 only a newer run of the same check clears it; a write that returns the file to earlier bytes is an ordinary landed write — nothing holds
 or blocks a revert, and the ledger follows it; a native shell command leaves the path's state unestablished.
 
-(b) Fixed, because completion is attributable. Calls of one turn that share a file run concurrently, and only edit-after-edit was queued
-(each program leaves an authenticated done-mark at exit and its successors wait for it). A whole-file write was not: `write f=A; write f=B`
-could leave A on disk while the ledger and every later fact said B; `write f; edit f` edited the OLD file and was told it did not match.
-Whole writes now join the same per-file queue (`writeproxy._edit_sequence`, `_queued`); a shrink-protection hold releases its slot. A
-call whose predecessor never finished inside the bound still runs (never held forever) and its record declares `late`; the loop treats a
-`late` landed write or edit as a touch of an unestablished state (`loop._late_landed_ids`) and completion measurement does not use a
-`late` write's own bytes as the file's — its position in the history orders nothing, because the predecessor may land after it.
+(b) Superseded by the operation ledger (Phase 5 of the harness-program migration, [`harness-programs.md`](harness-programs.md) section 7). The queue
+of per-file done-marks, the executor-side completion marks and their `/proc` liveness probe are deleted with the programs that wrote them. What
+replaced them is structural, not a mark on the harness:
 
-(c) Executor-side completion marks (`cria/completionmarks.py`) make three of the four cases a KNOWN state; the fourth stays unestablished.
-Every lowered write and edit program, under a session, leaves ONE authenticated mark for its own invocation as its last act (an `atexit`
-handler, so every exit and every refusal): `landed` with the sha256 of the bytes it put on the file, `did_not_run`, or `uncertain`. It
-lives in a private owned directory (`.ctx-done-<session credential>` under the harness `TMPDIR`, certified by `ownedfiles.DIRECTORY_PROGRAM`
-like the batch markers). A mark authenticates only as a regular, single-link, mode-0600 file of this user in the certified directory
-whose content names the session credential, the call's receipt and THIS composition's nonce (a fresh one per composition, so an earlier
-attempt's mark is stale). The credential, receipt and nonce are correlation tokens, not a security boundary. The next lowered write/edit
-program reads back the marks of every call whose outcome cria has not learned; its own record carries them as the typed report `pm`
-(receipt -> `[state, sha256]`), `denial.witnessed_completions` derives the known state statelessly from the re-presented history, and
-`denial.unlanded_call_ids` (a witnessed `did_not_run` is a proven unlanded call) and `loop._note_write_results` (a witnessed finished
-write is no longer pending) consume it. A call's own terminal record always outranks a witness; a witness must name a call that appears
-once and before it; two witnesses that disagree witness nothing. Positive landing claims (`denial.landed_call_ids`, supersession, the
-ledger's bytes) still require the call's own reply: a witnessed `landed` says the program FINISHED and what it left, not where it sits in
-the history, so nothing is ordered by a witness's position.
-  (2) A lowered writer whose reply has not arrived: its mark, once a later program has read it, makes it `landed` / `did_not_run` /
-  `uncertain` (finished). With no final mark the reader tells a live writer from a dead one WITHOUT any signal: at its start the program
-  leaves a second authenticated file (`s-<receipt>-<nonce>`, same directory, same checks as a mark) recording its own pid, its process
-  start time from `/proc/<pid>/stat` (field 22, clock ticks since boot), the boot id and its pid namespace. The reader (`_cm_liveness`)
-  reports `running` (the pid still has the recorded start time and is not a zombie), `dead` (no such process, a zombie, or a pid whose
-  start time differs: a RECYCLED pid is never believed to be the writer) or `incomplete` (no authentic start record, a record from another
-  boot or pid namespace, `pid <= 1`, or a `/proc` that does not answer for the reader's own process: nothing can be said, and no
-  guess is made). The mark is looked at again after a `dead` verdict, so a writer that finished between the two looks is its mark, not dead.
-  **`dead` is a witnessed end WITHOUT a final mark, and it is NOT proof the file is untouched**: a program killed after it replaced the file
-  and before its exit handler ran leaves the new bytes and no mark. So `dead` is never `did_not_run`, never a claimed landing, never a
-  learned outcome (the call stays outstanding and the gate keeps holding on it; the doctrine that the gate never approves on an
-  unestablished write is unchanged and the hold stays bounded by `MAX_COMPLETION_CHECKS`). What `dead` buys: the gate's notice
-  (`prompts/gate_unsettled_writes.txt`, key `dead`) tells the coder at the FIRST gate that the process that ran the write is gone and the
-  file may hold none, part or all of what was sent (a `running` writer and an unknown one get their own sentences), and a LATER-turn write
-  of the same file stops waiting `EDIT_SEQ_WAIT_SECONDS` for a mark that can never come and does not run `late` (nothing can land after
-  it). A start record is a correlation token like the mark, not a security boundary: a forger that knows the receipt and nonce could name a
-  dead pid and turn a slow writer into a `dead` report, which costs a hold and a rewrite (a landed rewrite supersedes it), never an approval.
-  Before any later program has run there is no witness: still unknown.
-  (3) A writer from an EARLIER turn still running when a later turn writes the same file: the later program waits (bounded by
-  `EDIT_SEQ_WAIT_SECONDS`, outside the directory lock, never forever) for the earlier writer's mark, and if the bound passes it runs and its
-  record declares `late`, which the loop already reads as an unestablished touch. The set of earlier writers is cria's in-memory registry of
-  composed-but-unresolved calls, REBUILT from every re-presented history (`writeproxy._adopt_marks` -> `completionmarks.adopt`: the stored
-  sentinel of each lowered write/edit declares its receipt, its mark's nonce `cm` and its target, so a restart does not forget a write whose
-  reply is still outstanding). A gate's reading is held in `GuardState.gate_marks` for the life of the process only (no
-  coder-visible result carries it, `probegate.clean_gate_results`), so the gate does NOT release the mark file it read: the call stays
-  outstanding until a record the history keeps (a later write's or read's `pm`, or the call's own reply) settles it, and a restart in
-  between finds the file and the call adopted as unresolved, so the next carrier reads it again (before this, a gate-witnessed
-  landed write released by a later program and followed by a restart read `incomplete` for good). What a restart still loses: a call
-  that never reached a history. Calls beyond the newest 64
-  that a history names are no longer stranded: `adopt` queues their marks for release (a restart used to leave them in the private
-  directory until the TMPDIR was cleared), and the queue drains through the authenticated reader, `MAX_RELEASE` (64) per program or gate,
-  bounded in memory by `MAX_PENDING_RELEASE` (1024); a backlog larger than that, a session whose history is never presented again, and the
-  start records and marks of a still-outstanding call stay until `python -m cria.retention --kind transient` (the certified-shape sweep)
-  or a TMPDIR clear removes the directory.
-  (4) The other carriers. The query is not only the next write's: the completion gate's worker (`gatecleanup`, request key `marks`) reads
-  every unresolved call's mark before the checks start and after they end, and declares `{receipt: [state, sha256, final_before]}` in the
-  completed transport's metadata (`probegate._declared_marks`; checker output can supply nothing). `probegate.unsettled_writes` leaves
-  a write open when it has no mark or its mark appeared only after the checks began (the checks may have read the old tree); a witnessed
-  `did_not_run` is proof it did not land; a mark final before the checks started leaves a verified tree. An open write makes the gate partial
-  (never recorded as a clean reading) and holds completion with `prompts/gate_unsettled_writes.txt`, bounded by `MAX_COMPLETION_CHECKS` like
-  an unknown reading. A lowered `read_file` / `list_dir` composed while something is outstanding carries ONE extra survey-kind record
-  (`wsview.marks_ride`: no body, typed `pm`) in the slot the sentinel's `sv` declares; with nothing outstanding the call is unchanged.
-  Release: the gate removes, through the authenticated reader, the marks AND start records cria has learned from a record the history
-  keeps (not what only its own reading learned: see (3)), and retires its own empty certified directory through the owned retirement - only when nothing is outstanding and nothing but the certificate is in it.
-  **Accepted limit (assessed 2026-11-01): a `web_fetch`, a search, a native command and an MCP/other-tool next action carry no query.**
-  Native shell commands and harness/MCP tools are the harness's: cria composes no program for them and wraps none. The lowered fetch
-  and search ARE cria's, but the only carrier that exists (`_survey_after_first_record`) holds a command's output in a shell variable and
-  prints it back, which is lossy for a page the coder reads (measured: a page ending in two blank lines comes back without them, and a NUL
-  would go); the record is up to 3,162 bytes (32 outstanding writes) on a result already budgeted to 9,000 of the harness's 10,000, so a
-  near-budget page would be cut by the harness to pay for the instrumentation; and the first line of a fetch is not always a record (a
-  failed spill prints only the shell's own error and exits 1, measured), nor is it known at composition which command the externalization
-  owner finally delivers (inline, spill, cached). A spliced, budgeted ride on the inline branch alone is possible but would buy nothing:
-  every outstanding write is read at the latest by the next write, read, listing or the gate, no consumer acts earlier, and the
-  measured carrier effect on the end state is nil (open-threads item 18 (d)). `tests/write_edit/test_write_edit_marks4_dead_writer.py`
-  pins that a lowered fetch, a native command and an unowned tool are byte-for-byte unchanged, and the fetched page exact, with a write
-  outstanding. The per-turn queue of a SAME-turn batch (`editsequence`) still waits its bound for a predecessor that died without its
-  done-mark (the marks above order only EARLIER turns); a same-turn dead predecessor runs `late`.
-  (1) A NATIVE shell writer (`> f`, `mv`, `sed -i`, a build) is still unattributable: cria composed no program, so no mark exists, and a
-  finished writer and a still-running one print the same text. It stays `unestablished`; no wrapper is added to native commands. **No harness-side signal exists to track it (measured 2026-11-01, pinned Codex 0.159.3, a sandboxed cell against a header-logging stub Responses server and a git workspace: request 1 ran `echo hello > newfile.txt`, request 2 `git status` showing `?? newfile.txt`).** The only workspace-state signal on the wire is the `x-codex-turn-metadata` header (also copied into `client_metadata`): `workspaces.<root>.{latest_git_commit_hash, has_changes}`. It is a per-TURN value, byte-identical on all three requests of the turn (`turn_started_at_unix_ms` fixed, `has_changes:false` on the request after the write although git then listed the new file), a single boolean for the whole git root (no path, no writer, no completion), absent for a non-git workspace, and a headless `codex exec` cell is one turn. The tool result of a native `exec_command` is only `Chunk ID / Wall time / Process exited with code N / Original token count / Output`; nothing says what it wrote. Codex's own file-change and diff events (`PatchApply*`, `turn_diff`, `ExecCommandEnd`) go to its event stream and rollout, never to the model provider. So the limit stands: a native writer is learned only from its command text (`shelltool.writes_something`, a touch of every path) and from cria's own later read-only probes (the workspace view, the gate survey).
-  Still indistinguishable: a program that never started from one whose start record could not be left (an unwritable marks directory, no
-  `/proc`, or a harness that runs the reader and the writer in different pid namespaces or boots: the state is `incomplete`, never
-  `dead`). A live writer is `running` and is never waited on forever: the later write still runs `late` after its bound. Only the marks
-  and start records of calls whose outcome is known are removed (by the next program or gate, through the authenticated reader); the
-  directory is never garbage-collected by prefix, so what cria learns only at the last gate remains, bounded (`MAX_OUTSTANDING`), in a
-  0700 directory of the harness's own TMPDIR until it is cleared.
+* cria never has two writes of one file in flight. The calls of one turn that share a file are ONE operation (`cria/writeops.py`): cria applies
+  them in the model's order to the bytes it read, answers each call truthfully on its own, and lands the combined result with one `write`.
+  `write f=A; write f=B` leaves B; `write f; edit f` edits the written text; the order is the model's, whatever the harness schedules. There is no
+  `late` result and no batch queue.
+* The write is compare-and-swap on the hash of the bytes cria read (`EX`). A change by anything else in between (a shell command, an editor,
+  another session) is `stale`: the file is read again and the calls are applied again; no update is lost.
+* A reply that never arrived, arrived cut or garbled, or says "still running" proves nothing and orders nothing; the FILE is asked what it
+  holds (an identity `read`) and the hashes are compared: the hash of the result means the write landed, anything else means it did not and the
+  identical write is sent again (it is idempotent: a landed write answers `stale` with the result's own hash). A write the file never confirms is
+  answered `uncertain` ("the file may have changed"), is never claimed landed and never called unchanged
+  (`tests/write_edit/test_write_edit_lost_replies.py`).
+* The gate asks the LEDGER (`Ledger.unresolved_writes`) for the mutations that ended `uncertain` and no later write to the same path settled;
+  `probegate.unsettled_writes` holds completion on them with `prompts/gate_unsettled_writes.txt` (bounded by `MAX_COMPLETION_CHECKS`, like an unknown
+  reading). A lost reply that the file can settle never reaches the gate: the operation is resolved before the model or the gate is consulted.
+* A NATIVE shell writer (`> f`, `mv`, `sed -i`, a build) is still unattributable (cria composed no program): it stays `unestablished`; no wrapper is
+  added to native commands. The first write after it is protected by the hash compare.
+
+What is no longer true of the text below the old (b)/(c): there is no `pm` report, no `.ctx-done-*` or `.ctx-edits-*` directory (the retention
+sweep still lists what earlier releases left), no `gate_marks`, no `witnessed_*`, no `cm` in a sentinel. Historical measurements of the
+marks carrier (open-threads item 18) stand as history.

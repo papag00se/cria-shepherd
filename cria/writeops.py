@@ -79,6 +79,12 @@ def survey_token(op: str) -> str:
     return callauth.group(op)[:16]
 
 
+def _shown(label: str) -> str:
+    """A display comment: one line of printable characters, at most as long as the primitives' own (harnessprims.compose)."""
+    line = label.splitlines()[0] if label.strip() else ''
+    return ''.join(c for c in line if c.isprintable())[:harnessprims._COMMENT_MAX]
+
+
 def _bytes(blobs: dict, h: str) -> bytes:
     return blobs[h].encode('utf-8', 'surrogateescape')
 
@@ -104,7 +110,7 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
     """The harness command of step ``s``: a pure function of what the ledger recorded (a retried request composes the same bytes)."""
     nonce = callauth.nonce(op, s)
     if what == 'noop':
-        return f"# {ctx['labels'][s]}\ntrue"
+        return f"# {_shown(ctx['labels'][s])}\ntrue"
     if what == 'mwrite':
         staged = bool(args.get('staged'))
         sp = '-' if args['sp'] is None else json.dumps(args['sp'], separators=(',', ':'))
@@ -203,7 +209,7 @@ class WriteOps:
     def _simulate(self, op, calls, base, verdicts, sha) -> 'mutplan.Sim':
         ctx = op.ctx
         review = _terms(ctx['review'])
-        shrink = ctx['shrink'] if ctx['shrink'] and ctx['shrink']['i'] == 0 and not ctx.get('plain') else None
+        shrink = ctx['shrink'] if ctx['shrink'] and ctx['shrink']['i'] == 0 else None
         return mutplan.simulate(calls, base, verdicts, echo=ctx['echo'], review=review, shrink=shrink, base_sha=sha, log=self._rlog,
                                 check_budget=self.command_budget - CHECK_RESERVE)
 

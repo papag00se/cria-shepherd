@@ -504,7 +504,7 @@ class Ops(ReadOps, WriteOps):
         if op.kind == writeops.MUTATE:
             r = final['results'][i]
             outcomes[original['id']] = r['o']
-            survey = next((st.frame.get('sv', '') for st in op.steps.values() if st.s == 0 and st.frame), '') if i == 0 else ''
+            survey = next((st.frame['sv'] for st in op.steps.values() if st.frame and st.frame.get('sv')), '') if i == 0 else ''     # rode home with the landing write
             writes[original['id']] = LedgerWrite(original['name'], original['arguments'], r['o'], r.get('text', ''),
                                                  {'ef': r['ef']} if r.get('ef') else {}, survey)
             return {'role': 'tool', 'tool_call_id': original['id'], 'content': r.get('text', '')}

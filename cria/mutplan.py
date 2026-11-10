@@ -11,7 +11,6 @@ asks and calls it again, from the start, with the answers. Missing answers are a
 check a group will need is asked in ONE reply; only a verdict that comes back as a fault re-plans the calls after it.
 """
 import hashlib
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath

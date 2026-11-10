@@ -27,9 +27,10 @@ through `ImageSession.confirm_close` / `cleanup_descriptor` / `ImageStore.releas
 or `retry_closed` (closed-seal marker outside the payload directory, removed last).
 
 `--kind transient` (also never part of `all`, same temp directory) lists and prunes the credentialed scratch directories the
-lowered write/edit/gate programs leave under the harness temp directory when they were killed or never finished: completion
-marks (`.ctx-done-<credential>`, earlier `.cria-done-`), edit-sequence markers (`.ctx-edits-`, earlier `.cria-edits-`) and gate
-scratch (`.ctx-private-<token>`, earlier `.gate-private-`). Never a prefix sweep: a directory is listed as removable only if it is
+lowered gate program (and, before the write/edit migration, the write/edit programs) leave under the harness temp directory when they
+were killed or never finished: gate scratch (`.ctx-private-<token>`, earlier `.gate-private-`) and what the earlier releases' write/edit
+programs left, which nothing creates now - completion marks (`.ctx-done-<credential>`, earlier `.cria-done-`) and edit-sequence markers
+(`.ctx-edits-`, earlier `.cria-edits-`). Never a prefix sweep: a directory is listed as removable only if it is
 owned by this user, mode 0700, holds a regular `.owner` certificate whose JSON names exactly this directory's prefix, credential and
 inode, and nothing but regular files (the gate's `aux/` may also hold regular files and plain subdirectories). Anything else with the
 prefix is listed refused and never touched. The age is the operator's judgment.

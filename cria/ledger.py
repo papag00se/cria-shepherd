@@ -28,6 +28,7 @@ import threading
 from dataclasses import dataclass, field
 
 from . import privatepaths
+from .toolargs import parse_args, tool_path
 
 
 class LedgerError(RuntimeError):
@@ -172,12 +173,7 @@ class Ledger:
             if op.kind != 'mutate' or op.final is None:
                 continue
             for call, result in zip(op.calls, op.final.get('results') or ()):
-                import json as _json
-                try:
-                    args = _json.loads(call['arguments']) if isinstance(call['arguments'], str) else call['arguments']
-                    path = str(args.get('path') or args.get('file_path') or args.get('filename') or '')
-                except (ValueError, AttributeError, TypeError):
-                    continue
+                path = tool_path(parse_args(call['arguments'])) or ''
                 key = os.path.normpath(os.path.join(op.ctx.get('wsroot') or '', path))
                 if result.get('o') == 'uncertain':
                     open_[key] = (op.op, path)
