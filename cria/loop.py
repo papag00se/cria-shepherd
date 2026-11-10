@@ -3409,17 +3409,23 @@ class Loop:
             sess = self._store.get(sess_key)
             if sess is None or not path:
                 return ""
+            def admitted(state):
+                # This is an admission decision, not evidence that the mutation actually ran.
+                if rlog is not None:
+                    rlog.emit('loop.unread_dispatch_nonatomic', target=path, state=state,
+                              turn_index=sess.coder_timed_turns)
+                return ""
             view = wsview.current(root)
             blank = view.blank_state(path)
             if blank is True:
-                return ""
+                return admitted('blank')
             if blank is None:
                 if view.observation_fingerprint is not None and view.isfile(path) is False:
-                    return ""
+                    return admitted('missing')
                 if rlog is not None:
                     rlog.emit('loop.unread_target_state', target=path, state='state_unknown',
                               turn_index=sess.coder_timed_turns)
-                return ""
+                return admitted('unknown')
             rel = view.rel(path)
             _track_content_fingerprints(sess, messages, view)
             seen = _coder_has_seen_current(view, rel, sess, messages) if rel else False
@@ -3437,7 +3443,8 @@ class Loop:
                     seen = hashlib.sha1(current[0]).hexdigest() in restored
                 elif _content_digest(current[0]) != fingerprint:
                     seen = False
-            return unread_target_fact(sess, view, path, messages, seen=seen)
+            fact = unread_target_fact(sess, view, path, messages, seen=seen)
+            return fact if fact else admitted('seen' if seen else 'unresolved')
         return check
 
     def shrinking_write_services(self, sess_key: str, messages: list[dict], root, rlog):

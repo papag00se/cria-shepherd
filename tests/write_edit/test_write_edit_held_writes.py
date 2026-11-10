@@ -319,6 +319,46 @@ def test_wire_confirmed_restoration_overrides_older_read_fingerprint(tmp_path, r
         wsview.unbind(token)
 
 
+@pytest.mark.parametrize('tool', ['write_file', 'create_file'])
+def test_dispatch_acceptance_reports_nonatomic_race(tmp_path, tool):
+    from cria import writeproxy
+    from write_edit_helpers import ENVELOPE, lower, run
+    target = tmp_path / 'x.txt'
+    target.write_text('old\n')
+    first = lower([call('read_file', {'path': 'x.txt'}, 'r')], injected=('read_file',), root=str(tmp_path))[0]
+    done = run(first, tmp_path)
+    result = lambda tc, proc: {'role': 'tool', 'tool_call_id': tc['id'],
+                               'content': ENVELOPE.format(rc=proc.returncode) + proc.stdout}
+    view = wsview.View(str(tmp_path), 'sid:race')
+    token = wsview.bind(view)
+    try:
+        history = writeproxy.represent_inbound([{'role': 'assistant', 'tool_calls': [first]}, result(first, done)],
+                                               workspace_root=str(tmp_path))
+        wsview.unbind(token)
+        view = wsview.View(str(tmp_path), 'sid:race-fresh')
+        token = wsview.bind(view)
+        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
+                                         capture_output=True, text=True, check=True).stdout)
+        assert view.apply_initial_inventory(data, str(tmp_path))
+        view.note_read('x.txt', 'old\n')
+        events = []
+        log = SimpleNamespace(emit=lambda name, **fields: events.append((name, fields)))
+        driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                           runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
+        driver._put_session('sid:race', loop._plan_off_session(loop._synthetic_plan('task'), ''))
+        check = driver.unread_target_check('sid:race', history, str(tmp_path), log)
+        lowered = lower([call(tool, {'path': 'x.txt', 'content': 'candidate\n'}, 'w')],
+                        injected=(tool,), root=str(tmp_path), unread_target=check)[0]
+        assert any(name == 'loop.unread_dispatch_nonatomic' and fields['target'] == 'x.txt'
+                   for name, fields in events)
+        target.write_text('new\n')  # independent writer after dispatch, before execution
+        done = run(lowered, tmp_path)
+        assert done.returncode == 0
+        assert target.read_text() == 'candidate\n'  # documented exposure, not a safety guarantee
+    finally:
+        wsview.unbind(token)
+
+
 def test_fingerprint_check_does_not_follow_inventory_skipped_symlink(tmp_path):
     target = tmp_path / 'target.txt'
     target.write_text('current\n')
