@@ -52,12 +52,25 @@ def survey_of_disk(root, bodies=(), progs=(), outside=(), session="sv", env=None
     where the files are, until it is done. Returns the `wsview.Survey`. ``ran`` collects each command run; ``alter(command, text)`` may
     change what the harness hands back for a command (a cut result, noise); ``restart`` is a fresh engine (a restarted cria) for every
     request; ``rounds`` collects the number of calls of each reply."""
+    wants = {"bodies": list(bodies), "progs": list(progs), "outside": list(outside)}
+    return _drive(lambda ops: ops.issue_survey(session, SHELL, str(root), wants), root, session, env, ran, alter, restart, rounds,
+                  lambda ops: ops.survey_of(next(o for o in ops.ledger.ops(session).values() if o.kind == "survey")))
+
+
+def inventory_of_disk(root, env=None, ran=None, alter=None, restart=False, session="inv", rounds=None, cwd=None):
+    """The real initial inventory of the real directory ``root``: the operation is issued and every primitive call it asks for is run with
+    bash where the files are, until it is done. Returns the listing dictionary the loop reads (None when there is none)."""
+    return _drive(lambda ops: ops.issue_inventory(session, SHELL, str(root))[1], cwd or root, session, env, ran, alter, restart, rounds,
+                  lambda ops: next(ops.inventory_of(session, o.op) for o in ops.ledger.ops(session).values() if o.kind == "inventory"))
+
+
+def _drive(issue, root, session, env, ran, alter, restart, rounds, result):
     home = tempfile.mkdtemp(prefix="survey-home-")
     saved = privatepaths.CRIA_HOME
     privatepaths.CRIA_HOME = type(saved)(home) / ".cria"
     try:
         ops = Ops()
-        calls = ops.issue_survey(session, SHELL, str(root), {"bodies": list(bodies), "progs": list(progs), "outside": list(outside)})
+        calls = issue(ops)
         messages = []
         while calls:
             if rounds is not None:
@@ -68,13 +81,12 @@ def survey_of_disk(root, bodies=(), progs=(), outside=(), session="sv", env=None
                 if ran is not None:
                     ran.append(command)
                 done = subprocess.run(["/bin/bash", "-c", command], cwd=str(root), env={**harness_env(root), **(env or {})},
-                                      capture_output=True, text=True, timeout=60)
+                                      capture_output=True, text=True, timeout=300)
                 text = done.stdout + done.stderr
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": alter(command, text) if alter else text})
             ops = Ops() if restart else ops
             calls = ops.incoming(session, messages).calls
-        op = next(o for o in ops.ledger.ops(session).values() if o.kind == "survey")
-        return ops.survey_of(op)
+        return result(ops)
     finally:
         privatepaths.CRIA_HOME = saved
 
@@ -85,3 +97,40 @@ def ask_survey(root, session):
     wsview.clear_pending(session, bodies, progs, outside)
     return survey_of_disk(root, bodies=bodies[:wsview.BLOB_FILES_MAX], progs=progs[:wsview.PROG_MAX],
                           outside=outside[:wsview.OUTSIDE_MAX], session=session)
+
+
+def command_text(call):
+    args = json.loads(call["function"]["arguments"])
+    command = args.get("command", args.get("cmd"))
+    return command[-1] if isinstance(command, list) else command
+
+
+def run_call(call, cwd):
+    return subprocess.run(["/bin/bash", "-c", command_text(call)], cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+
+def drive_with_ops(driver, request, history, key, classification, rlog, *, cwd=None, harness=None, before_drive=None, **drive):
+    """What the server does for one request: cria's own operations first (the engine verifies each answer and asks for the next step, and
+    projects what it finished out of the model's history), then the loop. The harness runs each call of cria's in ``cwd`` (``harness(call)``
+    may answer otherwise). Returns ``(the loop's answer, the harness's history)`` where every call of cria's own has been answered."""
+    ops = driver._ctx.issue_inventory.__self__
+    history = list(history)
+    cwd = cwd or driver._ctx.workspace_root
+    answer = harness or (lambda call: run_call(call, cwd))
+    while True:
+        taken = ops.incoming(key, history)
+        if taken.calls:
+            history.append({"role": "assistant", "content": None, "tool_calls": taken.calls})
+            history += [{"role": "tool", "tool_call_id": c["id"], "content": answer(c)} for c in taken.calls]
+            continue
+        if before_drive is not None:
+            before_drive()
+        result = driver.drive({**request, "messages": taken.messages}, key, classification, rlog, **drive)
+        message = result["choices"][0]["message"]
+        calls = message.get("tool_calls") or []
+        if calls and all(str(c.get("id")).startswith("ctx_") for c in calls):
+            history += [message] + [{"role": "tool", "tool_call_id": c["id"], "content": answer(c)} for c in calls]
+            continue
+        return result, history
+
+

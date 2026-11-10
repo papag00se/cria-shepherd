@@ -1058,6 +1058,8 @@ class CriaServer(ThreadingHTTPServer):
                     # watched the supervisor. Same mechanism, same owner, one more call path.
                     reasoner_chat=_ep("reasoner").chat_watched,
                     reasoner_buffered_chat=reasoner_buffered_chat,
+                    issue_inventory=lambda session, tool, root: self.ops.issue_inventory(session, tool, root),
+                    inventory_result=lambda session, op: self.ops.inventory_of(session, op),
                     coder_role=coder_role,
                     reasoner_role=roles.get("reasoner"),
                     compactor_role=self.compactor_role,
@@ -1749,24 +1751,12 @@ class CriaHandler(BaseHTTPRequestHandler):
         # `<<<LOCAL_COMPACT>>>` marker), so a compaction turn whose harness still sends a full tool
         # menu is not missed either.
         _c40_active = bool(body.get("tools")) and not _is_compaction_request(body.get("messages", []))
-        # The authenticated bootstrap runs a read-only inventory in the workspace;
-        # its private transport is not a coder mutation. Keep it for the loop to
-        # consume, but do not invalidate the new view while representing history.
-        private_readonly = set()
-        bootstrap = self.server.loop_store.get_bootstrap(sess_key)
-        if bootstrap is not None and bootstrap.initial_inventory:
-            from . import initial_inventory
-            before = body.get('messages') or []
-            after = initial_inventory.strip_calls(before, bootstrap.initial_calls)
-            ids = lambda items: {call.get('id') for message in items if message.get('role') == 'assistant'
-                                 for call in message.get('tool_calls') or () if isinstance(call, dict)}
-            private_readonly = ids(before) - ids(after)
         body["messages"] = redact_secrets(
             represent_inbound(body.get("messages", []), rlog,
                               workspace_root=getattr(self, "_workspace_root", None),
                               sess_key=sess_key, tools_present=_c40_active,
                               window=windowcaps.known_window(self.server._endpoint_for("coder"), rlog),
-                              ask=self._reasoner_question(rlog), private_readonly_calls=private_readonly,
+                              ask=self._reasoner_question(rlog),
                               ledger_outcomes=getattr(self, '_ops_outcomes', None),
                               ledger_reads=getattr(self, '_ops_reads', None),
                               ledger_writes=getattr(self, '_ops_writes', None),

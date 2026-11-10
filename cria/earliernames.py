@@ -1,4 +1,4 @@
-"""The private names an EARLIER release lowered with, and the one reader that needs them below `wsview`.
+"""The private names an EARLIER release lowered with.
 
 Assembled from parts so no source line, prompt or log of the present release spells the product's name. `privatenames` renames a replayed
 history with these. A leaf module."""

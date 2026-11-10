@@ -62,33 +62,39 @@ def acting():
     return completion(None, ("shell", {"command": ["sh", "-c", "true"]}))
 
 
+@pytest.fixture(autouse=True)
+def loop_main_private_home(tmp_path, monkeypatch):
+    """cria's key and operation ledger live under CRIA_HOME: every test gets its own, beside the workspace and never in it."""
+    from cria import privatepaths
+    home = tmp_path.parent / (tmp_path.name + ".home")
+    home.mkdir()
+    monkeypatch.setattr(privatepaths, "CRIA_HOME", home / ".cria")
+
+
 def plan_off_loop(coder, *, store=None, reasoner=None, **ctx):
-    """A Loop wired the way production wires plan-off (planner_enabled left at its default)."""
+    """A Loop wired the way production wires plan-off (planner_enabled left at its default), with cria's operation engine behind its
+    inventory (the server's `Ops`): `drive_with_ops` plays the server's part of answering the engine's own calls."""
+    from cria.ops import Ops
+    ops = Ops()
+    ctx.setdefault("issue_inventory", ops.issue_inventory)
+    ctx.setdefault("inventory_result", ops.inventory_of)
     return Loop(LoopContext(planner=None, coder_chat=coder, reasoner_chat=reasoner or coder,
                             reasoner_buffered_chat=reasoner or coder, runs_dir="", **ctx),
                 store or LoopStore())
 
 
+from survey_fixtures import command_text, drive_with_ops, run_call  # noqa: E402,F401  (the server's part, shared with the orientation shard)
+
+
 def drive_after_initial_inventory(loop, request, key, classification, rlog, *, pasted_delivery=None):
-    """Run the harness-owned inventory turns before an unrelated driver scenario."""
-    history = list(request['messages'])
-    while True:
-        deliveries = []
-        result = loop.drive({**request, 'messages': history}, key, classification, rlog,
-                            pasted_delivery=deliveries.append if pasted_delivery else None)
-        bootstrap = loop._store.get_bootstrap(key)
-        if bootstrap is None or not bootstrap.initial_inventory:
-            if pasted_delivery is not None:
-                for deliver in deliveries:
-                    pasted_delivery(deliver)
-            return result
-        message = result['choices'][0]['message']
-        call = message['tool_calls'][0]
-        args = json.loads(call['function']['arguments'])
-        command = args.get('command', args.get('cmd'))
-        command = command if isinstance(command, list) else ['sh', '-c', command]
-        run = subprocess.run(command, cwd=bootstrap.workspace_root, capture_output=True, text=True, check=True)
-        history += [message, {'role': 'tool', 'tool_call_id': call['id'], 'content': run.stdout}]
+    """Run cria's own inventory turns before an unrelated driver scenario."""
+    deliveries = []
+    result, _ = drive_with_ops(loop, request, request["messages"], key, classification, rlog, before_drive=deliveries.clear,
+                               pasted_delivery=deliveries.append if pasted_delivery else None)
+    if pasted_delivery is not None:
+        for deliver in deliveries:
+            pasted_delivery(deliver)
+    return result
 
 
 def synthetic(task="build it", pages=None):

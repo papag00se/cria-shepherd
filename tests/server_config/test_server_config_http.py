@@ -225,7 +225,7 @@ def test_responses_environment_reaches_coder_formatted_through_http(tmp_path):
             assert status == 200
             output = json.loads(raw)['output']
             calls = [item for item in output if item.get('type') == 'function_call']
-            if not calls or '___CTX_GATE_' not in json.loads(calls[0]['arguments']).get('cmd', ''):
+            if not calls or not str(calls[0].get('call_id')).startswith('ctx_'):
                 break
             call = calls[0]
             result = subprocess.run(['bash', '-c', json.loads(call['arguments'])['cmd']], cwd=root,

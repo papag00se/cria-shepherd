@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cria import denial, initial_inventory, loop, wsview
+from survey_fixtures import inventory_of_disk
+from cria import denial, loop, wsview
 from write_edit_helpers import (call, do, represented, run_batch, shrink_services, surveyed_view, write_edit_workspace_view)  # noqa: F401
 
 POM = "".join(f"<l{i}>{i}</l{i}>\n" for i in range(29))
@@ -78,8 +79,7 @@ def test_first_campaign_writes_are_answered_with_the_seed_files(tmp_path, label,
     """Actual Phi4 campaign write calls, with only their workspace roots relocated."""
     repo = Path(__file__).resolve().parents[2]
     shutil.copytree(repo / 'suite' / 'tasks' / seed / 'seed', tmp_path, dirs_exist_ok=True)
-    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                     capture_output=True, text=True, check=True).stdout)
+    data = inventory_of_disk(tmp_path)
     view = wsview.View(str(tmp_path), 'sid:incident')
     assert view.apply_initial_inventory(data, str(tmp_path))
     driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
@@ -107,8 +107,7 @@ def test_first_campaign_writes_are_answered_with_the_seed_files(tmp_path, label,
 def test_listed_blank_files_are_written_and_nonblank_is_read_instead(tmp_path, original):
     path = tmp_path / 'target.txt'
     path.write_text(original)
-    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                     capture_output=True, text=True, check=True).stdout)
+    data = inventory_of_disk(tmp_path)
     view = wsview.View(str(tmp_path), 'sid:blanks')
     assert view.apply_initial_inventory(data, str(tmp_path))
     driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
@@ -129,8 +128,7 @@ def test_listed_blank_files_are_written_and_nonblank_is_read_instead(tmp_path, o
 
 
 def inventory_session(tmp_path, sid):
-    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-        capture_output=True, text=True, check=True).stdout)
+    data = inventory_of_disk(tmp_path)
     driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
         runs_dir='', workspace_root=str(tmp_path), assists=True), loop.LoopStore())
     session = loop._plan_off_session(loop._synthetic_plan('task'), '')
@@ -257,8 +255,7 @@ def test_a_hash_mismatch_from_current_bytes_clears_the_note_so_the_write_is_not_
     path = seed_target(tmp_path)
     driver = inventory_session(tmp_path, 'sid:state')
     view = wsview.View(str(tmp_path), 'sid:state')
-    assert view.apply_initial_inventory(json.loads(subprocess.run(
-        ['bash', '-c', initial_inventory.command(str(tmp_path))], capture_output=True, text=True, check=True).stdout), str(tmp_path))
+    assert view.apply_initial_inventory(inventory_of_disk(tmp_path), str(tmp_path))
     path.write_text('changed outside the coder\'s sight')
     view.note_read('target.txt', path.read_text())      # a freshness-validated survey body: the current bytes
     log = Log()
@@ -405,8 +402,7 @@ def test_own_write_credit_requires_retained_history(tmp_path, retained, mutated,
     view = wsview.View(str(tmp_path), 'sid:own-fresh')
     token = wsview.bind(view)
     try:
-        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                         capture_output=True, text=True, check=True).stdout)
+        data = inventory_of_disk(tmp_path)
         assert view.apply_initial_inventory(data, str(tmp_path))
         if mutated:   # freshness-validated current bytes: the hash of the coder's own write no longer matches
             view.note_read('x.txt', target.read_text())
@@ -455,8 +451,7 @@ def test_retained_evidence_requires_matching_current_fingerprint_when_available(
     view = wsview.View(str(tmp_path), 'sid:hash-current')
     token = wsview.bind(view)
     try:
-        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                         capture_output=True, text=True, check=True).stdout)
+        data = inventory_of_disk(tmp_path)
         assert view.apply_initial_inventory(data, str(tmp_path))
         if state != 'unknown':
             current = run(call('exec_command', {'cmd': 'cat x.txt'}, 'probe'), tmp_path)
@@ -504,8 +499,7 @@ def test_wire_confirmed_restoration_overrides_older_read_fingerprint(tmp_path, r
         run(call('exec_command', {'cmd': "printf 'new\\n' > x.txt"}, 'external'), tmp_path)
         view = wsview.View(str(tmp_path), 'sid:restore-fresh')
         wsview.unbind(token); token = wsview.bind(view)
-        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                         capture_output=True, text=True, check=True).stdout)
+        data = inventory_of_disk(tmp_path)
         assert view.apply_initial_inventory(data, str(tmp_path))
         view.note_read('x.txt', 'new\n')
         facts = contextrestoration.FileHistory(('x.txt',), (), (), (), lambda p: p, {})
@@ -561,8 +555,7 @@ def test_dispatch_acceptance_reports_nonatomic_race(tmp_path, tool):
         wsview.unbind(token)
         view = wsview.View(str(tmp_path), 'sid:race-fresh')
         token = wsview.bind(view)
-        data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                         capture_output=True, text=True, check=True).stdout)
+        data = inventory_of_disk(tmp_path)
         assert view.apply_initial_inventory(data, str(tmp_path))
         view.note_read('x.txt', 'old\n')
         events = []
@@ -587,8 +580,7 @@ def test_fingerprint_check_does_not_follow_inventory_skipped_symlink(tmp_path):
     target = tmp_path / 'target.txt'
     target.write_text('current\n')
     (tmp_path / 'link.txt').symlink_to(target)
-    data = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                     capture_output=True, text=True, check=True).stdout)
+    data = inventory_of_disk(tmp_path)
     assert 'link.txt' in data['symlinks']
     view = wsview.View(str(tmp_path), 'sid:link')
     assert view.apply_initial_inventory(data, str(tmp_path))
@@ -665,8 +657,7 @@ def test_unread_guard_respects_concurrent_batch_mutations(tmp_path, peer, batch,
         wsview.unbind(token)
         view = wsview.View(str(tmp_path), 'sid:batch-unread-fresh')
         token = wsview.bind(view)
-        survey = json.loads(subprocess.run(['bash', '-c', initial_inventory.command(str(tmp_path))],
-                                           capture_output=True, text=True, check=True).stdout)
+        survey = inventory_of_disk(tmp_path)
         assert view.apply_initial_inventory(survey, str(tmp_path))
         # A later harness observation provides independently current bytes; it does not deliver them to the coder.
         fresh = run(call('exec_command', {'cmd': 'cat x.txt'}, 'probe'), tmp_path)

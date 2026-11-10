@@ -113,9 +113,12 @@ def verify(cid, command: str) -> tuple[str, int] | None:
 
 def neutralize(completion: dict) -> dict:
     """Give every model-authored tool call whose id begins ``ctx_`` a neutral new id, so the verified namespace is only ever
-    cria's. Called on what the model produced, before cria composes any of its own calls into the same completion."""
+    cria's. A call whose id is the MAC of its exact command (one cria issued itself, as the loop does for the inventory) is cria's and is left
+    as it is: only the key makes one, and the model never holds it."""
+    from .toolwire import _command_of
     for choice in completion.get('choices') or []:
         for call in (choice.get('message') or {}).get('tool_calls') or []:
-            if isinstance(call, dict) and isinstance(call.get('id'), str) and call['id'].startswith(PREFIX):
+            if (isinstance(call, dict) and isinstance(call.get('id'), str) and call['id'].startswith(PREFIX)
+                    and verify(call['id'], _command_of((call.get('function') or {}).get('arguments'))) is None):
                 call['id'] = 'call_' + secrets.token_hex(12)
     return completion

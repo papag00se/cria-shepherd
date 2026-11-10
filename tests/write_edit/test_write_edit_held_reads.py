@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from survey_fixtures import inventory_of_disk
 from cria import bodykeys, denial, wsview
 from write_edit_helpers import call, lower, represented, run, write_edit_workspace_view  # noqa: F401
 
@@ -57,10 +58,11 @@ def test_captured_ruby_batched_edits_hold_only_the_first_unread_readme_per_path_
 def test_incident_mutations_are_held_and_answered_with_the_file_through_the_engine(tmp_path, label, seed):
     """Campaign first replies (Node and Nemotron) and the separately labelled Python direct replay: every held mutation is answered with
     the exact bytes of its file, counts as the coder's read of it and sets the unread-hold hint for the next request only."""
-    from cria import initial_inventory, loop
+    from survey_fixtures import inventory_of_disk
+    from cria import loop
     workspace = tmp_path / "workspace"
     shutil.copytree(REPO / "suite" / "tasks" / seed / "seed", workspace)
-    data = json.loads(subprocess.run(["bash", "-c", initial_inventory.command(str(workspace))], capture_output=True, text=True, check=True).stdout)
+    data = inventory_of_disk(workspace)
     driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None, runs_dir="", workspace_root=str(workspace), assists=True),
                        loop.LoopStore())
     driver._put_session("sid:incident", loop._plan_off_session(loop._synthetic_plan("task"), ""))
@@ -93,12 +95,13 @@ def test_incident_mutations_are_held_and_answered_with_the_file_through_the_engi
 def test_held_receipt_attributes_only_the_call_and_the_read_returns_the_file_as_it_is_when_read(tmp_path, name, changed):
     """README-overwrite guard semantics: the answer is the file's bytes as read (a file that changed before the read is returned as it is
     now), under the call's own receipt wording."""
-    from cria import initial_inventory, loop
+    from survey_fixtures import inventory_of_disk
+    from cria import loop
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     path = workspace / "x.txt"
     path.write_text("old\n")
-    data = json.loads(subprocess.run(["bash", "-c", initial_inventory.command(str(workspace))], capture_output=True, text=True, check=True).stdout)
+    data = inventory_of_disk(workspace)
     view = wsview.View(str(workspace), "sid:receipt")
     assert view.apply_initial_inventory(data, str(workspace))
     driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None, runs_dir="", workspace_root=str(workspace), assists=True),

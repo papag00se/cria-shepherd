@@ -32,7 +32,7 @@ import re
 from dataclasses import dataclass, replace
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import bodykeys, brave, denial, resultpacket, depsurface, dirguard, prompts, webfetch, wsview, toolstages
+from . import bodykeys, callauth, brave, denial, resultpacket, depsurface, dirguard, prompts, webfetch, wsview, toolstages
 from .toolstages import LoweringRequest, MutateIntent, OutboundCall, ReadIntent, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
@@ -868,6 +868,9 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
+            if callauth.verify(tc.get("id"), _command_of(fn.get("arguments"))) is not None:
+                rebuilt.append(tc)        # a call cria issued itself (its id is the MAC of this very command): never re-guarded, never lowered
+                continue
             if only_injected and name not in injected:
                 rebuilt.append(tc)
                 continue
@@ -1209,7 +1212,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None, ledger_reads=None, ledger_writes=None, ledger_surveys=None) -> list[dict]:
+                      ask=None, ledger_outcomes=None, ledger_reads=None, ledger_writes=None, ledger_surveys=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1289,7 +1292,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     pending_mutations = set()
     read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
     def may_mutate(tc):
-        if tc.get('id') in private_readonly_calls or tc.get('id') in ledger_reads:
+        if tc.get('id') in ledger_reads:
             return False
         if tc.get('id') in ledger_writes:
             return tc.get("id") not in failed_ids
@@ -1336,7 +1339,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         # cria-composed write/edit/list, so a run of the coder's own shell commands
                         # changes the workspace while the view stands still. Recording that here is
                         # what lets a caller tell "cria saw no vendor/" from "there is no vendor/".
-                        if tc.get('id') not in private_readonly_calls and _native_effect_unknown_or_mutating(fn, workspace_root):
+                        if _native_effect_unknown_or_mutating(fn, workspace_root):
                             mutation_ids.add(tc.get("id"))
                             view.note_possible_effect()
                     if orig is not None:

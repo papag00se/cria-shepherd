@@ -59,19 +59,21 @@ def test_initial_inventory_round_trip_reaches_coder(tmp_path, responses, mode, m
             if responses:
                 calls = [item for item in response['output'] if item.get('type') == 'function_call']
                 assert calls
-                call = calls[0]
-                args = json.loads(call['arguments'])
+                private = [c for c in calls if str(c['call_id']).startswith('ctx_')]
+                if not private:
+                    break
+                for call in private:
+                    run = subprocess.run(['bash', '-c', json.loads(call['arguments'])['cmd']], cwd=root, capture_output=True, text=True, check=True)
+                    request['input'].extend([call, {'type': 'function_call_output', 'call_id': call['call_id'], 'output': run.stdout}])
             else:
                 message = response['choices'][0]['message']
-                call = message['tool_calls'][0]
-                args = json.loads(call['function']['arguments'])
-            if '___CTX_GATE_' not in args.get('cmd', ''):
-                break
-            run = subprocess.run(['bash', '-c', args['cmd']], cwd=root, capture_output=True, text=True, check=True)
-            if responses:
-                request['input'].extend([call, {'type': 'function_call_output', 'call_id': call['call_id'], 'output': run.stdout}])
-            else:
-                request['messages'].extend([message, {'role': 'tool', 'tool_call_id': call['id'], 'content': run.stdout}])
+                private = [c for c in message['tool_calls'] if str(c['id']).startswith('ctx_')]
+                if not private:
+                    break
+                request['messages'].append(message)
+                for call in private:
+                    run = subprocess.run(['bash', '-c', json.loads(call['function']['arguments'])['cmd']], cwd=root, capture_output=True, text=True, check=True)
+                    request['messages'].append({'role': 'tool', 'tool_call_id': call['id'], 'content': run.stdout})
         judgments = [body for _, body in wire.fake.chats if body.get('tool_choice') == 'required']
         if large and mode != 'missing-key':
             assert len(judgments) == (132 if mode == 'experiment' else 131)

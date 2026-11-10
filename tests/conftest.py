@@ -19,6 +19,28 @@ _lock = threading.Lock()
 
 
 @pytest.fixture(autouse=True)
+def _cria_private_home_is_the_tests_own(tmp_path_factory, monkeypatch):
+    """cria's key and operation ledger live under CRIA_HOME. No test touches the operator's: each one gets a private home of its own."""
+    from cria import privatepaths
+    monkeypatch.setattr(privatepaths, "CRIA_HOME", tmp_path_factory.mktemp("cria-home") / ".cria")
+
+
+@pytest.fixture(autouse=True)
+def _no_questions_outlive_their_test():
+    """The workspace view's questions (bodies, programs, outside paths, a wanted refresh) are module state keyed by session: one test's
+    must never be answered by, or trigger a survey in, another's."""
+    from cria import wsview
+    def clear():
+        for table in (wsview._BODY_MISSES, wsview._PROG_MISSES, wsview._OUTSIDE_MISSES, wsview._PROG_CACHE, wsview._BODY_CACHE,
+                      wsview._UNANSWERED_READS):
+            table.clear()
+        wsview._REFRESH.clear()
+    clear()
+    yield
+    clear()
+
+
+@pytest.fixture(autouse=True)
 def _fake_wire_servers_do_not_load_system1(request, monkeypatch):
     """Wire and planner scenarios exercise fake upstreams, not a machine-local model bundle.
 

@@ -112,24 +112,33 @@ def _clean(path: str) -> bool:
 
 
 class _Tree:
-    """What the walk steps' frames say, folded in step order."""
+    """What the walk steps' frames say, folded in step order. ``what`` names the walk's steps (the survey's or the inventory's);
+    ``paging`` asks for the next page of a directory a frame did not hold (a listing without a fold bound is whole or it is paged),
+    ``walk_skipped`` walks a directory ``ls`` reported and did not enter when nothing proves it a build output (the survey does; the
+    inventory never enters what it excludes), ``strict_names`` leaves out what is not one line of UTF-8 (the survey's rule; the inventory
+    carries every name as the JSON records give it)."""
 
-    def __init__(self, steps: list):
+    def __init__(self, steps: list, what: str = 'vls', paging: bool = False, walk_skipped: bool = True, strict_names: bool = True):
+        self.what, self.paging, self.walk_skipped, self.strict_names = what, paging, walk_skipped, strict_names
+        self.more: dict = {}            # directory -> the name its next page starts after
         self.records: dict = {}         # path -> ls record
         self.listed: set = set()        # directories whose entries are all in `records`
         self.folded: set = set()        # directories named only as a count
         self.partial: set = set()       # directories whose listing is not whole (a bound, an error, a frame that never fit)
         self.tried: dict = {}           # (dir, mode) -> the latest step for it
         self.failed_tree: set = set()   # directories whose whole-tree call did not answer whole: walked directory by directory
-        for st in sorted((x for x in steps if x.what == 'vls'), key=lambda x: x.s):
+        cut: dict = {}                  # (dir, mode) -> the latest step whose frame the harness cut, while a smaller ask is still possible
+        for st in sorted((x for x in steps if x.what == what), key=lambda x: x.s):
             key = (st.args['dir'], st.args['mode'])
             self.tried[key] = st
             if st.frame is None:
                 continue
             header, d, tree = st.frame['hdr'], st.args['dir'], st.args['mode'] == 'tree'
+            cut.pop(key, None)
             if header.get('ok') != 1:
                 if header.get('ok') == -1 and not tree and st.args['rung'] + 1 < len(LEVEL_MAXES):
-                    continue                        # a frame the harness cut: asked again smaller (a later step)
+                    cut[key] = st                   # a frame the harness cut: asked again smaller (a later step)
+                    continue
                 (self.failed_tree if tree else self.partial).add(d)
                 continue
             records = [json.loads(line) for line in st.frame['text'].split('\n') if line]
@@ -148,8 +157,12 @@ class _Tree:
                 pass
             elif whole:
                 self.listed.add(d)
+                self.more.pop(d, None)
+            elif paging and records:
+                self.more[d] = records[-1][1].rpartition('/')[2]       # the page ended here: the next one starts after this name
             else:
                 self.partial.add(d)
+        self.retry = list(cut.values())
 
     @staticmethod
     def _skipped(record) -> bool:
@@ -176,15 +189,19 @@ class _Tree:
         for d in sorted(self.failed_tree, key=lambda x: (x.count('/') if x else -1, x)):
             if (d, 'level') not in self.tried:
                 out.append((d, 'level'))
+        asking = {st.args['dir'] for st in self.retry}
+        for d, after in sorted(self.more.items()):
+            if d not in asking:
+                out.append((d, 'level', after))
         for p in sorted(self.records, key=lambda x: (x.count('/'), x)):
             r = self.records[p]
-            if r[0] != 'd' or not _clean(p) or p in self.listed or p in self.folded or (p, 'level') in self.tried or (p, 'tree') in self.tried:
+            if r[0] != 'd' or (self.strict_names and not _clean(p)) or p in self.listed or p in self.folded or (p, 'level') in self.tried or (p, 'tree') in self.tried:
                 continue
             parent = p.rpartition('/')[0]
             if parent not in self.listed and parent not in self.partial:
                 continue                                    # its parent is not listed yet: nothing named it
             if self._skipped(r):
-                if p.rpartition('/')[2] in wsview.PRUNE_DIRS or self.output_proof(r):
+                if not self.walk_skipped or p.rpartition('/')[2] in wsview.PRUNE_DIRS or self.output_proof(r):
                     continue                                # reported, never entered
                 out.append((p, 'tree'))                     # a skipped name nothing proves a build output: walked
             else:
@@ -388,9 +405,7 @@ class SurveyOps:
         issue = []
         # the walk -------------------------------------------------------
         tree = _Tree(steps)
-        for st in tree.tried.values():
-            if st.frame is not None and st.frame['hdr'].get('ok') == -1 and st.args['mode'] == 'level' and st.args['rung'] + 1 < len(LEVEL_MAXES):
-                issue.append(('vls', {**st.args, 'rung': st.args['rung'] + 1}))        # a frame the harness cut: the same directory, asked smaller
+        issue += [('vls', {**st.args, 'rung': st.args['rung'] + 1}) for st in tree.retry]     # a frame the harness cut: the same directory, asked smaller
         todo = tree.todo()
         if len(tree.records) < wsview.TREE_MAX_ENTRIES:
             issue += [('vls', {'dir': d, 'mode': mode, 'rung': 0}) for d, mode in todo]

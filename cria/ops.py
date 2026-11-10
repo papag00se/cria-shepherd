@@ -20,12 +20,13 @@ import os
 import threading
 from dataclasses import dataclass, field
 
-from . import callauth, denial, externalization, harnessprims, prompts, readops, surveyops, writeops, wsview
+from . import callauth, denial, externalization, harnessprims, inventoryops, prompts, readops, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
 from .opspath import OpsUnavailable, split
 from .opsteps import Final, Issue, Wait
+from .inventoryops import InventoryOps
 from .readops import LedgerRead, ReadFact, ReadOps
 from .surveyops import SurveyAsk, SurveyOps
 from .writeops import LedgerWrite, WriteOps
@@ -98,7 +99,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps, WriteOps, SurveyOps):
+class Ops(ReadOps, WriteOps, SurveyOps, InventoryOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -109,6 +110,7 @@ class Ops(ReadOps, WriteOps, SurveyOps):
         self._rate = readops.DEFAULT_RATE
         self._carry: dict = {}      # (operation, sha-256) -> the bytes a planned write will leave, for the cache once it lands
         self._surveys: dict = {}    # survey operation -> its wsview.Survey (process memory: recomputed from the ledger's frames)
+        self._inventories: dict = {}    # inventory operation -> its listing (process memory: recomputed from the ledger's frames)
         self._rlog = None
         self._lock = threading.RLock()      # the ledger's folded state is shared: one request at a time advances operations
 
@@ -153,6 +155,8 @@ class Ops(ReadOps, WriteOps, SurveyOps):
         nonce = callauth.nonce(op, s)
         if what in surveyops.WHATS:
             return surveyops.command(op, ctx, s, what, args, blobs or {})
+        if what in inventoryops.WHATS:
+            return inventoryops.command(op, ctx, s, what, args, blobs or {})
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what in writeops.WHATS:
             return writeops.command(op, ctx, s, what, args, blobs or {})
@@ -327,6 +331,8 @@ class Ops(ReadOps, WriteOps, SurveyOps):
             return self._m_after(op, wave, steps)
         if op.kind == surveyops.SURVEY:
             return self._v_after(op, steps)
+        if op.kind == inventoryops.INVENTORY:
+            return self._i_after(op, steps)
         table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
                  else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
         return table[wave[0].what](op, wave, steps)
