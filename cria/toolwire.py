@@ -1,12 +1,11 @@
-"""Command framing, original-call correlation and existing transport markers."""
+"""Command framing for the one shell call cria composes (a refusal, an oversize notice): the harness primitives are cria's own operations."""
 from __future__ import annotations
 
 import base64
 import json
-import re
 from shlex import quote as _qbash
 
-from . import denial, jsontext, prompts
+from . import denial
 from .shelltool import _CMD_FIELDS, shell_args, with_output_budget
 from .toolargs import parse_args as _parse
 
@@ -48,29 +47,6 @@ def _refusal_command(text: str) -> str:
     return f"printf %s {_qbash(denial.mark(text))}; exit {REFUSED_EXIT_CODE}"
 
 
-_SENTINEL = "⟦ctx:tool⟧"
-
-
-# THE DECLARATION LIVES AT ONE POSITION: the very first line of the command, because every call cria composes starts with
-# it (`_shell_call(..., f"{sentinel}\n{cmd}")`). A native command that merely CONTAINS a header — quoted in a variable, a
-# heredoc, a comment, a file it prints — declares nothing: the compiler's declaration must never come from source data.
-_SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
-
-
-def _sentinel(name: str, arguments, receipt: str = "") -> str:
-    """The leading comment line that lets inbound rebuild the original tool call, statelessly.
-
-    It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound): the typed
-    result record leads stdout at offset 0, so `represent_inbound` tells cria's own result from content that merely quotes
-    the marker by position, never by search. Without a receipt the payload is exactly what it always was."""
-    args_str = denial.canonical_arguments(arguments)
-    body = {"name": name, "arguments": args_str}
-    if receipt:
-        body["rcpt"] = receipt
-    payload = base64.b64encode(json.dumps(body).encode("utf-8")).decode("ascii")
-    return f"# {_SENTINEL}{payload}"
-
-
 def _shell_call(orig_id: str, shell_tool: dict, command: str, output_tokens: int = 0) -> dict:
     args = shell_args(shell_tool, command)
     if output_tokens:
@@ -90,80 +66,3 @@ def _command_of(args) -> str:
     if isinstance(v, list):
         return v[-1] if v else ""
     return str(v or "")
-
-
-def is_crias_own(command: str) -> bool:
-    """Did cria compose this command, whatever it composed it FOR?
-
-    ONE QUESTION, ONE OWNER (#23). `original_call` answers a narrower one — "which coder tool did
-    this lowering come from" — and returns None for a cria composition that is nobody's tool call:
-    the gate script, which carries its own sentinel. Every caller that used `original_call` as a
-    stand-in for this question therefore fell through to scanning cria's own bytes on the gate leg.
-    That is how `FILE FOLD_AT — does NOT exist on disk` kept reaching the steer author: the workspace
-    survey program contains `if len(files) > FOLD_AT:`, and the redirect matcher read the `>` as a
-    write to a file named after one of cria's own constants. Fixed once for the writeproxy sentinel
-    and still live on the gate leg at ef8ee77 — hence one owner rather than one sentinel's reader."""
-    text = command or ""
-    if not text:
-        return False
-    return _decode_sentinel(text) is not None
-
-
-def original_call(command: str, call_id=None) -> dict | None:
-    """The tool call a lowered command was made FROM — ``{"name":…, "arguments":…}`` — or None when
-    this is not one of cria's.
-
-    Public so a reader that wants to know what the CODER did stops reading what CRIA WROTE. The
-    lowered form is cria's text: a `python3` heredoc, a curl, and — appended to writes, edits and
-    lists — the workspace survey program. Anything that scans it is scanning cria's own bytes.
-
-    Walked on feed-pipeline-java x nemotron-elastic 1787346816. `loop._shell_write_target` looks for
-    a redirect target after a `>`; the survey program contains the ordinary Python comparison
-    `if len(files) > FOLD_AT:`, so cria read one of its OWN CONSTANTS as a file the coder had
-    written, and then told the model, in its own voice, `FILE FOLD_AT — does NOT exist on disk`.
-    Same family as the gate matchers retired on 2026-08-21: cria's own text re-entering as the
-    model's work (#12, #17)."""
-    return _read_sentinel(command, call_id)
-
-
-def _decode_sentinel(command: str) -> dict | None:
-    m = _SENTINEL_LINE.match(command or "")
-    if not m:
-        return None
-    try:
-        d = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
-        d["name"]
-        return d
-    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
-        return None
-
-
-def _declaration(command: str, call_id=None) -> dict | None:
-    """The leading declaration of a stored command, or None. With ``call_id`` a declaration that carries a receipt must
-    be the one THIS call's compiler made: the receipt is recomputed from the call's own id and the declared original
-    name and arguments, so a header copied from another call (stale, quoted, replayed) is rejected. The receipt is a
-    correlation token, not a secret — this only ties a declaration to the call it was composed for.
-
-    A declaration WITHOUT a receipt is never honoured for a given call (nothing composes one any more: the alias reads that did
-    are carried out by cria's own engine): an unreceipted header is just text a coder's own command carries (a heredoc, an echo,
-    a file it writes), and honouring it re-presented that command as a call the coder never made."""
-    d = _decode_sentinel(command)
-    if d is None:
-        return None
-    if call_id is not None:
-        from . import denial
-        if not d.get("rcpt") or d["rcpt"] != denial.receipt_for(call_id, d["name"], d.get("arguments") or "{}"):
-            return None
-    return d
-
-
-def _read_sentinel(command: str, call_id=None) -> dict | None:
-    """The original tool call encoded in a lowered command's sentinel, or None."""
-    d = _declaration(command, call_id)
-    return None if d is None else {"name": d["name"], "arguments": d.get("arguments") or "{}"}
-
-
-def receipt_of(command: str, call_id=None) -> str:
-    """The receipt a lowered command declared in its sentinel ("" when it declared none, or when it is not this call's)."""
-    d = _declaration(command, call_id)
-    return str(d.get("rcpt") or "") if d is not None else ""

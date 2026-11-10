@@ -100,8 +100,10 @@ class RewrittenCall:
 
 
 @dataclass(frozen=True)
-class ShellCommand:
-    command: str
+class Refusal:
+    """The call does not run: it is answered with these words (cria's, never the tool's), carried out as an operation of cria's own (cria.answerops:
+    the model's call, a ``say`` call in the harness's transcript, the typed outcome in the ledger)."""
+    text: str
 
 
 @dataclass(frozen=True)
@@ -170,8 +172,8 @@ class MutateIntent:
     plan: MutationPlan
 
 
-# None means not applicable, RewrittenCall continues, ShellCommand and ReadIntent terminate.
-OutboundEffect = RewrittenCall | ShellCommand | ReadIntent | None   # an AnswerIntent or SearchIntent comes from the lowering of the research and search tools
+# None means not applicable, RewrittenCall continues, Refusal and ReadIntent terminate.
+OutboundEffect = RewrittenCall | Refusal | ReadIntent | None   # an AnswerIntent or SearchIntent comes from the lowering of the research and search tools
 
 
 @dataclass(frozen=True)

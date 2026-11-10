@@ -148,6 +148,5 @@ def _respill_command(command: str, spill_dir: str) -> str:
 def read_instead_prose(fact: str, tool: str = 'write_file') -> tuple[str, str]:
     """The held write's own words around the read that answers it: ``(read, not_read)``, marked as a call that did not run."""
     labels = prompts.load_map('write_unread_target')
-    with denial.unframed():
-        return (denial.mark(prompts.fill(labels['read'], fact=fact, tool=tool)),
-                denial.mark(prompts.fill(labels['not_read'], fact=fact, tool=tool)))
+    return (denial.mark(prompts.fill(labels['read'], fact=fact, tool=tool)),
+            denial.mark(prompts.fill(labels['not_read'], fact=fact, tool=tool)))

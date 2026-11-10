@@ -33,33 +33,26 @@ WHICH FACTS NOW HANG ON THE MARK, AND WHAT PROVES IT. The mark began as disclosu
 evidence behind shared facts that GATE wording and assists: whether a write landed (`gate_unedited`, the
 grounded rumination notice, the thrash edit count, the work ledger, the context floor's modified-file note) and
 whether an edit recovery directive may be composed. So the mark alone — text any command can print and any file can
-quote — cannot be the proof. The proof is the BRANCH, declared by POSITION (`cria.resultpacket`): every compiled leaf
-prints one typed ASCII record at stdout offset 0 (`ran` / `refused` / `unapplied` / `landed` / `uncertain`) under a receipt
-`translate_outbound` derives per call and declares in the LEADING line of the call's stored command; `represent_inbound`
-reads exactly the record at that position of an unambiguously paired result, only if it carries that receipt, records the
-proven outcome as a message-level hint every reader asks (`outcome`, `refused`, `landed`, `unlanded`, `unlanded_call_ids`)
-— never the wording — and removes exactly that record. A file's bytes (a whole read, a read-instead answer) ride INSIDE the
-record with their length and digest, so what a read returned is verified, not found. A payload quoting records, receipts,
-markers or surveys is just the opaque tail and keeps every byte. Absent or lost record means unknown, never "did not
-run". The call and the body stay separate truths: the record proves WHICH BRANCH PRINTED the result (the call did not
-run) and, separately, whether the file was returned; the words beneath may be genuine ground truth.
+quote — cannot be the proof. The proof is cria's own ledger (`cria.ledger`): every operation cria carries out through the harness
+primitives ends in a typed outcome of its own record (`ran` / `refused` / `unapplied` / `landed` / `uncertain`) and the exact
+text the model is told; `represent_inbound` records that outcome as a message-level hint every reader asks (`outcome`,
+`refused`, `landed`, `unlanded`, `unlanded_call_ids`) — never the wording. A file's bytes (a whole read, a read-instead
+answer) are the ledger's verified read. A result quoting markers is just a result and keeps every byte. A call with no
+ledger entry has no outcome: unknown, never "did not run".
 
 DIRECTION (#13). Unknown withholds. A refusal that cannot be proven is read as "may have run", so no write is
 assumed unlanded, no step advances and no notice claims "nothing landed" on the strength of a quotation; the
 only ruling a PROVEN refusal moves is from "the tool proved this" toward "the tool never ran", the safe
-direction. What is parsed is cria's own receipt and call/result correlation (`paired_results`, exactly one call
+direction. What is read is the ledger's outcome and the call/result correlation (`paired_results`, exactly one call
 and exactly one result after it); what is never parsed is the model's, a command's or a file's wording.
 """
 
 from __future__ import annotations
 
-import contextlib
-import contextvars
 import hashlib
-import json
 from collections import Counter
 
-from . import bodykeys, payloadboundary, resultpacket
+from . import bodykeys, payloadboundary
 
 # ⟦ctx:…⟧ namespace, never the proper noun (#17). It rides in the refusal text the coder reads —
 # the same channel and the same shape as every other context marker in that stream.
@@ -78,20 +71,14 @@ def _opens_with(text: str, prefix: str) -> bool:
 
 
 def mark(text: str) -> str:
-    """``text`` opened by cria's own refusal header, :data:`DENIED_MARKER`. While a lowering is being composed
-    (:func:`receipt_scope`) the refusal branch that prints it first prints its ``refused`` record, so the branch is
-    attributable (see the record protocol above).
+    """``text`` opened by cria's own refusal header, :data:`DENIED_MARKER`.
 
     Idempotence is on that OPENING header only. A marker inside the BODY — a path, a quoted file, even at the very
     start of a path — is part of the body: it never stands in for the header and is never removed. Empty text is
     left empty: a refusal with nothing to say is not a refusal."""
     if not text:
         return text
-    lead = frame(REFUSED)
-    if lead and text.startswith(lead):
-        return text
-    body = text if _opens_with(text, DENIED_MARKER) else f"{DENIED_MARKER} {text}"
-    return lead + body
+    return text if _opens_with(text, DENIED_MARKER) else f"{DENIED_MARKER} {text}"
 
 
 def is_denied(text: str) -> bool:
@@ -103,74 +90,19 @@ def is_denied(text: str) -> bool:
     return bool(text) and DENIED_MARKER in text
 
 
-# --- WHICH BRANCH RAN: a typed RECORD at stdout offset 0 (the protocol lives in `resultpacket`) --------------------
+# --- HOW A CALL ENDED: typed outcomes cria's own ledger recorded (`cria.ledger`), never text found in a result ----------------------
 #
-# A result that merely CONTAINS a marker, a frame or a survey block proves nothing: a native command can `echo` them, a
-# file or a fetched page quotes them — even with the call's own receipt, which is derived from the call's id, name and
-# arguments and so can appear in data. So proof is POSITIONAL and DECLARED, never found: every compiled leaf prints one
-# ASCII JSON record FIRST (`resultpacket`), `represent_inbound` reads exactly the record at the start of the stdout of an
-# UNAMBIGUOUSLY PAIRED call (one call, one result after it) whose stored sentinel declares the receipt, and records the
-# proven outcome as a message hint (`bodykeys.RESULT_OUTCOME`, overwriting whatever the client sent). Whatever follows
-# the declared records is an opaque tail, never parsed. No record first => UNKNOWN, bytes untouched. A branch that may
-# already have changed the target prints an `uncertain` record. The receipt is derived from the call (no server state,
-# survives a restart); it is a correlation token between cria and its own commands, not a security boundary.
-REFUSED = resultpacket.REFUSED      # cria's own refusal branch ran: the call did not run
-UNAPPLIED = resultpacket.UNAPPLIED  # cria's edit program reported that the edit was not applied
-RAN = resultpacket.RAN              # a real payload-bearing branch ran (carries no outcome of its own)
-LANDED = resultpacket.LANDED        # cria's own write/edit program reported the mutation LANDED
-UNCERTAIN = resultpacket.UNCERTAIN  # cria's own write/edit program could not tell whether the target changed
-UNKNOWN = "unknown"                 # a cria-LOWERED call whose branch could not be proven: neither refused nor a real read
-_KINDS = resultpacket.KINDS
-
-_ACTIVE: contextvars.ContextVar[str] = contextvars.ContextVar("cria_denial_receipt", default="")
-
-
-def canonical_arguments(arguments) -> str:
-    """The ONE serialization of a call's arguments, shared by the sentinel that stores them and the receipt derived from them:
-    a string is itself, anything else (a dict an adapter built) is its JSON text. The receipt is recomputed from the STORED
-    string, so both sides must agree on this function — there is no second spelling and no guessing which was meant."""
-    return arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-
-
-def receipt_for(call_id, name, arguments) -> str:
-    """The receipt for one lowered call — a pure function of what the sentinel also carries."""
-    args = canonical_arguments(arguments)
-    return hashlib.sha256(f"{call_id}\x00{name}\x00{args}".encode("utf-8", "replace")).hexdigest()[:16]
-
-
-@contextlib.contextmanager
-def receipt_scope(token: str):
-    """Everything composed inside prints this call's records."""
-    reset = _ACTIVE.set(token or "")
-    try:
-        yield token
-    finally:
-        _ACTIVE.reset(reset)
-
-
-def unframed():
-    """Compose a leaf that runs INSIDE a branch which already printed its own record (a refusal that goes on to
-    answer with the file): a second record there would sit in the middle of what the model reads."""
-    return receipt_scope("")
-
-
-def active_receipt() -> str:
-    return _ACTIVE.get()
-
-
-def frame(kind: str, token: str | None = None, *, rep: dict | None = None) -> str:
-    """One record line for ``kind`` under the active (or given) receipt (with the producer's typed reports ``rep``); empty
-    when no lowering is being composed."""
-    token = _ACTIVE.get() if token is None else token
-    assert kind in _KINDS
-    return resultpacket.line(token, kind, rep=rep) if token else ""
-
-
-def ran_command() -> str:
-    """The shell statement that prints the body-less ``ran`` record (``""`` outside a lowering), for a real payload
-    leaf: ``printf ...; cat file``."""
-    return resultpacket.static_command(_ACTIVE.get(), RAN)
-
+# Every operation cria carries out through the harness primitives ends in a field of its own record (the outcome and the text the model is told);
+# `represent_inbound` puts it on the tool result as a message hint (`bodykeys.RESULT_OUTCOME`, overwriting whatever the client sent). A result that merely
+# CONTAINS a marker proves nothing: a native command can `echo` one, a file or a fetched page quotes one. No result is asked what it says about itself.
+REFUSED = "refused"      # cria's own refusal: the call did not run
+UNAPPLIED = "unapplied"  # cria's edit did not apply
+RAN = "ran"              # a real payload-bearing answer (carries no outcome of its own)
+LANDED = "landed"        # cria's own write/edit reported the mutation LANDED
+UNCERTAIN = "uncertain"  # cria could not tell whether the target changed
+UNKNOWN = "unknown"      # a cria operation whose end could not be proven: neither refused nor a real read
+WHOLE = "whole"          # the verified text of a read is the whole file
+RANGE = "range"          # ... a numbered window of it
 
 def read_payload(message) -> str | None:
     """The exact file text a PROVEN whole read returned, or None. The producer's record carried the bytes with their
@@ -241,7 +173,7 @@ def attributable_read(message) -> bool:
 
 
 def report(message) -> dict:
-    """The producer's typed reports on this result (`resultpacket.REPORT_KEYS`), ``{}`` when it declared none. Set only by
+    """The producer's typed reports on this result (`bodykeys.RESULT_REPORT`), ``{}`` when it declared none. Set only by
     `represent_inbound` from the first record of a proven call; a client-sent value is overwritten."""
     if not isinstance(message, dict) or message.get("role") != "tool":
         return {}

@@ -63,6 +63,8 @@ def lower(calls, *, injected=("write_file", "edit_file"), root="/w", **kw):
     comp = {"choices": [{"message": {"tool_calls": list(calls)}}]}
     kw.setdefault("issue_read", lambda c, a, instead: _ENGINE["ops"].issue_read(
         "s", SHELL, c, a, workspace_root=root, level="write", instead=instead))
+    kw.setdefault("issue_answer", lambda c, a, answer: _ENGINE["ops"].issue_answer(
+        "s", SHELL, c, answer, workspace_root=root, level=kw.get("external_dir_permission", "write")))
     kw.setdefault("issue_mutations", lambda requests: _ENGINE["ops"].issue_mutations(
         "s", SHELL, requests, workspace_root=root, level=kw.get("external_dir_permission", "write"), log=kw.get("rlog")))
     writeproxy.translate_outbound(comp, SHELL, injected=set(injected), workspace_root=root, **kw)

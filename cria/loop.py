@@ -5902,7 +5902,7 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     receipt_labels = prompts.load_map("work_log_receipt_labels")
     # Same scrub chain every other reasoner-facing serialization uses (author_steer, _summarize_single,
     # _self_compact): without clean_gate_results, cria's OWN gate probe renders here as a coder action —
-    # `$ shell {"command": "cd … || exit 97\necho ___CTX_GATE_…\npytest …"}` — and its raw output as
+    # `$ shell {"command": "cd … || exit 97 …\npytest …"}` — and its raw output as
     # something the coder's tool returned. This log feeds the step critic, the re-derivation, the
     # satisfaction judge and the completion briefing, so the orchestration was being judged as work.
     # THE PLAN IS WHAT MAKES THE GATE TEXT HONEST. Without it `clean_gate_output` has no workspace
@@ -6094,13 +6094,9 @@ def _strip_completion_banners(completion: dict) -> None:
 
 
 def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
-    """Hide cria's OWN artifacts from the coder: any `.cria/` plan-file writes (`mkdir -p .cria &&
-    … > .cria/<id>.md`) AND its `⟦cria⟧` status banners. cria no longer EMITS `.cria/` writes — the
-    plan mirror moved to cria's own dir with the no-workspace-pollution fix — but a resumed or
-    compacted conversation can still carry historical ones in its replayed history, so the scrub
-    stays. The banner scrub is always needed too, else the coder PARROTS the banners back and they
-    land in the critic as 'the coder's summary'."""
-    hidden: set = set()
+    """Hide cria's `⟦cria⟧` status banners from the coder, else it PARROTS them back and they land in the critic as 'the coder's summary'.
+    A command is never hidden because of what its text says: cria no longer writes `.cria/` plan files (the mirror is in cria's own directory), and a
+    history that holds an earlier release's is shown raw (operator decision D2, docs/harness-programs.md): text any author can write is no authority."""
     out: list[dict] = []
     for m in messages:
         role = m.get("role")
@@ -6109,19 +6105,7 @@ def _strip_cria_file_ops(messages: list[dict]) -> list[dict]:
             content = _strip_cria_banners(content)  # scrub cria's own banner lines
             m = {**m, "content": content}
         if role == "assistant" and m.get("tool_calls"):
-            kept = []
-            for tc in m["tool_calls"]:
-                a = (tc.get("function") or {}).get("arguments") or ""
-                a = a if isinstance(a, str) else json.dumps(a)
-                if "mkdir -p .cria &&" in a:  # cria's historical file-op signature
-                    hidden.add(tc.get("id"))
-                else:
-                    kept.append(tc)
-            if kept or (content or "").strip():
-                out.append({**m, "tool_calls": kept})
-            # else: the message was ONLY cria artifacts — drop it entirely
-        elif role == "tool" and m.get("tool_call_id") in hidden:
-            continue  # drop the file-op's result too
+            out.append(m)
         elif role == "assistant" and isinstance(content, str) and not content.strip():
             continue  # an assistant message that was ONLY banners → now empty → drop
         else:
@@ -6582,7 +6566,7 @@ def _shell_runs(messages: list[dict]):
             cmd = args.get("cmd") if args.get("cmd") is not None else args.get("command")
             if isinstance(cmd, list):
                 cmd = " ".join(str(x) for x in cmd)
-            if isinstance(cmd, str) and tc.get("id") and "___CTX_" not in cmd:
+            if isinstance(cmd, str) and tc.get("id"):
                 calls[tc["id"]] = cmd
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls and tid in paired:
@@ -7107,22 +7091,8 @@ def _write_path(fn: dict) -> str | None:
     a SHELL-native write (redirect/heredoc/`tee`), so the wheel-spin guard counts a model rewriting
     one file straight through the shell the same as a write_file."""
     name = fn.get("name")
-    # WHAT THE CODER CALLED, NOT WHAT CRIA LOWERED IT TO. A shell call carrying cria's sentinel is
-    # cria's own composition — a heredoc, a curl, and on writes/edits/lists the workspace survey
-    # program riding along — and scanning those bytes for a redirect target reads cria's text as the
-    # coder's work. The survey contains `if len(files) > FOLD_AT:`; the redirect matcher read that
-    # `>` as one and reported `FILE FOLD_AT — does NOT exist on disk` to the model, naming one of
-    # cria's own constants as a file (feed-pipeline-java x nemotron-elastic 1787346816). The
-    # sentinel holds the call that was actually made, exactly, so ask it (#12).
-    lowered = writeproxy._command_of(fn.get("arguments") or "")
-    original = writeproxy.original_call(lowered)
-    if original is not None:
-        fn, name = original, original.get("name")
-    elif writeproxy.is_crias_own(lowered):
-        # cria's own composition that is nobody's tool call — the gate script. Scanning it for a
-        # redirect target reads cria's text as the coder's work; the survey program it carries ends
-        # up named as a file the coder wrote (#5b).
-        return None
+    # WHAT THE CODER CALLED: the history holds the coder's own calls (cria's operations are projected to the call they answer, and the primitive
+    # commands are not in it), so nothing of cria's own text is scanned for a redirect target (feed-pipeline-java x nemotron-elastic 1787346816).
     if _is_write_tool(name):
         return _path_of_args(fn.get("arguments") or "", patch_ok=name == "apply_patch")
     if is_shell_tool_name(name):
@@ -11085,11 +11055,7 @@ def _refresh_inventory_notes(sess, messages, view, rlog=None):
             tid, fn = tc.get('id'), tc.get('function') or {}
             if not tid or tid in folded or tid not in paired:
                 continue
-            command = writeproxy._command_of(fn.get('arguments') or '')
-            original = writeproxy.original_call(command)
-            if original is not None:
-                fn = original
-            elif writeproxy.is_crias_own(command) or is_shell_tool_name(fn.get('name')):
+            if is_shell_tool_name(fn.get('name')):
                 continue
             path = _path_of_args(fn.get('arguments') or '', patch_ok=False)
             result = paired[tid]
@@ -11128,12 +11094,6 @@ def _mutation_targets(fn: dict, workspace_root: str | None = None):
     header and Move-to, and a shell command the classifier flags as writing is resolved only when every
     redirect/`tee` target is read from it AND it holds no other mutator — otherwise it is unknown."""
     name = fn.get("name")
-    lowered = writeproxy._command_of(fn.get("arguments") or "")
-    original = writeproxy.original_call(lowered)
-    if original is not None:
-        fn, name = original, original.get("name")
-    elif writeproxy.is_crias_own(lowered):
-        return []
     args = fn.get("arguments") or ""
     if _is_write_tool(name):
         out = []

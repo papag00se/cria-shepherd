@@ -1464,7 +1464,7 @@ def fetch_nav_result(url: str, *, find: Optional[str] = None, cursor: Optional[s
     session is refused (it can only return what the model has), and after GUESS_STREAK_THRESHOLD
     consecutive non-2xx external fetches a stop-guessing nudge is appended. Internal hosts never gate.
 
-    Returns ``(text, refused, status, facts)``. ``facts`` is the typed fetch fact (`resultpacket` ``rep.fx``: url, status, routes,
+    Returns ``(text, refused, status, facts)``. ``facts`` is the typed fetch fact (the answer's ``rep.fx``: url, status, routes,
     shapes, catalog), built from the parsed / discovered STRUCTURE — never from the rendered text — or None. ``status`` is the HTTP status the fetch actually got (None when the call was refused
     before fetching OR when an attempted fetch got no HTTP response). Only the latter is a RAN
     attempt without response facts; a cached/empty/non-2xx HTTP response always carries facts.
@@ -2172,7 +2172,7 @@ def _flat_shape(s: fetchfacts.Shape) -> fetchfacts.Shape:
 
 
 def structure_facts(kind: str, value) -> dict:
-    """The typed fetch facts (`resultpacket` ``rep.fx`` less url/status) straight from the parsed / discovered STRUCTURE, in the
+    """The typed fetch facts (the answer's ``rep.fx`` less url/status) straight from the parsed / discovered STRUCTURE, in the
     same typed entries the renderer's own display is made from — never from a rendered outline or block, even one cria composed
     itself (it embeds source keys): structure → typed facts → display, one way. Source-derived one-line leaves are flattened to
     one line; generated multi-line grammar (a fenced schema body) is retained as generated."""

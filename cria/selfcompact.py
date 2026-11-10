@@ -11,7 +11,7 @@ Everything is measured in TOKENS, not message count — the real constraint is t
 window, and a few huge file reads matter more than many tiny turns (the same currency the
 floor uses). Structure kept every turn:
   - the leading system message (cria's coder framing),
-  - any ANCHOR message (a ⟦ctx:briefing⟧ handoff / a ___CTX_GATE_ ground truth) — verbatim,
+  - any ANCHOR message (a ⟦ctx:briefing⟧ handoff / a gate's typed ground truth) — verbatim,
   - ONE ⟦ctx:rollup⟧ summary of the old middle,
   - a small VERBATIM band of old-but-not-yet-folded turns (bounded by RECOMPACT_TOKENS),
   - the recent tail up to KEEP_TAIL_TOKENS verbatim (the live working set).
@@ -562,8 +562,8 @@ def _defanged_line(m: dict, *, exec_result: bool = False) -> str:
 def _drop_unanswered_gate_calls(messages: list[dict]) -> list[dict]:
     """Remove cria's OWN gate calls whose result is not in ``messages``.
 
-    A gate survey/launch/poll is cria's plumbing, stamped with the ``⟦ctx:gate⟧`` provenance sentinel
-    at composition time (``probegate.gate_call_ids``) — the coder never authored it. Both compaction
+    A gate survey/launch/poll is cria's plumbing, marked in process (never in text)
+    when the operation is projected (``probegate.gate_call_ids``) — the coder never authored it. Both compaction
     callers filter ``_ANCHOR_MARKERS`` (``___CTX_GATE_`` among them) out of the writer's input BEFORE
     this module sees it, so the raw RESULT is gone while the CALL survived. ``clean_gate_results`` can
     only drop a call together with a result it can see, so the call reached the briefing writer — and
@@ -1271,7 +1271,7 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
                 continue
             args = toolargs.parse_args(fn.get("arguments"))
             cmd = next((str(args[k]) for k in _LEDGER_EXEC_ARGS if args.get(k)), "")
-            if cmd and not toolwire.is_crias_own(cmd) and not probegate.is_automatic(m):  # cria's own gate/lowering is not the coder's act
+            if cmd and not probegate.is_automatic(m):  # cria's own gate is not the coder's act (its operations are projected to the calls they answer)
                 cmd = _one_line(clip(cmd.strip(), _LEDGER_CMD_CAP,
                                      f" [command continues; {len(cmd.strip())} characters in all]"))
                 state = "shell_refused" if refused else ("shell_unanswered" if result is None else "shell_answered")

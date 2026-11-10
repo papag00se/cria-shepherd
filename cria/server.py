@@ -31,7 +31,7 @@ from . import imageassembly
 from . import upstream as _image_wire
 from .imageprotocol import ImageUnavailable
 
-from . import bodykeys, callauth, repohealth, dirguard, handoffdistill, handoffmemo, memoryhandoff, privatenames, system1wiring, windowcaps
+from . import bodykeys, callauth, repohealth, dirguard, handoffdistill, handoffmemo, memoryhandoff, system1wiring, windowcaps
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify, gateseam, loweringoptions
@@ -1668,8 +1668,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if not isinstance(messages, list):
             return
         self._bind_workspace_view(body, sess_key)
-        upgraded = privatenames.upgrade_names(messages)     # an earlier release's private names, so every reader below sees one spelling
-        cleaned, stripped = strip_history(upgraded)
+        cleaned, stripped = strip_history(messages)
         # LEVEL 3 — CONTEXT_FIXES. Reattributing the harness's compaction turn REWRITES a message the
         # harness wrote, which is surgery on the context by any reading, so it belongs to the rung
         # that owns surgery. It ran at EVERY level including the pure proxy until 2026-08-25, and
@@ -1696,7 +1695,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         marker_left = rescrubbed is not cleaned
         if marker_left:
             cleaned = rescrubbed
-        if stripped or reframed or marker_left or upgraded is not messages:
+        if stripped or reframed or marker_left:
             body["messages"] = cleaned
             if stripped:
                 rlog.emit("indicators.stripped", lines=stripped)
@@ -1743,10 +1742,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._bind_workspace_view(body, sess_key)   # definitive key; re-binds a fresh view
         # Re-present prior lowered shell calls as the synthetic tool the model actually called —
         # UNCONDITIONALLY, before the shell-tool gate. A harness compaction/summarize turn arrives with
-        # tools:[] (no shell tool), yet its history still holds cria's ⟦ctx:tool⟧-lowered write_file/
+        # tools:[] (no shell tool), yet its history still holds cria's lowered write_file/
         # edit_file/read_file calls; without this the model summarizes ~28 raw `python3 - <<HEREDOC`
         # blobs instead of its own tool calls, and that degraded summary becomes the next ⟦ctx:
-        # continuation⟧. No-op when no sentinel is present, so a plain passthrough is unaffected.
+        # continuation⟧. No-op when the ledger has nothing for the session, so a plain passthrough is unaffected.
         # C40's own probe (represent_inbound's tools_present arg) skips a compaction/summarize turn
         # on EITHER signal reachable at this seam: an empty tool menu (the shape this survey's own
         # comment above already relies on) OR the server's own compaction recognition

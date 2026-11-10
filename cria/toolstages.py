@@ -16,7 +16,7 @@ from typing import Iterable, Literal
 # Compatibility surface: the canonical records live below execution/default assembly.
 from .toolcontracts import (EventLog, _PolicyLog, policy_log, CompletionTransform, CompletionRepair,
     CompletionDefinition, ShrinkFinding, ShrinkCheck, LoweringRequest,
-    OutboundCall, RewrittenCall, ReadIntent, ShellCommand, OutboundEffect, OutboundDefinition, AnswerIntent, ProbeIntent, SaveIntent, SearchIntent,
+    OutboundCall, RewrittenCall, ReadIntent, Refusal, OutboundEffect, OutboundDefinition, AnswerIntent, ProbeIntent, SaveIntent, SearchIntent,
     MutationDefinition, MutationPlan, MutateIntent, ReviewTerms, ReturnedResult, ReturnedDefinition, ReturnedHistory,
     HistoryDefinition, RejectedDraft, DraftDefinition, ToolDefinition, ShrinkServices)
 
@@ -93,11 +93,11 @@ class ToolStages:
                     return position
         return -1
 
-    def outbound_call(self, source: OutboundCall) -> tuple[dict, dict, ShellCommand | ReadIntent | None]:
+    def outbound_call(self, source: OutboundCall) -> tuple[dict, dict, Refusal | ReadIntent | None]:
         from .toolargs import parse_args
         for definition in self.outbound:
             result = definition.execute(replace(source, log=policy_log(source.log, definition.policy)))
-            if isinstance(result, (ShellCommand, ReadIntent, ProbeIntent)):
+            if isinstance(result, (Refusal, ReadIntent, ProbeIntent)):
                 return source.call, source.arguments, result
             if isinstance(result, RewrittenCall):
                 arguments = (result.arguments if result.arguments is not None else
@@ -108,13 +108,12 @@ class ToolStages:
         effect = None
         if source.name == 'web_search':
             from . import researchpolicies, webfetch
-            from .toolwire import _refusal_command
             # Explicit request/tool bindings must not summon namespace defaults.
             # A canonical research binding always wins, including an empty one.
             if researchpolicies.is_bound() or not is_bound():
                 refusal = webfetch.gate_search(source.request.session, str(source.arguments.get('query') or ''))
                 if refusal is not None:
-                    effect = ShellCommand(_refusal_command(refusal))
+                    effect = Refusal(refusal)
         return source.call, source.arguments, effect
 
     def mutation_plan(self, source: OutboundCall) -> MutationPlan:

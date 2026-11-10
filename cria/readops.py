@@ -204,8 +204,7 @@ class ReadOps:
         try:
             if instead and instead.get('again'):
                 # A second held write to one path in a batch: the first read answers for them all, this one says only that it did not run.
-                with denial.unframed():
-                    again = Final(denial.REFUSED, denial.mark(not_read), {'hold': True})
+                again = Final(denial.REFUSED, denial.mark(not_read), {'hold': True})
                 return self._say(session, record, op, ctx, '', again)
             if start and end and end < start:
                 shown = lambda n: str(n) if n.bit_length() < 400 else None
@@ -236,8 +235,7 @@ class ReadOps:
     def _refusal(ctx: dict, text: str) -> Final:
         """cria's words, marked as a call that did not run (after the held write's own words), and the logical exit status the
         model has always been told beside a refusal."""
-        with denial.unframed():
-            marked = (denial.mark(ctx['not_read']) if ctx['instead'] else '') + denial.mark(text)
+        marked = (denial.mark(ctx['not_read']) if ctx['instead'] else '') + denial.mark(text)
         return Final(denial.REFUSED, marked, {'note': prompts.render('read_status', code=1), 'hold': ctx['instead']})
 
     # ---------------------------------------------------------------- deciding

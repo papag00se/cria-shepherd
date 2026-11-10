@@ -95,14 +95,11 @@ def test_only_calls_with_identical_arguments_and_output_collapse_keeping_the_las
 
 
 def refused(cid, cmd):
-    """A real authored refusal restored through the canonical inbound owner (nothing executes)."""
-    args = json.dumps({"cmd": cmd})
-    receipt = denial.receipt_for(cid, "exec_command", args)
-    with denial.receipt_scope(receipt):
-        stdout = denial.mark(f"Refused {cmd}\nObserved source detail for {cid}\n")
+    """A real authored refusal restored through the canonical inbound owner: the outcome is the ledger's (nothing executes)."""
+    stdout = denial.mark(f"Refused {cmd}\nObserved source detail for {cid}\n")
     call = toolwire._shell_call(cid, {"name": "exec_command", "parameters": {
-        "type": "object", "properties": {"cmd": {"type": "string"}}}}, toolwire._sentinel("exec_command", args, receipt) + "\n:")
-    return writeproxy.represent_inbound([{"role": "assistant", "tool_calls": [call]}, res(cid, stdout)])
+        "type": "object", "properties": {"cmd": {"type": "string"}}}}, cmd)
+    return writeproxy.represent_inbound([{"role": "assistant", "tool_calls": [call]}, res(cid, stdout)], ledger_outcomes={cid: denial.REFUSED})
 
 
 def test_a_run_of_proven_refusals_folds_losslessly_and_the_newest_stay_whole():

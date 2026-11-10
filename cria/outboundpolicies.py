@@ -2,12 +2,12 @@
 from __future__ import annotations
 import json
 
-from . import content_reduce as content_reduce_mod, dirguard, prompts, resultpacket, webfetch, wsview
+from . import content_reduce as content_reduce_mod, dirguard, prompts, webfetch, wsview
 from .assistcontract import Policy, Reference
 from dataclasses import replace
 
 from .toolcontracts import (OutboundCall, OutboundDefinition, MutationDefinition, MutationPlan, ReadIntent, ReviewTerms, RewrittenCall,
-                            ShellCommand, ProbeIntent)
+                            Refusal, ProbeIntent)
 from .probeops import UnreadProbe
 from .shrinkprotection import DEFINITION as SHRINK_PROTECTION
 from .callliterals import _has_tc_debris, _protocol_debris
@@ -15,55 +15,53 @@ from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _guarded_path, _targets_cria_home,
     _prepare_file_mutation, _under_spill_dir, _spill_relpath, _respill_command,
 )
-from .toolwire import (
-    _refusal_command, _command_of, _SENTINEL,
-)
+from .toolwire import _refusal_command, _command_of
 from .shelltool import _CMD_FIELDS, is_shell_tool_name
 from .toolargs import PATH_KEYS as _PATH_KEYS, tool_path as _tool_path
 
 
-def malformed_shell(source: OutboundCall) -> ShellCommand | None:
+def malformed_shell(source: OutboundCall) -> Refusal | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
     if is_shell_tool_name(name) and _has_tc_debris(fn.get('arguments')):
-        cmd = _refusal_command(prompts.load('malformed_call_refusal'))
+        text = prompts.load('malformed_call_refusal')
         if rlog is not None:
             rlog.emit('writeproxy.blocked_malformed_call', tool=name)
-        return ShellCommand(cmd)
+        return Refusal(text)
     return None
 
 
-def external_boundary(source: OutboundCall) -> ShellCommand | None:
+def external_boundary(source: OutboundCall) -> Refusal | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
     request = source.request
     injected, external_dir_permission = request.injected, request.external_dir_permission
     workspace_root, declared_roots = request.workspace_root, request.declared_roots
     session, pack = request.session, request.pack
     if (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root, declared_roots)) is not None:
-        cmd = _refusal_command(reason)
+        text = reason
         if rlog is not None:
             rlog.emit('writeproxy.blocked_external', tool=name, permission=external_dir_permission)
-        return ShellCommand(cmd)
+        return Refusal(text)
     return None
 
 
-def private_files(source: OutboundCall) -> ShellCommand | None:
+def private_files(source: OutboundCall) -> Refusal | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
     injected = source.request.injected
     if name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
-        cmd = _refusal_command(prompts.load('cria_home_refusal'))
+        text = prompts.load('cria_home_refusal')
         if rlog is not None:
             rlog.emit('writeproxy.blocked_cria_home', tool=name, path=target)
-        return ShellCommand(cmd)
+        return Refusal(text)
     return None
 
 
-def reference_files(source: OutboundCall) -> ShellCommand | ReadIntent | None:
+def reference_files(source: OutboundCall) -> Refusal | ReadIntent | None:
     name, args, fn, rlog = source.name, source.arguments, source.function, source.log
     injected = source.request.injected
     if name in _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES and name in injected and (sp := _tool_path(args)) and _under_spill_dir(str(sp), webfetch.SPILL_DIR) and (not (name in _READ_NAMES and (args.get('start_line') or args.get('end_line')))):
         if rlog is not None:
             rlog.emit('writeproxy.spill_read_gated' if name in _READ_NAMES else 'writeproxy.blocked_spill', tool=name, path=str(sp))
-        return ReadIntent() if name in _READ_NAMES else ShellCommand(_refusal_command(prompts.render('spill_edit_refusal', path=str(sp))))
+        return ReadIntent() if name in _READ_NAMES else Refusal(prompts.render('spill_edit_refusal', path=str(sp)))
     return None
 
 
@@ -103,13 +101,13 @@ def _valid_write(source: OutboundCall):
     return mutation if not mutation.error else None
 
 
-def fused_file(source: OutboundCall) -> ShellCommand | None:
+def fused_file(source: OutboundCall) -> Refusal | None:
     mutation = _valid_write(source)
     if mutation is None or not _protocol_debris(mutation.content):
         return None
     if source.log is not None:
         source.log.emit('writeproxy.write_fused_content', tool=source.name, path=str(mutation.path))
-    return ShellCommand(_refusal_command(prompts.load('write_fused_content')))
+    return Refusal(prompts.load('write_fused_content'))
 
 
 def unread_replacement(source: OutboundCall) -> ReadIntent | None:
@@ -169,13 +167,9 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace, roots)
     if is_shell_tool_name(name):  # the harness's raw shell → heuristic path/verb scan
         command = _command_of(fn.get("arguments"))
-        # cria's own composed command → trust. ANCHORED, not a substring scan anywhere in the text: a
-        # model-authored command that merely mentions either literal used to inherit cria's trust and
-        # skip the guard entirely. cria always writes the sentinel as the FIRST line (`# ⟦ctx:tool⟧<b64>`).
-        # (The gate is not one of these: it is an operation cria issues itself, after this guard, under an id only its key makes.)
-        head = "\n".join(command.lstrip().splitlines()[:2])
-        if head.startswith("# " + _SENTINEL):
-            return None
+        # NO COMMAND TEXT EARNS AN EXEMPTION (a model-authored command that began with cria's marker used to inherit cria's trust and skip this
+        # guard entirely: the security review's finding F3): what cria issues itself (its primitives, its gate) is issued after this guard and
+        # never passes through it, under an id only its key makes; a model-authored command is guarded as any other, whatever its first line says.
         return dirguard.command_refusal(command, level, workspace, roots)
     return None
 

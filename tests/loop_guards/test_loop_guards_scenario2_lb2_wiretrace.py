@@ -8,7 +8,7 @@ import pytest
 
 from survey_fixtures import ask_survey
 from gate_fixtures import gate_turn
-from cria import assistruntime, loop, toolwire, wsview
+from cria import assistruntime, loop, wsview
 
 
 def call(cid, name, **args):
@@ -16,7 +16,8 @@ def call(cid, name, **args):
 
 
 def lowered(name, **args):
-    return {"name": "exec_command", "arguments": json.dumps({"cmd": toolwire._sentinel(name, json.dumps(args)) + "\ntrue"})}
+    """The call the coder made, as the history holds it (cria's operations are projected to it)."""
+    return {"name": name, "arguments": json.dumps(args)}
 
 
 def survey_view(root):
@@ -30,7 +31,7 @@ PATCH = "*** Begin Patch\n*** Update File: a.py\n*** Move to: b.py\n*** Delete F
 
 
 @pytest.mark.parametrize("fn,targets", [
-    (lowered("write_file", path="x.py", content="1"), ["x.py"]),                                  # the lowering is read as the call the coder made
+    (lowered("write_file", path="x.py", content="1"), ["x.py"]),                                  # the call the coder made
     (lowered("read_file", path="x.py"), []),
     ({"name": "apply_patch", "arguments": json.dumps({"input": PATCH})}, ["a.py", "b.py", "c.py"]),
     ({"name": "apply_patch", "arguments": PATCH.replace("\n", "\\n")}, ["a.py", "b.py", "c.py"]),  # a raw, escaped blob

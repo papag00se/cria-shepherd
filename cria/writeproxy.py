@@ -8,10 +8,8 @@ these tools, cria:
 * **advertises** the synthetic tools to the MODEL (so it reaches for them),
 * translates each call **outbound** to a shell command the harness runs — byte-exact
   (base64 for writes/edits; heredoc-fed so there is no arg-size limit and no chunking),
-* stamps a **stateless sentinel** (`# ⟦ctx:tool⟧<b64>`) into the command carrying the
-  ORIGINAL tool name + args, so the **inbound** pass re-presents the recorded shell call
-  as the tool the model actually called — from the sentinel in the conversation itself,
-  with NO in-process store (survives a restart mid-session; the old store did not).
+* records each call in cria's ledger (`cria.ledger`, `cria.ops`): the ORIGINAL tool name + args and how it ended, so the **inbound** pass
+  re-presents the recorded shell call as the tool the model actually called — from the ledger, never from text in the command.
 
 Writes are one atomic command (temp file + `mv`); an empty success is reframed as a
 confirmation. Reads/lists/fetches are re-presented too, so the model never sees the raw
@@ -29,9 +27,10 @@ import os
 import re
 from dataclasses import dataclass, replace
 
-from . import bodykeys, callauth, brave, denial, resultpacket, depsurface, dirguard, prompts, webfetch, wsview, toolstages
-from .toolstages import (AnswerIntent, LoweringRequest, MutateIntent, OutboundCall, ProbeIntent, ReadIntent, SaveIntent, SearchIntent, ShellCommand,
+from . import bodykeys, callauth, brave, denial, depsurface, dirguard, prompts, webfetch, wsview, toolstages
+from .toolstages import (AnswerIntent, LoweringRequest, MutateIntent, OutboundCall, ProbeIntent, ReadIntent, Refusal, SaveIntent, SearchIntent,
                          ReturnedResult, ReturnedHistory)
+from .shrinkprotection import ShrinkServices
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
 from .outboundpolicies import _external_refusal
@@ -53,9 +52,7 @@ from .filecommands import (
     _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _SEARCH_FILE_NAMES, _FileMutation, _prepare_file_mutation,
     _targets_cria_home, _guarded_path, READ_INLINE_MAX)
 from .toolwire import (
-    REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
-    _sentinel, _shell_call, _b64,
-    _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, _declaration)
+    REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _shell_call, _b64, _command_of)
 
 from .resultnotes import (
     exec_envelope, _strip_exec_envelope, _noted, _digest, append_note, payload_of, _workspace_ecosystem,
@@ -206,7 +203,7 @@ def _file_mutation_refusal(name: str, mutation: _FileMutation, injected: set, rl
         if rlog is not None:
             rlog.emit("writeproxy.write_missing_arg" if write else "writeproxy.edit_missing_arg",
                       tool=name, arg=error)
-    return _refusal_command(message)
+    return message
 _FETCH_NAMES = {"web_fetch"}
 _SEARCH_NAMES = {"web_search", "local_web_search"}
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
@@ -358,9 +355,8 @@ def _fetch_answer(args: dict, session: str | None = None, workspace_root: str | 
         # died here before fetch_nav could act on it — and a nulled find also forces the oversized-spill
         # branch below, reproducing the "saved N chars, go grep it" reply that fix set out to kill.
         cursor = None
-    with denial.unframed():       # the answer is cria's words as the model reads them: no record line leads a refusal the gate marked
-        result, refused, status, facts = webfetch.fetch_nav_result(str(url), find=find, cursor=cursor, session=session, raw=raw,
-                                                                   workspace_root=workspace_root)
+    result, refused, status, facts = webfetch.fetch_nav_result(str(url), find=find, cursor=cursor, session=session, raw=raw,
+                                                               workspace_root=workspace_root)
     # A PLAIN fetch (no find/cursor) of an oversized doc is spilled by the externalization offer (`_externalize_coder`): the full doc is saved
     # under ./tmp and the model is handed a short pointer instead of a low-signal page-1. find=/cursor= navigation returns its slice as usual.
     # …but only the FIRST time. Once cria has written the doc to the workspace that file outlives the
@@ -371,8 +367,7 @@ def _fetch_answer(args: dict, session: str | None = None, workspace_root: str | 
     # A repeat-gate REFUSAL comes back from fetch_nav as ordinary text and is answered as a refusal ("a refused call must not report
     # success"). Which results are refusals is webfetch's own decision, never re-derived from wording: a real 404 page is a RESULT.
     if refused:                    # the repeat gate's own typed decision — a fetched page quoting the marker is a page
-        with denial.unframed():
-            return _sized_answer('web_fetch', str(url), denial.mark(result), denial.REFUSED)
+        return _sized_answer('web_fetch', str(url), denial.mark(result), denial.REFUSED)
     # THE FETCH'S OWN FACTS ride as a typed field of the answer (`rep.fx`: url, status, routes, shapes, catalog), computed
     # from the producer's parse of the document — never re-read from the rendered page, whose body may quote any marker.
     # This is also the visibility receipt's complete response contract: every HTTP response has fx,
@@ -432,8 +427,7 @@ def _search_answer(args: dict, answer: "brave.Answer", *, search_offer=None, ope
     slice) with a total-count header so the authoritative page — which may rank 9th+ — reaches the model and it knows how many exist."""
     query = str(args.get("query") or "")
     if answer.refused:
-        with denial.unframed():
-            return _sized_answer('web_search', query, denial.mark(_search_refusal(answer.refused, answer.wait_ms)), denial.REFUSED)
+        return _sized_answer('web_search', query, denial.mark(_search_refusal(answer.refused, answer.wait_ms)), denial.REFUSED)
     # A body that is not the JSON object `brave.search` builds (a transport failure, HTML, an empty body) is answered with the "unreadable" line, never
     # with a traceback and never as "no results": the cause belongs to the search tool and says nothing about the site the model is working on.
     try:
@@ -498,7 +492,7 @@ def _first_sight_of_rejection(sess_key: str, tc: dict) -> bool:
     return True
 
 
-def _lower_synthetic(source: OutboundCall) -> ShellCommand | AnswerIntent | SearchIntent | MutateIntent | ReadIntent | dict | None:
+def _lower_synthetic(source: OutboundCall) -> Refusal | AnswerIntent | SearchIntent | MutateIntent | ReadIntent | dict | None:
     """Required harness adapters, independent of optional steering selection.
 
     Validating mutation arguments and preserving execution/correlation are not
@@ -508,7 +502,7 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | AnswerIntent | Sear
     if name in (_WRITE_NAMES | _EDIT_NAMES) and name in request.injected:
         mutation = _prepare_file_mutation(name, args)
         if mutation.error:
-            return ShellCommand(_file_mutation_refusal(name, mutation, request.injected, source.log))
+            return Refusal(_file_mutation_refusal(name, mutation, request.injected, source.log))
         plan = toolstages.current().mutation_plan(source)
         # Explicit, unbound library callback compatibility only. Production uses typed factual services; a bound selection never falls
         # back to a whole legacy policy callback, even when its selected source has no services.
@@ -533,7 +527,7 @@ def _lower_synthetic(source: OutboundCall) -> ShellCommand | AnswerIntent | Sear
         except ops.OpsUnavailable as exc:
             if source.log is not None:
                 source.log.emit('ops.unavailable', level='error', error=str(exc))
-            return ShellCommand(_refusal_command(prompts.load('ops_unavailable')))
+            return Refusal(prompts.load('ops_unavailable'))
     elif name in _SEARCH_FILE_NAMES and name in request.injected:
         return SearchIntent() if request.issue_search is not None else None
     elif name in _FETCH_NAMES and name in request.injected:
@@ -637,19 +631,11 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # A read alias normalization renamed to `read_file` (the harness advertises no read tool of its own): cria runs it.
                 call_request = replace(request, injected=request.injected | _READ_NAMES)
             args = _parse(fn.get("arguments"))
-            # THE CORRELATION TOKEN FOR THIS CALL, derived once and held while its command is composed: every
-            # program authored inside prints it in its typed result record, which is the first line of stdout; the
-            # sentinel below declares it (and any survey record), and `represent_inbound` accepts a result as cria's
-            # own only by POSITION (the leading record) plus a recomputed canonical correlation — never by finding
-            # the marker or the token anywhere in the text.
-            receipt = denial.receipt_for(tc.get("id"), name, fn.get("arguments"))
-            with denial.receipt_scope(receipt):
-                tc, args, effect = toolstages.current().outbound_call(
-                    OutboundCall(tc, args, call_request, rlog))
-                fn = tc.get("function") or {}
-                name = fn.get("name")
-                if effect is None:
-                    effect = _lower_synthetic(OutboundCall(tc, args, call_request, rlog))
+            tc, args, effect = toolstages.current().outbound_call(OutboundCall(tc, args, call_request, rlog))
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            if effect is None:
+                effect = _lower_synthetic(OutboundCall(tc, args, call_request, rlog))
             if isinstance(effect, dict):
                 rebuilt.append(effect)
                 notes.append((len(rebuilt) - 1, tc, effect, None))
@@ -719,10 +705,18 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 mutations.append((len(rebuilt), tc, args, effect))
                 rebuilt.append(tc)
                 continue
-            cmd = effect.command if effect is not None else None
-            if cmd is not None:
-                header = _sentinel(name, fn.get('arguments'), receipt)
-                rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{header}\n{cmd}", 0))
+            if isinstance(effect, Refusal):
+                # The call does not run. cria answers it in its own words as an operation of its own (the model's call, one `say` call in the
+                # harness's transcript, the typed outcome in the ledger): nothing about the outcome is carried in text. Without an engine (a
+                # library caller that binds none) the words go out as a plain command that claims nothing.
+                text = denial.mark(effect.text)
+                try:
+                    issued = (issue_answer(tc, args, AnswerIntent(name, '', text, denial.REFUSED)) if issue_answer is not None else None)
+                except ops.OpsUnavailable as exc:
+                    if rlog is not None:
+                        rlog.emit('ops.unavailable', level='error', error=str(exc))
+                    issued = None
+                rebuilt.append(issued or _shell_call(tc.get("id"), shell_tool, _refusal_command(effect.text), 0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
                     pending.lowered_arguments = rebuilt[-1]['function']['arguments']
@@ -732,9 +726,6 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         observe_externalization(tc, rebuilt[-1], pending)
                 notes.append((len(rebuilt) - 1, tc, rebuilt[-1], None))
                 if rlog is not None:
-                    # `target`/`detail` feed the LIVE status ticker — the harness renders the lowered
-                    # call as an opaque sentinel blob (operator: "a file wrote to the project, but
-                    # there was no indicator"), so the ACTION is narrated here in cria's own voice.
                     rlog.emit("writeproxy.lowered", tool=name, target=_tool_path(args) or "",
                               detail=str(args.get("query") or args.get("url") or ""))
             else:
@@ -854,82 +845,15 @@ def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
 _REJECTED_PAYLOAD_CHARS = 400
 
 
-def _payload_offset(content: str) -> int:
-    """The protocol owner's positional record boundary, or stdout offset zero when unframed."""
-    envelope = exec_envelope(content)
-    return envelope.record_start if envelope is not None else 0
-
-
 class _Proof(NamedTuple):
-    """What cria's own records PROVED about one paired lowered result (see :func:`_frame_proofs`)."""
-    kind: str | None          # the first record's branch kind, or None (no record: unknown)
-    content: str              # the result with cria's records removed. A body-bearing record's result is
-                              # `pre + body + tail` with the harness envelope dropped; anything else keeps the envelope
+    """What cria's own ledger PROVED about one result of an operation it carried out (never text found in a result)."""
+    kind: str | None          # how the operation ended (the ledger's typed outcome)
+    content: str              # the text the model is shown for it
     text: str | None          # the body's decoded text when the first record carried a verified body, else None
     exact: bool               # `text` is the body's EXACT bytes (valid UTF-8, and nothing follows it): cacheable
-    rep: dict | None = None   # the first record's typed reports (`resultpacket.REPORT_KEYS`), or None
+    rep: dict | None = None   # the operation's typed reports (a fetch's facts, a saved file's), or None
     observe: str = ""         # what the verified body is: `whole` (the file) or `range` (a numbered window of it)
     pre: str = ""             # exact producer-authored prelude, not inferred from file text
-
-
-def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
-    """``tool_call_id -> _Proof`` for every call whose pairing is UNAMBIGUOUS (`denial.paired_results`: one call, one
-    result after it) and whose STORED command declared a receipt in cria's sentinel.
-
-    AUTHORITY IS POSITION AND DECLARATION (`resultpacket`): the first record is the program's own first line: at offset 0 of
-    the stdout (after the harness's own envelope), or after whatever a chatty login shell printed first
-    (`resultpacket.find_record`: the first occurrence of THIS call's receipt record, never past the harness's cut marker; that
-    noise is dropped from the display); the second exists only if the sentinel declared a survey and is read only on the
-    very next line. Nothing is searched for — a file, a page or a native command that quotes records, receipts, markers or
-    a valid-looking survey is just the opaque tail and keeps every byte. A valid first record stands when the second is
-    missing or cut. No record at offset 0 (a legacy command, a cut, an unlowered shape) means UNKNOWN: untouched."""
-    paired = denial.paired_results(messages)
-    out: dict[str, _Proof] = {}
-    for m in messages:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            cid, fn = tc.get("id"), tc.get("function") or {}
-            if cid not in paired or not is_shell_tool_name(fn.get("name")):
-                continue
-            command = _command_of(fn.get("arguments"))
-            declaration = _declaration(command, cid)
-            if declaration is None or not declaration.get("rcpt"):
-                continue
-            token = str(declaration["rcpt"])
-            paired_result = paired[cid]
-            content = str(paired_result.get("content") or "")
-            off = _payload_offset(content)
-            found = resultpacket.find_record(content, off, token)
-            if found is None:
-                # A shell that printed >5 KB before the program leaves the harness's tail holding the records (it keeps the first and
-                # last halves). Record 1 is taken from there only on a proof the cut did not destroy: its DECLARED second record follows it
-                # on the very next line (a quoted record in a command's tail is never followed by a valid survey of the same receipt), or
-                # the call is one of cria's own write/edit programs (declared and recomputed from this call's id, name and arguments) and
-                # nothing but whitespace follows the record: those programs print NO other output after a landed / unapplied record 1
-                # (a survey rides only every SURVEY_EVERY-th call, so most results carry none), so the record that ENDS the result is
-                # the program's own last word. Anything printed after it (a failure message, shell noise after the program) leaves the
-                # result UNKNOWN, as before. A read never qualifies: its tail is the file.
-                found = resultpacket.find_record(content, off, token, past_cut=True)
-                if found is not None:
-                    ends_the_result = declaration.get("name") in (_WRITE_NAMES | _EDIT_NAMES) and not content[found[1].end:].strip()
-                    if not ends_the_result:
-                        found = None
-            if found is None:
-                continue
-            first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped
-            tail, rep = content[first.end:], first.rep
-            if first.body is None:
-                out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, rep)
-                continue
-            try:
-                text, exact = first.body.decode("utf-8"), True
-            except UnicodeDecodeError:
-                text, exact = first.body.decode("utf-8", "replace"), False
-            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", rep, first.observe, first.pre)
-    return out
-
-
 
 
 
@@ -1054,8 +978,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     # one result after it (`denial.paired_results`). An ambiguous result keeps its actual bytes and teaches nothing.
     paired = set(denial.paired_results(messages))
     ledger_reads, ledger_writes, ledger_answers = ledger_reads or {}, ledger_writes or {}, ledger_answers or {}
-    proofs = {**_frame_proofs(messages),
-              **{tid: _Proof(r.kind, r.pre + r.text, r.text, True, None, r.observe, r.pre)
+    proofs = {**{tid: _Proof(r.kind, r.pre + r.text, r.text, True, None, r.observe, r.pre)
                  for tid, r in ledger_reads.items() if r.text is not None},
               **{tid: _Proof(w.kind, w.text, None, False, w.rep or None) for tid, w in ledger_writes.items()},
               **{tid: _Proof(a.kind, a.text, None, False, a.rep) for tid, a in ledger_answers.items()}}
@@ -1093,12 +1016,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             return False
         if tc.get('id') in ledger_writes:
             return tc.get("id") not in failed_ids
-        fn = tc.get("function") or {}
-        original = (_read_sentinel(_command_of(fn.get("arguments")), tc.get("id"))
-                    if is_shell_tool_name(fn.get("name")) else None)
-        if original is not None:
-            return original["name"] in (_WRITE_NAMES | _EDIT_NAMES) and tc.get("id") not in failed_ids
-        return _native_effect_unknown_or_mutating(fn, workspace_root)
+        return _native_effect_unknown_or_mutating(tc.get("function") or {}, workspace_root)
     anchored = {anchor: list(found) for anchor, found in (ledger_surveys or {}).items()}
 
     def survey_after(anchor):
@@ -1127,8 +1045,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 name = fn.get("name")
                 led = ledger_reads.get(tc.get("id")) or ledger_writes.get(tc.get("id")) or ledger_answers.get(tc.get("id"))
                 if led is not None or is_shell_tool_name(name):
-                    orig = ({"name": led.name, "arguments": led.arguments} if led is not None
-                            else _read_sentinel(_command_of(fn.get("arguments")), tc.get("id")))
+                    orig = {"name": led.name, "arguments": led.arguments} if led is not None else None
                     if orig is None:
                         own = _command_of(fn.get("arguments"))
                         own_cmds[tc.get("id")] = own
@@ -1246,7 +1163,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 continue
             # A verified UTF-8 read or authenticated search result contains user file text, not terminal log
             # decoration. Stripping ANSI or binary-looking controls would change the returned text.
-            if (proof is not None and tid in content_search_ids and proof.kind == denial.RAN) or (proof is not None and proof.exact and proof.text is not None and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE)):
+            if (proof is not None and tid in content_search_ids and proof.kind == denial.RAN) or (proof is not None and proof.exact and proof.text is not None and proof.observe in (denial.WHOLE, denial.RANGE)):
                 content = str(m.get('content') or '')
             else:
                 content = _debinarized(str(m.get("content") or ""))
@@ -1278,7 +1195,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     m[bodykeys.READ_OBSERVATION] = (len(proof.text), denial.text_digest(proof.text))
                     if tid in write_paths and proof.kind == denial.REFUSED:
                         wsview.from_observation(observation, view.note_read, write_paths[tid], proof.text, **observation_options)
-                    elif tid in read_whole and proof.kind == denial.RAN and proof.observe == resultpacket.WHOLE:
+                    elif tid in read_whole and proof.kind == denial.RAN and proof.observe == denial.WHOLE:
                         wsview.from_observation(observation, view.note_read, read_whole[tid], proof.text, **observation_options)
                 shown = content
                 final_prefix = proof.pre
@@ -1293,7 +1210,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     if note and head.endswith(marker):
                         final_prefix = f"{head.removesuffix(marker)}{note}\n\n{marker}"
                         shown = final_prefix + proof.text
-                if exact and proof.observe in (resultpacket.WHOLE, resultpacket.RANGE):
+                if exact and proof.observe in (denial.WHOLE, denial.RANGE):
                     from .readcontext import record_prefix
                     record_prefix(tid, proof.text, final_prefix)
                 out.append({**m, "content": shown})
