@@ -117,6 +117,17 @@ def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False, mar
     return f"# {_SENTINEL}{payload}"
 
 
+def _sentinel_shared(name: str, arguments, receipt: str, survey: bool = False, marks: str = "", unread_hold: bool = False) -> str:
+    """Declare arguments once, in the immediately following exported shell assignment."""
+    ordinary = _sentinel(name, arguments, receipt, survey, marks, unread_hold)
+    body = json.loads(base64.b64decode(_SENTINEL_LINE.match(ordinary).group(1)))
+    args = body.pop('arguments')
+    body['argref'] = 1
+    header = base64.b64encode(json.dumps(body).encode()).decode('ascii')
+    payload = base64.b64encode(args.encode('utf-8')).decode('ascii')
+    return f"# {_SENTINEL}{header}\nexport __ctx_args='{payload}'"
+
+
 def _shell_call(orig_id: str, shell_tool: dict, command: str, output_tokens: int = 0) -> dict:
     args = shell_args(shell_tool, command)
     if output_tokens:
@@ -233,6 +244,11 @@ def _decode_sentinel(command: str) -> dict | None:
     try:
         d = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
         d["name"]
+        if d.get('argref') == 1:
+            ref = re.match(r"export __ctx_args='([A-Za-z0-9+/=]+)'(?:\r?\n|\Z)", command[m.end():])
+            if ref is None or 'arguments' in d:
+                return None
+            d['arguments'] = base64.b64decode(ref.group(1), validate=True).decode('utf-8')
         return d
     except (json.JSONDecodeError, ValueError, KeyError, TypeError):
         return None

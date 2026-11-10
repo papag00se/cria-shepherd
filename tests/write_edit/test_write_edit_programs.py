@@ -28,6 +28,25 @@ def test_queued_writes_and_edits_keep_commands_small_and_execute(tmp_path):
     assert (tmp_path / 'f.txt').read_bytes() == b'after\n'
 
 
+def test_large_write_payload_is_carried_once_and_round_trips(tmp_path):
+    content = ''.join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(400))
+    tc, done, msgs = do('write_file', {'path': 'a.txt', 'content': content}, tmp_path)
+    command = json.loads(tc['function']['arguments'])['cmd']
+    assert len(command.encode()) < 55_000
+    assert done.returncode == 0, done.stderr
+    assert (tmp_path / 'a.txt').read_text() == content
+    assert json.loads(msgs[0]['tool_calls'][0]['function']['arguments']) == {'path': 'a.txt', 'content': content}
+    assert denial.landed(msgs[1])
+    replacement = content[::-1]
+    tc, done, msgs = do('edit_file', {'path': 'a.txt', 'old_string': content, 'new_string': replacement}, tmp_path)
+    command = json.loads(tc['function']['arguments'])['cmd']
+    assert len(command.encode()) < 100_000
+    assert done.returncode == 0, done.stderr
+    assert (tmp_path / 'a.txt').read_text() == replacement
+    assert json.loads(msgs[0]['tool_calls'][0]['function']['arguments']) == {'path': 'a.txt', 'old_string': content, 'new_string': replacement}
+    assert denial.landed(msgs[1])
+
+
 @pytest.mark.parametrize("content", [TRICKY, "", "0", "x" * 20_000], ids=["tricky", "empty", "falsy", "20KB"])
 def test_a_whole_write_lands_exactly_the_bytes_sent_and_replays_as_the_models_own_call(tmp_path, content):
     """Whole write: byte-exact (shell metachars, CRLF, empty, falsy, 20 KB in ONE call), atomic, no litter, re-presented unchanged."""

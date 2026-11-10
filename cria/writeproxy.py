@@ -56,7 +56,7 @@ from .filecommands import (
     _read_command, _read_in_place_of_write)
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
-    _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
+    _sentinel, _sentinel_shared, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
     _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration, marks_declared,
     GATE_SENTINEL)
 
@@ -1670,9 +1670,33 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         cmd = _survey_after_first_record(cmd, marks_ride, receipt)
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
                     cmd = _seq_release(edit_seq[ti]) + cmd
-                rebuilt.append(_shell_call(tc.get("id"), shell_tool,
-                                           f"{_sentinel(name, fn.get('arguments'), receipt, declaration.survey, declaration.marks, read_in_place)}\n{cmd}",
-                                           0))
+                # The original JSON is needed for restart-safe reconstruction. An ordinary
+                # mutation can consume that same copy instead of carrying its text twice.
+                # Refusals, transformed writes and unrecognized programs keep the old form.
+                shared = False
+                if name in (_WRITE_NAMES | _EDIT_NAMES) and not read_in_place and not bridged:
+                    try:
+                        original_args = json.loads(fn.get('arguments'))
+                        denial.canonical_arguments(fn.get('arguments')).encode('utf-8')
+                        if name in _WRITE_NAMES:
+                            content = original_args.get('content')
+                            pairs = [('raw', 'content', content, '')] if isinstance(content, str) and _repair_double_escaped(content) == content else []
+                        else:
+                            old, new = original_args.get('old_string'), original_args.get('new_string')
+                            pairs = [('old', 'old_string', old, '.decode()'), ('new', 'new_string', new, '.decode()')] if isinstance(old, str) and isinstance(new, str) else []
+                        literals = [(var, key, "{}=base64.b64decode('{}'){}".format(var, _b64(value), suffix)) for var, key, value, suffix in pairs]
+                        if literals and all(cmd.count(literal) == 1 for _, _, literal in literals):
+                            for var, key, literal in literals:
+                                expression = "json.loads(base64.b64decode(os.environ['__ctx_args']))[" + repr(key) + "]"
+                                if var == 'raw':
+                                    expression += ".encode('utf-8')"
+                                cmd = cmd.replace(literal, 'import json,os\n' + var + '=' + expression, 1)
+                            shared = True
+                    except (TypeError, ValueError, AttributeError):
+                        pass
+                header = (_sentinel_shared if shared else _sentinel)(name, fn.get('arguments'), receipt,
+                    declaration.survey, declaration.marks, read_in_place)
+                rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{header}\n{cmd}", 0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
                     pending.lowered_arguments = rebuilt[-1]['function']['arguments']
