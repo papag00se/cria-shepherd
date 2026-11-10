@@ -2,6 +2,7 @@
 'unknown', never 'does NOT exist'."""
 import base64
 import pytest
+import survey_fixtures
 from cria import groundtruth as gt, wsview
 
 CODE = "def f():\n    return 1\n" * 400
@@ -10,8 +11,8 @@ CODE = "def f():\n    return 1\n" * 400
 @pytest.fixture
 def view(tmp_path):
     v = wsview.View(str(tmp_path), "gt")
-    v._ingest_tree("D\t\nF\t1\t%d\tbig.py\nF\t1\t6\tsmall.txt\nF\t1\t3\tunread.txt" % len(CODE), complete=True)
-    v._set_body("big.py", base64.b64encode(CODE.encode()).decode()); v._set_body("small.txt", base64.b64encode(b"hello\n").decode())
+    v._ingest_tree(survey_fixtures.typed(str(tmp_path), "D\t\nF\t1\t%d\tbig.py\nF\t1\t6\tsmall.txt\nF\t1\t3\tunread.txt" % len(CODE)))
+    v._set_body("big.py", CODE.encode()); v._set_body("small.txt", b"hello\n")
     token = wsview.bind(v)
     yield tmp_path
     wsview.unbind(token)

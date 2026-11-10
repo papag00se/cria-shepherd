@@ -65,8 +65,7 @@ def test_cria_composed_calls_still_render_as_the_tool_the_model_made(tmp_path):
     assert modelview.wire_messages(msgs) == msgs
 
 
-def test_a_survey_cria_composed_still_leaves_the_models_view():
-    """Control for the part of restore_wire that stays until the survey route is migrated (phase 6)."""
-    from cria import wsview
-    history = _history(wsview.SURVEY_CMD_OPEN + '\nls\n', 'files\n', 's1')
-    assert [m['role'] for m in privatenames.restore_wire(history)] == ['user']
+def test_a_command_whose_first_line_looks_like_a_survey_header_is_the_command_it_is():
+    """The workspace survey is cria's own operation now (`cria.surveyops`): nothing is hidden from the model by the first line of a command."""
+    history = _history('# ___CTX_SURVEY_CMD___\nls\n', 'files\n', 's1')
+    assert privatenames.restore_wire(history) == history and modelview.wire_messages(history) == history

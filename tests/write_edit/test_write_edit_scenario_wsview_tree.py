@@ -1,10 +1,10 @@
-"""wsview on a REAL surveyed tree: the harness-side survey program runs in bash over a tmp tree (plain and packed), the view ingests
-it, and every answer is compared with the disk it came from: fold (one counted line, interior UNKNOWN), budget (a bound reads
-UNKNOWN, never absent), unknown (not delivered / refused size), stale (writes, edits, mutators), rejected surveys, and re-rooting."""
+"""wsview on a REAL surveyed tree: cria's survey operation runs its primitive calls in bash over a tmp tree, the view ingests it, and
+every answer is compared with the disk it came from: fold (a directory named, interior UNKNOWN), the bound (what the walk did not reach
+reads UNKNOWN, never absent), unknown (not delivered / refused size), stale (writes, edits, mutators), refused surveys, and re-rooting."""
 import os
-import subprocess
 
 import pytest
+from survey_fixtures import survey_of_disk
 
 from cria import wsview
 
@@ -33,8 +33,10 @@ def tree(tmp_path):
 
 
 def survey_of(root, **kw):
-    out = subprocess.run(["bash", "-lc", wsview.survey_command(SESS, cd=str(root), **kw)], capture_output=True, text=True, timeout=120).stdout
-    return wsview.strip_survey(out)[1]
+    """The survey cria asks for what the readers queued, run for real."""
+    bodies, progs, outside = wsview.pending(SESS)
+    wsview.clear_pending(SESS, bodies, progs, outside)
+    return survey_of_disk(root, bodies=bodies[:wsview.BLOB_FILES_MAX], progs=progs, outside=outside, session=SESS, **kw)
 
 
 def ask(*bodies, outside=(), programs=()):
@@ -46,12 +48,11 @@ def ask(*bodies, outside=(), programs=()):
         wsview.want_program(SESS, p)
 
 
-@pytest.mark.parametrize("pack", [False, True])
-def test_a_surveyed_view_answers_what_the_disk_holds_and_unknown_where_it_did_not_look(tree, pack):
+def test_a_surveyed_view_answers_what_the_disk_holds_and_unknown_where_it_did_not_look(tree):
     v = wsview.View(str(tree), SESS)
     assert v.read("README.md") is None and not v.surveyed
     ask("README.md", "src/pkg/a.py", "huge.bin", outside=("/etc", "/etc/hostname", "/nonexistent/zz"), programs=("sh", "no-such-prog-xyz"))
-    assert wsview.apply_survey(v, survey_of(tree, pack=pack)) and v.surveyed and v.complete and v.usable
+    assert wsview.apply_survey(v, survey_of(tree)) and v.surveyed and v.complete and v.usable
     assert v.isfile("README.md") and v.size("README.md") == 3 and v.isdir("src/pkg") and v.exists("src") and v.mtime("README.md")
     assert v.isfile("nope") is False and v.exists("nope") is False and v.rel(str(tree / "src")) == "src" and v.rel("../x") is None and v.rel("/else/x") is None
     assert v.abs("src") == f"{v.root}/src" and v.abs("") == v.root
@@ -78,22 +79,19 @@ def test_a_surveyed_view_answers_what_the_disk_holds_and_unknown_where_it_did_no
     assert d.reroot("/nowhere/x") is d and d.read(v.abs("src/pkg/a.py")) == "print(1)\n"
 
 
-def test_a_survey_that_hit_its_budget_is_unknown_and_a_cut_foreign_or_unverified_one_is_refused(tree):
+def test_a_survey_that_hit_its_bound_is_unknown_and_a_foreign_or_empty_one_is_refused(tree, monkeypatch):
     whole = survey_of(tree)
+    assert whole.complete
+    monkeypatch.setattr(wsview, "TREE_MAX_ENTRIES", 20)                # the walk stops after the entries it has: the rest is named as not listed
     bounded = wsview.View(str(tree), SESS)
-    assert wsview.apply_survey(bounded, survey_of(tree, budget=wsview.TREE_MIN_BYTES))
-    assert len(bounded._files) < 65 and bounded.isfile("many/file_60.py") is None and bounded.isfile("nope") is None and not bounded.listed_everything()
+    assert wsview.apply_survey(bounded, survey_of(tree))
+    assert len(bounded._files) < 65 and bounded.isfile("src/pkg/a.py") is None and bounded.isfile("nope") is None and not bounded.listed_everything()
+    assert not bounded.complete and bounded.isdir("src/pkg") is True                 # named, its interior not known
     assert wsview.apply_survey(fresh_view := wsview.View(str(tree), SESS), whole) and fresh_view.isfile("many/file_60.py") and fresh_view.isfile("nope") is False
-    fresh = lambda: wsview.View(str(tree), SESS)                                                      # noqa: E731
-    entries = [ln for ln in whole.splitlines() if ln.startswith("entries\t")][0]
-    refusals = [("cut-in-transit", whole.replace(wsview.SURVEY_CLOSE, "")), ("no-entry-count", whole.replace(entries, "x\t1")),
-                ("entry-count-mismatch", whole.replace(entries, "entries\t99")), ("entry-count-unparseable", whole.replace(entries, "entries\tmany")),
-                ("no-tree-section", whole.replace(wsview._SEC_PREFIX + "tree", "x")), ("packed-unverified", wsview.SURVEY_PACKED + " 5 deadbeef\nAAAA")]
-    for reason, text in refusals:
-        view = fresh()
-        assert not wsview.apply_survey(view, text) and wsview.last_reject()["reason"] == reason and not view.surveyed, reason
     foreign = wsview.View("/some/other/repo", SESS)
     assert not wsview.apply_survey(foreign, whole) and wsview.last_reject()["reason"] == "different-tree" and foreign.isfile("README.md") is None
+    empty = wsview.View(str(tree), SESS)
+    assert not wsview.apply_survey(empty, wsview.Survey(str(tree), listed=False)) and wsview.last_reject()["reason"] == "no-tree" and not empty.surveyed
     rootless = wsview.View(None, SESS)
     assert wsview.apply_survey(rootless, whole) and rootless.root == str(tree) and rootless.isfile("README.md")
 

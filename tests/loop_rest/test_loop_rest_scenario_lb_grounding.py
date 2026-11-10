@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from survey_fixtures import ask_survey
 from cria import loop, wsview
 from cria.loop import PlanSession
 from cria.plan import Plan, PlanItem
@@ -75,8 +76,7 @@ def test_a_completion_check_that_named_no_gap_gets_only_what_cria_measured_again
     (tmp_path / "notes.py").write_text("n = 1\n")
 
     def survey():
-        out = subprocess.run(["bash", "-lc", wsview.survey_command("lb", cd=str(tmp_path))], capture_output=True, text=True).stdout
-        return wsview.strip_survey(out)[1]
+        return ask_survey(str(tmp_path), "lb")
     view = wsview.View(str(tmp_path), "lb")
     wsview.apply_survey(view, survey())
     token = wsview.bind(view)

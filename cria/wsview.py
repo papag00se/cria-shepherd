@@ -15,10 +15,11 @@ at all. That is the one failure shape that cannot be noticed from the outside.
 
 HOW IT WORKS.
 
-* **The survey** — one bounded ``python3`` program cria composes and the HARNESS runs, riding
-  along on shell commands cria is already sending (a lowered ``write_file``, the completion
-  gate). It costs no extra turn, and its output is stripped out of the model's view exactly like
-  the gate's sections are: the model sees the result of its own call and nothing else.
+* **The survey** — cria's own operation (``cria.surveyops``): a few calls to the harness primitives (``ls`` for the tree, ``read``
+  for the bodies wanted, ``run`` for the programs and outside paths asked about), whose answers cria turns into a :class:`Survey`
+  here, in this process. It is asked on cria's own cadence (after a landed write, when a question could not be answered, after the
+  completion gate's checks), never as a program riding on another call, and it is projected out of the model's view like every
+  other private call.
 * **The conversation** — every synthetic file tool cria lowered is in the message history with
   its path and its bytes. A ``write_file`` proves a file's content; a ``read_file`` result proves
   it too; an ``edit_file`` proves the content CHANGED and is therefore no longer known.
@@ -39,65 +40,23 @@ run), by which time several surveys have ridden along.
 
 from __future__ import annotations
 
-import base64
 import contextvars
 import hashlib
-import json
 import os
 import posixpath
 import re
 import time
-import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 
-from . import denial, earliernames, resultpacket
+# --------------------------------------------------------------------------- bounds
 
-# --------------------------------------------------------------------------- wire format
-
-# Marker opening the survey block appended to a cria-composed command. Everything from this line
-# to SURVEY_CLOSE is cria's, never the model's, and is stripped before the result is represented.
-SURVEY_OPEN = "___CTX_SURVEY___"
-SURVEY_CLOSE = "___CTX_SURVEY_END___"
-# First line inside a survey block whose body travels packed (zlib, see `_SURVEY_PY`): the marker, the
-# length and the sha256 of the text it unpacks to. `strip_survey` unpacks it; nothing else ever sees it.
-SURVEY_PACKED = "___CTX_SURVEY_Z___"
-# Marker bracketing the survey inside the COMMAND cria composed, so the same plumbing-strip that
-# hides the gate's own scaffolding from the model hides this too. The model never authored either.
-SURVEY_CMD_OPEN = "# ___CTX_SURVEY_CMD___"
-SURVEY_CMD_CLOSE = "# ___CTX_SURVEY_CMD_END___"
-_SEC_PREFIX = "___CTX_SV_"
-_SEC_SUFFIX = "___"
-
-# How much of the tree one survey may carry. A task workspace is a few hundred files; a repo with
-# an installed dependency tree is tens of thousands, and the whole listing would be cut by the
-# harness's own output cap before cria ever saw it — which would be a silent lie about what
-# exists. So a directory holding more than FOLD_AT files is FOLDED to a count, and questions
-# inside it answer "unknown" rather than "no".
-# The listing rides home inside one tool result, which passes through the HARNESS's own output cap.
-# Overrun it and the result is cut in transit — and a listing cut in transit is indistinguishable
-# from a listing of a smaller repo, so every file past the cut would read as deleted. What does not
-# fit is FOLDED (named, with its interior marked unknown) rather than dropped.
-#
-# 48,000 WAS 4.7x THE CAP IT CLAIMED TO FIT INSIDE. Measured two ways: across 401 real
-# harness-truncated results in the captures the retained size is 9,292 min / 10,212 median / 10,223
-# p90, and cria's own bound on a tool result (`content_reduce.INLINE_RESULT_MAX_BYTES`) is 9,000.
-# Ran the real survey program against all 87 archived run workspaces: 10 of 10 rust and 22 of 35
-# ruby workspaces produced a survey over the bound (median 40-49 KB), and this repo surveys at
-# 55,289 bytes. Those are the two task families that have been running. A survey cut in transit is
-# rejected wholesale by `apply_survey` — correctly — so on those workspaces the view was NEVER
-# surveyed, and an unsurveyed view leaves `_confirm_completion` unchecked and makes
-# `linterprobe.collect_files` return no probes at all.
-#
-# The bound is now the same one every other tool result is held to, less room for the survey's other
-# sections (bodies, programs, outside paths) and for whatever command it rode home on. Folding
-# harder is a real answer — a folded directory is named and its interior reads as unknown, which
-# every downstream reader already handles. Being cut in transit is not.
+# How much of the tree one survey may carry. A task workspace is a few hundred files; a repo with an installed dependency tree is
+# tens of thousands, and walking all of it would be a silent cost on the coder's machine. So a directory holding more than FOLD_AT
+# files is FOLDED to a count (named, its interior marked unknown, so questions inside it answer "unknown" rather than "no"), and
+# the walk stops after TREE_MAX_ENTRIES entries: what it did not reach is named (folded) or said not to be listed. "Not listed"
+# is never "not there" (every predicate downgrades accordingly).
 TREE_MAX_ENTRIES = 1200
-TREE_MAX_BYTES = 6_000
-# The smallest tree budget worth asking for. Below this the survey would carry little more than its
-# own markers, and the caller is better off not spending the bytes — see `survey_command(budget=)`.
-TREE_MIN_BYTES = 400
 FOLD_AT = 400
 # When the tree bound is reached, the directories still queued are FOLDED — named, with their
 # interiors marked unknown — rather than dropped, so `isdir` stays right and nothing inside them is
@@ -909,56 +868,35 @@ class View:
             return None
         return fact[0]
 
-    def _ingest_tree(self, body: str, complete: bool = True) -> None:
+    def _ingest_tree(self, survey: "Survey") -> None:
         self._inventory_blanks.clear()
         self._files.clear()
         self._dirs.clear()
         self._folded.clear()
         self._outputs.clear()
-        self._complete = complete
-        for line in body.splitlines():
-            if not line:
-                continue
-            kind, _, rest = line.partition("\t")
-            if kind == "D":
-                if rest:
-                    self._dirs.add(rest)
-            elif kind == "B":
-                # A BUILD OUTPUT, folded by the survey on its manifest's proof: named, interior unknown (a fold like `X`), and
-                # the survey stays COMPLETE: nothing the project's author wrote is hidden.
-                manifest, _, d = rest.partition("\t")
-                if d:
-                    self._dirs.add(d)
-                    self._folded.add(d)
-                    self._outputs[d] = manifest
-            elif kind == "X":
-                _count, _, d = rest.partition("\t")
-                if d:
-                    self._dirs.add(d)
-                    self._folded.add(d)
-                else:
-                    # THE ROOT ITSELF WAS FOLDED, and this record used to be thrown away because its
-                    # path is the empty string. The survey emits `X\t<count>\t` for a root holding
-                    # more than FOLD_AT files and then stops — so `_files`, `_dirs` and `_folded` all
-                    # stayed empty while `_surveyed` and `_complete` stayed True. Every predicate
-                    # then answered FALSE rather than None, and `groundtruth.workspace_inventory`
-                    # told every judge, the planner and the briefing writer:
-                    #
-                    #   "WORKSPACE FILES in <root>: none — the workspace has no files at judging time."
-                    #
-                    # Reproduced on a 420-file root: `isfile(main.py)` returned False, not None. A
-                    # bound that turns "I could not look" into "it is not there" is the false fact
-                    # this class of guard exists to prevent (#5b, #11b, #23c).
-                    self._complete = False
-            elif kind == "F":
-                mt, _, rest2 = rest.partition("\t")
-                sz, _, rel = rest2.partition("\t")
-                if not rel:
-                    continue
-                try:
-                    self._files[rel] = (int(sz), float(mt))
-                except ValueError:
-                    self._files[rel] = (0, 0.0)
+        self._complete = survey.complete
+        self._dirs.update(d for d in survey.dirs if d)
+        for d, manifest in survey.outputs.items():
+            # A BUILD OUTPUT, folded by the survey on its manifest's proof: named, interior unknown (a fold like any other), and the
+            # survey stays COMPLETE: nothing the project's author wrote is hidden.
+            self._dirs.add(d)
+            self._folded.add(d)
+            self._outputs[d] = manifest
+        for d in survey.folded:
+            if d:
+                self._dirs.add(d)
+                self._folded.add(d)
+            else:
+                # THE ROOT ITSELF WAS FOLDED. Its record has the empty string for a path, and a survey that folds the root holds no
+                # file, directory or fold of any other name — so `_files`, `_dirs` and `_folded` all stayed empty while `_surveyed`
+                # and `_complete` stayed True, every predicate answered FALSE rather than None, and `groundtruth.workspace_inventory`
+                # told every judge, the planner and the briefing writer "the workspace has no files at judging time" (reproduced on
+                # a 420-file root: `isfile(main.py)` returned False, not None). A bound that turns "I could not look" into "it is not
+                # there" is the false fact this class of guard exists to prevent (#5b, #11b, #23c).
+                self._complete = False
+        for rel, (size, mtime) in survey.files.items():
+            if rel:
+                self._files[rel] = (int(size), float(mtime))
         self._surveyed = True
         self._snapshot_revision = self._freshness[0]
         self._ran_a_mutator = False
@@ -1059,43 +997,13 @@ class View:
                 _forget_body(self._sess, self.root, rel)
             del self._cache_candidates[rel]
 
-    def _ingest_blob(self, body: str) -> None:
-        cur_rel: str | None = None
-        buf: list[str] = []
-        for line in body.splitlines():
-            if line.startswith("!"):
-                if cur_rel is not None:
-                    self._set_body(cur_rel, "\n".join(buf))
-                cur_rel, buf = None, []
-                enc, _, size = line[1:].partition("\t")
-                try:
-                    self._undeliverable[base64.b64decode(enc.encode()).decode("utf-8", "replace")] \
-                        = int(size)
-                except Exception:                     # noqa: BLE001 — a malformed record is no record
-                    pass
-            elif line.startswith("@"):
-                if cur_rel is not None:
-                    self._set_body(cur_rel, "\n".join(buf))
-                buf = []
-                try:
-                    cur_rel = base64.b64decode(line[1:].encode()).decode("utf-8", "replace")
-                except Exception:                     # noqa: BLE001 — a malformed header ends the file
-                    cur_rel = None
-            elif cur_rel is not None:
-                buf.append(line)
-        if cur_rel is not None:
-            self._set_body(cur_rel, "\n".join(buf))
+    def _ingest_blob(self, survey: "Survey") -> None:
+        for rel, size in survey.refused.items():
+            self._undeliverable[rel] = int(size)
+        for rel, raw in survey.bodies.items():
+            self._set_body(rel, raw)
 
-    def _set_body(self, rel: str, b64: str) -> None:
-        try:
-            raw = base64.b64decode(b64.encode(), validate=False)
-        except Exception:                             # noqa: BLE001 — undecodable is simply unknown
-            self._bodies.pop(rel, None)               # never leave an OLDER body standing in for it
-            self._body_generation.pop(rel, None)
-            self._body_confirmed.pop(rel, None)
-            self._stale.add(rel)
-            _forget_body(self._sess, self.root, rel)
-            return
+    def _set_body(self, rel: str, raw: bytes) -> None:
         self._record_body(rel, raw)
         self._body_generation[rel] = self._survey_generation
         # CONFIRMED BY THIS SURVEY'S OWN LISTING (C38b). `_ingest_tree` ran before this blob was
@@ -1119,19 +1027,13 @@ class View:
         # a LATER request's cache reconciliation must match on before trusting this body again.
         _remember_body(self._sess, self.root, rel, raw, self._body_confirmed[rel][0])
 
-    def _ingest_outside(self, body: str) -> None:
-        for line in body.splitlines():
-            path, ok = _unb64(line.partition("\t")[0])
-            if ok and path:
-                self._outside[path] = line.partition("\t")[2]
+    def _ingest_outside(self, answers: dict) -> None:
+        self._outside.update(answers)
 
-    def _ingest_progs(self, body: str, *, unanswered_only: bool = False) -> None:
-        for line in body.splitlines():
-            enc, _, resolved = line.partition("\t")
-            name, ok = _unb64(enc)
-            hit, hit_ok = _unb64(resolved, "replace") if resolved else ("", True)
-            if ok and name and hit_ok and not (unanswered_only and name in self._progs):
-                self._answer_program(name, hit)
+    def _ingest_progs(self, answers: dict, *, unanswered_only: bool = False) -> None:
+        for name, resolved in answers.items():
+            if name and not (unanswered_only and name in self._progs):
+                self._answer_program(name, resolved)
 
     def note_program_absent(self, name: str) -> None:
         """A check cria composed to launch ``name`` directly exited 127 in the coder's own shell: that shell cannot find it. Said
@@ -1343,15 +1245,6 @@ class View:
         # itself on-disk ground truth. `read()` correctly answers None for the same file; the size
         # has to as well (#23c).
         self._files.setdefault(rel, (None, time.time()))
-
-
-def _unb64(field: str, errors: str = "strict") -> tuple[str, bool]:
-    """A survey record field that travels base64 (a name the model typed), as ``(text, ok)``; a field that
-    is not valid base64 or not UTF-8 is no record (UNKNOWN), never a different name."""
-    try:
-        return base64.b64decode(field.encode("ascii"), validate=True).decode("utf-8", errors), True
-    except (ValueError, UnicodeError):
-        return "", False
 
 
 def _parents(rel: str) -> list[str]:
@@ -1729,6 +1622,31 @@ def want_outside(sess: str, path: str) -> None:
     _remember(_OUTSIDE_MISSES, sess, path)
 
 
+# The gate's checks may have changed the tree and the bodies a judge will read: a survey is wanted once they have run, whether or not any
+# reader has yet asked a question the view could not answer.
+_REFRESH: set[str] = set()
+
+
+def want_refresh(sess: str) -> None:
+    if sess:
+        if len(_REFRESH) > 512:
+            _REFRESH.clear()
+        _REFRESH.add(sess)
+
+
+def clear_refresh(sess: str) -> None:
+    _REFRESH.discard(sess)
+
+
+def fresh_demands(sess: str) -> bool:
+    """Is there a question nobody has asked the harness yet (a body, a path outside the workspace, a program no earlier survey
+    answered), or a refresh the gate wants? An absence a survey already reported is re-checked on the next write's survey, not on
+    every request."""
+    bodies, progs, outside = pending(sess)
+    cached = _PROG_CACHE.get(sess) or {}
+    return bool(sess in _REFRESH or bodies or outside or any(cached.get(name) != "" for name in progs))
+
+
 def pending(sess: str) -> tuple[list[str], list[str], list[str]]:
     return (list(_BODY_MISSES.get(sess) or []), list(_PROG_MISSES.get(sess) or []),
             list(_OUTSIDE_MISSES.get(sess) or []))
@@ -1743,434 +1661,37 @@ def clear_pending(sess: str, bodies: list[str], progs: list[str], outside: list[
             store[sess] = [x for x in q if x not in set(asked)]
 
 
-# --------------------------------------------------------------------------- the survey command
+# --------------------------------------------------------------------------- the survey, as typed facts
 
-_SURVEY_PY = r'''
-import base64, os, sys
-W = sys.stdout.write
-TREE_MAX, TREE_BYTES, FOLD_AT, PRUNE = {tree_max}, {tree_bytes}, {fold_at}, {prune!r}
-BLOB_FILES, BLOB_BYTES, BLOB_FILE = {blob_files}, {blob_bytes}, {blob_file}
-OUTPUTS = {outputs!r}
-WANT = {want!r}
-PROGS = {progs!r}
-OUTSIDE = {outside!r}
-root = os.getcwd()
-W("{open}\n")
-W("{sec}meta{suf}\n")
-W("root\t%s\n" % root)
-W("{sec}tree{suf}\n")
-n = 0
-nrec = 0
-spent = 0
-complete = 1
-def EMIT(line):
-    global nrec, spent, complete
-    # One bound owns every tree record, including the queued-directory drain below. Previously the
-    # main walk stopped at TREE_BYTES and the drain emitted hundreds more records anyway; the harness
-    # cut the block, so its declared count could never match what arrived.
-    if spent + len(line) > TREE_BYTES:
-        complete = 0
-        return False
-    W(line)
-    nrec += 1
-    spent += len(line)
-    return True
-stack = [""]
-while stack and n < TREE_MAX and spent < TREE_BYTES:
-    cur = stack.pop(0)
-    d = os.path.join(root, cur) if cur else root
-    try:
-        entries = sorted(os.scandir(d), key=lambda e: e.name)
-    except OSError:
-        continue
-    subs, files = [], []
-    odd = 0
-    for e in entries:
-        # A NAME THE TREE CANNOT CARRY IS UNKNOWN, NOT ABSENT AND NOT INVENTED. The tree is one record per line, so a name holding a line break
-        # (a CR, LF, U+2028, ...) splits into forged records (`x\nF\t1\t5\tforged.txt` listed a file that is not there and failed the count, so the
-        # whole survey was refused), and a name that is not valid UTF-8 made the write below raise in a UTF-8 locale, ending the survey with
-        # no tree at all. Such an entry is left out and its directory is declared not fully listed, which is what every other bound already says.
-        try:
-            e.name.encode("utf-8")
-            listable = e.name.splitlines() == [e.name]
-        except UnicodeEncodeError:
-            listable = False
-        if not listable:
-            odd = 1
-            continue
-        try:
-            isd = e.is_dir(follow_symlinks=False)
-        except OSError:
-            continue
-        (subs if isd else files).append(e)
-    if odd:
-        complete = 0
-        EMIT("X\t0\t%s\n" % cur)
-    if len(files) > FOLD_AT:
-        EMIT("X\t%d\t%s\n" % (len(files), cur))
-        continue
-    here = set(f.name for f in files)
-    for e in subs:
-        if e.name in PRUNE:
-            continue
-        rel = (cur + "/" + e.name) if cur else e.name
-        # A TOOLCHAIN'S OUTPUT IS NAMED, NOT WALKED (`B`): its name AND a manifest of its ecosystem beside it (a table, `BUILD_ARTIFACT_DIRS`).
-        proof = [m for m in OUTPUTS.get(e.name, ()) if m in here]
-        if proof:
-            EMIT("B\t%s\t%s\n" % (proof[0], rel))
-            continue
-        EMIT("D\t%s\n" % rel)
-        stack.append(rel)
-        n += 1
-    for e in files:
-        rel = (cur + "/" + e.name) if cur else e.name
-        try:
-            st = e.stat(follow_symlinks=False)
-            EMIT("F\t%.0f\t%d\t%s\n" % (st.st_mtime, st.st_size, rel))
-        except OSError:
-            EMIT("F\t0\t0\t%s\n" % rel)
-        n += 1
-        if n >= TREE_MAX or spent >= TREE_BYTES:
-            # THE BOUND MEANS UNKNOWN, NOT ABSENT. Breaking here leaves this directory already
-            # popped off the stack and the rest of its files unlisted, with no `X` record naming
-            # it — and `complete` stayed 1, so `View.isfile` answered FALSE for a file that
-            # exists and `listed_everything` told every judge "This list is complete — a file not
-            # listed here does not exist in the workspace." Reproduced on a 61-file tree at the
-            # budget a gate-carried survey actually gets: 17 records emitted, complete 1,
-            # isfile('pkg/file_60.py') -> False. Same defect the root-fold branch was written to
-            # fix, one loop further in (#5b, #11b).
-            complete = 0
-            EMIT("X\t0\t%s\n" % cur)
-            break
-if stack and (n >= TREE_MAX or spent >= TREE_BYTES):
-    complete = 0                      # queued directories nobody will walk — same reason as above
-for rel in stack[:{drain_max}]:
-    EMIT("X\t0\t%s\n" % rel)
-if len(stack) > {drain_max}:
-    complete = 0
-# A NAME THE MODEL TYPED CAN BE ANYTHING, INCLUDING TEXT NO FILE SYSTEM CAN SPELL. A lone surrogate (`\ud800`) cannot be encoded, so
-# `rel.encode()` below and `os.path.getsize` raised (neither is an OSError) and the survey ended with no answer at all. Such a name is
-# UNKNOWN here, never absent: it gets no record, so the view keeps asking nothing and answers nothing about it.
-def spellable(s):
-    try:
-        s.encode("utf-8")
-        return True
-    except UnicodeEncodeError:
-        return False
-def B(s):
-    return base64.b64encode(s.encode("utf-8", "surrogateescape")).decode()
-W("{sec}blob{suf}\n")
-bspent, taken = 0, 0
-for rel in WANT:
-    if taken >= BLOB_FILES or bspent >= BLOB_BYTES:
-        break
-    if not spellable(rel):
-        continue
-    p = os.path.join(root, rel)
-    try:
-        sz = os.path.getsize(p)
-    except (FileNotFoundError, NotADirectoryError):
-        W("!%s\t-1\n" % base64.b64encode(rel.encode()).decode())
-        continue
-    except OSError:
-        W("!%s\t-2\n" % base64.b64encode(rel.encode()).decode())
-        continue
-    if sz > BLOB_FILE:
-        W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))
-        continue
-    try:
-        with open(p, "rb") as fh:
-            raw = fh.read(BLOB_FILE)
-    except OSError:
-        W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))
-        continue
-    W("@%s\n" % base64.b64encode(rel.encode()).decode())
-    W(base64.b64encode(raw).decode() + "\n")
-    bspent += len(raw)
-    taken += 1
-W("{sec}outside{suf}\n")
-# THE OUTSIDE AND PROGS SECTIONS ARE ONE RECORD PER LINE LIKE EVERY OTHER, and the name in each was the model's own text, printed raw:
-# a path holding a line break forged a second record the coder never asked about. Both fields travel base64, like the blob section.
-for q in OUTSIDE:
-    if not spellable(q):
-        continue
-    t = os.path.expanduser(q)
-    k = "d" if os.path.isdir(t) else ("f" if os.path.isfile(t) else "")
-    W("%s\t%s\n" % (B(q), k))
-W("{sec}progs{suf}\n")
-path = os.environ.get("PATH", "")
-for name in PROGS:
-    if not spellable(name):
-        continue
-    hit = ""
-    for d in path.split(os.pathsep):
-        c = os.path.join(d, name)
-        if os.path.isfile(c) and os.access(c, os.X_OK):
-            hit = name
-            break
-    if not hit:
-        import re as _re
-        pat = _re.compile(r"^" + _re.escape(name) + r"[0-9][0-9.]*$")
-        for d in path.split(os.pathsep):
-            try:
-                names = os.listdir(d)
-            except OSError:
-                continue
-            for e in sorted(names):
-                if pat.match(e) and os.access(os.path.join(d, e), os.X_OK):
-                    hit = e
-                    break
-            if hit:
-                break
-    W("%s\t%s\n" % (B(name), B(hit)))
-W("{sec}done{suf}\n")
-W("entries\t%d\n" % nrec)
-W("complete\t%d\n" % complete)
-W("{close}\n")
-'''
+@dataclass(frozen=True)
+class Survey:
+    """What one survey of the workspace learned, as facts (docs/harness-programs.md section 7, phase 6). cria's own survey operation
+    (``cria.surveyops``) builds it from the answers of the harness primitives; nothing here is parsed out of text.
 
-# THE PACKED VARIANT (N2) is the program above with three textual changes, so an unpacked survey is
-# byte-for-byte the program it always was (L2/L3 never see the packed one — see `survey_command(pack=)`).
-# Output is buffered, a body is kept as its RAW bytes, and the answer leaves once at the end.
-_PACK_EPILOGUE = r'''
-# THE ANSWER LEAVES HERE, ONCE. The text below is what this program has always printed (a body is its
-# base64 line). The same answer may travel as `{zopen} <bytes> <sha256>` + ONE base64
-# line of a zlib stream in which each body is its RAW bytes (`\0<n>\n<raw>\n`) instead of base64 text,
-# because zlib cannot shrink base64 text much and shrinks the bytes it came from 3x. The header carries
-# the length and sha256 of the unpacked text so the reader proves the round trip; nothing that fails
-# to shrink, or cannot be packed here, is packed - it prints exactly the text above.
-LEGACY = "".join(p if isinstance(p, str) else base64.b64encode(p).decode() + "\n" for p in PIECES)
-try:
-    import hashlib, zlib
-    lb = LEGACY.encode()
-    packed = base64.b64encode(zlib.compress(b"".join(
-        p.encode() if isinstance(p, str) else b"\0%d\n" % len(p) + p + b"\n" for p in PIECES), 9)).decode()
-    frame = "{open}\n{zopen} %d %s\n%s\n{close}\n" % (len(lb), hashlib.sha256(lb).hexdigest(), packed)
-    if len(frame) < len(LEGACY):
-        LEGACY = frame
-except Exception:
-    pass
-sys.stdout.write(LEGACY)
-'''
-_SURVEY_PACKED_PY = (
-    _SURVEY_PY
-    .replace("W = sys.stdout.write\n", "PIECES = []\nW = PIECES.append\n", 1)
-    .replace('    W(base64.b64encode(raw).decode() + "\\n")\n', "    W(raw)\n", 1)
-    .replace('W("{close}\\n")\n', 'W("{close}\\n")' + _PACK_EPILOGUE, 1))
-assert _SURVEY_PACKED_PY.count("PIECES") >= 4 and "{zopen}" in _SURVEY_PACKED_PY
+    ``dirs``/``files``/``folded``/``outputs`` are the tree: a folded directory is named with its interior unknown, an output is a
+    directory folded on its manifest's proof (the manifest named), ``complete`` says the listing named EVERYTHING. ``bodies`` are
+    the wanted files' bytes; ``refused`` is what the survey could not hand back (a size, or ABSENT / UNSTATABLE); ``outside``
+    answers the named paths outside the workspace (``d``, ``f`` or ``""``); ``progs`` is what the coder's shell resolves each
+    asked name to (``""`` = nothing)."""
 
-# THE RECORD VARIANT: the survey of an OWN lowered call leaves as ONE typed record (`resultpacket`, kind `survey`) whose
-# body is the survey text with its original length and digest, on the very line after the call's first record. The
-# sentinel declares it; the reader never looks for the block's own markers in a result. The text inside is exactly what
-# the program always printed (`apply_survey` is unchanged) and the codec (text / zlib) is chosen by serialized length.
-_RECORD_EPILOGUE = (
-    '\nLEGACY = "".join(p if isinstance(p, str) else base64.b64encode(p).decode() + "\\n" for p in PIECES)\n'
-    + resultpacket.ENCODER_PY.replace("{", "{{").replace("}", "}}")   # the template is str.format-ed
-    + '\nimport json\n'
-    'sys.stdout.write(json.dumps({{"v": 1, "r": "{receipt}", "k": "survey", "b": encode_body(LEGACY.encode())}},'
-    ' separators=(",", ":")) + "\\n")\n')
-_SURVEY_RECORD_PY = (
-    _SURVEY_PY
-    .replace("W = sys.stdout.write\n", "PIECES = []\nW = PIECES.append\n", 1)
-    .replace('    W(base64.b64encode(raw).decode() + "\\n")\n', "    W(raw)\n", 1)
-    .replace('W("{close}\\n")\n', 'W("{close}\\n")' + _RECORD_EPILOGUE, 1))
-assert _SURVEY_RECORD_PY.count("PIECES") >= 3 and "{receipt}" in _SURVEY_RECORD_PY
-
-_HEREDOC = "__CTX_SV_PY__"
-
-
-class _Param(str):
-    """A name that renders as itself under both ``{x}`` and ``{x!r}``, so the survey template can be
-    formatted with an EXPRESSION where it is normally formatted with a literal."""
-
-    def __repr__(self) -> str:
-        return str(self)
-
-    def __format__(self, spec: str) -> str:
-        return str(self)
-
-
-def survey_helper_program() -> str:
-    """The survey as an invariant program that reads its few per-call values from ``sys.argv[2]``
-    (JSON: ``tree_bytes``, ``want``, ``progs``, ``outside``) instead of having them formatted in.
-
-    N1: byte-identical every time it is rendered (the bound lists are sorted), so the gate can write it
-    to the harness ONCE and invoke it by path — it used to be re-sent, 4.8 KB at a time, in every
-    gate call. Everything the survey ASKS and reports is unchanged; only where its text lives moved."""
-    p = lambda key: _Param(f"PARAMS[{key!r}]")  # noqa: E731
-    body = _SURVEY_PY.format(
-        tree_max=TREE_MAX_ENTRIES, tree_bytes=p("tree_bytes"), fold_at=FOLD_AT,
-        drain_max=FOLD_DRAIN_MAX, prune=_Param(f"set({sorted(PRUNE_DIRS)!r})"), outputs=_build_output_proofs(),
-        blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
-        want=p("want"), progs=p("progs"), outside=p("outside"),
-        open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
-    return "import json\nPARAMS = json.loads(sys.argv[2])\n" + body.strip("\n") + "\n"
-
-
-def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
-                   helper: str = "", pack: bool = False) -> str:
-    """One shell block the HARNESS runs to answer everything the view could not.
-
-    ``python3`` is not a new dependency: cria's lowered ``write_file`` has always been a
-    ``python3`` heredoc, so a harness that cannot run this could never have written a file
-    either. The program is fed on stdin rather than through ``-c``, so nothing in it competes
-    with the surrounding command's quoting and there is no argv length to overflow.
-
-    The whole block is wrapped so it can be appended to a command cria already composed without
-    changing that command's exit status — the caller's result must read exactly as it would have.
-
-    ``budget`` is how many bytes of TREE this particular ride home can afford. A caller that is
-    already spending most of the result on something else — the gate, whose probe sections divide a
-    shared budget — passes what is left, and the survey folds to fit instead of being cut in transit.
-    Omitted, the survey takes :data:`TREE_MAX_BYTES`, which is one ordinary tool result's worth.
-
-    ``helper`` (N1/B1): shell words that run an installed harness-side helper through a verifying loader; it holds
-    :func:`survey_helper_program` (the gate writes it once per session). The block then carries only
-    that name and the per-call values, not the program. A helper that is not there prints no survey —
-    the same "no tree arrived" the caller already treats as nothing learned (``apply_survey`` refuses
-    it); the gate's own transport reader reports the missing helper as UNKNOWN.
-
-    ``pack`` (N2): the answer may travel zlib-packed (``SURVEY_PACKED``), verified by length and sha256
-    on arrival (:func:`strip_survey`). For a survey riding home on a lowered tool result, whose every
-    byte the harness counts toward its own compaction trigger though the model never sees it. The gate
-    does not ask (its pages are already packed as a whole); the helper program never packs.
-    """
-    bodies, progs, outside = pending(sess)
-    bodies, progs, outside = bodies[:BLOB_FILES_MAX], progs[:PROG_MAX], outside[:OUTSIDE_MAX]
-    clear_pending(sess, bodies, progs, outside)
-    prefix = f"cd {_q(cd)} 2>/dev/null; " if cd else ""
-    tree_bytes = max(int(budget), TREE_MIN_BYTES) if budget else TREE_MAX_BYTES
-    if helper:
-        params = json.dumps({"tree_bytes": tree_bytes, "want": list(bodies),
-                             "progs": list(progs), "outside": list(outside)})
-        return (f"{SURVEY_CMD_OPEN}\n"
-                "__ctx_sv_ec=$?\n"
-                f"{{ {prefix}{helper} survey {_q(params)}\n"
-                "} 2>/dev/null\n"
-                "( exit $__ctx_sv_ec )\n"
-                f"{SURVEY_CMD_CLOSE}")
-    receipt = denial.active_receipt()
-    if receipt:
-        denial.declare_survey()        # the sentinel declares the record that follows the call's own first record
-    body = (_SURVEY_RECORD_PY if receipt else _SURVEY_PACKED_PY if pack else _SURVEY_PY).format(
-        receipt=receipt, tree_max=TREE_MAX_ENTRIES, tree_bytes=tree_bytes,
-        fold_at=FOLD_AT,
-        drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS), outputs=_build_output_proofs(),
-        blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
-        want=list(bodies), progs=list(progs), outside=list(outside), 
-        open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
-    return (f"{SURVEY_CMD_OPEN}\n"
-            "__ctx_sv_ec=$?\n"
-            f"{{ {prefix}python3 -I - <<'{_HEREDOC}'\n{body}\n{_HEREDOC}\n}} 2>/dev/null\n"
-            "( exit $__ctx_sv_ec )\n"
-            f"{SURVEY_CMD_CLOSE}")
-
-
-def _q(s: str) -> str:
-    return "'" + str(s).replace("'", "'\\''") + "'"
-
-
-# --------------------------------------------------------------------------- reading it back
-
-# The CLOSE marker is kept in what this returns: `apply_survey` treats its absence as proof the
-# result was cut in transit, so stripping it here would hide the one signal that says so.
-_BLOCK = re.compile(re.escape(SURVEY_OPEN) + r"\n(.*?\n" + re.escape(SURVEY_CLOSE) + r"|.*)",
-                    re.S)
-
-
-def _unpack(group: str) -> str:
-    """One captured survey block, as the text the program would have printed unpacked.
-
-    A packed block is accepted only if it inflates, its length and sha256 match the header, and it
-    ends in the close marker. Anything else (cut in transit, corrupted, a record we cannot read) is
-    handed back STILL PACKED: it holds no tree section, so ``apply_survey`` refuses it and the view
-    stays UNKNOWN. A survey that does not verify never becomes a smaller one that passes."""
-    head, _, rest = group.partition("\n")
-    parts = head.split()
-    if len(parts) != 3 or parts[0] != SURVEY_PACKED:
-        return group
-    try:
-        n, want = int(parts[1]), parts[2]
-        body = base64.b64decode(rest.split("\n", 1)[0].encode("ascii"), validate=True)
-        raw, out, i = zlib.decompress(body), [], 0
-        while i < len(raw):
-            if raw[i] == 0:
-                j = raw.index(b"\n", i)
-                size = int(raw[i + 1:j])
-                if raw[j + 1 + size:j + 2 + size] != b"\n":
-                    return group
-                out.append(base64.b64encode(raw[j + 1:j + 1 + size]).decode() + "\n")
-                i = j + 2 + size
-            else:
-                j = raw.index(b"\n", i)
-                out.append(raw[i:j + 1].decode())
-                i = j + 1
-        text = "".join(out)
-    except (ValueError, zlib.error, UnicodeError):
-        return group
-    enc = text.encode()
-    if len(enc) != n or hashlib.sha256(enc).hexdigest() != want:
-        return group
-    for opener in (SURVEY_OPEN, earliernames.EARLIER_SURVEY_OPEN):         # the earlier release's packed block names itself the old way
-        if text.startswith(opener + "\n"):
-            # What the block regex captures for an unpacked survey ends AT the close marker, not after it.
-            return text[len(opener) + 1:].removesuffix("\n")
-    return group
-
-
-def strip_survey(text: str) -> tuple[str, str]:
-    """``(what the model may see, the survey text)``. The survey is cria's own instrumentation
-    riding on the model's own call; showing it would be showing the model a command it never
-    made — the same contract ``probegate.clean_gate_results`` holds for the gate."""
-    if not text or SURVEY_OPEN not in text:
-        return text, ""
-    found: list[str] = []
-
-    def take(m):
-        found.append(_unpack(m.group(1)))
-        return ""
-
-    visible = _BLOCK.sub(take, text).replace("\n\n\n", "\n\n")
-    return visible.rstrip("\n"), "\n".join(found)
-
-
-def sections(survey_text: str) -> dict[str, str]:
-    """Marker-delimited survey output → ``{section: body}``."""
-    out: dict[str, str] = {}
-    cur, buf = None, []
-    for line in (survey_text or "").splitlines():
-        s = line.strip()
-        if s.startswith(_SEC_PREFIX) and s.endswith(_SEC_SUFFIX):
-            if cur is not None:
-                out[cur] = "\n".join(buf)
-            cur, buf = s[len(_SEC_PREFIX):-len(_SEC_SUFFIX)], []
-        elif cur is not None:
-            buf.append(line)
-    if cur is not None:
-        out[cur] = "\n".join(buf)
-    return out
-
-
-def survey_root(survey_text: str) -> str:
-    """The directory the survey actually ran in, as the harness's own shell reported it."""
-    for line in (sections(survey_text).get("meta") or "").splitlines():
-        key, _, val = line.partition("\t")
-        if key == "root":
-            return _posix(val.strip())
-    return ""
-
-
-def tree_entries(body: str) -> int:
-    """How many records a tree section carries — the count :func:`apply_survey` checks against what
-    the survey said it wrote."""
-    return sum(1 for ln in (body or "").splitlines() if ln[:2] in ("D\t", "F\t", "X\t", "B\t"))
+    root: str
+    dirs: tuple = ()
+    files: dict = field(default_factory=dict)         # rel -> (size, mtime seconds)
+    folded: tuple = ()                                # rel dirs listed only as a count ("" = the root itself)
+    outputs: dict = field(default_factory=dict)       # rel dir -> the manifest that proved it a build output
+    complete: bool = True
+    listed: bool = True                               # a listing of the root arrived (a survey without one teaches nothing about the tree)
+    bodies: dict = field(default_factory=dict)        # rel -> bytes
+    refused: dict = field(default_factory=dict)       # rel -> size | ABSENT | UNSTATABLE
+    outside: dict = field(default_factory=dict)       # path -> "d" | "f" | ""
+    progs: dict = field(default_factory=dict)         # name -> resolved name ("" = absent)
 
 
 # WHY THE LAST SURVEY WAS REFUSED, for the caller that logs it. `apply_survey` answered True/False
 # and nothing else, so a walk that found 46 refusals in one session (L5 rust-toml-cli x gemma4) could
 # not tell a tree cut in transit from a survey about a different directory — and guessing which is
-# how a hypothesis gets written down as a cause (#5b). Four distinct checks refuse; each one names
-# itself here and the caller puts it in the event.
+# how a hypothesis gets written down as a cause (#5b). Each check that refuses names itself here and
+# the caller puts it in the event.
 _LAST_REJECT: dict = {}
 
 
@@ -2184,95 +1705,56 @@ def last_reject() -> dict:
     return dict(_LAST_REJECT)
 
 
-def apply_survey(view: View, survey_text: str) -> bool:
-    """Fold one survey's output into ``view``. False when it carried no tree (a truncated or failed
-    run) — then the view keeps whatever it already knew instead of being emptied.
+def apply_survey(view: View, survey: Survey) -> bool:
+    """Fold one survey into ``view``. False when it is about a different tree or was overtaken (then the view keeps what it
+    already knew instead of being changed).
 
-    ALSO FALSE WHEN IT IS ABOUT A DIFFERENT TREE. The survey names the directory it ran in; if that
-    is not this view's workspace, folding it in would answer questions about one repo with a listing
-    of another. A view with NO root yet adopts the one the survey reports, which is how a session
-    whose harness never announced a cwd still gets a workspace."""
-    if survey_text.startswith(SURVEY_PACKED):
-        # `_unpack` hands a packed block back unchanged when it did not verify (cut, corrupt, wrong
-        # length or sha256): say THAT, not "no tree section" — a different cause than a failed run.
-        _note_reject("packed-unverified")
+    FALSE WHEN IT IS ABOUT A DIFFERENT TREE. The survey names the directory it ran in; if that is not this view's workspace,
+    folding it in would answer questions about one repo with a listing of another. A view with NO root yet adopts the one the
+    survey reports, which is how a session whose harness never announced a cwd still gets a workspace."""
+    ran_in = _posix(survey.root).rstrip("/")
+    if ran_in and view.root and ran_in != view.root:
+        _note_reject("different-tree", ran_in=ran_in, view_root=view.root)
         return False
-    survey_text, earlier = earliernames.upgrade_survey(survey_text)    # a compressed survey of the earlier release (see there)
-    secs = sections(survey_text)
-    if earlier:
-        secs.pop("progs", None)           # raw names then, not the encoded ones this reader decodes: UNKNOWN, never a different name
-        secs.pop("outside", None)
-    if "tree" not in secs:
-        _note_reject("no-tree-section")
-        return False
-    # IT MUST HAVE ARRIVED WHOLE. The result this rode home on passes through the harness's own
-    # output cap, and a listing cut in transit is indistinguishable from a listing of a smaller
-    # repo — every file past the cut would read as deleted, under a heading saying what exists.
-    # So the survey states how many records it wrote and closes with a marker; a count that does
-    # not match, or a missing close, means what came back is not the answer to anything.
-    done = dict(ln.split("\t", 1) for ln in (secs.get("done") or "").splitlines() if "\t" in ln)
-    if SURVEY_CLOSE not in survey_text or "entries" not in done:
-        _note_reject("cut-in-transit" if SURVEY_CLOSE not in survey_text else "no-entry-count")
-        return False
-    try:
-        if int(done["entries"]) != tree_entries(secs["tree"]):
-            _note_reject("entry-count-mismatch",
-                         declared=done["entries"], arrived=tree_entries(secs["tree"]))
-            return False
-    except ValueError:
-        _note_reject("entry-count-unparseable")
-        return False
-    ran_in = survey_root(survey_text)
-    if ran_in and view.root and ran_in.rstrip("/") != view.root:
-        _note_reject("different-tree", ran_in=ran_in.rstrip("/"), view_root=view.root)
+    if not survey.listed:
+        _note_reject("no-tree")
         return False
     observation = _OBSERVATION.get()
     if observation is None and view._body_freshness.pending:
         _note_reject("unresolved-observation")
-        _keep_machine_facts(view, secs)
+        _keep_machine_facts(view, survey)
         return False
     if observation is not None and (view._superseded(observation) or not view.observation_current(observation)):
         _note_reject("overtaken-observation")
-        _keep_machine_facts(view, secs)
+        _keep_machine_facts(view, survey)
         return False
     if observation is None:
         observation = view.begin_observation()
-    return from_observation(observation, _ingest_validated_survey, view, secs, done, ran_in)
+    return from_observation(observation, _ingest_validated_survey, view, survey, ran_in)
 
 
-def _keep_machine_facts(view, secs) -> None:
+def _keep_machine_facts(view, survey: Survey) -> None:
     """A survey the tree refuses (a later read or write overtook it) still answers what the CODER'S SHELL resolves: the program
     sweep is about the machine, not the tree, and no file write can overtake it. It fills only names nobody has answered, so an
     answer from a newer survey is never replaced by an older one. Measured: 52 `overtaken-observation` refusals in one Node cell,
     each dropping its program answers, so the gate composed the same absent `eslint` again."""
-    if secs.get("progs"):
-        view._ingest_progs(secs["progs"], unanswered_only=True)
+    view._ingest_progs(survey.progs, unanswered_only=True)
 
 
-def _ingest_validated_survey(view, secs, done, ran_in):
+def _ingest_validated_survey(view, survey: Survey, ran_in: str) -> bool:
     if ran_in and not view.root:
-        view.root = ran_in.rstrip("/")
+        view.root = ran_in
     view._survey_generation += 1
-    view._ingest_tree(secs["tree"], complete=done.get("complete") != "0")
-    if secs.get("blob"):
-        view._ingest_blob(secs["blob"])
-        # AND SIZE-CHECK WHAT THE BLOB JUST DELIVERED. `_ingest_tree` ends by calling
-        # `_drop_stale_bodies`, which compares every remembered body against the size the listing
-        # declares — the exact check that catches a body cut in transit. It ran BEFORE the blob was
-        # ingested, so the bodies this survey carried were the only ones it never tested.
-        #
-        # Walked three times in the L5 sub-60 cells. A harness middle-cut inside a base64 body line
-        # splices the remains into something `b64decode(validate=False)` still decodes, so cria
-        # stored soup and then quoted it as the file: `[binary content: 3,792 bytes]` and
-        # "5,734 bytes, 6 lines" for a 7,601-byte, 193-line Importer.java, and
-        # `[binary content: 6,225 bytes]` for a test.js the same prompt's inventory called 7,354 B.
-        # Both went to a REASONER as ground truth — one authored "the file is binary/corrupted,
-        # rewrite it from scratch". A body whose length disagrees with the listing is not a file
-        # (#5b); re-running the existing check here drops it and cria re-asks.
+    view._ingest_tree(survey)
+    if survey.bodies or survey.refused:
+        view._ingest_blob(survey)
+        # AND SIZE-CHECK WHAT THE BODIES JUST DELIVERED. `_ingest_tree` ends by calling `_drop_stale_bodies`, which compares every
+        # remembered body against the size the listing declares — the exact check that catches a body of another size than the
+        # file the tree names. It ran BEFORE the bodies were ingested, so the bodies this survey carried were the only ones it
+        # never tested; a body whose length disagrees with the listing is not that file (#5b): re-running the check here drops it
+        # and cria re-asks.
         view._drop_stale_bodies()
-    if secs.get("outside"):
-        view._ingest_outside(secs["outside"])
-    if secs.get("progs"):
-        view._ingest_progs(secs["progs"])
+    view._ingest_outside(survey.outside)
+    view._ingest_progs(survey.progs)
     view._body_freshness.surveys[view.root] = _OBSERVATION.get().invocation
     return True

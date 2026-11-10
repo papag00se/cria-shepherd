@@ -20,13 +20,14 @@ import os
 import threading
 from dataclasses import dataclass, field
 
-from . import callauth, denial, externalization, harnessprims, prompts, readops, resultpacket, writeops
+from . import callauth, denial, externalization, harnessprims, prompts, readops, surveyops, writeops, wsview
 from .content_reduce import COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES
 from .filecache import FileCache
 from .ledger import Ledger, LedgerError, Op
 from .opspath import OpsUnavailable, split
 from .opsteps import Final, Issue, Wait
 from .readops import LedgerRead, ReadFact, ReadOps
+from .surveyops import SurveyAsk, SurveyOps
 from .writeops import LedgerWrite, WriteOps
 from .toolwire import _command_of, _refusal_command, _shell_call
 
@@ -49,6 +50,7 @@ class Incoming:
     reads: dict = field(default_factory=dict)       # original call id -> LedgerRead, for each finished read
     facts: tuple = ()                               # ReadFact of each verified read the model's wire has not yet accepted
     writes: dict = field(default_factory=dict)      # original call id -> LedgerWrite, for each finished file mutation
+    surveys: dict = field(default_factory=dict)     # id of the model's tool result a survey follows (None: the start) -> [wsview.Survey], in order
 
 
 def _reason(header: dict) -> str:
@@ -96,7 +98,7 @@ def render_listing(records: list, shown_path: str, done: bool, single: bool = Fa
     return text if done else text + '\n' + prompts.render('list_dir_incomplete', count=len(records), path=shown_path)
 
 
-class Ops(ReadOps, WriteOps):
+class Ops(ReadOps, WriteOps, SurveyOps):
     def __init__(self, ledger: Ledger | None = None, safe_path: str = harnessprims.SAFE_PATH):
         self.ledger = ledger or Ledger()
         self.safe_path = safe_path
@@ -106,7 +108,7 @@ class Ops(ReadOps, WriteOps):
         self.room = None            # as of the request being handled (read answers name routes from the menu and decide fit)
         self._rate = readops.DEFAULT_RATE
         self._carry: dict = {}      # (operation, sha-256) -> the bytes a planned write will leave, for the cache once it lands
-        self._rides: dict = {}      # operation -> composes the workspace survey that rides with its landing write (process memory: lost on restart, harmlessly)
+        self._surveys: dict = {}    # survey operation -> its wsview.Survey (process memory: recomputed from the ledger's frames)
         self._rlog = None
         self._lock = threading.RLock()      # the ledger's folded state is shared: one request at a time advances operations
 
@@ -149,6 +151,8 @@ class Ops(ReadOps, WriteOps):
     @staticmethod
     def _command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict | None = None) -> str:
         nonce = callauth.nonce(op, s)
+        if what in surveyops.WHATS:
+            return surveyops.command(op, ctx, s, what, args, blobs or {})
         label = f"{ctx.get('tool', LIST_DIR)} {ctx['path']}"
         if what in writeops.WHATS:
             return writeops.command(op, ctx, s, what, args, blobs or {})
@@ -173,18 +177,21 @@ class Ops(ReadOps, WriteOps):
         return harnessprims.compose(what, nonce, words, payload, comment=comment, safe_path=ctx['safe'])
 
     # ---------------------------------------------------------------- every request
-    def incoming(self, session: str, messages: list, log=None, *, tools=None, room: int | None = None) -> Incoming:
+    def incoming(self, session: str, messages: list, log=None, *, tools=None, room: int | None = None,
+                 survey: SurveyAsk | None = None) -> Incoming:
         """Ingest results, advance operations, hand back what the harness has not seen, project the history. ``tools`` is the
-        harness's tool menu and ``room`` the tokens one tool result may take in the model's measured window (None: unknown; a callable is asked only when a read's first frame is in hand)."""
+        harness's tool menu and ``room`` the tokens one tool result may take in the model's measured window (None: unknown; a callable is asked only when a read's first frame is in hand).
+        ``survey`` is where a workspace survey would run (the harness's shell tool and the workspace root; None: nowhere): when one is due
+        (:meth:`_survey_calls`) it is issued here, with no model call behind it."""
         with self._lock:
             self.menu, self.room = tools, room
             self._rlog = log if log is not None else self._rlog
-            return self._incoming(session, messages, log)
+            return self._incoming(session, messages, log, survey)
 
-    def _incoming(self, session: str, messages: list, log) -> Incoming:
+    def _incoming(self, session: str, messages: list, log, survey=None) -> Incoming:
         if not any(isinstance(c, dict) and str(c.get('id') or '').startswith(callauth.PREFIX)
                    for m in messages if isinstance(m, dict) and m.get('role') == 'assistant' for c in m.get('tool_calls') or ()):
-            return Incoming(messages)
+            return Incoming(messages, self._survey_calls(session, messages, survey, log))
         ledger_ops = self.ledger.ops(session)
         verified = self._verified(messages, ledger_ops)
         results = self._results(messages)
@@ -203,11 +210,31 @@ class Ops(ReadOps, WriteOps):
             if frames:
                 self.ledger.append(session, *frames)
             calls = self._advance(session, {op for op, _ in verified.values()}, set(verified), log)
+            calls = calls or self._survey_calls(session, messages, survey, log)
         except (LedgerError, callauth.KeyUnavailable) as exc:
             if log is not None:
                 log.emit('ops.unavailable', level='error', error=str(exc))
             return Incoming(messages)
         return self._project(session, messages, verified, calls, log)
+
+    def _survey_calls(self, session: str, messages: list, survey, log) -> list:
+        """The first calls of a survey when one is due (:meth:`_survey_due`), else none."""
+        if survey is None or not survey.root or not survey.shell or not self._survey_due(session, messages):
+            return []
+        wants = dict(zip(('bodies', 'progs', 'outside'), wsview.pending(session)))
+        wants = {'bodies': wants['bodies'][:wsview.BLOB_FILES_MAX], 'progs': wants['progs'][:wsview.PROG_MAX],
+                 'outside': wants['outside'][:wsview.OUTSIDE_MAX]}
+        try:
+            calls = self.issue_survey(session, survey.shell, survey.root, wants)
+        except OpsUnavailable as exc:
+            if log is not None:
+                log.emit('ops.unavailable', level='error', error=str(exc))
+            return []
+        wsview.clear_pending(session, wants['bodies'], wants['progs'], wants['outside'])
+        wsview.clear_refresh(session)
+        if log is not None:
+            log.emit('wsview.survey_issued', bodies=len(wants['bodies']), programs=len(wants['progs']), outside=len(wants['outside']))
+        return calls
 
     @staticmethod
     def _verified(messages: list, ledger_ops: dict) -> dict:
@@ -262,29 +289,8 @@ class Ops(ReadOps, WriteOps):
             frame = harnessprims.read_frame(text, nonce)
         except harnessprims.FrameUnknown as exc:
             return {'t': 'frame', 'op': op, 's': s, 'hdr': {'ok': -1, 'unknown': str(exc)}, 'text': '', 'wire': len(text)}
-        record = {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
-                  'wire': len(text)}
-        if step is not None and step.args.get('ride'):
-            survey = Ops._survey_after(text, nonce, writeops.survey_token(op))
-            if survey:
-                record['sv'] = survey
-        return record
-
-    @staticmethod
-    def _survey_after(text: str, nonce: str, token: str) -> str:
-        """The workspace survey that rode home on the line after a frame (the typed survey record, read at that position only), or ''."""
-        clean = text.replace('\r', '')
-        end = clean.find('CTX1 ' + nonce + ' END')
-        if end < 0:
-            return ''
-        at = clean.find('\n', end) + 1
-        record = resultpacket.read_record(clean, at, token, survey=True) if at else None
-        if record is None or record.body is None:
-            return ''
-        try:
-            return record.body.decode('utf-8')
-        except UnicodeDecodeError:
-            return 
+        return {'t': 'frame', 'op': op, 's': s, 'hdr': frame.header, 'text': frame.data.decode('utf-8', 'surrogateescape'),
+                'wire': len(text)}
 
     def _advance(self, session: str, op_ids: set, present: set, log) -> list:
         """Decide each operation's next step from the ledger alone. Returns the primitive calls the harness has not seen:
@@ -319,6 +325,8 @@ class Ops(ReadOps, WriteOps):
             return Wait
         if op.kind == writeops.MUTATE:
             return self._m_after(op, wave, steps)
+        if op.kind == surveyops.SURVEY:
+            return self._v_after(op, steps)
         table = ({readops.READ: self._after_read, 'stat': self._after_read_stat} if op.kind == readops.READ
                  else {'ls': self._after_ls, 'stat': self._after_stat, 'put': self._after_put, 'write': self._after_write})
         return table[wave[0].what](op, wave, steps)
@@ -454,6 +462,7 @@ class Ops(ReadOps, WriteOps):
         ops = self.ledger.ops(session)
         finished = {cid: (op, s) for cid, (op, s) in verified.items() if ops[op].final is not None}
         outcomes, reads, writes, facts, out, emitted = {}, {}, {}, [], [], set()
+        anchors, last_tool = {}, [None]      # survey operation -> the id of the kept tool result it follows
 
         def answers(cid):
             """The model's call this primitive call stands for: the first step of each of the operation's calls, in order."""
@@ -470,6 +479,8 @@ class Ops(ReadOps, WriteOps):
                 kept = []
                 for c in m['tool_calls']:
                     cid = c.get('id') if isinstance(c, dict) else None
+                    if cid in finished and ops[finished[cid][0]].kind == surveyops.SURVEY:
+                        anchors.setdefault(finished[cid][0], last_tool[0])
                     if cid in finished and answers(cid) is not None:
                         original = ops[finished[cid][0]].calls[answers(cid)]
                         kept.append({'id': original['id'], 'type': 'function',
@@ -489,12 +500,19 @@ class Ops(ReadOps, WriteOps):
                     if (op, i) not in emitted:
                         emitted.add((op, i))
                         out.append(self._model_result(ops[op], outcomes, reads, facts, writes, i))
+                        last_tool[0] = out[-1]['tool_call_id']
             else:
                 out.append(m)
+                if role == 'tool' and m.get('tool_call_id') not in finished:
+                    last_tool[0] = m.get('tool_call_id')
         unrecorded = {cid for cid in self._unrecorded(messages, verified)}
         if unrecorded:
             out = self._label(out, unrecorded, log)
-        return Incoming(out, calls, outcomes, reads, tuple(facts), writes)
+        surveys: dict = {}
+        for op, anchor in anchors.items():
+            if (found := self.survey_of(ops[op])) is not None:
+                surveys.setdefault(anchor, []).append(found)
+        return Incoming(out, calls, outcomes, reads, tuple(facts), writes, surveys)
 
     def _model_result(self, op: Op, outcomes: dict, reads: dict, facts: list, writes: dict, i: int = 0) -> dict:
         """The tool result the model is shown for one call of a finished operation, and what the wire and the history readers are
@@ -504,9 +522,8 @@ class Ops(ReadOps, WriteOps):
         if op.kind == writeops.MUTATE:
             r = final['results'][i]
             outcomes[original['id']] = r['o']
-            survey = next((st.frame['sv'] for st in op.steps.values() if st.frame and st.frame.get('sv')), '') if i == 0 else ''     # rode home with the landing write
             writes[original['id']] = LedgerWrite(original['name'], original['arguments'], r['o'], r.get('text', ''),
-                                                 {'ef': r['ef']} if r.get('ef') else {}, survey)
+                                                 {'ef': r['ef']} if r.get('ef') else {})
             return {'role': 'tool', 'tool_call_id': original['id'], 'content': r.get('text', '')}
         text, note, outcome = final['text'], final.get('note'), final['outcome']
         body = final.get('src') is not None and op.withheld is None

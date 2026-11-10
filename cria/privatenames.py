@@ -30,11 +30,10 @@ from __future__ import annotations
 import json
 import re
 
-from . import earliernames, toolwire, wsview
+from . import earliernames, toolwire
 
 LEGACY = earliernames.LEGACY
 _EARLIER = re.compile("|".join(re.escape(old) for old, _ in LEGACY))
-_SURVEY_HEADERS = tuple({wsview.SURVEY_CMD_OPEN, "# " + LEGACY[0][0] + "SURVEY_CMD___"})
 
 
 def _rename(text: str) -> str:
@@ -61,10 +60,9 @@ def _first_line(command: str) -> str:
 
 
 def _composed_by_cria(command: str) -> bool:
-    """By position, as everywhere else: the declaration (tool, gate) or the survey header is the FIRST line."""
+    """By position, as everywhere else: the declaration (tool, gate) is the FIRST line."""
     head = _first_line(command)
-    return (head.startswith("# " + toolwire._SENTINEL) or head.startswith("# " + toolwire.GATE_SENTINEL)
-            or head in _SURVEY_HEADERS)
+    return head.startswith("# " + toolwire._SENTINEL) or head.startswith("# " + toolwire.GATE_SENTINEL)
 
 
 def _text_parts(message: dict):
@@ -135,23 +133,4 @@ def restore_wire(messages: list) -> list:
     messages = upgrade_names(messages)
     if not isinstance(messages, list):
         return messages
-    private: set[str] = set()       # a survey cria composed on its own: the call and its result leave
-    for m in messages:
-        if isinstance(m, dict) and m.get("role") == "assistant":
-            for call in m.get("tool_calls") or []:
-                command = _call_command(call) if isinstance(call, dict) and call.get("id") else ""
-                if command and _first_line(command) in _SURVEY_HEADERS:
-                    private.add(call["id"])
-    if not private:
-        return messages
-    out = []
-    for m in messages:
-        if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
-            calls = [call for call in m["tool_calls"] if call.get("id") not in private]
-            if not calls and not any(t.strip() for t in _text_parts(m)):
-                continue                  # nothing of the turn is left once the private survey is gone
-            m = {**m, "tool_calls": calls} if calls else {k: v for k, v in m.items() if k != "tool_calls"}
-        elif _is_tool_result(m) and (m.get("tool_call_id") or m.get("call_id")) in private:
-            continue
-        out.append(m)
-    return out
+    return messages

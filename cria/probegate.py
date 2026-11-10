@@ -241,7 +241,7 @@ def _helper_reader_program() -> str:
 
 @functools.lru_cache(maxsize=1)
 def _helper_source() -> str:
-    """The ONE harness-side program: page transport, survey and gate cleanup.
+    """The ONE harness-side program: page transport and gate cleanup.
 
     Pure function of cria's own constants — no session, path or probe in it — so its text, and the
     content hash its file is named by, are identical in every call and every process. A cria change
@@ -249,7 +249,7 @@ def _helper_source() -> str:
     return ("import sys\n" + gatecleanup.NAMESPACE_PROGRAM + _helper_reader_program()
             + 'if sys.argv[1] == "gate":\n    sys.argv=sys.argv[1:]\n'
             + f'    _gate_program={gatecleanup.PROGRAM!r}\n    exec(_gate_program)\n    sys.exit(0)\n'
-            + 'if sys.argv[1] != "survey":\n    sys.exit(2)\n' + wsview.survey_helper_program())
+            + 'sys.exit(2)\n')
 
 
 def _helper_name() -> str:
@@ -379,7 +379,7 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
         path_arg, offset, transport_id, wait_s, budget)
 
 
-def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], survey: str,
+def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str],
                        poll_wait_s: float = GATE_POLL_WAIT_S, scope_dirs: tuple[str, ...] = (),
                        budget: int = TRANSPORT_CHUNK_BYTES) -> list[str]:
     """Launch one authenticated private harness resource, idempotently.
@@ -394,7 +394,7 @@ def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], surv
     unrelated path is never adopted. Source files are neither copied nor deleted.
     """
     launch = gatecleanup.launch_command(helper_runner(), transport_id, workspace,
-        "\n".join(parts) if parts else ":", survey, _marker(LITTER_REMOVED_SECTION), scope_dirs)
+        "\n".join(parts) if parts else ":", _marker(LITTER_REMOVED_SECTION), scope_dirs)
     opening, closing = shlex.quote(_transport_marker(transport_id)), shlex.quote(_transport_marker(transport_id, end=True))
     error_encoder = shlex.quote('import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')
     return [
@@ -1021,7 +1021,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         # discovery inputs within the survey's existing bounded FIFO.
         for rel in sorted(discovery_reads.paths):
             view.request_current_body(os.path.join(workspace, rel))
-    survey_command = wsview.survey_command(session, cd=workspace, helper=helper_runner())
+    wsview.want_refresh(session)       # the checks may change the tree, and the judge reads bodies: cria's own survey is asked for (cria.surveyops)
     # THE SESSION'S UNRESOLVED WRITES are known to cria's own ledger (a write whose reply was lost is asked of the file itself, and
     # sent again, before the model is consulted): only a mutation the file could not settle is still open when a gate is planned.
     from .ledger import Ledger
@@ -1049,7 +1049,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
             # The helper owns positive allocation before detaching any native work.
             *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
             *([spool_cleanup] if spool_cleanup else []),
-            *_gate_launch_guard(plan.transport_id, workspace, parts, survey_command, plan.transport_poll_wait_s,
+            *_gate_launch_guard(plan.transport_id, workspace, parts, plan.transport_poll_wait_s,
                                tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else (),
                                budget=budget),
         ])
@@ -2707,28 +2707,15 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     if unsettled and rlog is not None:
         rlog.emit("gate.writes_unsettled", level="warn", count=len(unsettled),
                   states=sorted({state for _r, _p, state in unsettled}))
-    # The workspace survey rode home on this result (see plan_gate). Take it off first — it is
-    # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
-    # whichever section happened to be open when it started.
-    sections, survey_text = gate_sections(result_text, plan)
-    survey = wsview.strip_survey(survey_text)[1]
+    sections, _ = gate_sections(result_text, plan)
     cleanup_record = _cleanup_record(sections, plan)
     scope_unknown = bool((cleanup_record is not None and cleanup_record[1])
                          or (plan.transport_required and cleanup_record is None))
     if scope_unknown:
         wsview.current().note_unknown_mutation()
-    survey_applied = False
-    if survey:
-        # A SURVEY THAT DID NOT LAND IS AN EVENT, NOT AN ABSENCE (#12). `apply_survey` refuses a
-        # survey that arrived cut, or that is about a different tree, and refusing is right — but
-        # both call sites threw the answer away and `wsview` emits nothing at all, so the one failure
-        # this module cannot notice from the outside was also the one nobody was told about. An
-        # unsurveyed view leaves `_confirm_completion` unchecked and leaves
-        # `linterprobe.collect_files` with no probes to compose.
-        survey_applied = wsview.apply_survey(wsview.current(), survey)
-        if not survey_applied and rlog is not None:
-            rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
-                      closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
+    # THE SURVEY IS CRIA'S OWN OPERATION (`cria.surveyops`), asked while the checks ran and again after them (`plan_gate` wants one):
+    # the view holds what it delivered by the time this result is read.
+    survey_applied = bool(wsview.current().surveyed)
     # THE PLAN WAS COMPOSED BLIND TO A MANIFEST THIS SURVEY JUST DELIVERED. After any command that could have
     # changed the tree, no held body is current, so discovery found no `rake test` / `npm test` and the gate ran only
     # syntax checks; the survey riding home with it carries the very bodies discovery asked for. Selection is

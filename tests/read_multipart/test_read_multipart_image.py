@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 import pytest
+import survey_fixtures
 from cria import bodykeys
 from cria.imageprotocol import CoderRoute, Delivery, ImageUnavailable, parse_observation
 from cria.imagestore import ImageStore
@@ -116,7 +117,7 @@ def judged(rig, task, *, observed, applies="NO", claim=""):
         def emit(self, *a, **k):
             pass
     view = wsview.View(str(tmp), "image-judge")
-    view._ingest_tree("D\t\nF\t72\t1\tnote.png", complete=True)
+    view._ingest_tree(survey_fixtures.typed(str(tmp), "D\t\nF\t72\t1\tnote.png"))
     tokens = wsview.bind(view), current.set(SourceImageContext(types.SimpleNamespace(), s, prepared, TASK))
     try:
         result = loop.judge_satisfaction(task, "$ view_image {}", provider, Role(name="reasoner", backend="local"), Log(),

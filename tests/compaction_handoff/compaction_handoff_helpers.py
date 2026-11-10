@@ -2,6 +2,7 @@
 import json
 import re
 
+import survey_fixtures
 from cria import bodykeys, denial, groundtruth, prompts, wsview
 
 def asst(n, label="a"):
@@ -56,7 +57,7 @@ TREE = ("D\t\nD\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\n
 def survey_text(tree=TREE, *, complete=True, changed=False, flavor="briefing"):
     """The workspace inventory cria renders from a harness survey: ``complete=False`` hit its own bound, ``changed`` was overtaken by a mutating command."""
     view = wsview.View("/ws", "compaction-handoff")
-    view._ingest_tree(tree, complete=complete)
+    view._ingest_tree(survey_fixtures.typed('/ws', tree, complete=complete))
     if changed:
         view.note_a_mutator_ran()
     token = wsview.bind(view)
@@ -65,12 +66,6 @@ def survey_text(tree=TREE, *, complete=True, changed=False, flavor="briefing"):
     finally:
         wsview.unbind(token)
 
-def survey(tree="", *, root="", blob="", complete=True, entries=None):
-    """A harness survey the way the real program emits it (record count and closing marker included, so a cut one is refusable)."""
-    tree = tree.strip("\n")
-    sec = lambda name: f"{wsview._SEC_PREFIX}{name}{wsview._SEC_SUFFIX}"
-    n = wsview.tree_entries(tree) if entries is None else entries
-    parts = ([sec("meta"), f"root\t{root}"] if root else []) + [sec("tree")] + ([tree] if tree else [])
-    parts += [sec("blob")] + ([blob.strip("\n")] if blob else []) + [sec("outside"), sec("progs"), sec("done"),
-                                                                      f"entries\t{n}", f"complete\t{int(complete)}", wsview.SURVEY_CLOSE]
-    return "\n".join(parts)
+def survey(tree="", *, root="", blobs=None, complete=True, listed=True):
+    """A survey of ``root`` as the facts it holds (see survey_fixtures.typed)."""
+    return survey_fixtures.typed(root, tree.strip("\n"), blobs=blobs, complete=complete, listed=listed)

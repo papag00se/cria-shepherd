@@ -1,29 +1,19 @@
-"""wsview second pass: a survey's malformed records (a bad record is no record, never a false fact), the view of a workspace nobody
-surveyed, overlapping tool observations that arrive out of order, the session body cache's bounds (files, bytes, sessions), the pending
-question queue, and the disk-backed view's missing-path answers. Real survey program over a real tree where one is needed."""
-import base64
+"""wsview second pass: a survey's facts are three-valued (an unlisted or folded path is unknown, never absent), the view of a workspace
+nobody surveyed, overlapping tool observations that arrive out of order, the session body cache's bounds (files, bytes, sessions), the
+pending question queue, and the disk-backed view's missing-path answers. The real survey operation over a real tree where one is needed."""
 import contextvars
-import hashlib
 import os
-import subprocess
-import zlib
 
 import pytest
+from survey_fixtures import survey_of_disk, typed
 
 from cria import wsview
 
 SESS = "sw2"
-OPEN, CLOSE = wsview.SURVEY_OPEN, wsview.SURVEY_CLOSE
 
 
-def sec(name):
-    return f"___CTX_SV_{name}___"
-
-
-def survey(root, tree, blob=(), entries=None, extra_meta=True):
-    rows = [OPEN, sec("meta"), *([f"root\t{root}"] if extra_meta else []), sec("tree"), *tree, sec("blob"), *blob, sec("outside"), sec("progs"),
-            sec("done"), f"entries\t{len([t for t in tree if t[:2] in ('D\t', 'F\t', 'X\t')]) if entries is None else entries}", "complete\t1", CLOSE]
-    return "\n".join(rows)
+def survey(root, tree, blobs=None, **kw):
+    return typed(root, tree, blobs=blobs, **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -33,22 +23,20 @@ def _clean_caches():
         table.clear()
 
 
-def b64(text):
-    return base64.b64encode(text.encode()).decode()
-
-
-def test_malformed_records_are_no_record_and_never_a_false_fact():
-    tree = ["", "D\t", "D\tsub", "F\t12.5\t4\tgood.txt", "F\tbogus\tnotanumber\tbad.txt", "F\t1\t2\t", "X\t900\tcrowd", "X\t900\t"]
-    blob = [f"@{b64('good.txt')}", b64("abcd"), "!A\t7", f"!{b64('too_big.bin')}\tmany", f"!{b64('huge.bin')}\t99999999", "@A", "lines of a body nobody owns",
-            f"@{b64('bad.txt')}", "aGk", f"@{b64('empty_owner.txt')}"]
+def test_a_surveys_facts_are_three_valued_and_what_it_could_not_hand_back_is_said():
+    tree = ["D\tsub", "F\t12\t4\tgood.txt", "F\t0\t0\tbad.txt", "X\t900\tcrowd", "X\t900\t"]
     v = wsview.View("/ws", SESS)
-    assert wsview.apply_survey(v, survey("/ws", tree, blob)) and v.surveyed
-    assert v.size("good.txt") == 4 and v.read("good.txt") == "abcd" and v.mtime("good.txt") == 12.5
-    assert v.size("bad.txt") == 0 and v.isfile("bad.txt") and v.read_bytes("bad.txt") is None and "bad.txt" in v._stale  # unparseable size/body -> unknown
-    assert v.undeliverable == ["huge.bin"] and v.isdir("sub") and v.isfile("crowd/anything") is None   # folded dir
+    assert wsview.apply_survey(v, survey("/ws", tree, {"good.txt": b"abcd"}, refused={"huge.bin": 99_999_999, "gone.txt": wsview.ABSENT}))
+    assert v.surveyed
+    assert v.size("good.txt") == 4 and v.read("good.txt") == "abcd" and v.mtime("good.txt") == 12.0
+    assert v.size("bad.txt") == 0 and v.isfile("bad.txt") and v.read_bytes("bad.txt") is None        # no body was delivered: unknown
+    assert v.undeliverable == ["gone.txt", "huge.bin"] and v.isdir("sub") and v.isfile("crowd/anything") is None   # folded dir
     assert not v.complete         # the root itself was folded: nothing may read as absent
     assert v.isfile("never.txt") is None and v.exists("never.txt") is None
-    assert wsview.survey_root(survey("", tree, extra_meta=False)) == "" and wsview.apply_survey(wsview.View(None, SESS), survey("", tree, extra_meta=False))
+    assert not wsview.apply_survey(wsview.View("/other", SESS), survey("/ws", tree)) and wsview.last_reject()["reason"] == "different-tree"
+    rootless = wsview.View(None, SESS)
+    assert wsview.apply_survey(rootless, survey("/ws", tree)) and rootless.root == "/ws"
+    assert not wsview.apply_survey(wsview.View("/ws", SESS), survey("/ws", [], listed=False)) and wsview.last_reject()["reason"] == "no-tree"
 
 
 def test_a_view_nobody_surveyed_answers_unknown_not_absent():
@@ -61,7 +49,7 @@ def test_a_view_nobody_surveyed_answers_unknown_not_absent():
     assert wsview.pending(SESS) == ([], ["never-asked"], ["/never/asked"])   # asking IS the request for the next survey
     assert wsview.apply_survey(v, survey("/ws", ["D\tsub", "F\t5\t3\tsub/a.txt"])) and v.isdir("/ws") and v.isfile("sub") is False and v.isfile("sub/a.txt")
     assert v.walk("sub/missing") is None and v.isdir("/else/x") is None and v.isfile("/else/x") is None and v.mtime("sub/missing") is None
-    assert v.reroot("sub").isdir("/ws/sub") is True and wsview.apply_survey(wsview.View("/ws", SESS), "garbage") is False
+    assert v.reroot("sub").isdir("/ws/sub") is True
 
 
 def test_overlapping_observations_arriving_out_of_order_never_overwrite_the_later_bytes():
@@ -105,16 +93,14 @@ def real(tmp_path):
 
 
 def surveyed(root, sess):
-    out = subprocess.run(["bash", "-lc", wsview.survey_command(sess, cd=str(root))], capture_output=True, text=True, timeout=60).stdout
     view = wsview.View(str(root), sess)
-    assert wsview.apply_survey(view, wsview.strip_survey(out)[1])
+    assert wsview.apply_survey(view, survey_of_disk(root, session=sess))
     return view
 
 
 def later_request(root, sess):
-    out = subprocess.run(["bash", "-lc", wsview.survey_command(sess, cd=str(root))], capture_output=True, text=True, timeout=60).stdout
     view = wsview.View(str(root), sess)
-    wsview.apply_survey(view, wsview.strip_survey(out)[1])
+    wsview.apply_survey(view, survey_of_disk(root, session=sess))
     return view
 
 
@@ -173,28 +159,29 @@ def test_the_disk_view_answers_absent_paths_as_unknown_and_finds_versioned_progr
     assert wsview.current("/x").isfile("/x") is None
 
 
-def packed(text, raw=None, *, n=None, sha=None, wrap=None):
-    """The compressed survey transport the harness prints, built independently of the reader: header, one base64(zlib) line, close marker."""
-    raw = text.encode() if raw is None else raw
-    body = wrap(zlib.compress(raw)) if wrap else base64.b64encode(zlib.compress(raw)).decode()
-    return f"{OPEN}\n{wsview.SURVEY_PACKED} {len(text.encode()) if n is None else n} {sha or hashlib.sha256(text.encode()).hexdigest()}\n{body}\n{CLOSE}"
+def test_the_survey_answers_programs_versioned_names_and_outside_paths_from_the_coders_own_shell(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, mode in (("pyx3.12", 0o755), ("pyxnoexec1.0", 0o644), ("tool", 0o755), ("tool2.7", 0o755)):
+        (bindir / name).write_text("#!/bin/sh\n")
+        (bindir / name).chmod(mode)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (tmp_path / "afile").write_text("x")
+    found = survey_of_disk(ws, progs=["pyx", "pyxnoexec", "zz-nothing", "tool", "sh; echo no"], outside=[str(cache), str(tmp_path / "afile"), str(tmp_path / "gone"), "~"],
+                           env={"PATH": f"{tmp_path / 'nonexistent'}:{bindir}:/usr/bin:/bin"})
+    assert found.progs == {"pyx": "pyx3.12", "pyxnoexec": "", "zz-nothing": "", "tool": "tool", "sh; echo no": ""}     # the name is data, never run
+    assert found.outside == {str(cache): "d", str(tmp_path / "afile"): "f", str(tmp_path / "gone"): "", "~": "d"}
 
 
-def test_a_packed_survey_is_accepted_only_whole_and_every_corruption_stays_unknown():
-    plain = survey("/ws", ["F\t1\t4\tgood.txt"], [f"@{b64('good.txt')}", b64("abcd")])
-    text = plain + "\n"
-    blobless = survey("/ws", ["F\t1\t4\tgood.txt"], [f"@{b64('good.txt')}", "BLOBLINE"]) + "\n"
-    # zero-prefixed record: the raw bytes of a blob body, base64'd back by the reader into the blob line
-    head, tail = blobless.split("BLOBLINE\n")
-    with_record = head.encode() + b"\x00" + str(len(b"abcd")).encode() + b"\nabcd\n" + tail.encode()
-    expected_text = head + base64.b64encode(b"abcd").decode() + "\n" + tail
-    v = wsview.View("/ws", SESS)
-    assert wsview.apply_survey(v, wsview.strip_survey("before\n" + packed(text) + "\nafter")[1]) and v.read("good.txt") == "abcd"
-    v = wsview.View("/ws", SESS)
-    assert wsview.apply_survey(v, wsview.strip_survey(packed(expected_text, with_record))[1]) and v.read("good.txt") == "abcd"
-    corrupt = [packed(text, sha="0" * 64), packed(text, n=5), packed(text, wrap=lambda z: "!!" + base64.b64encode(z).decode()),
-               packed(text, wrap=lambda z: base64.b64encode(z[:-6]).decode()), packed("no open line\n" + text),
-               packed(expected_text, with_record.replace(b"\nabcd\n", b"\nabcdX\n", 1)), packed(text, raw=b"\x00zz\n")]
-    for block in corrupt:
-        v = wsview.View("/ws", SESS)
-        assert not wsview.apply_survey(v, wsview.strip_survey(block)[1]) and not v.surveyed
+def test_the_survey_hands_back_what_it_can_and_says_what_it_cannot(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    (ws / "small.txt").write_text("abcd")
+    (ws / "big.txt").write_bytes(b"x" * (wsview.BLOB_FILE_MAX + 1))
+    (ws / "mid.bin").write_bytes(bytes(range(256)) * 100)          # 25,600 bytes: more than one page, not valid text
+    found = survey_of_disk(ws, bodies=["small.txt", "big.txt", "gone.txt", "sub", "mid.bin", "sub/x/y"])
+    assert found.bodies == {"small.txt": b"abcd", "mid.bin": bytes(range(256)) * 100}
+    assert found.refused == {"big.txt": wsview.BLOB_FILE_MAX + 1, "gone.txt": wsview.ABSENT, "sub": wsview.UNSTATABLE, "sub/x/y": wsview.ABSENT}

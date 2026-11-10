@@ -2,6 +2,7 @@
 import json
 
 import pytest
+import survey_fixtures
 
 from cria import assistruntime, loop, wsview
 from cria.classify import Classification
@@ -208,22 +209,21 @@ def test_a_missing_file_gap_rearms_only_after_a_new_complete_workspace_observati
     """feed-pipeline-java: the same REVIEW.md gap stays quiet until a complete survey of the harness shows the
     workspace changed; an unknown (a mutator ran) or partial survey cannot re-arm it."""
     def survey(content_line, complete=True):
-        return ("\n".join(["___CTX_SV_meta___", "root\t/h", "___CTX_SV_tree___", content_line,
-                           "___CTX_SV_done___", "entries\t1", f"complete\t{int(complete)}"]))
+        return survey_fixtures.typed("/h", content_line, complete=complete)
     view = wsview.View("/h", "feed")
     token = wsview.bind(view)
     try:
         gap = loop.VerdictNudge("REVIEW.md is absent.", diagnosis_kind="missing_file", subject="REVIEW.md")
         sess = Sess()
         sess.workspace_root = "/h"
-        assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t1\t100\tImporter.java')}\n{wsview.SURVEY_CLOSE}\n")
+        assert wsview.apply_survey(view, survey('F\t1\t100\tImporter.java'))
         run_satisfaction(monkeypatch, sess, (False, gap, ""))
         assert "REVIEW.md" in sess.nudge_reason
         sess.nudge_reason = ""
         sess.drive_count += 20
         run_satisfaction(monkeypatch, sess, (False, gap, ""))
         assert sess.nudge_reason == ""                          # same generation: silent
-        assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t2\t200\tImporter.java')}\n{wsview.SURVEY_CLOSE}\n")
+        assert wsview.apply_survey(view, survey('F\t2\t200\tImporter.java'))
         sess.drive_count += 20
         _, rlog = run_satisfaction(monkeypatch, sess, (False, gap, ""))
         assert sess.nudge_reason == "" and sess.completion_remediation_subject == "REVIEW.md"
@@ -233,10 +233,10 @@ def test_a_missing_file_gap_rearms_only_after_a_new_complete_workspace_observati
         run_satisfaction(monkeypatch, sess, (False, gap, ""))
         assert sess.nudge_reason == "" and sess.completion_remediation_subject == "REVIEW.md"
         # Only a current harness fact that the file exists releases the durable remediation.
-        assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t1\t100\tREVIEW.md')}\n{wsview.SURVEY_CLOSE}\n")
+        assert wsview.apply_survey(view, survey('F\t1\t100\tREVIEW.md'))
         loop._settle_completion_remediation(sess, [], Rlog())
         assert sess.completion_remediation_subject == ""
-        assert wsview.apply_survey(view, f"{wsview.SURVEY_OPEN}\n{survey('F\t3\t300\tImporter.java')}\n{wsview.SURVEY_CLOSE}\n")
+        assert wsview.apply_survey(view, survey('F\t3\t300\tImporter.java'))
         sess.drive_count += 20
         run_satisfaction(monkeypatch, sess, (False, gap, ""))
         assert "REVIEW.md" in sess.nudge_reason and sess.completion_remediation_subject == "REVIEW.md"

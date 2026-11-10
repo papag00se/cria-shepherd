@@ -55,8 +55,8 @@ from .filecommands import (
     _targets_cria_home, _guarded_path, READ_INLINE_MAX)
 from .toolwire import (
     REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE,
-    _sentinel, _shell_call, _b64, _RIDE_ALONG_HOST_RESERVE,
-    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, survey_declared, _declaration,
+    _sentinel, _shell_call, _b64,
+    _command_of, is_crias_own, original_call, _read_sentinel, receipt_of, _declaration,
     GATE_SENTINEL)
 
 from .resultnotes import (
@@ -499,30 +499,6 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
 COMMAND_ARG_BUDGET = content_reduce_mod.COMMAND_ARG_BUDGET
 # base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
 # needs room too.
-def _survey_after_first_record(cmd: str, ride: str, receipt: str) -> str:
-    """Place the survey immediately after the owned record, preserving earlier shell output.
-
-    A shim can print to stderr before the producer runs. The first LINE is then not the
-    producer's record. Match the call-bound receipt on a whole line; if no record arrived,
-    leave the output alone and do not pretend the survey can be paired with it.
-    """
-    prefix = '{"v":1,"r":"' + receipt + '","k":'
-    return ("__ctx_o=$( { " + cmd + "\n} 2>&1 )\n"
-            "__ctx_ec=$?\n"
-            "__ctx_surveyed=0\n"
-            "while IFS= read -r __ctx_line; do\n"
-            "  printf '%s\\n' \"$__ctx_line\"\n"
-            "  if [ \"$__ctx_surveyed\" = 0 ]; then\n"
-            "    case \"$__ctx_line\" in " + _qbash(prefix) + "*)\n"
-            "      __ctx_surveyed=1\n"
-            "      ( exit $__ctx_ec )\n"
-            + ride + "\n"
-            "    ;; esac\n"
-            "  fi\n"
-            "done <<< \"$__ctx_o\"\n"
-            "exit $__ctx_ec")
-
-
 SPILL_CONTENT_MAX = content_reduce_mod.SPILL_CONTENT_MAX
 
 
@@ -748,51 +724,6 @@ def _search_command(args: dict, answer: "brave.Answer", *, search_offer=None, op
 
 
 
-# Lowered tools whose own result is ONE bounded line, so appending the workspace survey to them
-# cannot push the model's own content past the harness's output cap. Reads, fetches and searches
-# are deliberately absent — see the ride-along note in translate_outbound.
-#
-# AND SO IS `list_dir`, WHICH WAS HERE AND IS NOT ONE LINE. Its lowering caps the listing at
-# READ_INLINE_MAX (9,000 bytes) and the survey it carried measured 6.6-10 KB, so a single result
-# could reach ~19 KB — well past the ~10 KB a harness keeps. The harness then cut the middle, which
-# is exactly where the survey's head sits; `apply_survey` refused the remains (entry count no longer
-# matches the records that survived) and the workspace view went stale for the rest of the session.
-# Measured across the 144-cell engagement ladder: 449 refused surveys in 11 cells, and the refusals
-# track the harness's own cut markers almost one for one — 94/94, 46/47, 29/29, 17/17. Eight of the
-# eleven are L5 runs, where the gate and the assists are the readers that lose the view.
-#
-# Each half was bounded and their SUM was not, which is the whole bug. Writes and edits really do
-# answer in one line, so they keep carrying it; a `list_dir` changes nothing on disk, so a view that
-# waits for the next write is not stale about anything that happened in between.
-_SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES
-
-# How many surveyable calls pass between surveys once the view is populated. The tree is re-walked
-# on the harness's side each time, so this is a cost on the CODER's box, not cria's; four is often
-# enough to see the file the coder wrote two turns ago without re-listing the repo every turn.
-SURVEY_EVERY = 4
-_SURVEY_SEQ: dict[str, int] = {}
-
-
-def _survey_due(session: str | None, name: str) -> bool:
-    """Whether this lowered call should carry the workspace survey.
-
-    ALWAYS when cria still knows nothing about the workspace, or when a reader asked a question
-    the view could not answer (a file body, a program on the coder's PATH) — those are real
-    demand, and leaving them unanswered is what makes a mechanism silently stop reaching what it
-    judges (#11b). Otherwise every SURVEY_EVERY-th call, which keeps the listing current without
-    paying for a tree walk on every write."""
-    sess = session or ""
-    view = wsview.current()
-    bodies, progs, outside = wsview.pending(sess)
-    if not view.surveyed or bodies or progs or outside:
-        return True
-    if len(_SURVEY_SEQ) > 512:
-        _SURVEY_SEQ.clear()
-    n = _SURVEY_SEQ.get(sess, 0) + 1
-    _SURVEY_SEQ[sess] = n
-    return n % SURVEY_EVERY == 0
-
-
 _REJECTIONS_SEEN: dict[str, set[tuple]] = {}
 
 
@@ -870,21 +801,6 @@ class WriteFact(NamedTuple):
     content: str
 
 
-def _ride(request: LoweringRequest, pack: bool, rlog):
-    """The workspace survey that rides home with a landing write, composed when the write is issued (given the receipt its step
-    gives it): the same budget and the same program as before, now appended to the harness `write` call instead of an inlined one."""
-    def compose(token: str) -> str:
-        room = resultpacket.max_text_for_wire(content_reduce_mod.INLINE_RESULT_MAX_BYTES
-                                              - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
-        if room < wsview.TREE_MIN_BYTES:
-            if rlog is not None:
-                rlog.emit("wsview.survey_not_carried", level="info", left=room, need=wsview.TREE_MIN_BYTES)
-            return ''
-        with denial.receipt_scope(token, denial.Declaration()):
-            return wsview.survey_command(request.session or '', cd=request.workspace_root or '', budget=room, pack=pack)
-    return compose
-
-
 def _carry_out(mutations: list, rebuilt: list, request: LoweringRequest, shell_tool: dict, rlog, notes: list, pack: bool) -> None:
     """Carry out a turn's cleared file mutations through the harness primitives (cria.writeops): the calls of one file are one operation.
     ``rebuilt[i]`` is replaced by the first primitive call of the model's i-th call; the model's calls and their results stay the
@@ -898,8 +814,7 @@ def _carry_out(mutations: list, rebuilt: list, request: LoweringRequest, shell_t
             tc, args, 'write' if name in _WRITE_NAMES else 'edit', str(effect.mutation.path),
             shrink=({'text': finding['text'], 'land': bool(finding.get('land')), 'sha': hashlib.sha256(finding['bytes']).hexdigest()}
                     if finding else None),
-            review={'permission': terms.permission, 'ws': terms.workspace_root} if terms else None, echo=request.edit_echo,
-            ride=_ride(request, pack, rlog) if _survey_due(request.session, name) else None))
+            review={'permission': terms.permission, 'ws': terms.workspace_root} if terms else None, echo=request.edit_echo))
     try:
         issued = request.issue_mutations(requests) if request.issue_mutations is not None else None
     except ops.OpsUnavailable as exc:
@@ -968,8 +883,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # own only by POSITION (the leading record) plus a recomputed canonical correlation — never by finding
             # the marker or the token anywhere in the text.
             receipt = denial.receipt_for(tc.get("id"), name, fn.get("arguments"))
-            declaration = denial.Declaration()      # what this call's compiler declares for its sentinel (a survey record)
-            with denial.receipt_scope(receipt, declaration):
+            with denial.receipt_scope(receipt):
                 tc, args, effect = toolstages.current().outbound_call(
                     OutboundCall(tc, args, call_request, rlog))
                 fn = tc.get("function") or {}
@@ -1010,35 +924,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 continue
             cmd = effect.command if effect is not None else None
             if cmd is not None:
-                # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
-                # workspace a question only by putting a command in the reply it is already
-                # sending. This is that reply. The survey is appended to write/edit/list
-                # translations, whose own output is one bounded line, and NEVER to a read or a
-                # fetch: those results are already large, and pushing one past the harness's own
-                # output cap would cut the CODER's content to pay for cria's instrumentation.
-                # `represent_inbound` strips it back out, so the model sees its own call's result
-                # and nothing else.
-                if name in _SURVEYABLE and _survey_due(session, name):
-                    # BUDGETED for this one-result ride-along. The completion gate no longer shares
-                    # this arithmetic: it carries the survey and probe evidence in checked pages.
-                    # Riding along without one is how cria's instrumentation came to push a result
-                    # past what a harness keeps — and the half the harness then cut was the MODEL'S
-                    # content, on a result cria itself composed. cria does not truncate; asking for
-                    # more than a result's worth let something else do it on cria's behalf, which
-                    # the never-truncate rule covers just the same.
-                    # The survey leaves as a typed record whose body costs up to 4/3 of its text on the wire (the codec
-                    # picks the shortest of text / zlib / base64): budget the ENCODED record, not the raw tree.
-                    room = resultpacket.max_text_for_wire(content_reduce_mod.INLINE_RESULT_MAX_BYTES
-                                                          - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
-                    if room >= wsview.TREE_MIN_BYTES:
-                        with denial.receipt_scope(receipt, declaration):      # the survey record follows THIS call's first record
-                            ride = wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)
-                        cmd = _survey_after_first_record(cmd, ride, receipt)
-                    elif rlog is not None:
-                        rlog.emit("wsview.survey_not_carried", level="info", left=room,
-                                  need=wsview.TREE_MIN_BYTES)
-                header = _sentinel(name, fn.get('arguments'), receipt,
-                    declaration.survey)
+                header = _sentinel(name, fn.get('arguments'), receipt)
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{header}\n{cmd}", 0))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
@@ -1184,7 +1070,6 @@ class _Proof(NamedTuple):
                               # `pre + body + tail` with the harness envelope dropped; anything else keeps the envelope
     text: str | None          # the body's decoded text when the first record carried a verified body, else None
     exact: bool               # `text` is the body's EXACT bytes (valid UTF-8, and nothing follows it): cacheable
-    survey: str               # the survey text the declared second record carried, "" when none
     rep: dict | None = None   # the first record's typed reports (`resultpacket.REPORT_KEYS`), or None
     observe: str = ""         # what the verified body is: `whole` (the file) or `range` (a numbered window of it)
     pre: str = ""             # exact producer-authored prelude, not inferred from file text
@@ -1230,31 +1115,21 @@ def _frame_proofs(messages: list[dict]) -> dict[str, _Proof]:
                 # result UNKNOWN, as before. A read never qualifies: its tail is the file.
                 found = resultpacket.find_record(content, off, token, past_cut=True)
                 if found is not None:
-                    survey_follows = (declaration.get("sv") == 1
-                                      and resultpacket.read_record(content, found[1].end, token, survey=True) is not None)
-                    ends_the_result = declaration.get("name") in _SURVEYABLE and not content[found[1].end:].strip()
-                    if not (survey_follows or ends_the_result):
+                    ends_the_result = declaration.get("name") in (_WRITE_NAMES | _EDIT_NAMES) and not content[found[1].end:].strip()
+                    if not ends_the_result:
                         found = None
             if found is None:
                 continue
             first = found[1]       # found[0] > off when the harness's shell printed noise before the program: dropped
-            at, survey, rep = first.end, "", first.rep
-            if declaration.get("sv") == 1 and (second := resultpacket.read_record(content, at, token, survey=True)) is not None:
-                at = second.end
-                if second.body is not None:
-                    try:
-                        survey = second.body.decode("utf-8")
-                    except UnicodeDecodeError:
-                        survey = ""
-            tail = content[at:]
+            tail, rep = content[first.end:], first.rep
             if first.body is None:
-                out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, survey, rep)
+                out[cid] = _Proof(first.kind, content[:off] + first.pre + tail, None, False, rep)
                 continue
             try:
                 text, exact = first.body.decode("utf-8"), True
             except UnicodeDecodeError:
                 text, exact = first.body.decode("utf-8", "replace"), False
-            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", survey, rep, first.observe, first.pre)
+            out[cid] = _Proof(first.kind, first.pre + text + tail, text, exact and tail == "", rep, first.observe, first.pre)
     return out
 
 
@@ -1334,7 +1209,7 @@ def _native_effect_unknown_or_mutating(function, workspace_root):
 
 def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
                       sess_key: str = "", tools_present: bool = True, window: int | None = None,
-                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None, ledger_reads=None, ledger_writes=None) -> list[dict]:
+                      ask=None, private_readonly_calls=frozenset(), ledger_outcomes=None, ledger_reads=None, ledger_writes=None, ledger_surveys=None) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1356,7 +1231,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     lowered call it was; what it proved is the ledger's, not a record parsed out of its result.
     ``ledger_writes`` maps a tool call id to the ``writeops.LedgerWrite`` of a file mutation cria carried out that way: the model's own
     call, how it ended (landed, refused, did not apply, uncertain), the text the coder is shown and, for an edit that did not apply, the
-    facts of the miss. The typed outcome is the ledger's; nothing is read out of result text."""
+    facts of the miss. The typed outcome is the ledger's; nothing is read out of result text.
+    ``ledger_surveys`` maps the id of a tool result (None: the start of the history) to the ``wsview.Survey`` objects cria asked for on its
+    own after it, in order: each is applied to the workspace view at that position, as the survey that rode with a result used to be."""
     # Retired client-supplied hint spellings are never provenance, regardless
     # of message role. Only the typed current owner marker can withhold proof.
     messages = [{k: v for k, v in m.items() if k not in bodykeys.LEGACY_MESSAGE_KEYS}
@@ -1379,9 +1256,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     paired = set(denial.paired_results(messages))
     ledger_reads, ledger_writes = ledger_reads or {}, ledger_writes or {}
     proofs = {**_frame_proofs(messages),
-              **{tid: _Proof(r.kind, r.pre + r.text, r.text, True, "", None, r.observe, r.pre)
+              **{tid: _Proof(r.kind, r.pre + r.text, r.text, True, None, r.observe, r.pre)
                  for tid, r in ledger_reads.items() if r.text is not None},
-              **{tid: _Proof(w.kind, w.text, None, False, w.survey, w.rep or None) for tid, w in ledger_writes.items()}}
+              **{tid: _Proof(w.kind, w.text, None, False, w.rep or None) for tid, w in ledger_writes.items()}}
     outcomes = {tid: p.kind for tid, p in proofs.items() if p.kind in (denial.REFUSED, denial.UNAPPLIED)}
     outcomes |= {tid: kind for tid, kind in (ledger_outcomes or {}).items() if kind in (denial.REFUSED, denial.UNAPPLIED)}
     landed_ids = {tid for tid, p in proofs.items() if p.kind == denial.LANDED}   # cria's own program reported the mutation landed
@@ -1422,7 +1299,22 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         if original is not None:
             return original["name"] in (_WRITE_NAMES | _EDIT_NAMES) and tc.get("id") not in failed_ids
         return _native_effect_unknown_or_mutating(fn, workspace_root)
+    anchored = {anchor: list(found) for anchor, found in (ledger_surveys or {}).items()}
+
+    def survey_after(anchor):
+        """The surveys cria asked for on its own right after the tool result ``anchor`` (None: before everything), in order."""
+        for found in anchored.pop(anchor, ()):
+            view.observation_pending(bool(pending_mutations))
+            observation = view.begin_observation(uncertain=bool(pending_mutations))
+            if not wsview.from_observation(observation, wsview.apply_survey, view, found) and rlog is not None:
+                # A rejected survey is the one failure `wsview` cannot show from the outside (#12).
+                rlog.emit("wsview.survey_rejected", level="warn", **wsview.last_reject())
+    survey_after(None)
+    previous = None
     for m in messages:
+        if previous is not None:
+            survey_after(previous)
+            previous = None
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
             # All calls in a batch may overlap; a pending writer is not closed
@@ -1517,10 +1409,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             out.append({**m, "tool_calls": new_calls})
         elif role == "tool":
             tid = m.get("tool_call_id")
+            previous = tid
             # THE PROVEN OUTCOME IS SET HERE, BEFORE any transform, preserve or recovery reads this message, and
             # whatever the client sent under that key is overwritten: a native client cannot nominate its own result.
             m = {k: v for k, v in m.items() if k not in (bodykeys.RESULT_OUTCOME, bodykeys.READ_OBSERVATION, bodykeys.RESULT_REPORT, bodykeys.UNREAD_HOLD)}
-            survey_text = ""
             pending_mutations.discard(tid)
             view.observation_pending(bool(pending_mutations))
             observation = observations.get(tid)
@@ -1541,7 +1433,6 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 m[bodykeys.RESULT_OUTCOME] = proof.kind
                 if proof.rep:
                     m[bodykeys.RESULT_REPORT] = proof.rep
-                survey_text = proof.survey         # only what a DECLARED second record carried is instrumentation
             elif ledger_outcomes and tid in ledger_outcomes:
                 m[bodykeys.RESULT_OUTCOME] = ledger_outcomes[tid]
             elif tid in lowered_ids:
@@ -1562,10 +1453,6 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # A SUCCESSFUL RUN OF THE CODER'S OWN COMMAND is ground truth that its programs exist (`dirguard.programs_that_ran`).
                 for program in dirguard.programs_that_ran(own_cmds[tid]):
                     view.note_program_ran(program)
-            # THE SURVEY IS WHAT A DECLARED SECOND RECORD CARRIED, NOTHING ELSE: the sentinel said one follows the first
-            # record, it was read on the very next line and removed there. A file, a native command or a read-instead
-            # answer that quotes a perfectly valid-looking survey block keeps it — and teaches the view nothing.
-            _, survey = wsview.strip_survey(survey_text)    # decodes a packed block; the text is cria's own bytes
             if tid in write_paths and tid in uncertain_ids:
                 # The in-place hardlink writer may have changed every alias. Their
                 # identities are not surveyed, so invalidate all held candidates
@@ -1580,12 +1467,6 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             edit_applied = (uninterrupted and tid in edit_pairs and bool(write_paths.get(tid)) and tid in landed_ids
                             and wsview.from_observation(observation, view.note_edited, write_paths[tid],
                                                        *edit_pairs[tid], previous=edit_preimages.get(tid)))
-            if survey:
-                # Same as the gate's copy: a rejected survey is the one failure `wsview` cannot show
-                # from the outside, and both readers used to drop the answer on the floor (#12).
-                if not wsview.from_observation(observation, wsview.apply_survey, view, survey) and rlog is not None:
-                    rlog.emit("wsview.survey_rejected", level="warn", bytes=len(survey),
-                              closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
             # A WHOLE READ BECOMES THE FILE'S BYTES ONLY ON A VERIFIED BODY: the producer's own read-once program put the
             # bytes in the first record with their length and sha-256, and `_frame_proofs` verified both. There is no
             # other source: the absence of a refusal proves nothing (a legacy own refusal, a lost record, a cut result),
@@ -1646,6 +1527,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 out.append(m)
         else:
             out.append(m)
+    if previous is not None:
+        survey_after(previous)
     if mutation_ids - paired:
         # Later surveys do not settle an unresolved/ambiguous native invocation.
         view.note_possible_effect()

@@ -113,7 +113,6 @@ def test_a_manifest_body_the_harness_delivered_reaches_the_next_requests_plan():
     """C38 / p27 shipping-rates-rb: every request builds a fresh View, so the delivered Rakefile body died with its request."""
     root, session = "/workspace", "s-c38"
     tree = [f"F\t1\t{len(RAKEFILE)}\tRakefile", "F\t1\t10\ttest/test_rates.rb", "D\ttest"]
-    blob = "@" + base64.b64encode(b"Rakefile").decode() + "\n" + base64.b64encode(RAKEFILE.encode()).decode()
     wsview._BODY_MISSES.clear()
     wsview._BODY_CACHE.clear()
     first = surveyed(root, tree, session=session)
@@ -123,7 +122,7 @@ def test_a_manifest_body_the_harness_delivered_reaches_the_next_requests_plan():
         assert "Rakefile" in wsview.pending(session)[0]
     finally:
         wsview.unbind(token)
-    delivered = surveyed(root, tree, blob=blob, session=session)        # same round trip: the harness delivers the body
+    delivered = surveyed(root, tree, blobs={"Rakefile": RAKEFILE.encode()}, session=session)        # same round trip: the harness delivers the body
     token = wsview.bind(surveyed(root, tree, session=session))          # NEXT request: brand-new View
     try:
         (test,) = [c for c in pd.discover(Path(root)) if c.kind is pd.ProbeKind.Test]

@@ -36,7 +36,7 @@ def _oversize_command(text: str) -> str:
     return f"printf %s {_qbash(denial.mark(text))}"
 
 
-def _refusal_command(text: str, survey: str = "") -> str:
+def _refusal_command(text: str) -> str:
     """The one way cria lowers a refusal: MARK it as a call that did not run, print it, then exit
     non-zero. ONE owner — the five call sites each hand-rolled `printf %s …` and all five inherited
     printf's exit 0.
@@ -47,43 +47,10 @@ def _refusal_command(text: str, survey: str = "") -> str:
     harness's ``Process exited with code`` envelope off read/nav results outright. Marking the text
     is what lets ``loop._work_log`` say the call never ran without matching a single word of it.
 
-    ``survey`` RIDES BEFORE THE EXIT, and only a refusal that needs one passes it. A refused install
-    is the single moment cria both owes the coder a route and does not have one: ``dirguard`` asks
-    ``toolpath.resolved`` which binary the CODER's shell has, the workspace view QUEUES that question
-    and answers None until a survey lands — and a survey rides only on a write or an edit. A coder
-    looping on raw ``gem install`` makes neither, so the question is asked every time and delivered
-    never, and the refusal renders ``route_unknown_yet`` forever. Measured in dirguard's own notes:
-    580 of 3,704 renderings (16%) routeless, clustered at session start, and once decisive — nine
-    routeless refusals in one prompt, after which the escalation reasoner told the coder to hardcode
-    the data the gem would have provided, while `countries (8.1.0)` sat installed on the box.
-
-    THE EXIT CODE IS UNCHANGED AND STILL LAST. It is read by a small model: a refusal that exits 0
-    reads as a call that ran (the five hand-rolled printfs this function replaced all inherited
-    ``printf``'s exit 0), and a non-zero exit on a READ reads as a missing path (operator ruling,
-    2026-08-12). The survey's own status must not move it, so it is spliced before and discarded."""
-    body = f"printf %s {_qbash(denial.mark(text))}"
-    if not survey:
-        return f"{body}; exit {REFUSED_EXIT_CODE}"
-    # NEWLINE-JOINED, AND NOT WRAPPED IN ANYTHING. The survey is a multi-line block containing a
-    # heredoc (`python3 - <<'__CTX_SV_PY__'`), so it cannot be `;`-joined onto one line and it
-    # cannot be parenthesised: `( <heredoc> ) || true` does not parse at all.
-    #
-    # My own first version did exactly that and SHIPPED. Measured on the very next cell run
-    # (session 01a0b798, calls 0010-0011): `gem install countries --no-document` came back as
-    # `bash: -c: line 146: syntax error: unexpected end of file from `('` in 0.0 seconds — so the
-    # coder never saw a refusal at all, just a broken shell, and spent turns diagnosing an
-    # environment that was never the problem. cria composed that syntax error (5b, in the most
-    # literal form: cria's own command lying about what is wrong).
-    #
-    # No wrapper is needed for the exit code either: `survey_command` contains no bare `exit`, so
-    # nothing terminates before the final line, and `exit` last sets the code whatever the survey
-    # returned. Asserted by a test rather than by this comment.
-    # THE SURVEY RECORD MUST BE THE VERY NEXT RECORD after the refusal's own first record (`resultpacket`): the first record
-    # prints, the survey runs and prints its record, and only then does the refusal's prose.
-    marked, lead = denial.mark(text), denial.frame(denial.REFUSED)
-    if lead and marked.startswith(lead):
-        return f"printf %s {_qbash(lead)}\n{survey}\nprintf %s {_qbash(marked.removeprefix(lead))}\nexit {REFUSED_EXIT_CODE}"
-    return f"{body}\n{survey}\nexit {REFUSED_EXIT_CODE}"
+    THE EXIT CODE IS LAST. It is read by a small model: a refusal that exits 0 reads as a call that ran (the five hand-rolled
+    printfs this function replaced all inherited ``printf``'s exit 0), and a non-zero exit on a READ reads as a missing path
+    (operator ruling, 2026-08-12)."""
+    return f"printf %s {_qbash(denial.mark(text))}; exit {REFUSED_EXIT_CODE}"
 
 
 _SENTINEL = "⟦ctx:tool⟧"
@@ -96,19 +63,16 @@ _SENTINEL_LINE = re.compile(r"# " + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)[ 
 _GATE_LINE = re.compile(r"# " + re.escape(GATE_SENTINEL) + r"([A-Za-z0-9+/=]+)[ \t]*(?:\r?\n|\Z)")
 
 
-def _sentinel(name: str, arguments, receipt: str = "", survey: bool = False) -> str:
+def _sentinel(name: str, arguments, receipt: str = "") -> str:
     """The leading comment line that lets inbound rebuild the original tool call, statelessly.
 
-    It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound) and
-    whether a survey record follows: the typed result record leads stdout at offset 0, so `represent_inbound` tells
-    cria's own result from content that merely quotes the marker by position, never by search. Without a receipt the
-    payload is exactly what it always was."""
+    It also DECLARES the call's correlation token (`denial.receipt_for`, recomputed — not trusted — at inbound): the typed
+    result record leads stdout at offset 0, so `represent_inbound` tells cria's own result from content that merely quotes
+    the marker by position, never by search. Without a receipt the payload is exactly what it always was."""
     args_str = denial.canonical_arguments(arguments)
     body = {"name": name, "arguments": args_str}
     if receipt:
         body["rcpt"] = receipt
-        if survey:
-            body["sv"] = 1          # the command carries a survey record, on the line after its first record
     payload = base64.b64encode(json.dumps(body).encode("utf-8")).decode("ascii")
     return f"# {_SENTINEL}{payload}"
 
@@ -123,12 +87,6 @@ def _shell_call(orig_id: str, shell_tool: dict, command: str, output_tokens: int
 
 def _b64(s: str) -> str:
     return base64.b64encode(s.encode("utf-8")).decode("ascii")
-
-
-_RIDE_ALONG_HOST_RESERVE = 1_000
-
-
-_RIDE_ALONG_COMMAND_RESERVE = 1_100
 
 
 def _command_of(args) -> str:
@@ -257,12 +215,6 @@ def _read_sentinel(command: str, call_id=None) -> dict | None:
     """The original tool call encoded in a lowered command's sentinel, or None."""
     d = _declaration(command, call_id)
     return None if d is None else {"name": d["name"], "arguments": d.get("arguments") or "{}"}
-
-
-def survey_declared(command: str, call_id=None) -> bool:
-    """Did the compiler of this stored command declare a survey record? (Only a receipt-bearing sentinel can.)"""
-    d = _declaration(command, call_id)
-    return bool(d is not None and d.get("rcpt") and d.get("sv") == 1)
 
 
 def receipt_of(command: str, call_id=None) -> str:

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+import survey_fixtures
 from cria import loop, wsview
 from loop_rest_helpers import Rlog, loop_rest_local_view  # noqa: F401
 
@@ -41,9 +42,7 @@ def author(reply, finish, root=None):
 @pytest.fixture
 def surveyed_root(tmp_path):
     view = wsview.View(str(tmp_path), "au")
-    P, S = wsview._SEC_PREFIX, wsview._SEC_SUFFIX
-    assert wsview.apply_survey(view, "\n".join([f"{P}meta{S}", f"root\t{tmp_path}", f"{P}tree{S}", "F\t1\t2\ta.py", f"{P}blob{S}", f"{P}outside{S}",
-                                                f"{P}progs{S}", f"{P}done{S}", "entries\t1", "complete\t1", wsview.SURVEY_CLOSE]))
+    assert wsview.apply_survey(view, survey_fixtures.typed(tmp_path, "F\t1\t2\ta.py"))
     token = wsview.bind(view)
     yield str(tmp_path)
     wsview.unbind(token)

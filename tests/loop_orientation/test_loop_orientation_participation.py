@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from survey_fixtures import ask_survey
 from cria import loop, participation as pt, probediscovery as pd, probegate, wsview
 from loop_orientation_helpers import Log, local_workspace_view  # noqa: F401
 
@@ -129,9 +130,7 @@ def test_a_positive_satisfaction_verdict_cannot_promote_a_required_test_that_nev
     state.last_gate_participation, state.gate_fresh = report, True
     (tmp_path / 'lookup.js').write_text('module.exports = {};\n')
     view = wsview.View(str(tmp_path), 'participation-approval')
-    survey = subprocess.run(['sh', '-c', wsview.survey_command('participation-approval', cd=str(tmp_path))],
-                            capture_output=True, text=True, timeout=30, check=True).stdout
-    assert wsview.apply_survey(view, wsview.strip_survey(survey)[1])
+    assert wsview.apply_survey(view, ask_survey(str(tmp_path), 'participation-approval'))
     view.note_read(str(tmp_path / 'lookup.js'), 'module.exports = {};\n')
     queue = [SATISFIED, answer]
 

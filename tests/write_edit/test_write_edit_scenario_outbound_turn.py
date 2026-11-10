@@ -10,7 +10,7 @@ from write_edit_helpers import call, lower, represent, run
 DOC = "alpha\nbeta\n"
 
 
-def test_a_turn_of_guarded_calls_each_answers_what_it_did_and_the_refusal_carries_the_survey(tmp_path):
+def test_a_turn_of_guarded_calls_each_answers_what_it_did_and_the_refusal_is_cria_s_own_words(tmp_path):
     (tmp_path / "tmp/reference").mkdir(parents=True)
     (tmp_path / "tmp/reference/doc.md").write_text(DOC)
     (tmp_path / "notes.txt").write_text("n\n")
@@ -30,10 +30,9 @@ def test_a_turn_of_guarded_calls_each_answers_what_it_did_and_the_refusal_carrie
         assert denial.refused(shown[cid]) and (cid == "u1" or done[cid].returncode != 0)
     assert "tool-call" in shown["m1"]["content"].lower() and "echo" not in done["m1"].stdout
     assert "'/etc/hostname' is outside the project directory" in shown["x1"]["content"]
-    assert '"k":"survey"' in done["x1"].stdout and '"k":"survey"' not in done["m1"].stdout       # the survey rode the external refusal only
+    assert "survey" not in done["x1"].stdout and "python3" not in done["x1"].stdout.lower()        # a refusal is cria's words and nothing else
     assert shown["r1"]["content"] == DOC and done["g1"].stdout == "beta\n"                                # root-absolute spill spellings were corrected
     assert "This write_file call was not run" in shown["u1"]["content"] and "n\n" in shown["u1"]["content"] and (tmp_path / "notes.txt").read_text() == "n\n"
     kinds = {k for k, _ in events}
     assert {"writeproxy.blocked_malformed_call", "writeproxy.blocked_external", "writeproxy.spill_path_redirect", "writeproxy.spill_read_gated",
             "writeproxy.spill_command_redirect", "writeproxy.write_unread_target"} <= kinds
-    assert ("writeproxy.blocked_external", True) in [(k, f.get("carried_survey")) for k, f in events]

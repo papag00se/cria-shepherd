@@ -105,10 +105,10 @@ def test_a_ruby_candidate_is_checked_by_the_harness_with_the_checkers_own_words_
 
 
 @pytest.mark.parametrize('name,args', [('write_file', {'path': 'n.txt', 'content': 'hi\n'}), ('edit_file', {'path': 'm.txt', 'old_string': 'a', 'new_string': 'b'})],
-                         ids=['a new file: the write is the first call', 'an edit: the survey rides with the landing write'])
-def test_the_workspace_survey_that_rides_a_landing_write_reaches_the_view(tmp_path, name, args):
-    """The survey program (phase 6 replaces it) rides home with the write that lands the bytes, is read at the one position after the frame, and
-    is applied by the inbound pass: the view that knew nothing of the workspace now holds its tree."""
+                         ids=['a new file: the write is the first call', 'an edit: the survey follows the landing write'])
+def test_the_workspace_survey_cria_asks_after_a_landing_write_reaches_the_view(tmp_path, name, args):
+    """After the write that lands the bytes cria asks for the survey on its own (no call carries it), and the inbound pass applies it right after
+    that write's result: the view that knew nothing of the workspace now holds its tree, post-write, and the model is shown nothing of it."""
     from cria import wsview
     (tmp_path / 'm.txt').write_text('a\n')
     (tmp_path / 'other.py').write_text('x = 1\n')
@@ -118,8 +118,12 @@ def test_the_workspace_survey_that_rides_a_landing_write_reaches_the_view(tmp_pa
         assert not view.surveyed
         tc = lower([call(name, args, 'w1')], root=str(tmp_path))[0]
         done = run(tc, tmp_path)
-        shown = settle([{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': 'Output:\n' + done.stdout}], tmp_path)
-        assert denial.landed(shown[1]) and 'survey' not in shown[1]['content'] and 'CTX1' not in shown[1]['content']
-        assert view.surveyed and view.isfile('other.py') is True
+        ran = []
+        shown = settle([{'role': 'assistant', 'tool_calls': [tc]}, {'role': 'tool', 'tool_call_id': tc['id'], 'content': 'Output:\n' + done.stdout}], tmp_path,
+                       ran=ran, survey=True)
+        assert denial.landed(shown[1]) and 'survey' not in shown[1]['content'] and 'CTX1' not in shown[1]['content'] and len(shown) == 2
+        asked = [c for c in ran if c.startswith('# workspace survey')]
+        assert asked and all('/usr/bin/env -i PATH=' in c and len(c) < 3_000 for c in asked)             # a primitive call each: 2.1 KB, no program riding on anything
+        assert view.surveyed and view.isfile('other.py') is True and view.isfile(args['path']) is True
     finally:
         wsview.unbind(token)

@@ -5,9 +5,11 @@ import subprocess
 import sys
 
 import pytest
+import survey_fixtures
 
 from cria import privatepaths, wsview, writeproxy
 from cria.ops import Ops
+from cria.surveyops import SurveyAsk
 
 SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
 ENVELOPE = "Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code {rc}\nOriginal token count: 9\nOutput:\n"
@@ -32,7 +34,6 @@ def operations_engine(tmp_path, monkeypatch):
 def write_edit_workspace_view():
     """Every test answers workspace questions from this machine's disk (production fills the view from a harness survey)."""
     token = wsview.bind(wsview.DirectView())
-    writeproxy._SURVEY_SEQ.clear()    # every Nth lowered call carries a survey: a count another test advanced decides the size of this one's command
     yield
     wsview.unbind(token)
 
@@ -77,7 +78,7 @@ def represented(messages, **kw):
 DROP = object()
 
 
-def settle(messages, cwd, fault=None, ran=None, env=None):
+def settle(messages, cwd, fault=None, ran=None, env=None, survey=False):
     """The harness side of cria's own operations: answer each primitive call the engine asks for, in the workspace, until it asks no
     more; returns what `represent_inbound` shows the model, given what the ledger recorded.
 
@@ -85,8 +86,9 @@ def settle(messages, cwd, fault=None, ran=None, env=None):
     runs, the answer is lost), or a function of the harness's answer text (it runs, the answer is altered). ``ran`` collects each command
     that actually ran."""
     engine, messages = _ENGINE["ops"], list(messages)      # the harness's own history, which only grows: cria projects it afresh each time
+    ask = SurveyAsk(SHELL, str(cwd)) if survey else None   # ``survey``: where cria's own survey may run, as the server tells the engine
     while True:
-        taken = engine.incoming("s", messages)
+        taken = engine.incoming("s", messages, survey=ask)
         if not taken.calls:
             break
         messages.append({"role": "assistant", "tool_calls": taken.calls})
@@ -101,7 +103,8 @@ def settle(messages, cwd, fault=None, ran=None, env=None):
                 continue
             text = ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": mode(text) if callable(mode) else text})
-    return writeproxy.represent_inbound(taken.messages, workspace_root=str(cwd), ledger_outcomes=taken.outcomes, ledger_reads=taken.reads, ledger_writes=taken.writes)
+    return writeproxy.represent_inbound(taken.messages, workspace_root=str(cwd), ledger_outcomes=taken.outcomes, ledger_reads=taken.reads, ledger_writes=taken.writes,
+                                        ledger_surveys=taken.surveys)
 
 
 def command_of(tc):
@@ -198,15 +201,8 @@ def surveyed_view(root, *files):
     tree = "\n".join(["D\t" + d for d in sorted({os.path.dirname(f).split("/")[0] for f, _ in files if os.path.dirname(f)})]
                      + [f"F\t1\t{size}\t{path}" for path, size in files])
     view = wsview.View(str(root), "we")
-    assert wsview.apply_survey(view, _survey(tree, root=str(root)))
+    assert wsview.apply_survey(view, survey_fixtures.typed(root, tree))
     return view
-
-
-def _survey(tree, root):
-    P, S = wsview._SEC_PREFIX, wsview._SEC_SUFFIX
-    n = wsview.tree_entries(tree)
-    return "\n".join([f"{P}meta{S}", f"root\t{root}", f"{P}tree{S}", tree, f"{P}blob{S}", f"{P}outside{S}", f"{P}progs{S}",
-                      f"{P}done{S}", f"entries\t{n}", "complete\t1", wsview.SURVEY_CLOSE])
 
 
 def converse(steps, cwd, **lowering):

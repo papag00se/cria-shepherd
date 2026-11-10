@@ -143,7 +143,6 @@ if mode=='launch':
             sys.exit(0)
         _gate_create(context,'request.json',json.dumps(request).encode())
         _gate_create(context,'.ctx-gate-'+token+'-cmd.sh',request['body'].encode())
-        _gate_create(context,'survey.sh',request['survey'].encode())
         _gate_create(context,_gate_spool_name(token))
         os.mkdir('aux',0o700,dir_fd=context['fd'])
         subprocess.Popen([sys.executable,'-I','-c',_gate_program,'worker',token,context['parent_path']],
@@ -174,8 +173,8 @@ elif mode=='worker':
                 _gate_run_script(context,'.ctx-gate-'+token+'-cmd.sh',environment,stream)
             finally:
                 # THE TRANSITIONS ARE THE BOUNDARIES: everything before this size is native checker output, then
-                # cria's cleanup report, then cria's survey. Declared here, by the producer that writes them, so
-                # no reader ever has to find a marker inside checker output to know where a private report starts.
+                # cria's cleanup report. Declared here, by the producer that writes them, so no reader ever has to
+                # find a marker inside checker output to know where a private report starts.
                 bounds['checker_end']=os.fstat(stream.fileno()).st_size
                 record=_gate_aux_cleanup(context)
                 record['failed'].extend(scope_errors)
@@ -188,10 +187,8 @@ elif mode=='worker':
                 record['scope']='original-workspace; project-native outputs are not owned auxiliary scratch'
                 stream.write(('\n'+request['cleanup_marker']+'\n'+json.dumps(record)+'\n').encode())
                 bounds['report_end']=os.fstat(stream.fileno()).st_size
-                _gate_run_script(context,'survey.sh',os.environ,stream)
         if not _owned_valid(context): raise ValueError('namespace_identity_changed')
         os.unlink('.ctx-gate-'+token+'-cmd.sh',dir_fd=context['fd'])
-        os.unlink('survey.sh',dir_fd=context['fd'])
         os.unlink('request.json',dir_fd=context['fd'])
         bounds['total']=os.stat(_gate_spool_name(token),dir_fd=context['fd']).st_size
         declared={}
@@ -236,9 +233,9 @@ else:
 '''.replace('%%PREFIX%%', PRIVATE_PREFIX)
 
 
-def launch_command(runner: str, token: str, workspace: str, body: str, survey: str, marker: str,
+def launch_command(runner: str, token: str, workspace: str, body: str, marker: str,
                    scope_dirs: tuple[str, ...] = ()) -> str:
-    request = dict(workspace=workspace, body=body, survey=survey, cleanup_marker=marker, scope_dirs=list(scope_dirs))
+    request = dict(workspace=workspace, body=body, cleanup_marker=marker, scope_dirs=list(scope_dirs))
     payload = json.dumps(request)
     return (runner + ' gate launch ' + shlex.quote(token) + " <<'__CTX_GATE_REQUEST__'\n"
             + payload + '\n__CTX_GATE_REQUEST__\n')

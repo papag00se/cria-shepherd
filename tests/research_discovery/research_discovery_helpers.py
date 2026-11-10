@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import pytest
+import survey_fixtures
 
 from cria import wsview
 
@@ -17,11 +18,8 @@ def write(root, rel, body=""):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
 
-def surveyed(root, tree_lines, blob="", session=""):
-    """A harness view that has been told only `tree_lines` (and optionally one delivered body); the caller binds it."""
-    view, tree = wsview.View(root, session), "\n".join(tree_lines)
-    sec = lambda name: f"{wsview._SEC_PREFIX}{name}{wsview._SEC_SUFFIX}"
-    parts = [sec("meta"), f"root\t{root}", sec("tree"), tree, sec("blob")] + ([blob] if blob else []) + [
-        sec("outside"), sec("progs"), sec("done"), f"entries\t{wsview.tree_entries(tree)}", "complete\t1", wsview.SURVEY_CLOSE]
-    assert wsview.apply_survey(view, "\n".join(parts))
+def surveyed(root, tree_lines, blobs=None, session=""):
+    """A harness view that has been told only `tree_lines` (and optionally delivered bodies, ``{rel: bytes}``); the caller binds it."""
+    view = wsview.View(root, session)
+    assert wsview.apply_survey(view, survey_fixtures.typed(root, tree_lines, blobs=blobs))
     return view

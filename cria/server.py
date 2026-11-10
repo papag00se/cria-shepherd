@@ -71,6 +71,7 @@ from .statusline import StatusWriter  # noqa: F401 — re-exported for tests
 from . import statusline
 from . import toolmenu
 from .shelltool import find_shell_tool
+from .surveyops import SurveyAsk
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError, ReadFitUnknown, ReadFitOverflow
 from . import wsview, generation
@@ -1395,9 +1396,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         text. What the harness has not yet seen goes back to it without asking the model. Returns True when it answered."""
         before = body.get('messages') or []
         self._ops_session = sess_key       # ONE ledger for the request: results are read from it here and calls are issued into it in _translate_out
-        taken = self.server.ops.incoming(sess_key, before, rlog, tools=body.get('tools'), room=lambda: self._read_room(rlog))
+        taken = self.server.ops.incoming(sess_key, before, rlog, tools=body.get('tools'), room=lambda: self._read_room(rlog),
+                                         survey=self._survey_ask(body, sess_key, before))
         body['messages'] = taken.messages
         self._ops_outcomes, self._ops_reads, self._ops_writes, self._read_facts = taken.outcomes, taken.reads, taken.writes, taken.facts
+        self._ops_surveys = taken.surveys
         if not taken.calls:
             return False
         completion = {'id': 'ops_' + uuid.uuid4().hex, 'object': 'chat.completion',
@@ -1425,6 +1428,15 @@ class CriaHandler(BaseHTTPRequestHandler):
                 self._raw_write(chunk)
         return True
 
+    def _survey_ask(self, body, sess_key, messages):
+        """Where cria's own workspace survey would run for this request: the harness's shell tool and the workspace root. Only where cria
+        lowers tools at all (below that rung it alters nothing) and where the harness announced both."""
+        if not self.server.cfg.routing.simple_tools:
+            return None
+        shell = find_shell_tool(body.get('tools'))
+        root = _session_cwd(sess_key, messages, lexical=True)
+        return SurveyAsk(shell, root) if shell is not None and root else None
+
     def _reproject(self, sess_key: str, rlog) -> dict | None:
         """The harness's own history, projected again after the ledger changed (a read withheld): a copy of the body, or None when
         the projection would ask the harness for more."""
@@ -1434,6 +1446,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             return None
         again['messages'] = taken.messages
         self._ops_outcomes, self._ops_reads, self._ops_writes, self._read_facts = taken.outcomes, taken.reads, taken.writes, taken.facts
+        self._ops_surveys = taken.surveys
         self._strip_and_reframe_inbound(again, sess_key, rlog)
         self._setup_translation(again, sess_key, rlog)
         return again
@@ -1756,7 +1769,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                               ask=self._reasoner_question(rlog), private_readonly_calls=private_readonly,
                               ledger_outcomes=getattr(self, '_ops_outcomes', None),
                               ledger_reads=getattr(self, '_ops_reads', None),
-                              ledger_writes=getattr(self, '_ops_writes', None)),
+                              ledger_writes=getattr(self, '_ops_writes', None),
+                              ledger_surveys=getattr(self, '_ops_surveys', None)),
             self.server.secret_values())
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness

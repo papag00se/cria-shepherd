@@ -2,6 +2,7 @@
 import json
 
 import pytest
+import survey_fixtures
 
 from cria import bodykeys, completedwork as cw, loop, prompts, selfcompact, windowcaps, wsview
 from cria.assistruntime import AssistRuntime
@@ -95,12 +96,7 @@ def text_write_turn(judge, *, read=True):
     """phi4 / Java A1 (capture 20261010T212733 call 0022): a pom excerpt, then the COMPLETE Importer.java, then pseudo-actions."""
     view = wsview.View(ROOT, "text-write")
     tree = f"D\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\nF\t1\t4543\t{JAVA}\nF\t1\t980\tpom.xml"
-    survey = "\n".join([f"{wsview._SEC_PREFIX}meta{wsview._SEC_SUFFIX}", f"root\t{ROOT}",
-                        f"{wsview._SEC_PREFIX}tree{wsview._SEC_SUFFIX}", tree,
-                        *(f"{wsview._SEC_PREFIX}{n}{wsview._SEC_SUFFIX}" for n in ("blob", "outside", "progs")),
-                        f"{wsview._SEC_PREFIX}done{wsview._SEC_SUFFIX}", f"entries\t{wsview.tree_entries(tree)}",
-                        "complete\t1", wsview.SURVEY_CLOSE])
-    assert wsview.apply_survey(view, survey)
+    assert wsview.apply_survey(view, survey_fixtures.typed(ROOT, tree))
     asked, log = [], Log()
     ruling = lambda body, rlog: asked.append(body["messages"][0]["content"]) or json.dumps(
         {"choices": [{"message": {"content": judge}}]}).encode()

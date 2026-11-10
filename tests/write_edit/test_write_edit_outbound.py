@@ -100,21 +100,9 @@ def test_a_second_call_fused_into_a_write_payload_is_trimmed_whatever_kind_of_ca
     assert writeproxy.trim_fused_tail(REAL) == REAL and writeproxy.trim_fused_tail(prose) == prose and writeproxy.trim_fused_tail(big) == big
 
 
-def test_survey_follows_owned_record_even_when_command_stderr_precedes_it(tmp_path):
-    import subprocess
+def test_a_write_lands_and_reads_back_whatever_a_noisy_python3_shim_prints(tmp_path):
     import sys
-    receipt = '0123456789abcdef'
-    record = '{"v":1,"r":"' + receipt + '","k":"landed"}'
-    cmd = "printf 'startup warning\\n' >&2; printf '%s\\n' '" + record + "'; printf 'tail\\n'"
-    wrapped = writeproxy._survey_after_first_record(cmd, "printf 'survey\\n'", receipt)
-    out = subprocess.run(['bash', '-c', wrapped], capture_output=True, text=True, check=True)
-    assert out.stdout == 'startup warning\n' + record + '\nsurvey\ntail\n'
-    missing = writeproxy._survey_after_first_record("printf 'diagnostic\\n'; exit 7", "printf 'survey\\n'", receipt)
-    out = subprocess.run(['bash', '-c', missing], capture_output=True, text=True)
-    assert out.returncode == 7 and out.stdout == 'diagnostic\n'
-
-    # Exercise the actual lowered write and inbound representation with a noisy
-    # python3 shim, without invoking mise or the network.
+    # The actual lowered write and inbound representation with a noisy python3 shim, without invoking mise or the network.
     shim = tmp_path / 'bin'; shim.mkdir()
     python = shim / 'python3'
     python.write_text('#!/bin/sh\nprintf "shim warning\\n" >&2\nexec "' + sys.executable + '" "$@"\n')
@@ -127,32 +115,4 @@ def test_survey_follows_owned_record_even_when_command_stderr_precedes_it(tmp_pa
     finally:
         wsview.unbind(token)
     assert done.returncode == 0 and target.read_text() == 'written\n'
-    assert denial.landed(messages[1]) and '"k":"survey"' not in messages[1]['content']
-
-
-def test_the_workspace_survey_rides_only_on_one_line_results_never_on_a_listing(tmp_path):
-    """144-cell ladder: list_dir (a listing capped at 9,000 bytes) carried the 6.6-10 KB survey, a ~19 KB result the harness cut in the
-    middle; apply_survey refused the remains (449 refused surveys in 11 cells) and the view went stale. Writes and edits keep carrying it,
-    on the call that lands their bytes (the `write` that answers in one frame; never on a read, whose result is the file); a listing is
-    cria's own `ls` primitive call, which carries nothing but its arguments."""
-    from write_edit_helpers import _ENGINE
-    engine = _ENGINE["ops"]
-    (tmp_path / "m.txt").write_text("a\n")
-    token = wsview.bind(wsview.View(str(tmp_path), "unsurveyed"))        # nothing surveyed yet: every call is due
-    try:
-        first = lower(
-            [call("list_dir", {"path": "."}, "ls"), call("write_file", {"path": "n.txt", "content": "x\n"}, "wr"),
-             call("edit_file", {"path": "m.txt", "old_string": "a", "new_string": "b"}, "ed")],
-            injected=("write_file", "edit_file", "list_dir"), root=str(tmp_path),
-            issue_list_dir=lambda c, a: engine.issue_list_dir("s", SHELL, c, a, workspace_root=str(tmp_path), level="none"),
-            issue_mutations=lambda reqs: engine.issue_mutations("s", SHELL, reqs, workspace_root=str(tmp_path), level="none"))
-        ran = []
-        settle([{"role": "assistant", "tool_calls": first}], tmp_path, ran=ran)
-    finally:
-        wsview.unbind(token)
-    first = [command_of(c) for c in first]
-    assert wsview.SURVEY_CMD_OPEN not in first[0] and first[0].count("python3") == 1
-    assert wsview.SURVEY_CMD_OPEN in first[1]                                   # a new file: the write is the first call
-    assert wsview.SURVEY_CMD_OPEN not in first[2]                               # an unread file: its first call is the read
-    landing = [c for c in ran if "CTX_EOF" in c and c.startswith("# edit_file")]
-    assert len(landing) == 1 and wsview.SURVEY_CMD_OPEN in landing[0]           # ...and the edit's survey rides on its landing write
+    assert denial.landed(messages[1])

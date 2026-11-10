@@ -60,8 +60,9 @@ class Op:
 
     @property
     def calls(self) -> list:
-        """The model's calls this operation answers, in the model's order (a group of file mutations answers several)."""
-        return self.extra_calls or [self.call]
+        """The model's calls this operation answers, in the model's order (a group of file mutations answers several; an operation
+        cria asked on its own, such as the workspace survey, answers none)."""
+        return self.extra_calls or ([self.call] if self.call else [])
 
 
 class Ledger:

@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from survey_fixtures import ask_survey
 from cria import assistruntime, loop, toolwire, wsview
 
 
@@ -18,9 +19,9 @@ def lowered(name, **args):
 
 
 def survey_view(root):
-    out = subprocess.run(["bash", "-lc", wsview.survey_command("lb2", cd=str(root))], capture_output=True, text=True).stdout
+
     view = wsview.View(str(root), "lb2")
-    wsview.apply_survey(view, wsview.strip_survey(out)[1])
+    wsview.apply_survey(view, ask_survey(str(root), "lb2"))
     return view
 
 

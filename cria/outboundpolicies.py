@@ -16,7 +16,6 @@ from .filecommands import (
 )
 from .toolwire import (
     _refusal_command, _command_of, GATE_SENTINEL, _SENTINEL,
-    _RIDE_ALONG_COMMAND_RESERVE, _RIDE_ALONG_HOST_RESERVE,
 )
 from .shelltool import _CMD_FIELDS, is_shell_tool_name
 from .toolargs import PATH_KEYS as _PATH_KEYS, tool_path as _tool_path
@@ -39,17 +38,9 @@ def external_boundary(source: OutboundCall) -> ShellCommand | None:
     workspace_root, declared_roots = request.workspace_root, request.declared_roots
     session, pack = request.session, request.pack
     if (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root, declared_roots)) is not None:
-        ride = ''
-        if wsview.pending(session or '')[1]:
-            room = resultpacket.max_text_for_wire(     # the survey travels as an encoded record: budget its worst-case wire cost
-                content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE - len(reason))
-            if room >= wsview.TREE_MIN_BYTES:
-                ride = wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)
-            elif rlog is not None:
-                rlog.emit('wsview.survey_not_carried', level='info', left=room, carrier=name)
-        cmd = _refusal_command(reason, ride)
+        cmd = _refusal_command(reason)
         if rlog is not None:
-            rlog.emit('writeproxy.blocked_external', tool=name, permission=external_dir_permission, carried_survey=bool(ride))
+            rlog.emit('writeproxy.blocked_external', tool=name, permission=external_dir_permission)
         return ShellCommand(cmd)
     return None
 

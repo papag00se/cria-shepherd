@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from survey_fixtures import ask_survey
 from cria import loop, wsview
 from loop_rest_helpers import Rlog, loop_rest_local_view  # noqa: F401
 
@@ -83,9 +84,7 @@ def test_workspace_evidence_stays_current_across_the_semantic_question(tmp_path,
 
     def survey():
         wsview.want_body(session, "a.txt")
-        result = subprocess.run(["sh", "-c", wsview.survey_command(session, cd=root)],
-                                capture_output=True, text=True, check=True, timeout=30)
-        assert wsview.apply_survey(view, wsview.strip_survey(result.stdout)[1])
+        assert wsview.apply_survey(view, ask_survey(root, session))
 
     survey()
     token = wsview.bind(view)

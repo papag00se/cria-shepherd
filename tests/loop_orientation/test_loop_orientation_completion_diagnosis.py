@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import survey_fixtures
 from cria import completiondiagnosis as cd, loop, prompts, wsview
 from loop_orientation_helpers import Log, local_workspace_view  # noqa: F401
 
@@ -48,11 +49,8 @@ def test_a_workspace_survey_that_may_be_cut_never_reads_as_an_absent_file(comple
     """The harness's survey is the only view of a remote workspace; an incomplete one makes REPORT.md UNKNOWN."""
     root = "/remote/diagnosis"
     tree = "F\t1\t1\tREADME.md"
-    section = lambda name: f"{wsview._SEC_PREFIX}{name}{wsview._SEC_SUFFIX}"
-    survey = "\n".join([section("meta"), f"root\t{root}", section("tree"), tree, *map(section, ("blob", "outside", "progs", "done")),
-                        f"entries\t{wsview.tree_entries(tree)}", f"complete\t{int(complete)}", wsview.SURVEY_CLOSE])
     view = wsview.View(root, "diag")
-    assert wsview.apply_survey(view, survey)
+    assert wsview.apply_survey(view, survey_fixtures.typed(root, tree, complete=complete))
     token = wsview.bind(view)
     try:
         asked = []

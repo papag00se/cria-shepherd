@@ -262,7 +262,7 @@ def plan(root: str, *, poll_wait_s: float = probegate.GATE_POLL_WAIT_S) -> probe
             'TMPDIR="$__ctx_scratch"; export TMPDIR',
             f'__ctx_gate_file={spool}',
             probegate._helper_install_leg().rstrip('\n'),
-            *probegate._gate_launch_guard(result.transport_id, root, [command(root, encoded=True)], '',
+            *probegate._gate_launch_guard(result.transport_id, root, [command(root, encoded=True)],
                                            poll_wait_s, (), budget=budget),
             f'else printf "%s\\n" {shlex.quote(UNAVAILABLE)}; fi',
         ])

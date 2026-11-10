@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from survey_fixtures import ask_survey, survey_of_disk
 from cria import probegate, wsview
 from gates_completion_helpers import gates_completion_view, run_in_harness  # noqa: F401
 
@@ -42,11 +43,11 @@ def test_a_gate_planned_after_a_mutating_command_is_replanned_once_its_survey_de
     view = wsview.View(root, SESS)
     token = wsview.bind(view)
     try:
-        tree = subprocess.run(["sh", "-c", wsview.survey_command(SESS, cd=root)], capture_output=True, text=True).stdout
-        assert wsview.apply_survey(view, wsview.strip_survey(tree)[1])
+        assert wsview.apply_survey(view, ask_survey(root, SESS))
         view.note_unknown_mutation()                      # the coder ran `rake test` itself: no held body is current any more
         plan = probegate.plan_gate(root, SESS)
         assert plan.surveyed_before and _tests(plan) == [] and manifest in plan.unanswered_reads
+        assert wsview.apply_survey(view, ask_survey(root, SESS))      # cria's own survey, asked for what the plan read blind, delivers the manifest
         subprocess.run(["git", "init", "-q", root], check=True)
         raw = run_in_harness(plan.script, tmp_path, "sh")
         outcome = probegate.interpret_gate(plan, raw)
@@ -71,8 +72,7 @@ def test_gate_refreshes_discovery_input_after_a_check_changes_it(tmp_path):
     token = wsview.bind(view)
     try:
         view.request_current_body(root + "/package.json")
-        tree = subprocess.run(["sh", "-c", wsview.survey_command(session, cd=root)], capture_output=True, text=True).stdout
-        assert wsview.apply_survey(view, wsview.strip_survey(tree)[1])
+        assert wsview.apply_survey(view, ask_survey(root, session))
         assert view.read(root + "/package.json") is not None
         plan = probegate.plan_gate(root, session)
         assert _tests(plan) == ["npm run test"]
@@ -82,6 +82,8 @@ def test_gate_refreshes_discovery_input_after_a_check_changes_it(tmp_path):
             raw = run_in_harness(probegate.continue_transport_command(plan), tmp_path)
             outcome = probegate.interpret_gate(plan, raw)
         assert outcome.ran
+        assert wsview.fresh_demands(session)                  # the gate wants a survey once the checks have run, and the plan queued the manifest again
+        assert wsview.apply_survey(view, ask_survey(root, session))
         assert "node changed.test.js" in view.read_current_survey(root + "/package.json")
         # The next gate consumes the post-check manifest, rather than alternating
         # to a blind plan after the check changed it.
@@ -105,8 +107,9 @@ def test_a_manifest_name_the_survey_reported_absent_is_not_queued_again_ahead_of
 def test_absence_is_proof_only_for_a_missing_file_and_only_until_the_tree_may_have_changed(tmp_path):
     (tmp_path / "locked").mkdir()
     (tmp_path / "Rakefile").write_text("x\n")
-    script = wsview.survey_command("abs", cd=str(tmp_path))
-    assert "FileNotFoundError, NotADirectoryError" in script                       # only ENOENT/ENOTDIR may say -1
+    found = survey_of_disk(tmp_path, bodies=["go.mod", "Rakefile", "locked", "Rakefile/x"])
+    assert found.refused == {"go.mod": wsview.ABSENT, "locked": wsview.UNSTATABLE, "Rakefile/x": wsview.ABSENT}    # only ENOENT/ENOTDIR may say absent
+    assert found.bodies == {"Rakefile": b"x\n"}
     view = wsview.View("/w", "abs-fresh")
     view._surveyed, view._complete = True, False
     view._undeliverable["go.mod"] = wsview.UNSTATABLE                              # a stat error: not proof of anything

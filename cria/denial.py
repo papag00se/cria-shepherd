@@ -123,13 +123,6 @@ UNKNOWN = "unknown"                 # a cria-LOWERED call whose branch could not
 _KINDS = resultpacket.KINDS
 
 _ACTIVE: contextvars.ContextVar[str] = contextvars.ContextVar("cria_denial_receipt", default="")
-_DECLARATION: contextvars.ContextVar["Declaration | None"] = contextvars.ContextVar("cria_denial_declaration", default=None)
-
-
-class Declaration:
-    """What the compiler of ONE lowered call declares for the sentinel (set while it composes, read once afterwards)."""
-    def __init__(self) -> None:
-        self.survey = False
 
 
 def canonical_arguments(arguments) -> str:
@@ -146,31 +139,23 @@ def receipt_for(call_id, name, arguments) -> str:
 
 
 @contextlib.contextmanager
-def receipt_scope(token: str, declaration: "Declaration | None" = None):
-    """Everything composed inside prints this call's records and may declare into ``declaration``."""
+def receipt_scope(token: str):
+    """Everything composed inside prints this call's records."""
     reset = _ACTIVE.set(token or "")
-    reset_decl = _DECLARATION.set(declaration)
     try:
         yield token
     finally:
-        _DECLARATION.reset(reset_decl)
         _ACTIVE.reset(reset)
 
 
 def unframed():
     """Compose a leaf that runs INSIDE a branch which already printed its own record (a refusal that goes on to
     answer with the file): a second record there would sit in the middle of what the model reads."""
-    return receipt_scope("", _DECLARATION.get())
+    return receipt_scope("")
 
 
 def active_receipt() -> str:
     return _ACTIVE.get()
-
-
-def declare_survey() -> None:
-    """The command being composed will carry a survey record (the sentinel declares it; see `resultpacket`)."""
-    if _ACTIVE.get() and (d := _DECLARATION.get()) is not None:
-        d.survey = True
 
 
 def frame(kind: str, token: str | None = None, *, rep: dict | None = None) -> str:

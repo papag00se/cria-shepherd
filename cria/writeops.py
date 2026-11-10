@@ -45,7 +45,6 @@ CHECK_WAIT = 8          # seconds the harness waits for a checker before it answ
 CHECK_WAITS = 3         # waits for a checker that is still running, before its verdict is UNKNOWN
 CHECK_RESERVE = 6_000   # room one command keeps for everything but a candidate's base64
 HOLD = 3_000            # the bytes of a command that are not payload (the stub and its arguments)
-RIDE_ROOM = 14_000      # room a survey ride needs beside a landing command: a command that would not hold it carries none
 
 
 @dataclass(frozen=True)
@@ -58,25 +57,17 @@ class MutationRequest:
     shrink: dict | None = None  # the measured finding for a whole write: {text, land, sha}
     review: dict | None = None  # the candidate-safety terms: {permission, ws}
     echo: bool = False
-    ride: 'Callable[[str], str] | None' = None   # composes the workspace survey that rides with the landing step, given its receipt (cria.wsview)
 
 
 @dataclass(frozen=True)
 class LedgerWrite:
     """What ``represent_inbound`` needs to treat a projected mutation as the lowered call it was: the model's call, how it ended, the
-    text the coder is shown (for an edit that did not apply, the facts of the miss instead), and the survey that rode home with it."""
+    text the coder is shown (for an edit that did not apply, the facts of the miss instead)."""
     name: str
     arguments: str
     kind: str
     text: str
     rep: dict
-    survey: str
-
-
-def survey_token(op: str) -> str:
-    """The receipt of a workspace survey riding home with an operation's landing write: derived from the operation, read back at one
-    position (the line after the write's frame)."""
-    return callauth.group(op)[:16]
 
 
 def _shown(label: str) -> str:
@@ -115,9 +106,8 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
         staged = bool(args.get('staged'))
         sp = '-' if args['sp'] is None else json.dumps(args['sp'], separators=(',', ':'))
         words = [args['root'], args['rel'], args['ex'], sp, args['nw'], 1 if staged else 0, args['mk'], callauth.group(op)]
-        cmd = harnessprims.compose('write', nonce, words, None if staged else _bytes(blobs, args['blob']),
-                                   comment=ctx['label'], safe_path=ctx['safe'])
-        return cmd + '\n' + blobs[args['ride']] if args.get('ride') else cmd
+        return harnessprims.compose('write', nonce, words, None if staged else _bytes(blobs, args['blob']),
+                                    comment=ctx['label'], safe_path=ctx['safe'])
     if what == 'mput':
         words = [args['root'], args['rel'], callauth.group(op), args['off'], args['mk']]
         data = _bytes(blobs, args['blob'])[args['off']:args['off'] + harnessprims.CHUNK_BYTES]
@@ -166,11 +156,6 @@ class WriteOps:
         record = {'t': 'op', 'op': op, 'kind': MUTATE, 'ctx': ctx, 'call': calls[0], 'calls': calls}
         try:
             fake = _Group(op, ctx, calls)
-            carrier = next((r.ride for r in reqs if r.ride), None)
-            if carrier is not None:
-                self._rides[op] = carrier
-                while len(self._rides) > 256:
-                    self._rides.pop(next(iter(self._rides)))
             plan = self._m_first(fake, root, rel)
             blobs = dict(plan.blobs)
             steps = [(what, {'wave': 0, **a}) for what, a in plan.steps]
@@ -245,12 +230,6 @@ class WriteOps:
             offsets = range(0, len(payload), harnessprims.CHUNK_BYTES)
             return _Plan([('mput', {**args, 'off': off}) for off in offsets[:harnessprims.PUT_WAVE]], {digest: text})
         blobs = {digest: text}
-        carrier = self._rides.pop(op.op, None)
-        if carrier is not None and len(payload) * 4 // 3 + HOLD + RIDE_ROOM <= self.command_budget:
-            ride = carrier(survey_token(op.op))        # the survey rides home with the write that lands the bytes
-            if ride:
-                h = hashlib.sha256(ride.encode()).hexdigest()
-                blobs[h], args['ride'] = ride, h
         return _Plan([('mwrite', args)], blobs)
 
     def _m_read_args(self, op, root, rel, hop, replans) -> dict:
