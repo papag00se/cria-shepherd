@@ -36,7 +36,9 @@ def test_a_protocol_refused_reply_is_redriven_with_a_notice_then_bounded():
     loop = plan_off_loop(coder, store=LoopStore())
     out = loop.drive(body(), "sid:r", CODING, rlog)
     assert out["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "shell"
-    assert len(coder.bodies) == 2 and "native protocol error" in json.dumps(coder.bodies[1]["messages"])
+    retry_messages = json.dumps(coder.bodies[1]["messages"])
+    assert len(coder.bodies) == 2 and "native protocol error" in retry_messages
+    assert "close it before the tool call" in retry_messages
     assert "native protocol error" not in json.dumps(coder.bodies[0]["messages"])
     assert out[generation.EVIDENCE]["prior_protocol_errors"] == [REFUSED]
     refused = [f for k, f in rlog.events if k == "loop.protocol_refused"]
