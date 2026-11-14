@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Callable, Protocol
 
-from . import bodykeys, callsyntax, prompts, selfcompact
+from . import bodykeys, callsyntax, generation, prompts, selfcompact
 
 
 class TopicJudge(Protocol):
@@ -81,7 +81,7 @@ def generate(chat_fn, role, task: str, evidence: tuple[str, ...], prior: str | N
         completion = json.loads(chat_fn(body, rlog))
     finally:
         rlog.phase = old_phase
-    if callsyntax.is_truncated(completion):
+    if generation.incomplete(completion) or callsyntax.is_ruminating(completion):
         return ""
     choices = completion.get("choices") or []
     message = (choices[0].get("message") or {}) if choices else {}

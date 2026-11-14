@@ -1,10 +1,11 @@
 """The measured compaction predicate: the room is computed from real windows/densities and fires before a compaction call stops fitting."""
 import copy
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from cria import contextfloor, handoffdistill, loop as cloop, selfcompact as sc, tokenratio, windowcaps
+from cria import compactionaction, contextfloor, handoffdistill, loop as cloop, selfcompact as sc, tokenratio, windowcaps
 from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
@@ -57,6 +58,23 @@ def test_each_models_own_window_density_and_reserve_bound_its_own_room():
     assert evidence < 16384 < room                         # a small compactor binds the evidence bound, not the coder's
     unknown = _loop(None, None)
     assert unknown._compaction_room(_Rlog(), unknown._ctx.compactor_chat, 4000, facts_text="") == (None, None)
+
+def test_aborted_compaction_action_never_reaches_topic_classifier():
+    judged = []
+    judge = SimpleNamespace(judge_compaction_topic=lambda task, response, **kw: judged.append(response) or "ON_TASK")
+    def run(finish, marker=None):
+        reply = {"choices": [{"finish_reason": finish, "message": {"content": "action text"}}]}
+        if marker is not None:
+            reply["cria_rumination"] = marker
+        chat = lambda body, rlog: json.dumps(reply).encode()
+        author = lambda task, evidence, prior: compactionaction.generate(chat, None, task, evidence, prior, _Rlog())
+        return compactionaction.next_action("task", (), author, judge)
+    for finish, marker in (("rumination", {"degenerate": True}), ("rumination", None), ("length", None)):
+        assert run(finish, marker) == ""
+    assert judged == []
+    assert run("stop") == "action text"
+    assert judged == ["action text"]
+
 
 def test_the_first_view_that_does_not_fit_one_more_turn_is_compacted_and_every_call_reads_it_whole():
     """The writer and every validator read the whole view: at the firing point each compaction body fits its window with its reply."""
