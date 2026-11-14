@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -84,7 +85,22 @@ def set_level(want: str) -> str | None:
 
 
 def sh(*cmd: str, timeout: int | None = 120) -> int:
-    return subprocess.run(cmd, timeout=timeout).returncode
+    # Isolate the runner from a terminal's group SIGINT; relay one interrupt so it can
+    # stop its separately-owned harness and archive before this wrapper exits.
+    proc = subprocess.Popen(cmd, start_new_session=True)
+    try:
+        return proc.wait(timeout=timeout)
+    except KeyboardInterrupt:
+        try:
+            proc.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        return 130
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
 
 
 def cell_timeout() -> int | None:

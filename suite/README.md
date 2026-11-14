@@ -4,7 +4,7 @@
 
 Local test-run outputs go to `~/.cria/test-runs/outputs/`, and debug call captures to `~/.cria/test-runs/calls/`; call debugging stays enabled on this machine unless the operator asks otherwise. Preserve only files normally committed, not build outputs, package installations or caches. Active task workspaces and installations are temporary under `/var/tmp/cria-test-runs` and removed on normal runner exit. Real users' coding outputs remain in their own workspaces. No additional directories under `~/.cria` without operator consent; configuration, secrets, service logs and multipart state are permitted. System 1 belongs with the cria installation, not in `~/.cria`. Historical paths and results remain where they were recorded.
 
-One matrix cell per `run.py` invocation. A run receives active working time in milestone intervals, preserves its workspace and exact call captures, and appends one metadata row to `results/results.jsonl`.
+One matrix cell per `run.py` invocation. A run receives active working time in milestone intervals, preserves its workspace and exact call captures, and appends one metadata row to `results/results.jsonl`. An operator SIGINT during active monitoring records `operator-interrupted`, stops the owned harness group, and follows the normal capture and archive path; `battery_run.py` forwards the interrupt and waits for that cleanup. Interruptions before monitoring or during shutdown are not covered by this guarantee.
 
 **Default policy:** planner off; report at 15, 30, 45, … active minutes with total inferred usefulness and material changes since the previous milestone. One snapshot and judgment serves both reporting and continuation—there is no separate 10-minute reporting clock.
 

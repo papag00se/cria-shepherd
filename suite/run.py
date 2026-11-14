@@ -673,6 +673,15 @@ def stop_process_group(proc, *, grace: float = KILL_GRACE, sleeper=time.sleep) -
         pass
 
 
+def monitor_interruptible(proc, pacing, run_id, ws, task_dir, *, stop):
+    """An operator interrupt is a terminal outcome, not a bypass of owned cleanup."""
+    judgments = []
+    try:
+        return monitor_milestones(proc, pacing, run_id, ws, task_dir, stop=stop, judgments=judgments)
+    except KeyboardInterrupt:
+        return "operator-interrupted", judgments
+
+
 def shutdown_and_capture(*, calls_dir, before_sessions, stop, select=None):
     """Stop the owned process group, then timestamp and discover the cell's capture sessions.
 
@@ -861,7 +870,7 @@ class HarnessControl:
         stop_process_group(self.proc)
 
 
-def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop):
+def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop, judgments=None):
     """Observe one harness; the harness is never paused and no judgment is waited for.
 
     Every due interval copies the LIVE workspace (approximate, mutable) and records that checkpoint as
@@ -873,7 +882,8 @@ def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, stop):
     operator accepts that files changed since the snapshot, and a newer checkpoint that is merely unanswered
     does not erase it. The one ordering rule: the judgment of the NEWEST judged checkpoint decides, so an
     older stop decision recorded after a newer checkpoint was already judged is retained but superseded."""
-    judgments = []
+    if judgments is None:
+        judgments = []
     waiting = []
 
     def collect(*, may_end):
@@ -1200,7 +1210,7 @@ def _main(scope) -> None:
         control = HarnessControl(proc, adapter)
         pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
                                  budget_intervals=budget_intervals(task_dir))
-        terminal, milestone_judgments = monitor_milestones(
+        terminal, milestone_judgments = monitor_interruptible(
             proc, pacing, run_id, ws, task_dir, stop=control.stop)
         # Stop first. A child may still finish a response or create a new session during the grace
         # period, so the wall cutoff and session inventory must be taken only after the group is gone.

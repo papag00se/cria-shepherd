@@ -1,6 +1,8 @@
 """Restored campaign promises: planner stays off, a cell without a result runs (again) and one with a result does
 not, and the restored launch never touches the live arm."""
+import signal
 import sys
+from unittest.mock import Mock
 
 import pytest
 
@@ -12,6 +14,17 @@ def test_campaign_id_cannot_escape_the_state_directory(name):
     """campaign_dir refuses empty, traversal and separator-bearing ids."""
     with pytest.raises(ValueError):
         campaign.campaign_dir(name)
+
+
+def test_interrupt_is_forwarded_to_runner_and_waits_for_cleanup(monkeypatch):
+    proc = Mock()
+    proc.wait.side_effect = [KeyboardInterrupt(), 0]
+    launch = Mock(return_value=proc)
+    monkeypatch.setattr(battery_run.subprocess, "Popen", launch)
+    assert battery_run.sh("runner", timeout=None) == 130
+    assert launch.call_args.kwargs["start_new_session"] is True
+    proc.send_signal.assert_called_once_with(signal.SIGINT)
+    assert proc.wait.call_count == 2
 
 
 def test_restored_battery_delegates_without_touching_the_live_arm_and_legacy_arms_keep_planner_off(monkeypatch, tmp_path):
