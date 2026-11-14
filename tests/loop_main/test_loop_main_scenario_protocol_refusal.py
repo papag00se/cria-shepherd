@@ -47,6 +47,23 @@ def test_a_protocol_refused_reply_is_redriven_with_a_notice_then_bounded():
     assert len(stubborn.bodies) == 3 and "loop.protocol_refusal_bound" in rlog.kinds()
 
 
+def test_protocol_refusal_budget_recovers_after_an_accepted_action():
+    coder, rlog = Coder(refusal(), refusal(), acting(), refusal(), acting()), Rlog()
+    loop = plan_off_loop(coder, store=LoopStore())
+    first = loop.drive(body(), "sid:recovered", CODING, rlog)
+    assert first["choices"][0]["message"]["tool_calls"]
+    # A process restart retains evidence but must not resurrect the spent streak.
+    from cria.loop import _session_from_dict, _session_to_dict
+    restored = _session_from_dict(_session_to_dict(loop._store.get("sid:recovered")))
+    assert restored.protocol_refusal_count == 0
+    assert restored.generation_errors == [REFUSED, REFUSED]
+    loop._store.put("sid:recovered", restored)
+    second = loop.drive(body(), "sid:recovered", CODING, rlog)
+    assert second["choices"][0]["message"]["tool_calls"]
+    assert [f["attempt"] for k, f in rlog.events if k == "loop.protocol_refused"] == [1, 2, 1]
+    assert second[generation.EVIDENCE]["prior_protocol_errors"] == [REFUSED, REFUSED, REFUSED]
+
+
 def test_a_cut_off_call_is_never_forwarded_and_the_turn_reports_incomplete():
     cut = {"choices": [{"finish_reason": "length", "message": {"role": "assistant", "content": None, "tool_calls": [
         {"id": "w", "type": "function", "function": {"name": "write_file", "arguments": '{"path":"x","content":"cut'}}]}}]}

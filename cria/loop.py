@@ -520,6 +520,7 @@ class PlanSession(GuardState):
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     unexecuted_nudges: int = 0  # bounded pushes for a turn that PASTED the file instead of writing it
     generation_errors: list[dict] = field(default_factory=list)
+    protocol_refusal_count: int = 0  # consecutive refused generations since an accepted acting reply
     # (path, sha1 of the block) of every pasted file the text-write judge has ruled on, and its answer —
     # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
     text_write_judged: dict = field(default_factory=dict)
@@ -4578,12 +4579,12 @@ class Loop:
 
     def _protocol_refused(self, sess: PlanSession, key: str, body: dict, error, rlog) -> dict:
         sess.generation_errors.append(error.response_error)
-        if sess.unexecuted_nudges >= MAX_UNEXECUTED_NUDGES:
+        if sess.protocol_refusal_count >= MAX_UNEXECUTED_NUDGES:
             rlog.emit('loop.protocol_refusal_bound', error=error.response_error)
             raise error
-        sess.unexecuted_nudges += 1
-        rlog.emit('loop.protocol_refused', attempt=sess.unexecuted_nudges, error=error.response_error)
-        notice = prompts.render('generation_protocol_refused', attempt=sess.unexecuted_nudges)
+        sess.protocol_refusal_count += 1
+        rlog.emit('loop.protocol_refused', attempt=sess.protocol_refusal_count, error=error.response_error)
+        notice = prompts.render('generation_protocol_refused', attempt=sess.protocol_refusal_count)
         return self._renudge(sess, key, body, notice, rlog)
 
     def _retain_living_reply(self, sess, effects, raw_reply, actual, offered, rlog):
@@ -5697,7 +5698,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
         "generation_errors": sess.generation_errors,
-        "generation_refusal_count": sess.unexecuted_nudges if sess.generation_errors else 0,
+        "generation_refusal_count": sess.protocol_refusal_count,
+        "unexecuted_nudges": sess.unexecuted_nudges if sess.generation_errors else 0,
         # A negative satisfaction verdict is completion-critical session state. Persist it so a
         # restart cannot turn the same current evidence into a false completion.
         "latest_satisfaction": sess.latest_satisfaction,
@@ -5751,7 +5753,8 @@ def _session_from_dict(d) -> PlanSession | None:
                            inventory_root=str(d.get('inventory_root') or ''), inventory_observations=observations,
                            inventory_event_ids={x for x in d.get('inventory_event_ids', []) if isinstance(x, str)},
                            generation_errors=list(d.get("generation_errors") or []),
-                           unexecuted_nudges=int(d.get("generation_refusal_count", 0)),
+                           protocol_refusal_count=int(d.get("generation_refusal_count", 0)),
+                           unexecuted_nudges=int(d.get("unexecuted_nudges", d.get("generation_refusal_count", 0))),
                            prior_work=str(d.get("prior_work", "")),
                            verify_fails=int(d.get("verify_fails", 0)),
                            latest_satisfaction=(d.get("latest_satisfaction")
@@ -7312,6 +7315,8 @@ def _requested_repository_probe(gs, body, rlog, *, workspace_root=None,
 
 
 def _forward_acting_coder(sess, completion):
+    # A valid acting reply ends the protocol-error streak, not its retained evidence.
+    sess.protocol_refusal_count = 0
     # Only the six accepted coder-return leaves call this; delegation is transparent.
     selected = _repository_selection(sess)
     if selected.definition is not None and selected.definition.observe(sess, acting=True) is not None:
