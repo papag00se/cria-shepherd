@@ -111,13 +111,14 @@ class LinterReport:
 # ---------------------------------------------------------------------------
 # File collection (pure filesystem read, no execution)
 
-def collect_files(root: str, exts: list[str]) -> list[str]:
-    """Recursively collect files under ``root`` whose extension (text after the last dot, not
-    including the dot) is in ``exts``. A directory is skipped only on proof that a tool generated it
-    (:func:`cria.ignore.generated`); an unreadable directory contributes nothing, silently. Sorted
-    (path order)."""
+def collect_files(root: str, exts: list[str], *, names: tuple[str, ...] = ()) -> list[str]:
+    """Collect files with an extension in ``exts`` or an exact basename in ``names``.
+
+    Generated directories are skipped on proof; unreadable directories contribute nothing.
+    Results are sorted by path.
+    """
     out: list[str] = []
-    _walk(root, root, exts, out, [])
+    _walk(root, root, exts, out, [], names)
     out.sort()
     return out
 
@@ -134,7 +135,8 @@ def collect_files_with_skips(root: str, exts: list[str]) -> tuple[list[str], lis
     return out, sorted(set(skipped))
 
 
-def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: list[str]) -> None:
+def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: list[str],
+          names: tuple[str, ...] = ()) -> None:
     # The workspace is the HARNESS's filesystem, so the entries come from what the harness
     # reported (:mod:`cria.wsview`), not from cria's own disk. None means the same thing the old
     # OSError meant — this directory could not be listed — so the contract is unchanged.
@@ -163,9 +165,9 @@ def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: lis
                 rel = os.path.relpath(full, root)
                 skipped.append(proof.replace(name, rel, 1) if rel != name else proof)
                 continue
-            _walk(root, full, exts, out, skipped)
+            _walk(root, full, exts, out, skipped, names)
         elif is_file:
-            if "." in name and name.rsplit(".", 1)[1] in exts:
+            if name in names or ("." in name and name.rsplit(".", 1)[1] in exts):
                 out.append(full)
 
 

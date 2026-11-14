@@ -64,6 +64,20 @@ def test_maven_checkstyle_only_when_the_pom_declares_it_and_a_broken_pom_is_caug
     write(tmp_path, "pom.xml", "<project><build><plugins><plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin></plugins></build></project>")
     assert any("checkstyle" in c for c in cmds(proberun.select_completion_probes(tmp_path)))
 
+def test_ruby_syntax_floor_checks_extensionless_build_files(tmp_path):
+    for path in ("Rakefile", "Gemfile", "nested/rakefile"):
+        write(tmp_path, path, "---\nrequire 'rake'\n")
+    write(tmp_path, "lib/shipping.rb", "puts 'ok'\n")
+    write(tmp_path, "README", "not ruby\n")
+    candidates = pd.syntax_floor_candidates(tmp_path)
+    checks = {c.command[-1]: c.command for c in candidates if c.command[:2] == ["ruby", "-c"]}
+    assert set(checks) == {str(tmp_path / path) for path in ("Rakefile", "Gemfile", "nested/rakefile", "lib/shipping.rb")}
+    for name in ("Rakefile", "Gemfile", "nested/rakefile"):
+        result = subprocess.run(checks[str(tmp_path / name)], capture_output=True, text=True)
+        assert result.returncode != 0 and "syntax error" in result.stderr.lower()
+    assert subprocess.run(checks[str(tmp_path / "lib/shipping.rb")], capture_output=True).returncode == 0
+
+
 @pytest.mark.parametrize("gemfile,expect", [
     ('source "x"\ngem "europe"\ngem "rake"\n', ["bundle exec rake test"]),   # shipping-rates-rb 1787268190: bare rake could not see vendor/bundle
     ('source "x"\ngem "europe"\n', ["rake test"]),

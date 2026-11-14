@@ -1201,7 +1201,7 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
         out.append(cand(ProbeKind.SyntaxCheck, ["php", "-l", f],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Php, reason="PHP file present: parse floor"))
-    for f in linterprobe.collect_files(str(root), ["rb"])[:MAX_FLOOR_FILES_PER_LANG]:
+    for f in linterprobe.collect_files(str(root), ["rb"], names=("Rakefile", "rakefile", "Gemfile"))[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["ruby", "-c", f],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Ruby, reason="Ruby file present: parse floor"))
