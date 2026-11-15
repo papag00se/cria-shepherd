@@ -47,6 +47,11 @@ def validate(sources: tuple[compactionpacket.ToolEvidence, ...], answer: object)
         # When the harness provided a structured process status, always preserve its
         # own line. The envelope's anchored parser, not stdout vocabulary, owns it.
         envelope = resultnotes.exec_envelope(source.result)
+        # An exit status alone loses the reason an action failed. Keep the
+        # complete original result; the final context floor remains the owner
+        # of fitting and can still omit this historical evidence under pressure.
+        if envelope and envelope.exit_code not in (None, 0):
+            indexes.update(range(1, len(lines) + 1))
         match = resultnotes._EXEC_HEADER.match(source.result) if envelope else None
         if match:
             for group in ("exit", "session"):

@@ -4,10 +4,21 @@ from pathlib import Path
 
 from types import SimpleNamespace
 
-from cria import contextfloor, denial, indicators, loop, prompts, resultnotes, selfcompact as sc, server
+from cria import compactionpacket, contextfloor, denial, historyselection, indicators, loop, prompts, resultnotes, selfcompact as sc, server
 from cria.config import Role
 from gate_fixtures import gate_turn
 from compaction_handoff_helpers import call, chat_reply, lens_answer, result, shell, write
+
+def test_selected_failed_command_preserves_its_original_diagnostic():
+    # Rust retry: the selector retained the status but dropped the reason cargo add failed.
+    failed = "Chunk ID: a\nWall time: 0.0 seconds\nProcess exited with code 1\nOutput:\ncd: project: No such file or directory\n"
+    success = failed.replace("code 1", "code 0")
+    sources = (compactionpacket.ToolEvidence("a", "exec_command", "{}", failed),
+               compactionpacket.ToolEvidence("b", "exec_command", "{}", success))
+    selected = historyselection.validate(sources, {"a": [3], "b": [3]})
+    assert failed in selected[0].render()
+    assert "No such file" not in selected[1].render()
+
 
 LONG = "x" * 5000
 NOTE = "⟦ctx:facts⟧ searched /ws/vendor; the dependency source is under /home/u/.m2"
