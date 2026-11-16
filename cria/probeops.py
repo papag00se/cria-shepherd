@@ -43,6 +43,15 @@ def command(op: str, ctx: dict, s: int, what: str, args: dict, blobs: dict) -> s
                                 safe_path=ctx['safe'])
 
 
+class ReleasedCalls(list):
+    """Calls released by a ledger-owned probe, with their original batch judgments."""
+    def __init__(self, calls, decisions, originals, source_ops=()):
+        super().__init__(calls)
+        self.decisions = decisions
+        self.originals = originals
+        self.source_ops = frozenset(source_ops)
+
+
 class ProbeOps:
     """The probe half of the engine; ``Ops`` inherits it (``_step``, ``_next`` and the ledger live there)."""
 
@@ -50,10 +59,15 @@ class ProbeOps:
         """Record a probe of ``path`` holding the model's calls ``held`` (dicts with an id, a name and arguments) and return its first primitive call."""
         from .toolwire import _shell_call
         root, rel = split(path, workspace_root)
+        decisions = held.decisions if isinstance(held, ReleasedCalls) else None
+        originals = held.originals if isinstance(held, ReleasedCalls) else {}
+        source_ops = list(held.source_ops) if isinstance(held, ReleasedCalls) else []
+        held = list(held)
         with self._lock:
             op = callauth.new_op()
             ctx = {'path': path, 'shell': shell_tool, 'safe': self.safe_path, 'ws': workspace_root or '.', 'wsroot': workspace_root, 'level': level,
-                   'roots': list(roots), 'root': root, 'rel': rel, 'held': held, 'at': time.time()}
+                   'roots': list(roots), 'root': root, 'rel': rel, 'held': held, 'at': time.time(),
+                   'batch_decisions': decisions, 'batch_original_ids': originals, 'batch_source_ops': source_ops}
             record = {'t': 'op', 'op': op, 'kind': PROBE, 'ctx': ctx, 'call': {}}
             try:
                 step = self._step(op, ctx, 0, 'pread', {'wave': 0, 'root': root, 'rel': rel, 'len': readfacts.FACT_LEN, 'whole': False, 'hop': 0})
@@ -69,7 +83,15 @@ class ProbeOps:
             if not done:
                 return [], []
             self.ledger.append(session, *({'t': 'settle', 'op': o.op} for o in done))
-            return [call for o in done for call in o.ctx['held']], [o.final['facts'] for o in done]
+            calls, decisions, originals = [], [], {}
+            for op in done:
+                held = op.ctx['held']
+                saved = op.ctx.get('batch_decisions')
+                calls.extend(held)
+                decisions.extend(saved if isinstance(saved, list) and len(saved) == len(held) else [None] * len(held))
+                originals.update(op.ctx.get('batch_original_ids') or {})
+            sources = {source for o in done for source in [o.op, *o.ctx.get('batch_source_ops', ())]}
+            return ReleasedCalls(calls, decisions, originals, sources), [o.final['facts'] for o in done]
 
     # ---------------------------------------------------------------- deciding
     def _p_after(self, op, wave: list, steps: list):

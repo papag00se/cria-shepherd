@@ -680,7 +680,10 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # overtake it) wait in the operation; they are lowered again, with the answer, in the next request. The model never sees the probe.
                 held = [{'id': c.get('id'), 'type': 'function', 'function': dict(c.get('function') or {})} for c in tool_calls[ti:]]
                 try:
-                    rebuilt.append(issue_probe(effect.path, held))
+                    from .probeops import ReleasedCalls
+                    decisions = ([i in held_indices for i in range(ti, len(tool_calls))] if batch_hold is not None else [None] * len(held))
+                    rebuilt.append(issue_probe(effect.path, ReleasedCalls(held, decisions, batch_original_ids or {},
+                                                                            getattr(tool_calls, 'source_ops', ()))))
                 except ops.OpsUnavailable as exc:
                     if rlog is not None:
                         rlog.emit('ops.unavailable', level='error', error=str(exc))

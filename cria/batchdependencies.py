@@ -31,6 +31,20 @@ def repair_ids(calls: list, session: str, request_key: str, used: set[str]) -> d
     return originals
 
 
+def ledger_ids(ops, session: str, *, exclude_probes=()) -> set[str]:
+    """IDs hidden behind cria transports still belong to model-visible history."""
+    with ops._lock:
+        entries = ops.ledger.ops(session).values()
+        ids = set()
+        for op in entries:
+            ids.update(call.get('id') for call in op.calls if isinstance(call.get('id'), str))
+            if op.kind == 'batch-id-map':
+                ids.update(row[1] for row in op.ctx.get('mapped', ()) if isinstance(row[1], str))
+            elif op.kind == 'probe' and op.op not in exclude_probes:
+                ids.update(call.get('id') for call in op.ctx.get('held', ()) if isinstance(call.get('id'), str))
+        return ids
+
+
 def repair_recorded(calls: list, session: str, request: dict, used: set[str], ops) -> dict[str, str]:
     """Persist a request-and-batch scoped mapping so a regenerated reply reuses it after restart."""
     batch = json.dumps(calls, ensure_ascii=True, sort_keys=True, separators=(',', ':'))

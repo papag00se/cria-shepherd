@@ -1888,13 +1888,27 @@ class CriaHandler(BaseHTTPRequestHandler):
         batch_hold = None
         batch_original_ids = {}
         if lowering.batch_dependencies:
-            from . import batchdependencies
+            from . import batchdependencies, probeops
             history = getattr(self, '_ops_original_body', {}).get('messages') or []
             used = {tc.get('id') for m in history if isinstance(m, dict) for tc in (m.get('tool_calls') or [])
                     if isinstance(tc, dict) and isinstance(tc.get('id'), str)}
             if batch_shell is not None:
+                history_ids = set(used)
+                used.update(batchdependencies.ledger_ids(self.server.ops, sess_key))
                 for choice in completion.get('choices', []):
                     calls = (choice.get('message') or {}).get('tool_calls') or []
+                    if isinstance(calls, probeops.ReleasedCalls):
+                        other_used = history_ids | batchdependencies.ledger_ids(self.server.ops, sess_key, exclude_probes=calls.source_ops)
+                        ids = [c.get('id') for c in calls]
+                        if any(not isinstance(i, str) or not i for i in ids) or len(ids) != len(set(ids)) or any(i in other_used for i in ids):
+                            repaired = batchdependencies.repair_recorded(
+                                calls, sess_key, getattr(self, '_ops_original_body', {}), other_used, self.server.ops)
+                            calls.decisions = [True if c.get('id') in repaired else decision
+                                               for c, decision in zip(calls, calls.decisions)]
+                            calls.originals.update(repaired)
+                        batch_original_ids.update(calls.originals)
+                        used.update(c.get('id') for c in calls if isinstance(c.get('id'), str))
+                        continue
                     ids = [c.get('id') for c in calls]
                     owned = any(callauth.verify(c.get('id'), callauth.content_of((c.get('function') or {}).get('arguments'))) for c in calls)
                     if not owned and (any(not isinstance(i, str) or not i for i in ids) or len(ids) != len(set(ids)) or any(i in used for i in ids)):
@@ -1902,10 +1916,13 @@ class CriaHandler(BaseHTTPRequestHandler):
                             calls, sess_key, getattr(self, '_ops_original_body', {}), used, self.server.ops))
                     used.update(c.get('id') for c in calls if isinstance(c.get('id'), str))
             def batch_hold(calls):
-                if len(calls) < 2:
-                    return set()
+                if isinstance(calls, probeops.ReleasedCalls):
+                    # An old probe without a decision cannot establish independence.
+                    return {i for i, decision in enumerate(calls.decisions) if decision is not False}
                 if any(c.get('id') in batch_original_ids for c in calls):
                     return set(range(len(calls)))
+                if len(calls) < 2:
+                    return set()
                 if any(callauth.verify(c.get('id'), callauth.content_of((c.get('function') or {}).get('arguments')))
                        for c in calls):
                     return set()

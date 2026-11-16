@@ -60,12 +60,127 @@ def test_batch_handler_holds_with_native_shell_and_abstains_without_one(tmp_path
     wire = result["choices"][0]["message"]["tool_calls"]
     assert wire[0] == calls[0] and wire[1]["id"].startswith("ctx_")
     assert any(e == "batch.dependencies" and d["held"] == 1 for e, d in log.events)
+    # Raw harness history names the transport ID, not the held call's original ID.
+    handler._ops_original_body = {"messages": [{"role": "assistant", "tool_calls": wire}]}
+    handler.server.ops = Ops()  # recovered from the session ledger, not the prior process cache
+    retry = {"id": "next", "choices": [{"message": {"tool_calls": [call("exec_command", {"cmd": "echo next"}, "b")]}}]}
+    with assistruntime.bound(runtime):
+        following = handler._translate_out(retry, "batch", log)
+    assert following["choices"][0]["message"]["tool_calls"][0]["id"] != "b"
+    records = list(handler.server.ops.ledger.ops('batch').values())
+    mappings = [o.ctx['mapped'] for o in records if o.kind == 'batch-id-map']
+    assert len(mappings) == 1 and mappings[0][0][2] == 'b' and mappings[0][0][1] != 'b'
+    assert any(o.final and (o.final.get('rep') or {}).get('batch_original_id') == 'b' for o in records)
     handler._batch_shell = None
     log = Log()
     with assistruntime.bound(runtime):
         result = handler._translate_out(completion(), "batch", log)
     assert result["choices"][0]["message"]["tool_calls"] == calls
     assert any(e == "batch.dependencies_unsupported" for e, _ in log.events)
+
+
+def test_batch_dependency_survives_unread_probe_and_restart(tmp_path):
+    from types import SimpleNamespace
+    from cria import harnessprims, loop, probeops, server, wsview
+    from cria.ops import Ops
+    from write_edit_helpers import run, ENVELOPE
+    class Role:
+        def apply(self, body, **kwargs): pass
+    class Log:
+        phase = 'coder'
+        def emit(self, event, **kwargs): pass
+    judgments = []
+    def judge(body, rlog):
+        judgments.append(body)
+        return json.dumps({'choices': [{'finish_reason': 'stop', 'message': {'content': '{"edges": [[0, 2]]}'}}]})
+    runtime = assistruntime.AssistRuntime.select(level=5)
+    handler = object.__new__(server.CriaHandler)
+    handler.server = SimpleNamespace(pilot_runtime=runtime, ops=Ops(),
+        cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission='write'),
+                            harness=SimpleNamespace(safe_path=harnessprims.SAFE_PATH)),
+        loop_store=SimpleNamespace(get_guard=lambda *args, **kwargs: None),
+        loop=SimpleNamespace(_ctx=SimpleNamespace(reasoner_buffered_chat=judge, reasoner_role=Role())))
+    handler._shell_tool = handler._batch_shell = SHELL
+    handler._synthetic, handler._search_only = {'write_file'}, False
+    handler._workspace_root, handler._declared_roots, handler._ops_session = str(tmp_path), (), 'probe-batch'
+    handler._ops_original_body = {'messages': []}
+    handler._unread_target = lambda path: probeops.UnreadProbe(path)
+    (tmp_path / 'existing').write_text('old')
+    calls = [call('exec_command', {'cmd': 'false'}, 'a'),
+             call('write_file', {'path': 'existing', 'content': 'new'}, 'b'),
+             call('exec_command', {'cmd': 'touch dependent'}, 'c')]
+    token = wsview.bind(wsview.View(str(tmp_path), 'we'))
+    try:
+        with assistruntime.bound(runtime):
+            first = handler._translate_out(loop._completion_toolcalls(calls), 'probe-batch', Log())
+        wire = first['choices'][0]['message']['tool_calls']
+        assert wire[0] == calls[0] and len(wire) == 2
+        # Another request cannot reuse an ID reserved by the still-active probe.
+        handler._ops_original_body = {'messages': [{'role': 'assistant', 'tool_calls': wire}]}
+        intervening = loop._completion_toolcalls([call('exec_command', {'cmd': 'touch intervening'}, 'b')])
+        with assistruntime.bound(runtime):
+            protected = handler._translate_out(intervening, 'probe-batch', Log())
+        assert protected['choices'][0]['message']['tool_calls'][0]['id'].startswith('ctx_')
+        assert not (tmp_path / 'intervening').exists()
+        assert run(wire[0], tmp_path).returncode != 0  # the prerequisite really failed
+        result = run(wire[1], tmp_path)
+        history = [{'role': 'assistant', 'tool_calls': wire},
+                   {'role': 'tool', 'tool_call_id': wire[1]['id'],
+                    'content': ENVELOPE.format(rc=result.returncode) + result.stdout + result.stderr}]
+        handler.server.ops = Ops()  # no in-memory state survives restart
+        handler.server.ops.incoming('probe-batch', history)
+        driver = object.__new__(loop.Loop)
+        driver._ctx = SimpleNamespace(take_released=handler.server.ops.release)
+        driver._store = SimpleNamespace(get=lambda key: None, get_bootstrap=lambda key: None)
+        released_completion = driver._drive_locked({'messages': []}, 'probe-batch', None, Log())
+        assert len(released_completion['choices'][0]['message']['tool_calls']) == 2
+        handler._unread_target = lambda path: None
+        with assistruntime.bound(runtime):
+            second = handler._translate_out(released_completion, 'probe-batch', Log())
+        assert len(judgments) == 1  # never rejudge a suffix with its prerequisite missing
+        remaining = second['choices'][0]['message']['tool_calls']
+        assert remaining[1]['id'].startswith('ctx_')
+        receipt = run(remaining[1], tmp_path)
+        assert 'did not run' in receipt.stdout
+        mappings = [row for op in handler.server.ops.ledger.ops('probe-batch').values()
+                    if op.kind == 'batch-id-map' for row in op.ctx['mapped']]
+        assert len(mappings) == 1 and mappings[0][2] == 'b'
+        # The intervening call's old ID is provenance, not another owner of b: the independent write proceeds.
+        pending, write_history = [remaining[0]], []
+        while pending:
+            write_history.append({'role': 'assistant', 'tool_calls': pending})
+            for primitive in pending:
+                done = run(primitive, tmp_path)
+                write_history.append({'role': 'tool', 'tool_call_id': primitive['id'],
+                                      'content': ENVELOPE.format(rc=done.returncode) + done.stdout + done.stderr})
+            pending = handler.server.ops.incoming('probe-batch', write_history).calls
+        assert (tmp_path / 'existing').read_text() == 'new'
+        assert not (tmp_path / 'dependent').exists()
+    finally:
+        wsview.unbind(token)
+
+
+def test_probe_batch_lineage_survives_multiple_releases(tmp_path):
+    from cria import probeops
+    from cria.ops import Ops
+    from write_edit_helpers import run, ENVELOPE
+    engine = Ops()
+    (tmp_path / 'existing').write_text('old')
+    held = probeops.ReleasedCalls([call('exec_command', {'cmd': 'true'}, 'b'),
+                                   call('exec_command', {'cmd': 'false'}, 'c')], [False, True], {})
+    for _ in range(2):
+        primitive = engine.issue_probe('multi', SHELL, 'existing', held, workspace_root=str(tmp_path), level='write')
+        result = run(primitive, tmp_path)
+        history = [{'role': 'assistant', 'tool_calls': [primitive]},
+                   {'role': 'tool', 'tool_call_id': primitive['id'],
+                    'content': ENVELOPE.format(rc=result.returncode) + result.stdout + result.stderr}]
+        engine = Ops()  # the next hop must recover its lineage from the ledger
+        engine.incoming('multi', history)
+        held, facts = engine.release('multi')
+        assert facts and held.decisions == [False, True]
+    assert len(held.source_ops) == 2
+    assert {'b', 'c'} <= batchdependencies.ledger_ids(engine, 'multi')
+    assert not {'b', 'c'} & batchdependencies.ledger_ids(engine, 'multi', exclude_probes=held.source_ops)
 
 
 def test_batch_duplicate_ids_are_stable_and_keep_unique_result_pairs(tmp_path):
