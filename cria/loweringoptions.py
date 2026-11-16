@@ -25,6 +25,7 @@ STAGE = "lowering-options"
 class Options:
     pack: bool = False
     edit_echo: bool = False
+    batch_dependencies: bool = False
 
 
 def _pack(options: Options) -> Options:
@@ -33,6 +34,10 @@ def _pack(options: Options) -> Options:
 
 def _echo(options: Options) -> Options:
     return replace(options, edit_echo=True)
+
+
+def _batch(options: Options) -> Options:
+    return replace(options, batch_dependencies=True)
 
 
 @dataclass(frozen=True)
@@ -57,7 +62,15 @@ ECHO = Definition(Policy(
     services=("edit window",),
     hooks=_HOOKS, regressions=(_REGRESSION,)), _echo)
 
-DEFINITIONS = (PACKING, ECHO)
+BATCH_DEPENDENCIES = Definition(Policy(
+    "batch-dependency-hold", STAGE, 5, family_id="F77",
+    prompts=("batch_dependencies_judge", "batch_dependencies_held"),
+    services=("reasoner", "authenticated answer transport"),
+    hooks=(Reference("cria/server.py", "CriaHandler._translate_out"),
+           Reference("cria/writeproxy.py", "translate_outbound")),
+    regressions=(Reference("tests/write_edit/test_write_edit_outbound.py", "test_batch_dependencies_hold_only_dependents_or_all_when_unknown"),)), _batch)
+
+DEFINITIONS = (PACKING, ECHO, BATCH_DEPENDENCIES)
 
 
 def resolve(runtime) -> Options:

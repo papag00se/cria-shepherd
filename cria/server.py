@@ -1736,6 +1736,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         cache key), NOT ``session_key(headers, messages)`` — so passing the caller's sess_key here is
         what lets the 'you already fetched this' refusal fire (it re-fetched openapi.json 10+ times)."""
         self._shell_tool = None
+        self._batch_shell = find_shell_tool(body.get("tools"))
         self._synthetic: set[str] = set()
         self._native_search = None
         self._brave_key = None
@@ -1869,7 +1870,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
-        completion = callauth.neutralize(generation.safe_completion(completion))
+        completion = generation.safe_completion(completion)
         research = any((tc.get('function') or {}).get('name') in ('web_fetch', 'web_search')
                        for choice in completion.get('choices', [])
                        for tc in (choice.get('message') or {}).get('tool_calls') or [])
@@ -1880,10 +1881,46 @@ class CriaHandler(BaseHTTPRequestHandler):
             originals[lowered.get('id')] = original.get('id')      # cria's primitive call stands for the model's call
             if proposed_write is not None:
                 admitted[original.get('id')] = proposed_write
-        if self._shell_tool is not None:
-            lowering = loweringoptions.resolve(assistruntime.current() if assistruntime.is_bound()
-                                               else self.server.pilot_runtime)
-            translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
+        lowering = loweringoptions.resolve(assistruntime.current() if assistruntime.is_bound()
+                                           else self.server.pilot_runtime)
+        batch_shell = getattr(self, '_batch_shell', None) if lowering.batch_dependencies else None
+        shell = self._shell_tool or batch_shell
+        batch_hold = None
+        batch_original_ids = {}
+        if lowering.batch_dependencies:
+            from . import batchdependencies
+            history = getattr(self, '_ops_original_body', {}).get('messages') or []
+            used = {tc.get('id') for m in history if isinstance(m, dict) for tc in (m.get('tool_calls') or [])
+                    if isinstance(tc, dict) and isinstance(tc.get('id'), str)}
+            if batch_shell is not None:
+                for choice in completion.get('choices', []):
+                    calls = (choice.get('message') or {}).get('tool_calls') or []
+                    ids = [c.get('id') for c in calls]
+                    owned = any(callauth.verify(c.get('id'), callauth.content_of((c.get('function') or {}).get('arguments'))) for c in calls)
+                    if not owned and (any(not isinstance(i, str) or not i for i in ids) or len(ids) != len(set(ids)) or any(i in used for i in ids)):
+                        batch_original_ids.update(batchdependencies.repair_recorded(
+                            calls, sess_key, getattr(self, '_ops_original_body', {}), used, self.server.ops))
+                    used.update(c.get('id') for c in calls if isinstance(c.get('id'), str))
+            def batch_hold(calls):
+                if len(calls) < 2:
+                    return set()
+                if any(c.get('id') in batch_original_ids for c in calls):
+                    return set(range(len(calls)))
+                if any(callauth.verify(c.get('id'), callauth.content_of((c.get('function') or {}).get('arguments')))
+                       for c in calls):
+                    return set()
+                ctx = getattr(getattr(self.server, 'loop', None), '_ctx', None)
+                held = batchdependencies.judge(calls, getattr(ctx, 'reasoner_buffered_chat', None),
+                                               getattr(ctx, 'reasoner_role', None), rlog)
+                rlog.emit('batch.dependencies', calls=len(calls), held=len(held))
+                return held
+            if batch_shell is None:
+                if any(len((c.get('message') or {}).get('tool_calls') or ()) > 1 for c in completion.get('choices', [])):
+                    rlog.emit('batch.dependencies_unsupported', reason='no_shell')
+                batch_hold = None
+        completion = callauth.neutralize(completion)
+        if shell is not None:
+            translate_outbound(completion, shell, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
                                native_search=getattr(self, "_native_search", None), session=sess_key,
                                workspace_root=getattr(self, "_workspace_root", None),
@@ -1897,6 +1934,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                                pack=lowering.pack, edit_echo=lowering.edit_echo,
                                observe_lowering=observed, externalization_owner=owner,
                                only_injected=getattr(self, '_search_only', False), safe_path=self.server.cfg.harness.safe_path,
+                               batch_hold=batch_hold, batch_original_ids=batch_original_ids,
                                issue_read=lambda call, args, instead: self.server.ops.issue_read(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, call, args,
                                    workspace_root=getattr(self, "_workspace_root", None),
@@ -1909,7 +1947,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, path, held, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())),
                                issue_answer=lambda call, args, answer: self.server.ops.issue_answer(
-                                   getattr(self, '_ops_session', sess_key), self._shell_tool, call, answer, workspace_root=getattr(self, "_workspace_root", None),
+                                   getattr(self, '_ops_session', sess_key), shell, call, answer, workspace_root=getattr(self, "_workspace_root", None),
                                    level=self.server.cfg.safety.external_dir_permission, roots=getattr(self, "_declared_roots", ())),
                                issue_search=lambda call, args: self.server.ops.issue_search(
                                    getattr(self, '_ops_session', sess_key), self._shell_tool, call, args, workspace_root=getattr(self, "_workspace_root", None),

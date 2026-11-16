@@ -1007,6 +1007,14 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         ),
     ),
     AssistFamily(
+        'F77', 'Hold unsafe concurrent tool calls',
+        'Recovery and file safety',
+        'A focused reasoner judges prerequisite relationships between proposed calls. Held calls receive ledger-backed not-run outcomes; independent calls retain normal lowering and concurrency.',
+        (),
+        (SourceOwner('cria/batchdependencies.py', 'judge'),
+         SourceOwner('cria/writeproxy.py', 'translate_outbound')),
+    ),
+    AssistFamily(
         'F76', 'Carry finished-work briefings into follow-ups',
         'Context and memory',
         'Separate from rejected-handoff recovery: closing-time generated memory with its own validation/provenance limits.',
@@ -1040,6 +1048,7 @@ _BOUNDARIES = {
     "F09": ("Withhold incomplete actions and preserve their recovery status.", "Generation stop evidence governs quarantine; rumination and candidate validity have separate authorities."),
     "F10": ("Advertise, focus and explain the available model tool interface.", "Native search aliases are menu adapters; lowering and research judgments retain separate ownership."),
     "F11": ("Round-trip synthetic tools through harness primitives.", "Execution adapters preserve correlation and bytes; admission and safety policies remain consumers."),
+    "F77": ("Hold calls whose concurrent execution is dependent or undecidable.", "The reasoner judges action relationships; ledger-backed receipts do not authenticate native tool success."),
     "F12": ("Reject replacements that introduce proven syntax regressions.", "Language syntax evidence differs from argument preparation and destructive-resource analysis."),
     "F13": ("Prepare valid whole-write and exact-edit arguments.", "Missing/null and intentional-empty values retain distinct contracts; syntax and safety are not argument validation."),
     "F14": ("Represent returned tool bytes, coverage and outcomes truthfully.", "Read, binary and empty-result adapters preserve provenance; confidential data handling belongs to F19."),

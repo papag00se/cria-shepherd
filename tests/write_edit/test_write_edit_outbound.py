@@ -1,9 +1,120 @@
 """Outbound guards that decide whether a lowered write/edit/command may run at all: private dir, system programs, unsafe cleanup, fused tails."""
 import json
 
-from cria import assistruntime, cleanupsafety, denial, dirguard, writeproxy
+from cria import assistruntime, batchdependencies, cleanupsafety, denial, dirguard, writeproxy
 from cria.config import CRIA_HOME
-from write_edit_helpers import SHELL, call, command_of, do, lower, settle, write_edit_workspace_view  # noqa: F401
+from write_edit_helpers import SHELL, call, command_of, do, lower, run_batch, settle, write_edit_workspace_view  # noqa: F401
+
+def test_batch_dependencies_hold_only_dependents_or_all_when_unknown():
+    calls = [call("exec_command", {"cmd": "create project"}, "a"), call("exec_command", {"cmd": "enter project"}, "b"),
+             call("read_file", {"path": "notes"}, "c")]
+    assert batchdependencies.held(calls, {"edges": [[0, 1]]}) == {1}
+    assert batchdependencies.held(calls, {"edges": [[0, 1], [1, 2]]}) == {1, 2}
+    assert batchdependencies.held(calls, {"edges": []}) == set()
+    for answer in (None, {}, {"edges": [[1, 0]]}, {"edges": [[0, 3]]}, {"edges": [[0, 1], [0, 1]]}):
+        assert batchdependencies.held(calls, answer) == {0, 1, 2}
+    assert batchdependencies.held(calls[:1], None) == set()
+    class Role:
+        def apply(self, body, **kwargs):
+            pass
+    from types import SimpleNamespace
+    log = SimpleNamespace(phase="coder")
+    def answer(text):
+        return lambda body, rlog: json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": text}}]})
+    assert batchdependencies.judge(calls, answer('{"edges": [[0, 1]]}'), Role(), log) == {1}
+    assert batchdependencies.judge(calls, answer('{"edges": []}'), Role(), log) == set()
+    assert batchdependencies.judge(calls, answer('{"unknown": true}'), Role(), log) == {0, 1, 2}
+    assert batchdependencies.judge(calls, None, None, log) == {0, 1, 2}
+    assert batchdependencies.judge(calls[:1], None, None, log) == set()
+    assert log.phase == "coder"
+
+
+def test_batch_handler_holds_with_native_shell_and_abstains_without_one(tmp_path):
+    from types import SimpleNamespace
+    from cria import harnessprims, server
+    from cria.ops import Ops
+    class Role:
+        def apply(self, body, **kwargs):
+            pass
+    class Log:
+        phase = "coder"
+        def __init__(self): self.events = []
+        def emit(self, event, **kwargs): self.events.append((event, kwargs))
+    def judge(body, rlog):
+        return json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": '{"edges": [[0, 1]]}'}}]})
+    runtime = assistruntime.AssistRuntime.select(level=5)
+    handler = object.__new__(server.CriaHandler)
+    handler.server = SimpleNamespace(pilot_runtime=runtime, ops=Ops(),
+        cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission="write"),
+                            harness=SimpleNamespace(safe_path=harnessprims.SAFE_PATH)),
+        loop_store=SimpleNamespace(get_guard=lambda *args, **kwargs: None),
+        loop=SimpleNamespace(_ctx=SimpleNamespace(reasoner_buffered_chat=judge, reasoner_role=Role())))
+    handler._shell_tool, handler._batch_shell, handler._synthetic, handler._search_only = None, SHELL, set(), True
+    handler._workspace_root, handler._declared_roots, handler._ops_session = str(tmp_path), (), "batch"
+    handler._ops_original_body = {"messages": []}
+    calls = [call("exec_command", {"cmd": "mkdir project"}, "a"), call("exec_command", {"cmd": "touch project/b"}, "b")]
+    def completion(): return {"id": "reply", "choices": [{"message": {"tool_calls": [dict(c) for c in calls]}}]}
+    log = Log()
+    with assistruntime.bound(runtime):
+        result = handler._translate_out(completion(), "batch", log)
+    wire = result["choices"][0]["message"]["tool_calls"]
+    assert wire[0] == calls[0] and wire[1]["id"].startswith("ctx_")
+    assert any(e == "batch.dependencies" and d["held"] == 1 for e, d in log.events)
+    handler._batch_shell = None
+    log = Log()
+    with assistruntime.bound(runtime):
+        result = handler._translate_out(completion(), "batch", log)
+    assert result["choices"][0]["message"]["tool_calls"] == calls
+    assert any(e == "batch.dependencies_unsupported" for e, _ in log.events)
+
+
+def test_batch_duplicate_ids_are_stable_and_keep_unique_result_pairs(tmp_path):
+    calls = [call("exec_command", {"cmd": "touch a"}, "dup"),
+             call("exec_command", {"cmd": "touch b"}, "dup"),
+             call("exec_command", {"cmd": "touch c"}, "valid")]
+    import copy
+    replay = copy.deepcopy(calls)
+    from cria.ops import Ops
+    request = {"messages": [{"role": "user", "content": "task"}]}
+    original = batchdependencies.repair_recorded(calls, "session", request, {"historical"}, Ops())
+    assert batchdependencies.repair_recorded(replay, "session", request, {"historical"}, Ops()) == original
+    other = [call("exec_command", {"cmd": "touch a"}, "dup"), call("exec_command", {"cmd": "touch b"}, "dup"),
+             call("exec_command", {"cmd": "touch c"}, "valid")]
+    assert not set(batchdependencies.repair_recorded(other, "other-session", request, {"historical"}, Ops())) & set(original)
+    assert calls == replay and calls[2]["id"] == "valid" and list(original.values()) == ["dup", "dup"]
+    collision = [call("exec_command", {"cmd": "touch a"}, "dup"), call("exec_command", {"cmd": "touch b"}, "dup"),
+                 call("exec_command", {"cmd": "touch c"}, "valid")]
+    changed = batchdependencies.repair_recorded(collision, "session", {"messages": []}, set(original), Ops())
+    assert not set(changed) & set(original)
+    messages = run_batch(calls, tmp_path, [0, 1, 2], batch_hold=lambda calls: {0, 1, 2}, batch_original_ids=original)
+    results = denial.paired_results(messages)
+    assert set(results) == {c["id"] for c in calls} and all(denial.refused(m) for m in results.values())
+    recorded = [o.final.get("rep", {}).get("batch_original_id") for o in Ops().ledger.ops("s").values() if o.final]
+    assert recorded.count("dup") == 2
+    assert not any((tmp_path / name).exists() for name in ("a", "b", "c"))
+    from cria import responses
+    completion = {"id": "r", "model": "fake", "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant", "content": None, "tool_calls": calls}}]}
+    output = responses.to_responses_json(completion, "fake")["output"]
+    output.extend({"type": "function_call_output", "call_id": c["id"], "output": "done"} for c in calls)
+    chat = responses.to_chat_body({"model": "fake", "input": output})["messages"]
+    assert set(denial.paired_results(chat)) == {c["id"] for c in calls}
+
+
+def test_batch_hold_runs_independent_calls_and_returns_paired_not_run(tmp_path):
+    (tmp_path / "info").write_text("independent read")
+    calls = [call("exec_command", {"cmd": "mkdir project"}, "a"),
+             call("exec_command", {"cmd": "touch project/dependent"}, "b"),
+             call("exec_command", {"cmd": "touch independent"}, "c"),
+             call("read_file", {"path": "info"}, "d")]
+    messages = run_batch(calls, tmp_path, [0, 1, 2, 3], batch_hold=lambda calls: {1}, injected=("read_file",))
+    assert (tmp_path / "project").is_dir() and (tmp_path / "independent").exists()
+    assert not (tmp_path / "project/dependent").exists()
+    results = denial.paired_results(messages)
+    assert denial.refused(results["b"])
+    assert "did not run" in results["b"]["content"]
+    assert not denial.refused(results["a"]) and not denial.refused(results["c"])
+    assert "independent read" in results["d"]["content"]
+
 
 SOURCE_DELETES_SHARED_TMP = ("import os, shutil, tempfile\n\n\ndef test_it():\n    fd, path = tempfile.mkstemp()\n"
                              "    shutil.rmtree(os.path.dirname(path), ignore_errors=True)\n")

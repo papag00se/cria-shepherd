@@ -589,7 +589,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        observe_lowering=None, externalization_owner=None,
                        observe_externalization=None, only_injected: bool = False, issue_list_dir=None,
                        issue_read=None, issue_mutations=None, issue_answer=None, issue_search=None, issue_probe=None,
-                       safe_path: str = harnessprims.SAFE_PATH) -> dict:
+                       safe_path: str = harnessprims.SAFE_PATH, batch_hold=None, batch_original_ids=None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -614,10 +614,22 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             continue
         rebuilt: list[dict] = []
         held_reads: set[str] = set()
+        held_indices = batch_hold(tool_calls) if batch_hold is not None else set()
         mutations: list = []        # (index in `rebuilt`, the model's call, its arguments, the MutateIntent): carried out together below
         notes: list = []            # (index in `rebuilt`, the model's call, what it became, the whole-file write proposed): reported to the observer in order
         for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
+            if ti in held_indices:
+                text = denial.mark(prompts.load('batch_dependencies_held'))
+                if issue_answer is None:
+                    raise ops.OpsUnavailable('batch hold needs an authenticated answer transport')
+                original_ids = batch_original_ids or {}
+                rep = ({'batch_original_id': original_ids[tc.get('id')]} if tc.get('id') in original_ids else None)
+                issued = issue_answer(tc, _parse(fn.get('arguments')),
+                                      AnswerIntent(fn.get('name') or '', '', text, denial.REFUSED, rep=rep))
+                rebuilt.append(issued)
+                notes.append((len(rebuilt) - 1, tc, issued, None))
+                continue
             name = fn.get("name")
             if callauth.verify(tc.get("id"), callauth.content_of(fn.get("arguments"))) is not None:
                 rebuilt.append(tc)        # a call cria issued itself (its id is the MAC of this very command): never re-guarded, never lowered
